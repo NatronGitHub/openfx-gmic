@@ -81,14 +81,14 @@
 #define PLANAR_BUFFER
 
 #ifdef OFX_PLUGIN
-    #include "../Helpers/RFX_OFX_Utils.h"
+    #include "RFX_OFX_Utils.h"
 #else
-    #include "../Helpers/RFX_AE_Utils.h"
+    #include "RFX_AE_Utils.h"
 #endif
 
-#include "../Helpers/gmic_parser.h"
-#include "../ThirdParty/GMIC/src/gmic_libc.h"
-#include "../ThirdParty/GMIC/src/gmic.h"
+#include "gmic_parser.h"
+#include "gmic_libc.h"
+#include "gmic.h"
 
 #include <math.h>
 
