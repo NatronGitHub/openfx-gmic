@@ -1521,7 +1521,7 @@ static OfxStatus describe(int pluginIndex, OfxImageEffectHandle effect)
 	// set some labels and the group it belongs to
 	gPropHost->propSetString(effectProps, kOfxPropLabel, 0, globalData[pluginIndex].pluginInfo.name.c_str());
 	gPropHost->propSetString(effectProps, kOfxImageEffectPluginPropGrouping, 0, globalData[pluginIndex].pluginInfo.category.c_str());
-	gPropHost->propSetString(effectProps, kOfxPropPluginDescription, 0, globalData[pluginIndex].pluginInfo.description.c_str());
+        gPropHost->propSetString(effectProps, kOfxPropPluginDescription, 0, globalData[pluginIndex].pluginInfo.name.c_str() /*globalData[pluginIndex].pluginInfo.description.c_str()*/);
 
 	// define the contexts we can be used in
 	gPropHost->propSetString(effectProps, kOfxImageEffectPropSupportedContexts, 0, kOfxImageEffectContextFilter);

@@ -7,7 +7,7 @@ include Makefile.master
 
 RESOURCES = GMIC.png $(SRCDIR)/GMIC/gmic_stdlib.gmic
 CXXFLAGS += -I$(SRCDIR)/Common -I$(SRCDIR)/GMIC -I$(SRCDIR)/OpenFX/include -I$(SRCDIR)/OpenFX/Examples/include
-LINKFLAGS += -lcgmic
+LINKFLAGS += -L$(SRCDIR)/GMIC -lcgmic
 
 VPATH += \
 $(SRCDIR)/GMIC \
