@@ -186,7 +186,7 @@ string getUniqueId(string name)
 			|| (name[i] >= '0' && name[i] <= '9'))
 			uniqueid += name[i];
 	}
-	return "gmic_" + strLowercase(uniqueid);
+	return "GMIC_" + strLowercase(uniqueid);
 }
 
 void processCommand(const string s, EffectData& cd)
@@ -494,7 +494,7 @@ void gmic_parse_multi(const string content, vector<EffectData>* cds, vector<stri
 						strReplace(cd.name, "]", "");
 						strReplace(cd.name, " - ", " ");
 						strReplace(cd.name, "inverse", "inv.");
-						cd.category = "G'MIC " + cd.category;
+						cd.category = "GMIC/" + cd.category;
 						if (cds) cds->push_back(cd);
 						if (lines) lines->push_back(line2);
 					}

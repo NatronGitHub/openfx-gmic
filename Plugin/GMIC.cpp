@@ -40,10 +40,10 @@
 */
 
 // name and description for the plugin
-#define PLUGIN_NAME	        "G'MIC                          "
-#define PLUGIN_CATEGORY		"G'MIC                          "
-#define PLUGIN_UNIQUEID		"gmic_plugin                    "
-#define PLUGIN_DESCRIPTION	"A plugin that gives access to the awesome G'MIC framework (http://www.gmic.eu).\nNative plugin by Tobias Fleischer (http://www.reduxfx.com).";
+#define PLUGIN_NAME	        "GMIC"
+#define PLUGIN_CATEGORY		"GMIC"
+#define PLUGIN_UNIQUEID		"fr.inria.openfx.GMIC"
+#define PLUGIN_DESCRIPTION	"OpenFX wrapper for the G'MIC framework (http://www.gmic.eu).\nWritten by Tobias Fleischer (http://www.reduxfx.com).";
 
 // version information
 #define	MAJOR_VERSION		1
