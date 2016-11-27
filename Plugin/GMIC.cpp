@@ -42,7 +42,7 @@
 // name and description for the plugin
 #define PLUGIN_NAME	        "GMIC"
 #define PLUGIN_CATEGORY		"GMIC"
-#define PLUGIN_UNIQUEID		"fr.inria.openfx.GMIC"
+#define PLUGIN_UNIQUEID		"GMIC"
 #define PLUGIN_DESCRIPTION	"OpenFX wrapper for the G'MIC framework (http://www.gmic.eu).\nWritten by Tobias Fleischer (http://www.reduxfx.com).";
 
 // version information
@@ -95,28 +95,9 @@
 using namespace reduxfx;
 
 #ifdef OFX_PLUGIN
-
+#include "gmic_stdlib_gmic.h"
+#include <sstream>
 #include <stdlib.h> 
-string get_gmic_rc_path()
-{
-	string path;
-	const char *_path_rc = 0;
-/*	if (!_path_rc) _path_rc = getenv("GMIC_PATH");
-	if (!_path_rc) _path_rc = getenv("GMIC_GIMP_PATH");
-	if (!_path_rc) _path_rc = getenv("XDG_CONFIG_HOME"); */
-	if (!_path_rc) {
-#ifndef _WIN32
-		_path_rc = getenv("HOME");
-		if (_path_rc) {
-			path = string(_path_rc) + "/.config/gmic/";
-		}
-#else
-		_path_rc = getenv("APPDATA");
-#endif
-	}
-	if (path == "") path = string(_path_rc) + "/gmic/";
-	return path;
-}
 
 class PluginGlobalData
 {
@@ -124,9 +105,9 @@ public:
 	vector<EffectData> pluginData;
 	vector<string> pluginContent;
 	PluginGlobalData() {
-		string effectContent = loadStringFromFile(get_gmic_rc_path() + "gmic_ofx.gmic");
-		if (effectContent == "") effectContent = loadStringFromFile(get_gmic_rc_path() + "gmic_stdlib.gmic");
-		gmic_parse_multi(effectContent, &pluginData, &pluginContent);
+                stringstream s;
+                s << gmic_stdlib_gmic;
+                gmic_parse_multi(s.str(), &pluginData, &pluginContent);
 	};
 };
 PluginGlobalData pluginGlobalData;
