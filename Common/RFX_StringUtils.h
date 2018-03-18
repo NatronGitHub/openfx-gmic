@@ -80,7 +80,7 @@ static string strTrim(const string& str, const string& whitespace = " \t\0")
     return str.substr(strBegin, strRange);
 }
 
-static string strReplace(string& str, const string search, const string replace, bool firstOnly = false, bool caseInsensitive = false)
+static string strReplace(string& str, const string& search, const string& replace, bool firstOnly = false, bool caseInsensitive = false)
 {
 	size_t pos = 0;
 	if (caseInsensitive) {
@@ -117,7 +117,7 @@ static void strSplit(const string& s, const char seperator, vector<string>& resu
 	if (substring != "") results.push_back(substring); // Last word
 }
 
-static string strAfterFirst(const string s, const string ss, const int ofs = 0)
+static string strAfterFirst(const string& s, const string& ss, const int ofs = 0)
 { 
 	int ii = (int)s.find(ss); 
 	if (ii >= 0) 
@@ -126,7 +126,7 @@ static string strAfterFirst(const string s, const string ss, const int ofs = 0)
 		return "";
 }
 
-static string strAfterLast(const string s, const string ss, const int ofs = 0)
+static string strAfterLast(const string& s, const string& ss, const int ofs = 0)
 { 
 	int ii = (int)s.rfind(ss); 
 	if (ii >= 0) 
@@ -171,12 +171,12 @@ static inline void hexBufferToBuffer(const unsigned char* inbuf, const unsigned 
     }
 }
 
-static inline void hexStringToBuffer(const string hexstr, unsigned char* outbuf)
+static inline void hexStringToBuffer(const string& hexstr, unsigned char* outbuf)
 {
 	hexBufferToBuffer((const unsigned char*)hexstr.c_str(), (int)hexstr.length(), outbuf);
 }
 
-static string hexStringToString(const string hexstr)
+static string hexStringToString(const string& hexstr)
 {
 	string h = hexstr;
 	h = strReplace(h, " ", "");
@@ -188,28 +188,27 @@ static string hexStringToString(const string hexstr)
 	return s;
 }
 
-static string stringToHexString(const string str)
+static string stringToHexString(const string& str)
 {
 	return bufferToHexString((const unsigned char*)str.c_str(), (int)str.length());
 }
 
-static string strGetToken(string s, const string token, const string delim = "\"")
+static string strGetToken(const string& s, const string& token, const string& delim = "\"")
 {
 	string res;
 	size_t pos = 0;
 	pos = s.find(token);
 	if (pos != string::npos) {
-		s = s.substr(pos);
-		pos = s.find(delim);
-		s = s.substr(pos+1);
-		pos = s.find(delim);
-		s = s.substr(0, pos);
-		res = s;
+		res = s.substr(pos);
+		pos = res.find(delim);
+		res = res.substr(pos+1);
+		pos = res.find(delim);
+		res = res.substr(0, pos);
 	}
 	return res;
 }
 
-static string strGetTokenValue(const string script, const string token)
+static string strGetTokenValue(const string& script, const string& token)
 {
 	int iPos = (int)script.find(token);
 	if (iPos >= 0) {
@@ -226,7 +225,7 @@ static string strGetTokenValue(const string script, const string token)
 }
 
 
-static string strGetTag(string s, const string tag)
+static string strGetTag(const string& s, const string& tag)
 {
 	string res;
 	size_t pos = 0;

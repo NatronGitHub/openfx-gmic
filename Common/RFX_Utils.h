@@ -99,13 +99,12 @@ typedef std::map<std::string, std::string> strStrMap;
 
 namespace reduxfx {
 
-inline void openOS(string s)
+inline void openOS(const string& s)
 {
 #ifdef _WIN32
 	ShellExecute(NULL, "open", s.c_str(), NULL, NULL, SW_SHOWNORMAL);
 #else
-	s = "open " + s;
-	system(s.c_str());
+	system(string("open " + s).c_str());
 #endif
 }
 

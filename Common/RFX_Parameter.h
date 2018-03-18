@@ -128,7 +128,7 @@ public:
 class Parameter
 {
 public:
-	Parameter(string _displayName = "", int _paramType = PT_FLOAT, float _minValue = 0.f, float _maxValue = 1.f, float _defaultValue0 = 0.f, float _defaultValue1 = 0.f, float _defaultValue2 = 0.f, float _defaultValue3 = 0.f, string _text = "") {
+	Parameter(const string& _displayName = "", int _paramType = PT_FLOAT, float _minValue = 0.f, float _maxValue = 1.f, float _defaultValue0 = 0.f, float _defaultValue1 = 0.f, float _defaultValue2 = 0.f, float _defaultValue3 = 0.f, const string& _text = "") {
 		displayName = _displayName;
 		paramName = displayName;
 		if (displayName == "") displayName = paramName;

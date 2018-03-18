@@ -55,7 +55,7 @@ using namespace std;
 
 namespace reduxfx {
 
-static bool fileExists(const string inFilename)
+static bool fileExists(const string& inFilename)
 {
     FILE *fileP;
 #ifndef _WIN32
@@ -68,7 +68,7 @@ static bool fileExists(const string inFilename)
 	return true;
 }
 
-static int loadBufferFromFile(const string filename, unsigned char** bufferP, unsigned int& bufferSize, const bool piggybackMode = false)
+static int loadBufferFromFile(const string& filename, unsigned char** bufferP, unsigned int& bufferSize, const bool piggybackMode = false)
 {
 	bufferSize = 0;
 	*bufferP = NULL;
@@ -102,7 +102,7 @@ static int loadBufferFromFile(const string filename, unsigned char** bufferP, un
     return -1;
 }
 
-static string loadStringFromFile(const string filename, const bool loadOnlyText = false)
+static string loadStringFromFile(const string& filename, const bool loadOnlyText = false)
 {
     string res;
 	if (filename == "") return res;
@@ -129,7 +129,7 @@ static string loadStringFromFile(const string filename, const bool loadOnlyText 
     return res;
 }
 
-static int saveStringToFile(string s, const string filename, const bool unifyLineEndings = true)
+static int saveStringToFile(const string& s, &filename, const bool unifyLineEndings = true)
 {
     ofstream myfile(filename.c_str(), ios::out | ios::binary);
     if (myfile.is_open()) {
@@ -145,7 +145,7 @@ static int saveStringToFile(string s, const string filename, const bool unifyLin
 	return -1;
 }
 
-static int saveBufferToFile(const unsigned char** bufferP, const unsigned int bufferSize, const string filename, const bool piggybackMode = false)
+static int saveBufferToFile(const unsigned char** bufferP, const unsigned int bufferSize, const string& filename, const bool piggybackMode = false)
 {
 	ofstream outfile;
 	if (piggybackMode) {

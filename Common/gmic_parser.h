@@ -73,7 +73,7 @@ struct EffectData {
 	vector<EffectParameter> param;
 };
 
-static bool fileExists(const string inFilename)
+static bool fileExists(const string& inFilename)
 {
     FILE *fileP;
 #ifndef _WIN32
@@ -86,7 +86,7 @@ static bool fileExists(const string inFilename)
 	return true;
 }
 
-static int loadBufferFromFile(const string filename, unsigned char** bufferP, int& bufferSize)
+static int loadBufferFromFile(const string& filename, unsigned char** bufferP, int& bufferSize)
 {
 	if (filename == "") return -1;
 	ifstream infile;
@@ -103,7 +103,7 @@ static int loadBufferFromFile(const string filename, unsigned char** bufferP, in
     return -1;
 }
 
-static int saveBufferToFile(unsigned char** bufferP, const int bufferSize, const string filename)
+static int saveBufferToFile(unsigned char** bufferP, const int bufferSize, const string& filename)
 {
     ofstream myfile(filename.c_str(), ios::out | ios::binary);
     if (myfile.is_open()) {
@@ -114,7 +114,7 @@ static int saveBufferToFile(unsigned char** bufferP, const int bufferSize, const
 	return -1;
 }
 
-static string loadStringFromFile(const string filename)
+static string loadStringFromFile(const string& filename)
 {
     string res;
 	if (filename == "") return res;
@@ -134,7 +134,7 @@ static string loadStringFromFile(const string filename)
     return res;
 }
 
-static int saveStringToFile(string s, const string filename, const bool unifyLineEndings = true)
+static int saveStringToFile(const string& s, const string& filename, const bool unifyLineEndings = true)
 {
     ofstream myfile(filename.c_str(), ios::out | ios::binary);
     if (myfile.is_open()) {
@@ -150,7 +150,7 @@ static int saveStringToFile(string s, const string filename, const bool unifyLin
 	return -1;
 }
 
-string replaceHtml(const string s)
+string replaceHtml(const string& s)
 {
 	string r;
 	bool inHtml = false;
@@ -177,7 +177,7 @@ string replaceHtml(const string s)
 	return r;
 }
 
-string getUniqueId(string name)
+string getUniqueId(const string& name)
 {
 	string uniqueid = "";
 	for (unsigned int i = 0; i < name.size(); i++) {
@@ -189,7 +189,7 @@ string getUniqueId(string name)
 	return "GMIC_" + strLowercase(uniqueid);
 }
 
-void processCommand(const string s, EffectData& cd)
+void processCommand(const string& s, EffectData& cd)
 {
 	string r = s;
 	if (r == dst_prefix + " :") return;
@@ -222,7 +222,7 @@ void processCommand(const string s, EffectData& cd)
 	if (cd.preview_command == "") cd.preview_command = cd.command;
 }
 
-void processNote(const string s, EffectData& cd)
+void processNote(const string& s, EffectData& cd)
 {
 	string r = s;
 	r = replaceHtml(r);
@@ -248,7 +248,7 @@ void processNote(const string s, EffectData& cd)
 	if (r != "") cd.notes += r + "\n";
 }
 
-void processParam(const string s, EffectParameter& cp)
+void processParam(const string& s, EffectParameter& cp)
 {
 	string r = s;
 	cp.minValue = "";
@@ -341,7 +341,7 @@ void processParam(const string s, EffectParameter& cp)
 	}
 }
 
-string gmic_parse_single(const string content, EffectData& cd)
+string gmic_parse_single(const string& content, EffectData& cd)
 {
 	string result;
 	bool inNote = false;
@@ -454,7 +454,7 @@ string gmic_parse_single(const string content, EffectData& cd)
 	return result;
 }
 
-void gmic_parse_multi(const string content, vector<EffectData>* cds, vector<string>* lines)
+void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<string>* lines)
 {
 	stringstream ss(content);
 	bool inEffect = false;
