@@ -8,13 +8,16 @@ include $(PATHTOROOT)/Makefile.master
 
 RESOURCES = GMIC.png
 
+# we need zlib to decompress the G'MIC standard library, and FFTW3 for many effects that use the FFT (the CImg builtin FFT only works with power-of-two dimensions)
 CXXFLAGS += \
 -DOFX_PLUGIN \
 -I$(SRCDIR)/Helpers \
 -I$(SRCDIR)/openfx/include \
 -I$(SRCDIR)/openfx/Examples/include \
--Dgmic_build -Dgmic_is_parallel -Dcimg_use_abort -Dcimg_display=0 -Dcimg_appname=\"gmic\" -Dcimg_namespace_suffix=openfx_gmic -Dcimg_verbosity=0 -Dcimg_library=cimg_library_openfx_gmic
+-Dgmic_build -Dgmic_is_parallel -Dcimg_use_abort -Dcimg_display=0 -Dcimg_appname=\"gmic\" -Dcimg_namespace_suffix=openfx_gmic -Dcimg_verbosity=0 -Dcimg_library=cimg_library_openfx_gmic \
+-Dcimg_use_zlib -Dcimg_use_fftw3
 
+LINKFLAGS += -lfftw3 -lfftw3_threads -lz
 
 VPATH = $(SRCDIR):$(SRCDIR)/Helpers
 

@@ -393,6 +393,7 @@
 				CLANG_WARN_INT_CONVERSION = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = YES;
+				FFTW3_PATH = /usr/local;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_OPTIMIZATION_LEVEL = 0;
 				GCC_PREPROCESSOR_DEFINITIONS = (
@@ -424,6 +425,7 @@
 					"-Wmissing-declarations",
 					"-Wno-multichar",
 				);
+				ZLIB_PATH = /usr/local;
 			};
 			name = Debug;
 		};
@@ -438,6 +440,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				FFTW3_PATH = /usr/local;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"$(inherited)",
 					"NDEBUG=1",
@@ -465,6 +468,7 @@
 					"-Wmissing-declarations",
 					"-Wno-multichar",
 				);
+				ZLIB_PATH = /usr/local;
 			};
 			name = Release;
 		};
@@ -475,6 +479,8 @@
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"$(inherited)",
 					cimg_use_abort,
+					cimg_use_zlib,
+					cimg_use_fftw3,
 					"cimg_display=0",
 					"cimg_verbosity=0",
 					"cimg_appname=\\\"gmic\\\"",
@@ -483,8 +489,20 @@
 					"gmic_is_parallel=1",
 					"cimg_library=cimg_library_openfx_gmic",
 				);
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(ZLIB_PATH)/include",
+					"$(FFTW3_PATH)/include",
+				);
 				INFOPLIST_FILE = Info.plist;
 				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/OFX/Plugins/$(PROJECT_NAME)";
+				OTHER_LDFLAGS = (
+					"-L$(FFTW3_PATH)/lib",
+					"-lfftw3",
+					"-lfftw3_threads",
+					"-L$(ZLIB_PATH)/lib",
+					"-lz",
+				);
 				PRODUCT_NAME = GMIC.ofx;
 				WRAPPER_EXTENSION = bundle;
 			};
@@ -497,6 +515,8 @@
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"$(inherited)",
 					cimg_use_abort,
+					cimg_use_zlib,
+					cimg_use_fftw3,
 					"cimg_display=0",
 					"cimg_verbosity=0",
 					"cimg_appname=\\\"gmic\\\"",
@@ -505,8 +525,20 @@
 					"gmic_is_parallel=1",
 					"cimg_library=cimg_library_openfx_gmic",
 				);
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(ZLIB_PATH)/include",
+					"$(FFTW3_PATH)/include",
+				);
 				INFOPLIST_FILE = Info.plist;
 				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/OFX/Plugins/$(PROJECT_NAME)";
+				OTHER_LDFLAGS = (
+					"-L$(FFTW3_PATH)/lib",
+					"-lfftw3",
+					"-lfftw3_threads",
+					"-L$(ZLIB_PATH)/lib",
+					"-lz",
+				);
 				PRODUCT_NAME = GMIC.ofx;
 				WRAPPER_EXTENSION = bundle;
 			};
