@@ -1,4 +1,4 @@
-SUBDIRS = GMIC Plugin
+SUBDIRS = Plugin
 
 all: subdirs
 
