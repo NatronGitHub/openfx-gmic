@@ -5,12 +5,10 @@ SRCDIR = ..
 PATHTOROOT = $(SRCDIR)/OpenFX/Examples
 include $(PATHTOROOT)/Makefile.master
 
-RESOURCES = eu.gmic.openfx.png
+RESOURCES = GMIC.png
 
 CXXFLAGS += \
--DOFX_PLUGIN \
 -I$(SRCDIR)/Common \
--I$(SRCDIR)/GMIC \
 -I$(SRCDIR)/OpenFX/include \
 -I$(SRCDIR)/OpenFX/Examples/include \
 -Dgmic_build -Dgmic_is_parallel -Dcimg_use_abort -Dcimg_display=0 -Dcimg_appname=\"gmic\" -Dcimg_namespace_suffix=openfx_gmic -Dcimg_verbosity=0 -Dcimg_library=cimg_library_openfx_gmic

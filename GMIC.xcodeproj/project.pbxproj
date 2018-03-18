@@ -1,0 +1,497 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 46;
+	objects = {
+
+/* Begin PBXAggregateTarget section */
+		1E0E4EA3194CB2970072248F /* all */ = {
+			isa = PBXAggregateTarget;
+			buildConfigurationList = 1E0E4EA8194CB2970072248F /* Build configuration list for PBXAggregateTarget "all" */;
+			buildPhases = (
+			);
+			dependencies = (
+				1ED12E661A4B356300ABA348 /* PBXTargetDependency */,
+			);
+			name = all;
+			productName = all;
+		};
+/* End PBXAggregateTarget section */
+
+/* Begin PBXBuildFile section */
+		1E31EFB2205EA3380025144C /* GMIC.png in CopyFiles */ = {isa = PBXBuildFile; fileRef = 1E31EFB1205EA3340025144C /* GMIC.png */; };
+		1E406978205E8A350065F383 /* gmic.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1E406971205E8A340065F383 /* gmic.cpp */; };
+		1E406979205E8A350065F383 /* gmic_libc.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1E406975205E8A350065F383 /* gmic_libc.cpp */; };
+		1E40697A205E8A350065F383 /* gmic_openfx.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1E406977205E8A350065F383 /* gmic_openfx.cpp */; };
+		1EE9B0A01A4B300700869861 /* OpenGL.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1E551F5A179950EC00A4135C /* OpenGL.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		1ED12E651A4B356300ABA348 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1E551EB917994D4000A4135C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1EE9B0931A4B300700869861;
+			remoteInfo = Add.ofx;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		1EE9B0A11A4B300700869861 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 7;
+			files = (
+				1E31EFB2205EA3380025144C /* GMIC.png in CopyFiles */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		1E009D5E17F44D5C003071CC /* ofxsHWNDInteract.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ofxsHWNDInteract.h; sourceTree = "<group>"; };
+		1E009D5F17F44D70003071CC /* ofxCore.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ofxCore.h; path = ../../include/ofxCore.h; sourceTree = "<group>"; };
+		1E009D6017F44D70003071CC /* ofxImageEffect.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ofxImageEffect.h; path = ../../include/ofxImageEffect.h; sourceTree = "<group>"; };
+		1E009D6117F44D70003071CC /* ofxInteract.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ofxInteract.h; path = ../../include/ofxInteract.h; sourceTree = "<group>"; };
+		1E009D6217F44D70003071CC /* ofxKeySyms.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ofxKeySyms.h; path = ../../include/ofxKeySyms.h; sourceTree = "<group>"; };
+		1E009D6317F44D70003071CC /* ofxMemory.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ofxMemory.h; path = ../../include/ofxMemory.h; sourceTree = "<group>"; };
+		1E009D6417F44D70003071CC /* ofxMessage.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ofxMessage.h; path = ../../include/ofxMessage.h; sourceTree = "<group>"; };
+		1E009D6517F44D70003071CC /* ofxMultiThread.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ofxMultiThread.h; path = ../../include/ofxMultiThread.h; sourceTree = "<group>"; };
+		1E009D6617F44D70003071CC /* ofxOpenGLRender.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ofxOpenGLRender.h; path = ../../include/ofxOpenGLRender.h; sourceTree = "<group>"; };
+		1E009D6717F44D70003071CC /* ofxParam.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ofxParam.h; path = ../../include/ofxParam.h; sourceTree = "<group>"; };
+		1E009D6817F44D70003071CC /* ofxParametricParam.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ofxParametricParam.h; path = ../../include/ofxParametricParam.h; sourceTree = "<group>"; };
+		1E009D6917F44D70003071CC /* ofxPixels.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ofxPixels.h; path = ../../include/ofxPixels.h; sourceTree = "<group>"; };
+		1E009D6A17F44D70003071CC /* ofxProgress.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ofxProgress.h; path = ../../include/ofxProgress.h; sourceTree = "<group>"; };
+		1E009D6B17F44D70003071CC /* ofxProperty.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ofxProperty.h; path = ../../include/ofxProperty.h; sourceTree = "<group>"; };
+		1E009D6C17F44D70003071CC /* ofxTimeLine.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ofxTimeLine.h; path = ../../include/ofxTimeLine.h; sourceTree = "<group>"; };
+		1E2770281A7A47A700516761 /* ofxsImageBlender.H */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.h; name = ofxsImageBlender.H; path = openfx/Support/Plugins/include/ofxsImageBlender.H; sourceTree = SOURCE_ROOT; };
+		1E2770291A7A47A700516761 /* ofxsProcessing.H */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.h; name = ofxsProcessing.H; path = openfx/Support/Plugins/include/ofxsProcessing.H; sourceTree = SOURCE_ROOT; };
+		1E2868D41B832BB400B18774 /* libMangledOSMesa32.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libMangledOSMesa32.a; path = ../../../../opt/osmesa/lib/libMangledOSMesa32.a; sourceTree = OSMESA_PATH; };
+		1E31EFAB205E8AEA0025144C /* RFX_OFX_Utils.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = RFX_OFX_Utils.h; path = Common/RFX_OFX_Utils.h; sourceTree = "<group>"; };
+		1E31EFAC205E8AEA0025144C /* gmic_parser.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = gmic_parser.h; path = Common/gmic_parser.h; sourceTree = "<group>"; };
+		1E31EFAD205E8AEA0025144C /* RFX_StringUtils.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = RFX_StringUtils.h; path = Common/RFX_StringUtils.h; sourceTree = "<group>"; };
+		1E31EFAE205E8AEA0025144C /* RFX_FileUtils.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = RFX_FileUtils.h; path = Common/RFX_FileUtils.h; sourceTree = "<group>"; };
+		1E31EFAF205E8AEA0025144C /* RFX_Utils.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = RFX_Utils.h; path = Common/RFX_Utils.h; sourceTree = "<group>"; };
+		1E31EFB0205E8AEA0025144C /* RFX_Parameter.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = RFX_Parameter.h; path = Common/RFX_Parameter.h; sourceTree = "<group>"; };
+		1E31EFB1205EA3340025144C /* GMIC.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = GMIC.png; sourceTree = "<group>"; };
+		1E398DAA1B99008E00C98B28 /* libMangledGLU.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libMangledGLU.a; path = lib/libMangledGLU.a; sourceTree = OSMESA_PATH; };
+		1E3E3D3117996112005F2132 /* ofxsCore.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ofxsCore.h; sourceTree = "<group>"; };
+		1E3E3D3217996112005F2132 /* ofxsImageEffect.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ofxsImageEffect.h; sourceTree = "<group>"; };
+		1E3E3D3317996112005F2132 /* ofxsInteract.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ofxsInteract.h; sourceTree = "<group>"; };
+		1E3E3D3417996112005F2132 /* ofxsLog.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ofxsLog.h; sourceTree = "<group>"; };
+		1E3E3D3517996112005F2132 /* ofxsMemory.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ofxsMemory.h; sourceTree = "<group>"; };
+		1E3E3D3617996112005F2132 /* ofxsMessage.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ofxsMessage.h; sourceTree = "<group>"; };
+		1E3E3D3717996112005F2132 /* ofxsMultiThread.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ofxsMultiThread.h; sourceTree = "<group>"; };
+		1E3E3D3817996112005F2132 /* ofxsParam.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ofxsParam.h; sourceTree = "<group>"; };
+		1E406970205E8A340065F383 /* gmic_libc.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = gmic_libc.h; sourceTree = "<group>"; };
+		1E406971205E8A340065F383 /* gmic.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = gmic.cpp; sourceTree = "<group>"; };
+		1E406972205E8A340065F383 /* CImg.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = CImg.h; sourceTree = "<group>"; };
+		1E406973205E8A340065F383 /* gmic.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = gmic.h; sourceTree = "<group>"; };
+		1E406974205E8A350065F383 /* gmic_stdlib.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = gmic_stdlib.h; sourceTree = "<group>"; };
+		1E406975205E8A350065F383 /* gmic_libc.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = gmic_libc.cpp; sourceTree = "<group>"; };
+		1E406976205E8A350065F383 /* gmic_stdlib_gmic.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = gmic_stdlib_gmic.h; sourceTree = "<group>"; };
+		1E406977205E8A350065F383 /* gmic_openfx.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = gmic_openfx.cpp; sourceTree = "<group>"; };
+		1E551F5A179950EC00A4135C /* OpenGL.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = OpenGL.framework; path = System/Library/Frameworks/OpenGL.framework; sourceTree = SDKROOT; };
+		1E58F9321AD6740D00E00CAE /* ofxNatron.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ofxNatron.h; path = openfx/include/ofxNatron.h; sourceTree = SOURCE_ROOT; };
+		1E85D2DA18C641FD00060E71 /* fnOfxExtensions.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = fnOfxExtensions.h; sourceTree = "<group>"; };
+		1E9B5F6C198A54210095C8AA /* README.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = README.md; sourceTree = "<group>"; };
+		1E9FC1CE180BF74400EFE0F9 /* camera.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = camera.h; sourceTree = "<group>"; };
+		1E9FC1CF180BF74400EFE0F9 /* fnPublicOfxExtensions.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = fnPublicOfxExtensions.h; sourceTree = "<group>"; };
+		1EC7C7F818BF4F4C002A246F /* ofxReadWrite.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ofxReadWrite.h; sourceTree = "<group>"; };
+		1EC7C7F918BF4F85002A246F /* ofxDialog.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = ofxDialog.h; path = openfx/include/ofxDialog.h; sourceTree = SOURCE_ROOT; };
+		1EC7C7FA18BF4F85002A246F /* ofxSonyVegas.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = ofxSonyVegas.h; path = openfx/include/ofxSonyVegas.h; sourceTree = SOURCE_ROOT; };
+		1ED12E471A4B316900ABA348 /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		1ED12E481A4B316900ABA348 /* Makefile */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.make; path = Makefile; sourceTree = "<group>"; };
+		1EDE1BE8182D8B18002392CB /* Makefile */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.make; path = Makefile; sourceTree = "<group>"; };
+		1EE9B0A51A4B300700869861 /* GMIC.ofx.bundle */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GMIC.ofx.bundle; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1EE9B09F1A4B300700869861 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1EE9B0A01A4B300700869861 /* OpenGL.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1E3E3D30179960F9005F2132 /* Headers */ = {
+			isa = PBXGroup;
+			children = (
+				1E58F9321AD6740D00E00CAE /* ofxNatron.h */,
+				1E009D5F17F44D70003071CC /* ofxCore.h */,
+				1EC7C7F918BF4F85002A246F /* ofxDialog.h */,
+				1E009D6017F44D70003071CC /* ofxImageEffect.h */,
+				1E009D6117F44D70003071CC /* ofxInteract.h */,
+				1E009D6217F44D70003071CC /* ofxKeySyms.h */,
+				1E009D6317F44D70003071CC /* ofxMemory.h */,
+				1E009D6417F44D70003071CC /* ofxMessage.h */,
+				1E009D6517F44D70003071CC /* ofxMultiThread.h */,
+				1E009D6617F44D70003071CC /* ofxOpenGLRender.h */,
+				1E009D6717F44D70003071CC /* ofxParam.h */,
+				1E009D6817F44D70003071CC /* ofxParametricParam.h */,
+				1E009D6917F44D70003071CC /* ofxPixels.h */,
+				1E009D6A17F44D70003071CC /* ofxProgress.h */,
+				1E009D6B17F44D70003071CC /* ofxProperty.h */,
+				1EC7C7FA18BF4F85002A246F /* ofxSonyVegas.h */,
+				1E009D6C17F44D70003071CC /* ofxTimeLine.h */,
+				1E9FC1CC180BF70A00EFE0F9 /* nuke */,
+				1EC7C7F718BF4F28002A246F /* tuttle */,
+				1E3E3D3117996112005F2132 /* ofxsCore.h */,
+				1E009D5E17F44D5C003071CC /* ofxsHWNDInteract.h */,
+				1E3E3D3217996112005F2132 /* ofxsImageEffect.h */,
+				1E3E3D3317996112005F2132 /* ofxsInteract.h */,
+				1E3E3D3417996112005F2132 /* ofxsLog.h */,
+				1E3E3D3517996112005F2132 /* ofxsMemory.h */,
+				1E3E3D3617996112005F2132 /* ofxsMessage.h */,
+				1E3E3D3717996112005F2132 /* ofxsMultiThread.h */,
+				1E3E3D3817996112005F2132 /* ofxsParam.h */,
+				1E2770281A7A47A700516761 /* ofxsImageBlender.H */,
+				1E2770291A7A47A700516761 /* ofxsProcessing.H */,
+			);
+			name = Headers;
+			path = openfx/Support/include;
+			sourceTree = "<group>";
+		};
+		1E40697B205E8A670065F383 /* Common */ = {
+			isa = PBXGroup;
+			children = (
+				1E31EFAC205E8AEA0025144C /* gmic_parser.h */,
+				1E31EFAE205E8AEA0025144C /* RFX_FileUtils.h */,
+				1E31EFAB205E8AEA0025144C /* RFX_OFX_Utils.h */,
+				1E31EFB0205E8AEA0025144C /* RFX_Parameter.h */,
+				1E31EFAD205E8AEA0025144C /* RFX_StringUtils.h */,
+				1E31EFAF205E8AEA0025144C /* RFX_Utils.h */,
+			);
+			name = Common;
+			sourceTree = "<group>";
+		};
+		1E551EB817994D4000A4135C = {
+			isa = PBXGroup;
+			children = (
+				1E3E3D30179960F9005F2132 /* Headers */,
+				1E551ED217994DEF00A4135C /* Sources */,
+				1E551EDA17994E8100A4135C /* Frameworks */,
+				1E551EC217994D4000A4135C /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		1E551EC217994D4000A4135C /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1EE9B0A51A4B300700869861 /* GMIC.ofx.bundle */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		1E551ED217994DEF00A4135C /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				1E40697B205E8A670065F383 /* Common */,
+				1E9B5F6C198A54210095C8AA /* README.md */,
+				1EDE1BE8182D8B18002392CB /* Makefile */,
+				1EE9B08E1A4B2FA400869861 /* Plugin */,
+			);
+			name = Sources;
+			sourceTree = "<group>";
+		};
+		1E551EDA17994E8100A4135C /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				1E398DAA1B99008E00C98B28 /* libMangledGLU.a */,
+				1E2868D41B832BB400B18774 /* libMangledOSMesa32.a */,
+				1E551F5A179950EC00A4135C /* OpenGL.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		1E9FC1CC180BF70A00EFE0F9 /* nuke */ = {
+			isa = PBXGroup;
+			children = (
+				1E9FC1CE180BF74400EFE0F9 /* camera.h */,
+				1E85D2DA18C641FD00060E71 /* fnOfxExtensions.h */,
+				1E9FC1CF180BF74400EFE0F9 /* fnPublicOfxExtensions.h */,
+			);
+			name = nuke;
+			path = ../../include/nuke;
+			sourceTree = "<group>";
+		};
+		1EC7C7F718BF4F28002A246F /* tuttle */ = {
+			isa = PBXGroup;
+			children = (
+				1EC7C7F818BF4F4C002A246F /* ofxReadWrite.h */,
+			);
+			name = tuttle;
+			path = ../../include/tuttle;
+			sourceTree = "<group>";
+		};
+		1EE9B08E1A4B2FA400869861 /* Plugin */ = {
+			isa = PBXGroup;
+			children = (
+				1E406977205E8A350065F383 /* gmic_openfx.cpp */,
+				1E406972205E8A340065F383 /* CImg.h */,
+				1E406975205E8A350065F383 /* gmic_libc.cpp */,
+				1E406970205E8A340065F383 /* gmic_libc.h */,
+				1E406976205E8A350065F383 /* gmic_stdlib_gmic.h */,
+				1E406974205E8A350065F383 /* gmic_stdlib.h */,
+				1E406971205E8A340065F383 /* gmic.cpp */,
+				1E406973205E8A340065F383 /* gmic.h */,
+				1E31EFB1205EA3340025144C /* GMIC.png */,
+				1ED12E471A4B316900ABA348 /* Info.plist */,
+				1ED12E481A4B316900ABA348 /* Makefile */,
+			);
+			path = Plugin;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1EE9B0931A4B300700869861 /* GMIC.ofx */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1EE9B0A21A4B300700869861 /* Build configuration list for PBXNativeTarget "GMIC.ofx" */;
+			buildPhases = (
+				1EE9B0941A4B300700869861 /* Sources */,
+				1EE9B09F1A4B300700869861 /* Frameworks */,
+				1EE9B0A11A4B300700869861 /* CopyFiles */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = GMIC.ofx;
+			productName = basic.ofx;
+			productReference = 1EE9B0A51A4B300700869861 /* GMIC.ofx.bundle */;
+			productType = "com.apple.product-type.bundle";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1E551EB917994D4000A4135C /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 0460;
+				ORGANIZATIONNAME = OpenFX;
+			};
+			buildConfigurationList = 1E551EBC17994D4000A4135C /* Build configuration list for PBXProject "GMIC" */;
+			compatibilityVersion = "Xcode 3.2";
+			developmentRegion = English;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+			);
+			mainGroup = 1E551EB817994D4000A4135C;
+			productRefGroup = 1E551EC217994D4000A4135C /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				1E0E4EA3194CB2970072248F /* all */,
+				1EE9B0931A4B300700869861 /* GMIC.ofx */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1EE9B0941A4B300700869861 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1E40697A205E8A350065F383 /* gmic_openfx.cpp in Sources */,
+				1E406978205E8A350065F383 /* gmic.cpp in Sources */,
+				1E406979205E8A350065F383 /* gmic_libc.cpp in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		1ED12E661A4B356300ABA348 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1EE9B0931A4B300700869861 /* GMIC.ofx */;
+			targetProxy = 1ED12E651A4B356300ABA348 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		1E0E4EA9194CB2970072248F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_NAME = "all copy";
+			};
+			name = Debug;
+		};
+		1E0E4EAA194CB2970072248F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_NAME = "all copy";
+			};
+			name = Release;
+		};
+		1E551ECD17994D4000A4135C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+					OFX_EXTENSIONS_NUKE,
+					OFX_EXTENSIONS_VEGAS,
+					OFX_EXTENSIONS_TUTTLE,
+					OFX_EXTENSIONS_NATRON,
+					OFX_SUPPORTS_OPENGLRENDER,
+				);
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
+				GCC_WARN_ABOUT_MISSING_PROTOTYPES = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(OFX_PATH)/include",
+					"$(OFX_PATH)/Examples/include",
+				);
+				LD_RUNPATH_SEARCH_PATHS = "@loader_path/../Frameworks @loader_path/../Libraries";
+				LLVM_PATH = /opt/llvm;
+				OFX_PATH = openfx;
+				ONLY_ACTIVE_ARCH = YES;
+				WARNING_CFLAGS = (
+					"-Wextra",
+					"-Wall",
+					"-Wmissing-prototypes",
+					"-Wmissing-declarations",
+					"-Wno-multichar",
+				);
+			};
+			name = Debug;
+		};
+		1E551ECE17994D4000A4135C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"NDEBUG=1",
+					OFX_EXTENSIONS_NUKE,
+					OFX_EXTENSIONS_VEGAS,
+					OFX_EXTENSIONS_TUTTLE,
+					OFX_EXTENSIONS_NATRON,
+					OFX_SUPPORTS_OPENGLRENDER,
+				);
+				GCC_WARN_ABOUT_MISSING_PROTOTYPES = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(OFX_PATH)/include",
+					"$(OFX_PATH)/Examples/include",
+				);
+				LD_RUNPATH_SEARCH_PATHS = "@loader_path/../Frameworks @loader_path/../Libraries";
+				LLVM_PATH = /opt/llvm;
+				OFX_PATH = openfx;
+				WARNING_CFLAGS = (
+					"-Wextra",
+					"-Wall",
+					"-Wmissing-prototypes",
+					"-Wmissing-declarations",
+					"-Wno-multichar",
+				);
+			};
+			name = Release;
+		};
+		1EE9B0A31A4B300700869861 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				EXPORTED_SYMBOLS_FILE = "$(OFX_PATH)/Support/include/osxSymbols";
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					cimg_use_abort,
+					"cimg_display=0",
+					"cimg_verbosity=0",
+					"cimg_appname=\\\"gmic\\\"",
+					"cimg_namespace_suffix=openfx_gmic",
+					gmic_build,
+					"gmic_is_parallel=1",
+					"cimg_library=cimg_library_openfx_gmic",
+				);
+				INFOPLIST_FILE = Plugin/Info.plist;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/OFX/Plugins/$(PROJECT_NAME)";
+				PRODUCT_NAME = GMIC.ofx;
+				WRAPPER_EXTENSION = bundle;
+			};
+			name = Debug;
+		};
+		1EE9B0A41A4B300700869861 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				EXPORTED_SYMBOLS_FILE = "$(OFX_PATH)/Support/include/osxSymbols";
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					cimg_use_abort,
+					"cimg_display=0",
+					"cimg_verbosity=0",
+					"cimg_appname=\\\"gmic\\\"",
+					"cimg_namespace_suffix=openfx_gmic",
+					gmic_build,
+					"gmic_is_parallel=1",
+					"cimg_library=cimg_library_openfx_gmic",
+				);
+				INFOPLIST_FILE = Plugin/Info.plist;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/OFX/Plugins/$(PROJECT_NAME)";
+				PRODUCT_NAME = GMIC.ofx;
+				WRAPPER_EXTENSION = bundle;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1E0E4EA8194CB2970072248F /* Build configuration list for PBXAggregateTarget "all" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1E0E4EA9194CB2970072248F /* Debug */,
+				1E0E4EAA194CB2970072248F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1E551EBC17994D4000A4135C /* Build configuration list for PBXProject "GMIC" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1E551ECD17994D4000A4135C /* Debug */,
+				1E551ECE17994D4000A4135C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1EE9B0A21A4B300700869861 /* Build configuration list for PBXNativeTarget "GMIC.ofx" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1EE9B0A31A4B300700869861 /* Debug */,
+				1EE9B0A41A4B300700869861 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 1E551EB917994D4000A4135C /* Project object */;
+}

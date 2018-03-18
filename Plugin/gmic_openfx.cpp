@@ -39,6 +39,7 @@
  #
 */
 
+#include <iostream>
 #include "gmic_parser.h"
 #include "gmic_libc.h"
 #include "gmic.h"
@@ -92,12 +93,16 @@
     #include "RFX_AE_Utils.h"
 #endif
 
-using namespace reduxfx;
-
 #ifdef OFX_PLUGIN
 #include "gmic_stdlib_gmic.h"
 #include <sstream>
 #include <stdlib.h> 
+
+#include "RFX_Parameter.h"
+#include "RFX_StringUtils.h"
+
+using namespace reduxfx;
+using namespace std;
 
 class PluginGlobalData
 {
@@ -149,17 +154,17 @@ void* createCustomGlobalData() { return new MyGlobalData(); }
 void destroyCustomGlobalData(void* customGlobalDataP) { delete (MyGlobalData*)customGlobalDataP; }
 void* createCustomSequenceData() { return new MySequenceData(); }
 void destroyCustomSequenceData(void* customSequenceDataP) { delete (MySequenceData*)customSequenceDataP; }
-void* flattenCustomSequenceData(void* customUnflatSequenceDataP, int& flatSize) { return NULL; }
-void* unflattenCustomSequenceData(void* customSequenceDataP, int flatSize) { return new MySequenceData(); }
+void* flattenCustomSequenceData(void* /*customUnflatSequenceDataP*/, int& /*flatSize*/) { return NULL; }
+void* unflattenCustomSequenceData(void* /*customSequenceDataP*/, int /*flatSize*/) { return new MySequenceData(); }
 
-int pluginSetdown(GlobalData* globalDataP, ContextData* contextDataP) { return 0; }
+int pluginSetdown(GlobalData* /*globalDataP*/, ContextData* /*contextDataP*/) { return 0; }
 
-int pluginSetup(GlobalData* globalDataP, ContextData* contextDataP)
+int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 {
 	globalDataP->scale = 255.f;
 	globalDataP->buttonName = "Reload";
 
-	MyGlobalData* myGlobalDataP = (MyGlobalData*)globalDataP->customGlobalDataP;
+	//MyGlobalData* myGlobalDataP = (MyGlobalData*)globalDataP->customGlobalDataP;
 
 	EffectData effectData;
 	effectData.multiLayer = true;
@@ -259,12 +264,12 @@ int pluginSetup(GlobalData* globalDataP, ContextData* contextDataP)
 #define PARAM_NOALPHA (globalDataP->nofParams - 3)
 #define PARAM_PREVIEW (globalDataP->nofParams - 2)
 
-int pluginParamChange(int index, SequenceData* sequenceDataP, GlobalData* globalDataP, ContextData* contextDataP)
+int pluginParamChange(int index, SequenceData* sequenceDataP, GlobalData* globalDataP, ContextData* /*contextDataP*/)
 {
 	if (index == PARAM_RESIZE) {
 		globalDataP->inplaceProcessing = PAR_VAL(index) < 1.f;
 	} else {
-		MyGlobalData* myGlobalDataP = (MyGlobalData*)globalDataP->customGlobalDataP;
+		//MyGlobalData* myGlobalDataP = (MyGlobalData*)globalDataP->customGlobalDataP;
 
 #ifdef AE_PLUGIN	
 		string cmd = PAR_VAL(PARAM_PREVIEW) > 0 ? myGlobalDataP->effectData.preview_command:myGlobalDataP->effectData.command;
