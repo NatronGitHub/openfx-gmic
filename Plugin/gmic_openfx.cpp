@@ -39,6 +39,12 @@
  #
 */
 
+#include "gmic_parser.h"
+#include "gmic_libc.h"
+#include "gmic.h"
+
+#include <math.h>
+
 // name and description for the plugin
 #define PLUGIN_NAME	        "GMIC"
 #define PLUGIN_CATEGORY		"GMIC"
@@ -85,12 +91,6 @@
 #else
     #include "RFX_AE_Utils.h"
 #endif
-
-#include "gmic_parser.h"
-#include "gmic_libc.h"
-#include "gmic.h"
-
-#include <math.h>
 
 using namespace reduxfx;
 
