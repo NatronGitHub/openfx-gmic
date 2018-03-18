@@ -42,7 +42,7 @@
 // name and description for the plugin
 #define PLUGIN_NAME	        "GMIC"
 #define PLUGIN_CATEGORY		"GMIC"
-#define PLUGIN_UNIQUEID		"GMIC"
+#define PLUGIN_UNIQUEID		"eu.gmic.plugin"
 #define PLUGIN_DESCRIPTION	"OpenFX wrapper for the G'MIC framework (http://www.gmic.eu).\nWritten by Tobias Fleischer (http://www.reduxfx.com).";
 
 // version information
