@@ -1,16 +1,17 @@
 PLUGINNAME = GMIC
-PLUGINOBJECTS = gmic.o gmic_libc.o gmic_openfx.o
+PLUGINSOURCES = gmic.cpp gmic_libc.cpp gmic_openfx.cpp
+PLUGINOBJECTS = $(PLUGINSOURCES:.cpp=.o)
 
 SRCDIR = ..
-PATHTOROOT = $(SRCDIR)/OpenFX/Examples
+PATHTOROOT = $(SRCDIR)/openfx/Examples
 include $(PATHTOROOT)/Makefile.master
 
 RESOURCES = GMIC.png
 
 CXXFLAGS += \
 -I$(SRCDIR)/Common \
--I$(SRCDIR)/OpenFX/include \
--I$(SRCDIR)/OpenFX/Examples/include \
+-I$(SRCDIR)/openfx/include \
+-I$(SRCDIR)/openfx/Examples/include \
 -Dgmic_build -Dgmic_is_parallel -Dcimg_use_abort -Dcimg_display=0 -Dcimg_appname=\"gmic\" -Dcimg_namespace_suffix=openfx_gmic -Dcimg_verbosity=0 -Dcimg_library=cimg_library_openfx_gmic
 
 # openmp
@@ -23,6 +24,10 @@ endif
 ifeq ($(OS),$(filter $(OS),Linux FreeBSD Darwin))
   CXXFLAGS += -Dgmic_is_parallel
 endif
+
+.PHONY: sources
+
+sources: $(PLUGINSOURCES)
 
 # CImg
 # commit 88fab6de7bfc141a1f577e3cf1b17b9fb1e4f438 is CImg 2.2.1

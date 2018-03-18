@@ -18,6 +18,17 @@
 			name = all;
 			productName = all;
 		};
+		1E31EFC3205ECB260025144C /* sources */ = {
+			isa = PBXAggregateTarget;
+			buildConfigurationList = 1E31EFC4205ECB260025144C /* Build configuration list for PBXAggregateTarget "sources" */;
+			buildPhases = (
+				1E31EFC7205ECB350025144C /* ShellScript */,
+			);
+			dependencies = (
+			);
+			name = sources;
+			productName = sources;
+		};
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
@@ -29,6 +40,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		1E31EFC8205ECB8D0025144C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1E551EB917994D4000A4135C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1E31EFC3205ECB260025144C;
+			remoteInfo = sources;
+		};
 		1ED12E651A4B356300ABA348 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 1E551EB917994D4000A4135C /* Project object */;
@@ -263,6 +281,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				1E31EFC9205ECB8D0025144C /* PBXTargetDependency */,
 			);
 			name = GMIC.ofx;
 			productName = basic.ofx;
@@ -277,6 +296,12 @@
 			attributes = {
 				LastUpgradeCheck = 0460;
 				ORGANIZATIONNAME = OpenFX;
+				TargetAttributes = {
+					1E31EFC3205ECB260025144C = {
+						CreatedOnToolsVersion = 9.2;
+						ProvisioningStyle = Automatic;
+					};
+				};
 			};
 			buildConfigurationList = 1E551EBC17994D4000A4135C /* Build configuration list for PBXProject "GMIC" */;
 			compatibilityVersion = "Xcode 3.2";
@@ -292,9 +317,26 @@
 			targets = (
 				1E0E4EA3194CB2970072248F /* all */,
 				1EE9B0931A4B300700869861 /* GMIC.ofx */,
+				1E31EFC3205ECB260025144C /* sources */,
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		1E31EFC7205ECB350025144C /* ShellScript */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "make -C Plugin sources";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		1EE9B0941A4B300700869861 /* Sources */ = {
@@ -310,6 +352,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		1E31EFC9205ECB8D0025144C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1E31EFC3205ECB260025144C /* sources */;
+			targetProxy = 1E31EFC8205ECB8D0025144C /* PBXContainerItemProxy */;
+		};
 		1ED12E661A4B356300ABA348 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 1EE9B0931A4B300700869861 /* GMIC.ofx */;
@@ -329,6 +376,22 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				PRODUCT_NAME = "all copy";
+			};
+			name = Release;
+		};
+		1E31EFC5205ECB260025144C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		1E31EFC6205ECB260025144C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;
 		};
@@ -469,6 +532,15 @@
 			buildConfigurations = (
 				1E0E4EA9194CB2970072248F /* Debug */,
 				1E0E4EAA194CB2970072248F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1E31EFC4205ECB260025144C /* Build configuration list for PBXAggregateTarget "sources" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1E31EFC5205ECB260025144C /* Debug */,
+				1E31EFC6205ECB260025144C /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
