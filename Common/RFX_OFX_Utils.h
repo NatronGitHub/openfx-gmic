@@ -242,7 +242,7 @@ static OfxStatus createInstance(int pluginIndex, OfxImageEffectHandle effect)
 		myData->sequenceDataP->customSequenceDataP = createCustomSequenceData();
 	}
 		
-	char *context = 0;
+	const char *context = 0;
 
 	// is this instance a general effect ?
 	gPropHost->propGetString(effectProps, kOfxImageEffectPropContext, 0, &context);
@@ -515,14 +515,14 @@ static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance,
 	setContextData(contextData, instance, inArgs, outArgs);
 
 	// see why it changed
-	char *changeReason;
+	const char *changeReason;
 	gPropHost->propGetString(inArgs, kOfxPropChangeReason, 0, &changeReason);
 
 	// we are only interested in user edits
 	if (strcmp(changeReason, kOfxChangeUserEdited) != 0) return kOfxStatReplyDefault;
 
 	// fetch the type of the object that changed
-	char *typeChanged;
+	const char *typeChanged;
 	gPropHost->propGetString(inArgs, kOfxPropType, 0, &typeChanged);
 
 	// was it a clip or a param?
@@ -530,7 +530,7 @@ static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance,
 	bool isParam = strcmp(typeChanged, kOfxTypeParameter) == 0;
 
 	// get the name of the thing that changed
-	char *objChanged;
+	const char *objChanged;
 	gPropHost->propGetString(inArgs, kOfxPropName, 0, &objChanged);
 
 	// retrieve any instance data associated with this effect
@@ -563,7 +563,7 @@ static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance,
 		OfxParamHandle param; 
 		OfxPropertySetHandle props;
 		gParamHost->paramGetHandle(paramSet, objChanged, &param, &props);
-		char* paramType;
+		const char* paramType;
 		gPropHost->propGetString(props, kOfxParamPropType, 0, &paramType);
 
 #ifdef ABOUT_DIALOG
@@ -1354,7 +1354,7 @@ static void paramAddChoice(OfxParamSetHandle effectParams, OfxPropertySetHandle&
 static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect, OfxPropertySetHandle inArgs)
 {
 	// get the context from the inArgs handle
-	char *context = NULL;
+	const char *context = NULL;
 	gPropHost->propGetString(inArgs, kOfxImageEffectPropContext, 0, &context);
 	bool isGeneralContext = strcmp(context, kOfxImageEffectContextGeneral) == 0;
 
@@ -1533,7 +1533,7 @@ static OfxStatus describe(int pluginIndex, OfxImageEffectHandle effect)
 	gPropHost->propSetInt(effectProps, kOfxImageEffectPropSupportsMultiResolution, 0, 0);
 	gPropHost->propSetInt(effectProps, kOfxImageEffectPropTemporalClipAccess, 0, 1);
 
-	char *path = NULL;
+	const char *path = NULL;
 	gPropHost->propGetString(effectProps, kOfxPluginPropFilePath, 0, &path);
 
 	if (path) {

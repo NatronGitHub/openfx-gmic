@@ -88,10 +88,12 @@ inline float smootherStep(float edge0, float edge1, float x)
 	x = saturate((x - edge0)/(edge1 - edge0));
 	return x*x*x*(x*(x*6.0f - 15.0f) + 10.0f);
 }
+/*
 inline int round(float d)
 { 
 	return (int)floor(d + 0.5f); 
 }
+*/
 
 typedef std::map<std::string, std::string> strStrMap;
 

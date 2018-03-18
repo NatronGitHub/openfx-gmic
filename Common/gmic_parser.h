@@ -164,7 +164,7 @@ string replaceHtml(const string s)
 		}
 	}
 	strReplace(r, "&amp;", "&");
-	strReplace(r, "\\251", "©");
+	strReplace(r, "\\251", "(c)");
 //	strReplace(r, "&#244;", "ô");
 //	strReplace(r, "&#233;", "é");
 //	for (int i = 128; i < 255; i++) {
