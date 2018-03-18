@@ -186,7 +186,7 @@ static OfxStatus onUnload(int pluginIndex)
 	return kOfxStatOK;
 }
 
-static OfxStatus syncPrivateData(int pluginIndex, OfxImageEffectHandle effect)
+static OfxStatus syncPrivateData(int /*pluginIndex*/, OfxImageEffectHandle effect)
 {
 	MyInstanceData* myData = getMyInstanceData(effect);
 	if (myData && myData->sequenceDataP && myData->sequenceDataP->customSequenceDataP) {
@@ -266,7 +266,7 @@ static OfxStatus createInstance(int pluginIndex, OfxImageEffectHandle effect)
 }
 
 // instance destruction
-static OfxStatus destroyInstance(int pluginIndex, OfxImageEffectHandle effect)
+static OfxStatus destroyInstance(int /*pluginIndex*/, OfxImageEffectHandle effect)
 {
 	// get my instance data
 	MyInstanceData* myData = getMyInstanceData(effect);
@@ -369,6 +369,7 @@ static void getParamData(int pluginIndex, int paramIndex, MyInstanceData* myData
 	}
 }
 
+#if 0
 static void setParamData(int pluginIndex, MyInstanceData* myData)
 {
 	for (int i = 0; i < globalData[pluginIndex].nofParams; i++) {
@@ -406,9 +407,10 @@ static void setParamData(int pluginIndex, MyInstanceData* myData)
 		}
 	}
 }
+#endif
 
 // tells the host what region we are capable of filling
-OfxStatus getSpatialRoD(int pluginIndex, OfxImageEffectHandle effect, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
+OfxStatus getSpatialRoD(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
 	// retrieve any instance data associated with this effect
 	MyInstanceData *myData = getMyInstanceData(effect);
@@ -426,7 +428,8 @@ OfxStatus getSpatialRoD(int pluginIndex, OfxImageEffectHandle effect, OfxPropert
 }
 
 // tells the host how much of the input we need to fill the given window
-OfxStatus getSpatialRoI(int pluginIndex, OfxImageEffectHandle effect, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
+static
+OfxStatus getSpatialRoI(int /*pluginIndex*/, OfxImageEffectHandle /*effect*/, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
 	// get the RoI the effect is interested in from inArgs
 	OfxRectD roi;
@@ -441,7 +444,8 @@ OfxStatus getSpatialRoI(int pluginIndex, OfxImageEffectHandle effect, OfxPropert
 // Tells the host how many frames we can fill, only called in the general context.
 // This is actually redundant as this is the default behaviour, but for illustrative
 // purposes.
-OfxStatus getTemporalDomain(int pluginIndex, OfxImageEffectHandle effect, OfxPropertySetHandle /*inArgs*/, OfxPropertySetHandle outArgs)
+static
+OfxStatus getTemporalDomain(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPropertySetHandle /*inArgs*/, OfxPropertySetHandle outArgs)
 {
 	MyInstanceData *myData = getMyInstanceData(effect);
 	double sourceRange[2];
@@ -457,7 +461,7 @@ OfxStatus getTemporalDomain(int pluginIndex, OfxImageEffectHandle effect, OfxPro
 }
 
 // Set our clip preferences 
-static OfxStatus getClipPreferences(int pluginIndex, OfxImageEffectHandle effect, OfxPropertySetHandle /*inArgs*/, OfxPropertySetHandle outArgs)
+static OfxStatus getClipPreferences(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPropertySetHandle /*inArgs*/, OfxPropertySetHandle outArgs)
 {
 	// retrieve any instance data associated with this effect
 	MyInstanceData *myData = getMyInstanceData(effect);
@@ -480,12 +484,16 @@ static OfxStatus getClipPreferences(int pluginIndex, OfxImageEffectHandle effect
 }
 
 // are the settings of the effect performing an identity operation
-static OfxStatus isIdentity(int pluginIndex, OfxImageEffectHandle effect, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
+static OfxStatus isIdentity(int /*pluginIndex*/,
+                            OfxImageEffectHandle /*effect*/,
+                            OfxPropertySetHandle /*inArgs*/,
+                            OfxPropertySetHandle /*outArgs*/)
 {
 	return kOfxStatReplyDefault;
 }
 
-static void showAboutDialog(int pluginIndex, MyInstanceData* myData)
+#ifdef ABOUT_DIALOG
+static void showAboutDialog(int pluginIndex, MyInstanceData* /*myData*/)
 {
 	try
 	{
@@ -506,6 +514,7 @@ static void showAboutDialog(int pluginIndex, MyInstanceData* myData)
 	{
 	}
 }
+#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 // function called when the instance has been changed by anything
@@ -526,7 +535,7 @@ static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance,
 	gPropHost->propGetString(inArgs, kOfxPropType, 0, &typeChanged);
 
 	// was it a clip or a param?
-	bool isClip = strcmp(typeChanged, kOfxTypeClip) == 0;
+	//bool isClip = strcmp(typeChanged, kOfxTypeClip) == 0;
 	bool isParam = strcmp(typeChanged, kOfxTypeParameter) == 0;
 
 	// get the name of the thing that changed
@@ -613,6 +622,7 @@ public:
 	};
 };
 
+static
 void convert_RGBA8P_to_RGBA8(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -634,6 +644,7 @@ void convert_RGBA8P_to_RGBA8(ConvertData& data, const int startLine, const int e
 	}
 }
 
+static
 void convert_RGBA8P_to_RGBA32(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -655,6 +666,7 @@ void convert_RGBA8P_to_RGBA32(ConvertData& data, const int startLine, const int 
 	}
 }
 
+static
 void convert_RGBA8_to_RGBA8P(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -676,6 +688,7 @@ void convert_RGBA8_to_RGBA8P(ConvertData& data, const int startLine, const int e
 	}
 }
 
+static
 void convert_RGBA32P_to_RGBA32(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -697,6 +710,7 @@ void convert_RGBA32P_to_RGBA32(ConvertData& data, const int startLine, const int
 	}
 }
 
+static
 void convert_RGBA32_to_RGBA32(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -711,6 +725,8 @@ void convert_RGBA32_to_RGBA32(ConvertData& data, const int startLine, const int 
 		}
 	}
 }
+
+static
 void convert_RGBA32P_to_RGBA8(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -732,6 +748,7 @@ void convert_RGBA32P_to_RGBA8(ConvertData& data, const int startLine, const int 
 	}
 }
 
+static
 void convert_RGBA32_to_RGBA32P(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -753,6 +770,7 @@ void convert_RGBA32_to_RGBA32P(ConvertData& data, const int startLine, const int
 	}
 }
 
+static
 void convert_RGBA8_to_RGBA32(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -770,6 +788,7 @@ void convert_RGBA8_to_RGBA32(ConvertData& data, const int startLine, const int e
 	}
 }
 
+static
 void convert_RGBA8_to_RGBA32P(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -787,6 +806,7 @@ void convert_RGBA8_to_RGBA32P(ConvertData& data, const int startLine, const int 
 	}
 }
 
+static
 void convert_RGBA32_to_RGBA8(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -804,6 +824,7 @@ void convert_RGBA32_to_RGBA8(ConvertData& data, const int startLine, const int e
 	}
 }
 
+static
 void convert_RGBA32_to_RGBA8P(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -1441,7 +1462,7 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 			);
 		} else if (globalData[pluginIndex].param[i].paramType == PT_SELECT) {	
 			string t = globalData[pluginIndex].param[i].text;
-			t = strReplace(t, "|-|", "|(-|");
+			strReplace(t, "|-|", "|(-|");
 			vector<string> choices;
 			strSplit(t, '|', choices);
 			paramAddChoice(

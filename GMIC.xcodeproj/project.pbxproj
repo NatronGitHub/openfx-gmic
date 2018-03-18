@@ -33,6 +33,8 @@
 
 /* Begin PBXBuildFile section */
 		1E31EFB2205EA3380025144C /* GMIC.png in CopyFiles */ = {isa = PBXBuildFile; fileRef = 1E31EFB1205EA3340025144C /* GMIC.png */; };
+		1E31EFCB205ED5770025144C /* gmic_parser.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1E31EFCA205ED5760025144C /* gmic_parser.cpp */; };
+		1E31EFCD205ED6C80025144C /* RFX_StringUtils.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1E31EFCC205ED6C80025144C /* RFX_StringUtils.cpp */; };
 		1E406978205E8A350065F383 /* gmic.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1E406971205E8A340065F383 /* gmic.cpp */; };
 		1E406979205E8A350065F383 /* gmic_libc.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1E406975205E8A350065F383 /* gmic_libc.cpp */; };
 		1E40697A205E8A350065F383 /* gmic_openfx.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1E406977205E8A350065F383 /* gmic_openfx.cpp */; };
@@ -91,10 +93,11 @@
 		1E31EFAB205E8AEA0025144C /* RFX_OFX_Utils.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = RFX_OFX_Utils.h; path = Common/RFX_OFX_Utils.h; sourceTree = "<group>"; };
 		1E31EFAC205E8AEA0025144C /* gmic_parser.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = gmic_parser.h; path = Common/gmic_parser.h; sourceTree = "<group>"; };
 		1E31EFAD205E8AEA0025144C /* RFX_StringUtils.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = RFX_StringUtils.h; path = Common/RFX_StringUtils.h; sourceTree = "<group>"; };
-		1E31EFAE205E8AEA0025144C /* RFX_FileUtils.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = RFX_FileUtils.h; path = Common/RFX_FileUtils.h; sourceTree = "<group>"; };
 		1E31EFAF205E8AEA0025144C /* RFX_Utils.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = RFX_Utils.h; path = Common/RFX_Utils.h; sourceTree = "<group>"; };
 		1E31EFB0205E8AEA0025144C /* RFX_Parameter.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = RFX_Parameter.h; path = Common/RFX_Parameter.h; sourceTree = "<group>"; };
 		1E31EFB1205EA3340025144C /* GMIC.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = GMIC.png; sourceTree = "<group>"; };
+		1E31EFCA205ED5760025144C /* gmic_parser.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = gmic_parser.cpp; path = Common/gmic_parser.cpp; sourceTree = "<group>"; };
+		1E31EFCC205ED6C80025144C /* RFX_StringUtils.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = RFX_StringUtils.cpp; path = Common/RFX_StringUtils.cpp; sourceTree = "<group>"; };
 		1E398DAA1B99008E00C98B28 /* libMangledGLU.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libMangledGLU.a; path = lib/libMangledGLU.a; sourceTree = OSMESA_PATH; };
 		1E3E3D3117996112005F2132 /* ofxsCore.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ofxsCore.h; sourceTree = "<group>"; };
 		1E3E3D3217996112005F2132 /* ofxsImageEffect.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ofxsImageEffect.h; sourceTree = "<group>"; };
@@ -180,11 +183,12 @@
 		1E40697B205E8A670065F383 /* Common */ = {
 			isa = PBXGroup;
 			children = (
+				1E31EFCA205ED5760025144C /* gmic_parser.cpp */,
 				1E31EFAC205E8AEA0025144C /* gmic_parser.h */,
-				1E31EFAE205E8AEA0025144C /* RFX_FileUtils.h */,
 				1E31EFAB205E8AEA0025144C /* RFX_OFX_Utils.h */,
 				1E31EFB0205E8AEA0025144C /* RFX_Parameter.h */,
 				1E31EFAD205E8AEA0025144C /* RFX_StringUtils.h */,
+				1E31EFCC205ED6C80025144C /* RFX_StringUtils.cpp */,
 				1E31EFAF205E8AEA0025144C /* RFX_Utils.h */,
 			);
 			name = Common;
@@ -343,6 +347,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1E31EFCD205ED6C80025144C /* RFX_StringUtils.cpp in Sources */,
+				1E31EFCB205ED5770025144C /* gmic_parser.cpp in Sources */,
 				1E40697A205E8A350065F383 /* gmic_openfx.cpp in Sources */,
 				1E406978205E8A350065F383 /* gmic.cpp in Sources */,
 				1E406979205E8A350065F383 /* gmic_libc.cpp in Sources */,

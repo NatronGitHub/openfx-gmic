@@ -246,7 +246,7 @@ inline void setPixel_BGRA_8(unsigned char** buf, float& r, float& g, float& b, f
 	*p++ = (unsigned char)(a * 255.f);
 	*buf = p;
 }
-inline void setPixel_RGB_8(unsigned char** buf, float& r, float& g, float& b, float& a)
+inline void setPixel_RGB_8(unsigned char** buf, float& r, float& g, float& b, float& /*a*/)
 {
 	unsigned char* p = *buf;
 	*p++ = (unsigned char)(r * 255.f);
@@ -282,7 +282,7 @@ inline void setPixel_BGRA_16(unsigned char** buf, float& r, float& g, float& b, 
 	*p++ = (unsigned short int)(a * 65535.f);
 	*buf = (unsigned char*)p;
 }
-inline void setPixel_RGB_16(unsigned char** buf, float& r, float& g, float& b, float& a)
+inline void setPixel_RGB_16(unsigned char** buf, float& r, float& g, float& b, float& /*a*/)
 {
 	unsigned short int* p = (unsigned short int*)(*buf);
 	*p++ = (unsigned short int)(r * 65535.f);
@@ -318,7 +318,7 @@ inline void setPixel_BGRA_32(unsigned char** buf, float& r, float& g, float& b, 
 	*p++ = a;
 	*buf = (unsigned char*)p;
 }
-inline void setPixel_RGB_32(unsigned char** buf, float& r, float& g, float& b, float& a)
+inline void setPixel_RGB_32(unsigned char** buf, float& r, float& g, float& b, float& /*a*/)
 {
 	float* p = (float*)(*buf);
 	*p++ = r;
@@ -327,6 +327,7 @@ inline void setPixel_RGB_32(unsigned char** buf, float& r, float& g, float& b, f
 	*buf = (unsigned char*)p;
 }
 
+#if 0
 static float luma(const float r, const float g, const float b)
 {
 	return 0.299f * r + 0.587f * g + 0.114f * b;
@@ -491,7 +492,7 @@ static reduxfx::World convertWorld(const reduxfx::World& src, reduxfx::PixelForm
 	
 	return dst;
 }
-
+#endif // 0
 };
 
 

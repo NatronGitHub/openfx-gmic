@@ -1,5 +1,5 @@
 PLUGINNAME = GMIC
-PLUGINSOURCES = gmic.cpp gmic_libc.cpp gmic_openfx.cpp
+PLUGINSOURCES = gmic.cpp gmic_libc.cpp gmic_openfx.cpp gmic_parser.cpp RFX_StringUtils.cpp
 PLUGINOBJECTS = $(PLUGINSOURCES:.cpp=.o)
 
 SRCDIR = ..
@@ -13,6 +13,8 @@ CXXFLAGS += \
 -I$(SRCDIR)/openfx/include \
 -I$(SRCDIR)/openfx/Examples/include \
 -Dgmic_build -Dgmic_is_parallel -Dcimg_use_abort -Dcimg_display=0 -Dcimg_appname=\"gmic\" -Dcimg_namespace_suffix=openfx_gmic -Dcimg_verbosity=0 -Dcimg_library=cimg_library_openfx_gmic
+
+VPATH = $(SRCDIR)/Common
 
 # openmp
 ifeq ($(OPENMP),1)
