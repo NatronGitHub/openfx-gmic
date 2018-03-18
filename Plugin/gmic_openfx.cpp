@@ -110,9 +110,7 @@ public:
 	vector<EffectData> pluginData;
 	vector<string> pluginContent;
 	PluginGlobalData() {
-                stringstream s;
-                s << gmic_stdlib_gmic;
-                gmic_parse_multi(s.str(), &pluginData, &pluginContent);
+                gmic_parse_multi(string(gmic_stdlib_gmic, gmic_stdlib_gmic_len), &pluginData, &pluginContent);
 	};
 };
 PluginGlobalData pluginGlobalData;
