@@ -2,18 +2,26 @@
  #
  #  File        : gmic_parser.h
  #
- #  Description : A self-contained header file with helper functions to     
- #                parse the G'MIC standard library file into a param structure    
+ #  Description : A self-contained header file with helper functions to
+ #                parse the G'MIC standard library file into a param structure
  #
  #  Copyright   : Tobias Fleischer / reduxFX Productions (http://www.reduxfx.com)
  #
- #  License     : CeCILL-B v1.0
- #                ( http://www.cecill.info/licences/Licence_CeCILL-B_V1-en.html )
+ #  Licenses        : This file is 'dual-licensed', you have to choose one
+ #                    of the two licenses below to apply.
  #
- #  This software is governed either by the CeCILL-B license
+ #                    CeCILL-C
+ #                    The CeCILL-C license is close to the GNU LGPL.
+ #                    ( http://www.cecill.info/licences/Licence_CeCILL-C_V1-en.html )
+ #
+ #                or  CeCILL v2.0
+ #                    The CeCILL license is compatible with the GNU GPL.
+ #                    ( http://www.cecill.info/licences/Licence_CeCILL_V2-en.html )
+ #
+ #  This software is governed either by the CeCILL or the CeCILL-C license
  #  under French law and abiding by the rules of distribution of free software.
  #  You can  use, modify and or redistribute the software under the terms of
- #  the CeCILL-B licenses as circulated by CEA, CNRS and INRIA
+ #  the CeCILL or CeCILL-C licenses as circulated by CEA, CNRS and INRIA
  #  at the following URL: "http://www.cecill.info".
  #
  #  As a counterpart to the access to the source code and  rights to copy,
@@ -34,9 +42,10 @@
  #  same conditions as regards security.
  #
  #  The fact that you are presently reading this means that you have had
- #  knowledge of the CeCILL-B licenses and that you accept its terms.
+ #  knowledge of the CeCILL and CeCILL-C licenses and that you accept its terms.
  #
 */
+
 
 #include "gmic_parser.h"
 
@@ -52,119 +61,11 @@ using namespace reduxfx;
 
 namespace reduxfx {
 
-static const string src_prefix = "#@gimp";
-static const string dst_prefix = "#@gmic_plugin";
-static const string master_name = "gmic_ae";
+static const char* const src_prefix_old_c = "#@gimp";
+static const char* const src_prefix_c = "#@gui";
+static const char* const dst_prefix_c = "#@gmic_plugin";
+//static const char* const master_name_c = "gmic_ae";
 
-#if 0 // the following are unused functions
-static bool fileExists(const string& inFilename)
-{
-    FILE *fileP;
-#ifndef _WIN32
-	fileP = fopen(inFilename.c_str(), "r");
-#else
-	fopen_s(&fileP, inFilename.c_str(), "r");
-#endif
-	if (fileP == NULL) return false;
-	fclose(fileP);
-	return true;
-}
-
-static int loadBufferFromFile(const string& filename, unsigned char** bufferP, int& bufferSize)
-{
-	if (filename == "") return -1;
-	ifstream infile;
-    infile.open(filename.c_str(), ios::in | ios::binary | ios::ate);
-    if (infile.is_open()) {
-        bufferSize = (int)infile.tellg();
-        *bufferP = new unsigned char[bufferSize];
-        infile.seekg (0, ios::beg);
-        infile.read((char*)*bufferP, bufferSize);
-		if (!infile) bufferSize = (int)infile.gcount();
-        infile.close();
-		return 0;
-    }
-    return -1;
-}
-
-static int saveBufferToFile(unsigned char** bufferP, const int bufferSize, const string& filename)
-{
-    ofstream myfile(filename.c_str(), ios::out | ios::binary);
-    if (myfile.is_open()) {
-        myfile.write((char*)(*bufferP), bufferSize);
-        myfile.close();
-	    return 0;
-    }
-	return -1;
-}
-
-static string loadStringFromFile(const string& filename)
-{
-    string res;
-	if (filename == "") return res;
-	ifstream infile;
-    infile.open(filename.c_str(), ios::in | ios::binary | ios::ate);
-    if (infile.is_open()) {
-        int size = (int)infile.tellg();
-        char* bufferP = new char[size+1];
-        infile.seekg (0, ios::beg);
-        infile.read(bufferP, size);
-		if (!infile) size = (int)infile.gcount();
-        infile.close();
-		bufferP[size] = 0;
-		res = string(reinterpret_cast<const char*>(bufferP), size+1);
-		delete[] bufferP;
-    }
-    return res;
-}
-
-static int saveStringToFile(const string& s, const string& filename, const bool unifyLineEndings = true)
-{
-    ofstream myfile(filename.c_str(), ios::out | ios::binary);
-    if (myfile.is_open()) {
-		if (unifyLineEndings) {
-            string res = s;
-            strReplace(res, "\r\n", "\n");
-            strReplace(res, "\r", "\n");
-            strReplace(res, "\n", "\r\n");
-            myfile.write(res.c_str(), s.size());
-        } else {
-            myfile.write(s.c_str(), s.size());
-        }
-        myfile.close();
-	    return 0;
-    }
-	return -1;
-}
-#endif
-
-static
-string replaceHtml(const string& s)
-{
-	string r;
-	bool inHtml = false;
-	for (unsigned int i = 0; i < s.size(); i++) {
-		if (s[i] == '<') {
-			inHtml = true;
-		} else if (s[i] == '>') {
-			inHtml = false;
-		} else if (!inHtml) {
-			r += s[i];
-		}
-	}
-	strReplace(r, "&amp;", "&");
-	strReplace(r, "\\251", "(c)");
-//	strReplace(r, "&#244;", "ô");
-//	strReplace(r, "&#233;", "é");
-//	for (int i = 128; i < 255; i++) {
-	for (int i = 230; i < 255; i++) {
-		unsigned char c = (unsigned char)i;
-		string ss; ss += c;
-		strReplace(r, "&#" + intToString(i) + ";", ss);
-		
-	}
-	return r;
-}
 
 static
 string getUniqueId(const string& name)
@@ -176,21 +77,22 @@ string getUniqueId(const string& name)
 			|| (name[i] >= '0' && name[i] <= '9'))
 			uniqueid += name[i];
 	}
-	return "GMIC_" + strLowercase(uniqueid);
+	return "gmic_" + strLowercase(uniqueid);
 }
 
 static
 void processCommand(const string& s, EffectData& cd)
 {
+	const string dst_prefix = dst_prefix_c;
 	string r = s;
 	if (r == dst_prefix + " :") return;
-	r = replaceHtml(r);
+	r = strRemoveXmlTags(r, false);
 	int sPos = (int)r.find(":");
 	if (sPos < 0) return;
 	string r1 = r.substr(0, sPos - 1);
 	int sPos2 = (int)r1.find(dst_prefix);
 	if (sPos2 >= 0) cd.name = strTrim(r1.substr(sPos2 + dst_prefix.size()), " \n");
-	
+
 	string r2 = r.substr(sPos + 1);
 	string r3 = r2;
 	sPos = (int)r2.find(",");
@@ -216,9 +118,10 @@ void processCommand(const string& s, EffectData& cd)
 static
 void processNote(const string& s, EffectData& cd)
 {
+    const string dst_prefix = dst_prefix_c;
 	string r = s;
-	r = replaceHtml(r);
-	strReplace(r, "note(0,", "note(");	
+	// r = replaceHtml(r);
+	strReplace(r, "note(0,", "note(");
 	string n = strLowercase(r);
 	int p1 = (int)n.find("note(");
 	if (p1 >= 0) {
@@ -326,7 +229,7 @@ void processParam(const string& s, EffectParameter& cp)
 		cp.text = "";
 		for (int i = 0; i < (int)c.size() - 1; i++) {
 			cp.text += strTrim(c[i]) + "|";
-		}			
+		}
 		cp.text += strTrim(c[(int)c.size() - 1]);
 		strReplace(cp.text, "\"", "");
 		cp.minValue = "0";
@@ -336,6 +239,9 @@ void processParam(const string& s, EffectParameter& cp)
 
 string gmic_parse_single(const string& content, EffectData& cd)
 {
+	const string src_prefix_old = src_prefix_old_c;
+	const string src_prefix = src_prefix_c;
+	const string dst_prefix = dst_prefix_c;
 	string result;
 	bool inNote = false;
 	bool inChoice = false;
@@ -350,6 +256,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	for (int i = 0; i < (int)lines.size(); i++) {
 		string line = strTrim(lines[i], " \r\n\t");
 		if (line.size() > 0 && line[0] != '#') result += line + "\n";
+		strReplace(line, src_prefix_old, dst_prefix);
 		strReplace(line, src_prefix, dst_prefix);
 		string n = strTrim(line, " \r\n\t");
 		int sPos = (int)line.find(":");
@@ -372,7 +279,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 					strReplace(n, "link[", "note(");
 					sPos = (int)n.find("note(");
 					if (sPos >= 0 || inNote) {
-						if (n != "" && 
+						if (n != "" &&
 							(n[n.size() - 1] != ')' && n[n.size() - 1] != ']' && n[n.size() - 1] != '}')
 							) inNote = true;
 						if (sPos >= 0) n = n.substr(sPos + 5);
@@ -413,7 +320,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 			sPos = (int)n.find(" ");
 			if (sPos >= 0) {
 				n = n.substr(sPos);
-				n = replaceHtml(n);
+				n = strRemoveXmlTags(n, false);
 				strReplace(n, " & ", " and ");
 				n = strTrim(n, " \r\n\t_");
 				if (n != "") {
@@ -438,24 +345,38 @@ string gmic_parse_single(const string& content, EffectData& cd)
 			}
 		}
 	}
-	if ((int)content.find(" layers") > 0) 
+	if ((int)content.find(" layers") > 0)
 		cd.multiLayer = true;
 	else
 		cd.multiLayer = false;
 	cd.uniqueId = getUniqueId(cd.name);
 	cd.notes = strTrim(cd.notes, "\n");
+
+#ifdef OFX_PLUGIN
+	strReplace(cd.name, "&amp;", "&&");
+	strReplace(cd.category, "&amp;", "&&");
+	strReplace(cd.notes, "&amp;", "&&");
+#else
+	strReplace(cd.name, "&amp;", "&");
+	strReplace(cd.category, "&amp;", "&");
+	strReplace(cd.notes, "&amp;", "&");
+#endif
 	return result;
 }
 
 void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<string>* lines)
 {
+	const string src_prefix_old = src_prefix_old_c;
+	const string src_prefix = src_prefix_c;
+	const string dst_prefix = dst_prefix_c;
 	stringstream ss(content);
 	bool inEffect = false;
 	string line, line2, cat;
 	EffectData cd;
 	int l = 0;
 	while (getline(ss, line)) {
-		if (line.substr(0, src_prefix.size() + 1) == src_prefix + " ") {
+		if ( (line.substr(0, src_prefix.size() + 1) == src_prefix + " ") ||
+             (line.substr(0, src_prefix_old.size() + 1) == src_prefix_old + " ") ) {
 			if (line != "") line2 += line + "\n";
 			l++;
 			inEffect = true;
@@ -463,11 +384,12 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 			if (inEffect) {
 				if (line2 != "") {
 					if (l == 1) {
-						if (line2 != src_prefix + " _\n") cat = line2;
+						if ( (line2 != src_prefix + " _\n") && (line2 != src_prefix_old + " _\n") ) cat = line2;
 					} else {
 						line2 = cat + line2;
 						strReplace(line2, src_prefix, dst_prefix);
-            gmic_parse_single(line2, cd);
+						strReplace(line2, src_prefix_old, dst_prefix);
+                        gmic_parse_single(line2, cd);
 					}
 
 					bool doOutput = true;
@@ -487,7 +409,8 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 						strReplace(cd.name, "]", "");
 						strReplace(cd.name, " - ", " ");
 						strReplace(cd.name, "inverse", "inv.");
-						cd.category = "GMIC/" + cd.category;
+						//cd.category = "G'MIC " + cd.category;
+cd.category = "GMIC/" + cd.category;
 						if (cds) cds->push_back(cd);
 						if (lines) lines->push_back(line2);
 					}

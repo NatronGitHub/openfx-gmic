@@ -7,13 +7,21 @@
  #
  #  Copyright   : Tobias Fleischer / reduxFX Productions (http://www.reduxfx.com)
  #
- #  License     : CeCILL-B v1.0
- #                ( http://www.cecill.info/licences/Licence_CeCILL-B_V1-en.html )
+ #  Licenses        : This file is 'dual-licensed', you have to choose one
+ #                    of the two licenses below to apply.
  #
- #  This software is governed either by the CeCILL-B license
+ #                    CeCILL-C
+ #                    The CeCILL-C license is close to the GNU LGPL.
+ #                    ( http://www.cecill.info/licences/Licence_CeCILL-C_V1-en.html )
+ #
+ #                or  CeCILL v2.0
+ #                    The CeCILL license is compatible with the GNU GPL.
+ #                    ( http://www.cecill.info/licences/Licence_CeCILL_V2-en.html )
+ #
+ #  This software is governed either by the CeCILL or the CeCILL-C license
  #  under French law and abiding by the rules of distribution of free software.
  #  You can  use, modify and or redistribute the software under the terms of
- #  the CeCILL-B licenses as circulated by CEA, CNRS and INRIA
+ #  the CeCILL or CeCILL-C licenses as circulated by CEA, CNRS and INRIA
  #  at the following URL: "http://www.cecill.info".
  #
  #  As a counterpart to the access to the source code and  rights to copy,
@@ -34,14 +42,12 @@
  #  same conditions as regards security.
  #
  #  The fact that you are presently reading this means that you have had
- #  knowledge of the CeCILL-B licenses and that you accept its terms.
+ #  knowledge of the CeCILL and CeCILL-C licenses and that you accept its terms.
  #
 */
 
-#pragma once
-
-#ifndef _RFX_PARAMETER_H
-#define _RFX_PARAMETER_H
+#ifndef RFX_PARAMETER_H
+#define RFX_PARAMETER_H
 
 // arbitrary bounds :)
 #define MAX_NOF_LAYERS 32
@@ -128,9 +134,9 @@ public:
 class Parameter
 {
 public:
-	Parameter(const string& _displayName = "", int _paramType = PT_FLOAT, float _minValue = 0.f, float _maxValue = 1.f, float _defaultValue0 = 0.f, float _defaultValue1 = 0.f, float _defaultValue2 = 0.f, float _defaultValue3 = 0.f, const string& _text = "") {
+	Parameter(string _paramName = "", string _displayName = "", int _paramType = PT_FLOAT, float _minValue = 0.f, float _maxValue = 1.f, float _defaultValue0 = 0.f, float _defaultValue1 = 0.f, float _defaultValue2 = 0.f, float _defaultValue3 = 0.f, string _text = "") {
 		displayName = _displayName;
-		paramName = displayName;
+		paramName = _paramName;
 		if (displayName == "") displayName = paramName;
 		paramType = _paramType;
 		defaultValue[0] = _defaultValue0;
@@ -213,7 +219,7 @@ public:
 		headlessMode = false;
 		customGlobalDataP = NULL;
 		// memset(&param[0], 0, sizeof(reduxfx::Parameter) * MAX_NOF_PARAMS);
-		param[0] = reduxfx::Parameter("input", PT_LAYER);
+		param[0] = reduxfx::Parameter("input", "Input", PT_LAYER);
 		nofParams = 1;
 		nofInputs = 0;
 		buttonName = " ";

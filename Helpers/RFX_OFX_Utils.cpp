@@ -7,13 +7,21 @@
  #
  #  Copyright   : Tobias Fleischer / reduxFX Productions (http://www.reduxfx.com)
  #
- #  License     : CeCILL-B v1.0
- #                ( http://www.cecill.info/licences/Licence_CeCILL-B_V1-en.html )
+ #  Licenses        : This file is 'dual-licensed', you have to choose one
+ #                    of the two licenses below to apply.
  #
- #  This software is governed either by the CeCILL-B license
+ #                    CeCILL-C
+ #                    The CeCILL-C license is close to the GNU LGPL.
+ #                    ( http://www.cecill.info/licences/Licence_CeCILL-C_V1-en.html )
+ #
+ #                or  CeCILL v2.0
+ #                    The CeCILL license is compatible with the GNU GPL.
+ #                    ( http://www.cecill.info/licences/Licence_CeCILL_V2-en.html )
+ #
+ #  This software is governed either by the CeCILL or the CeCILL-C license
  #  under French law and abiding by the rules of distribution of free software.
  #  You can  use, modify and or redistribute the software under the terms of
- #  the CeCILL-B licenses as circulated by CEA, CNRS and INRIA
+ #  the CeCILL or CeCILL-C licenses as circulated by CEA, CNRS and INRIA
  #  at the following URL: "http://www.cecill.info".
  #
  #  As a counterpart to the access to the source code and  rights to copy,
@@ -34,14 +42,13 @@
  #  same conditions as regards security.
  #
  #  The fact that you are presently reading this means that you have had
- #  knowledge of the CeCILL-B licenses and that you accept its terms.
+ #  knowledge of the CeCILL and CeCILL-C licenses and that you accept its terms.
  #
 */
 
-#ifndef _RFX_OFX_UTILS_H
-#define _RFX_OFX_UTILS_H
+#ifndef RFX_OFX_UTILS_H
+#define RFX_OFX_UTILS_H
 
-#pragma once
 #include <stdexcept>
 #include <new>
 #include <cstring>
@@ -54,6 +61,9 @@
 #ifndef NO_MULTITHREADED_CONVERSION
 #include <thread>
 #endif
+
+
+// #include "../../../Helpers/TLog.h"
 
 #include <string>
 #include "RFX_Utils.h"
@@ -83,6 +93,7 @@ using namespace reduxfx;
 
 struct ContextData
 {
+    int pluginIndex;
 	OfxImageEffectHandle instance;
 	OfxPropertySetHandle inArgs;
 	OfxPropertySetHandle outArgs;
@@ -125,11 +136,12 @@ const int stepWidth = 1;
 const int stepWidth = 4;
 #endif
 
-inline void setContextData(ContextData &cd, OfxImageEffectHandle instance, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
+inline void setContextData(ContextData &cd, OfxImageEffectHandle instance, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs, int pluginIndex)
 {
 	cd.instance = instance;
 	cd.inArgs = inArgs;
 	cd.outArgs = outArgs;
+    cd.pluginIndex = pluginIndex;
 }
 
 // pointers64 to various bits of the host
@@ -174,6 +186,8 @@ static MyInstanceData* getMyInstanceData(OfxImageEffectHandle effect)
 
 static OfxStatus onLoad(int pluginIndex)
 {
+	ContextData contextData;
+	setContextData(contextData, NULL, NULL, NULL, pluginIndex);
 	globalData[pluginIndex].customGlobalDataP = createCustomGlobalData();
 	pluginSetup(&globalData[pluginIndex], NULL);
 	return kOfxStatOK;
@@ -181,6 +195,8 @@ static OfxStatus onLoad(int pluginIndex)
 
 static OfxStatus onUnload(int pluginIndex)
 {
+	ContextData contextData;
+	setContextData(contextData, NULL, NULL, NULL, pluginIndex);
 	pluginSetdown(&globalData[pluginIndex], NULL);
 	destroyCustomGlobalData(globalData[pluginIndex].customGlobalDataP);
 	return kOfxStatOK;
@@ -304,8 +320,8 @@ static void getAllParamData(int pluginIndex, MyInstanceData* myData, OfxTime t)
 		} else if (globalData[pluginIndex].param[i].paramType == PT_POINT) {
 			double myX, myY;
 			gParamHost->paramGetValueAtTime(myData->param[i], t, &myX, &myY);
-			myData->sequenceDataP->floatValue[i][0] = (float)myX;
-			myData->sequenceDataP->floatValue[i][1] = (float)myY;
+			myData->sequenceDataP->floatValue[i][0] = (float)myX * myData->sequenceDataP->downsample_x;
+			myData->sequenceDataP->floatValue[i][1] = (float)myY * myData->sequenceDataP->downsample_y;
 		} else if (globalData[pluginIndex].param[i].paramType == PT_ANGLE) {
 			double v;
 			gParamHost->paramGetValueAtTime(myData->param[i], t, &v);
@@ -345,8 +361,8 @@ static void getParamData(int pluginIndex, int paramIndex, MyInstanceData* myData
 	} else if (globalData[pluginIndex].param[i].paramType == PT_POINT) {
 		double myX, myY;
 		gParamHost->paramGetValueAtTime(myData->param[i], t, &myX, &myY);
-		myData->sequenceDataP->floatValue[i][0] = (float)myX;
-		myData->sequenceDataP->floatValue[i][1] = (float)myY;
+		myData->sequenceDataP->floatValue[i][0] = (float)myX * myData->sequenceDataP->downsample_x;
+		myData->sequenceDataP->floatValue[i][1] = (float)myY * myData->sequenceDataP->downsample_y;
 	} else if (globalData[pluginIndex].param[i].paramType == PT_ANGLE) {
 		double v;
 		gParamHost->paramGetValueAtTime(myData->param[i], t, &v);
@@ -385,8 +401,8 @@ static void setParamData(int pluginIndex, MyInstanceData* myData)
 			double myB = (double)myData->sequenceDataP->floatValue[i][2];
 			gParamHost->paramSetValue(myData->param[i], myR, myG, myB);
 		} else if (globalData[pluginIndex].param[i].paramType == PT_POINT) {
-			double myX = (double)myData->sequenceDataP->floatValue[i][0];
-			double myY = (double)myData->sequenceDataP->floatValue[i][1];
+			double myX = (double)myData->sequenceDataP->floatValue[i][0] / myData->sequenceDataP->downsample_x;
+			double myY = (double)myData->sequenceDataP->floatValue[i][1] / myData->sequenceDataP->downsample_y;
 			gParamHost->paramSetValue(myData->param[i], myX, myY);
 		} else if (globalData[pluginIndex].param[i].paramType == PT_ANGLE) {
 			double v;
@@ -417,7 +433,7 @@ OfxStatus getSpatialRoD(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPro
 
 	OfxTime time;
 	gPropHost->propGetDouble(inArgs, kOfxPropTime, 0, &time);
-	
+
 	// my RoD is the same as my input's
 	OfxRectD rod;
 	gEffectHost->clipGetRegionOfDefinition(myData->input[0], time, &rod);
@@ -428,7 +444,6 @@ OfxStatus getSpatialRoD(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPro
 }
 
 // tells the host how much of the input we need to fill the given window
-static
 OfxStatus getSpatialRoI(int /*pluginIndex*/, OfxImageEffectHandle /*effect*/, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
 	// get the RoI the effect is interested in from inArgs
@@ -444,7 +459,6 @@ OfxStatus getSpatialRoI(int /*pluginIndex*/, OfxImageEffectHandle /*effect*/, Of
 // Tells the host how many frames we can fill, only called in the general context.
 // This is actually redundant as this is the default behaviour, but for illustrative
 // purposes.
-static
 OfxStatus getTemporalDomain(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPropertySetHandle /*inArgs*/, OfxPropertySetHandle outArgs)
 {
 	MyInstanceData *myData = getMyInstanceData(effect);
@@ -484,15 +498,11 @@ static OfxStatus getClipPreferences(int /*pluginIndex*/, OfxImageEffectHandle ef
 }
 
 // are the settings of the effect performing an identity operation
-static OfxStatus isIdentity(int /*pluginIndex*/,
-                            OfxImageEffectHandle /*effect*/,
-                            OfxPropertySetHandle /*inArgs*/,
-                            OfxPropertySetHandle /*outArgs*/)
+static OfxStatus isIdentity(int /*pluginIndex*/, OfxImageEffectHandle /*effect*/, OfxPropertySetHandle /*inArgs*/, OfxPropertySetHandle /*outArgs*/)
 {
 	return kOfxStatReplyDefault;
 }
 
-#ifdef ABOUT_DIALOG
 static void showAboutDialog(int pluginIndex, MyInstanceData* /*myData*/)
 {
 	try
@@ -514,14 +524,13 @@ static void showAboutDialog(int pluginIndex, MyInstanceData* /*myData*/)
 	{
 	}
 }
-#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 // function called when the instance has been changed by anything
 static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
 	ContextData contextData;
-	setContextData(contextData, instance, inArgs, outArgs);
+	setContextData(contextData, instance, inArgs, outArgs, pluginIndex);
 
 	// see why it changed
 	const char *changeReason;
@@ -535,7 +544,7 @@ static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance,
 	gPropHost->propGetString(inArgs, kOfxPropType, 0, &typeChanged);
 
 	// was it a clip or a param?
-	//bool isClip = strcmp(typeChanged, kOfxTypeClip) == 0;
+	// bool isClip = strcmp(typeChanged, kOfxTypeClip) == 0;
 	bool isParam = strcmp(typeChanged, kOfxTypeParameter) == 0;
 
 	// get the name of the thing that changed
@@ -577,7 +586,7 @@ static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance,
 
 #ifdef ABOUT_DIALOG
 		if (strcmp(objChanged, "About") == 0) {
-			showAboutDialog(myData);
+			showAboutDialog(pluginIndex, myData);
 		}
 #endif
 		for (int i = 0; i < globalData[pluginIndex].nofParams; i++) {
@@ -622,7 +631,6 @@ public:
 	};
 };
 
-static
 void convert_RGBA8P_to_RGBA8(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -644,7 +652,6 @@ void convert_RGBA8P_to_RGBA8(ConvertData& data, const int startLine, const int e
 	}
 }
 
-static
 void convert_RGBA8P_to_RGBA32(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -666,7 +673,6 @@ void convert_RGBA8P_to_RGBA32(ConvertData& data, const int startLine, const int 
 	}
 }
 
-static
 void convert_RGBA8_to_RGBA8P(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -688,7 +694,6 @@ void convert_RGBA8_to_RGBA8P(ConvertData& data, const int startLine, const int e
 	}
 }
 
-static
 void convert_RGBA32P_to_RGBA32(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -710,7 +715,6 @@ void convert_RGBA32P_to_RGBA32(ConvertData& data, const int startLine, const int
 	}
 }
 
-static
 void convert_RGBA32_to_RGBA32(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -725,8 +729,6 @@ void convert_RGBA32_to_RGBA32(ConvertData& data, const int startLine, const int 
 		}
 	}
 }
-
-static
 void convert_RGBA32P_to_RGBA8(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -748,7 +750,6 @@ void convert_RGBA32P_to_RGBA8(ConvertData& data, const int startLine, const int 
 	}
 }
 
-static
 void convert_RGBA32_to_RGBA32P(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -770,7 +771,6 @@ void convert_RGBA32_to_RGBA32P(ConvertData& data, const int startLine, const int
 	}
 }
 
-static
 void convert_RGBA8_to_RGBA32(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -788,7 +788,6 @@ void convert_RGBA8_to_RGBA32(ConvertData& data, const int startLine, const int e
 	}
 }
 
-static
 void convert_RGBA8_to_RGBA32P(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -806,7 +805,6 @@ void convert_RGBA8_to_RGBA32P(ConvertData& data, const int startLine, const int 
 	}
 }
 
-static
 void convert_RGBA32_to_RGBA8(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -824,7 +822,6 @@ void convert_RGBA32_to_RGBA8(ConvertData& data, const int startLine, const int e
 	}
 }
 
-static
 void convert_RGBA32_to_RGBA8P(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -846,7 +843,7 @@ void convert_RGBA32_to_RGBA8P(ConvertData& data, const int startLine, const int 
 static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
 	ContextData contextData;
-	setContextData(contextData, instance, inArgs, outArgs);
+	setContextData(contextData, instance, inArgs, outArgs, pluginIndex);
 
 	// get the render window and the time from the inArgs
 	OfxTime time;
@@ -882,6 +879,7 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 		int dstRowBytes, dstBitDepth;
 		OfxRectI dstRect;
 		outputImg = ofxuGetImage(myData->output, time, dstRowBytes, dstBitDepth, dstIsAlpha, dstRect, dstData);
+
 		if (outputImg == NULL) throw OfxuNoImageException();
 		float scale = globalData[pluginIndex].scale;
 
@@ -891,6 +889,8 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 		gPropHost->propGetIntN(inArgs, kOfxImageEffectPropRenderWindow, 4, &renderWindow.x1);
 
 		myData->sequenceDataP->time = time;
+		myData->sequenceDataP->downsample_x = (float)renderScale.x;
+		myData->sequenceDataP->downsample_y = (float)renderScale.y;
 		
 		getAllParamData(pluginIndex, myData, time);
 
@@ -1243,7 +1243,6 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 		}
 #endif
 
-
 	} catch(OfxuNoImageException &ex) {
 		// if we were interrupted, the failed fetch is fine, just return kOfxStatOK
 		// otherwise, something weird happened
@@ -1330,13 +1329,13 @@ static void paramAddInt(OfxParamSetHandle effectParams, OfxPropertySetHandle& pr
 
 static void paramAddPoint(OfxParamSetHandle effectParams, OfxPropertySetHandle& props, const char* paramName, double defaultX, double defaultY)
 {
-	OfxStatus stat = gParamHost->paramDefine(effectParams, kOfxParamTypeInteger2D, paramName, &props);
+	OfxStatus stat = gParamHost->paramDefine(effectParams, kOfxParamTypeDouble2D, paramName, &props);
 	if (stat != kOfxStatOK) {
 		throw OfxuStatusException(stat);
 	}
 	gPropHost->propSetDouble(props, kOfxParamPropDefault, 0, defaultX);
 	gPropHost->propSetDouble(props, kOfxParamPropDefault, 1, defaultY);
-	gPropHost->propSetString(props, kOfxParamPropDoubleType, 0, kOfxParamDoubleTypeXY);
+	gPropHost->propSetString(props, kOfxParamPropDoubleType, 0, kOfxParamDoubleTypeXYAbsolute);
 	gPropHost->propSetString(props, kOfxParamPropDefaultCoordinateSystem, 0, kOfxParamCoordinatesNormalised);
 }
 
@@ -1377,7 +1376,7 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 	// get the context from the inArgs handle
 	const char *context = NULL;
 	gPropHost->propGetString(inArgs, kOfxImageEffectPropContext, 0, &context);
-	bool isGeneralContext = strcmp(context, kOfxImageEffectContextGeneral) == 0;
+	// bool isGeneralContext = strcmp(context, kOfxImageEffectContextGeneral) == 0;
 
 	OfxPropertySetHandle props;
 	// define the single output clip in both contexts
@@ -1405,7 +1404,10 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 #ifdef ABOUT_DIALOG
 	{
 	OfxPropertySetHandle props;
-	gParamHost->paramDefine(paramSet, kOfxParamTypePushButton, "About", &props);
+#ifndef ABOUT_DIALOG_CAPTION
+#define ABOUT_DIALOG_CAPTION "About"
+#endif
+	gParamHost->paramDefine(paramSet, kOfxParamTypePushButton, ABOUT_DIALOG_CAPTION, &props);
 	}
 #endif
 
@@ -1462,7 +1464,7 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 			);
 		} else if (globalData[pluginIndex].param[i].paramType == PT_SELECT) {	
 			string t = globalData[pluginIndex].param[i].text;
-			strReplace(t, "|-|", "|(-|");
+			// t = strReplace(t, "|-|", "|(-|");
 			vector<string> choices;
 			strSplit(t, '|', choices);
 			paramAddChoice(
@@ -1542,7 +1544,7 @@ static OfxStatus describe(int pluginIndex, OfxImageEffectHandle effect)
 	// set some labels and the group it belongs to
 	gPropHost->propSetString(effectProps, kOfxPropLabel, 0, globalData[pluginIndex].pluginInfo.name.c_str());
 	gPropHost->propSetString(effectProps, kOfxImageEffectPluginPropGrouping, 0, globalData[pluginIndex].pluginInfo.category.c_str());
-        gPropHost->propSetString(effectProps, kOfxPropPluginDescription, 0, globalData[pluginIndex].pluginInfo.name.c_str() /*globalData[pluginIndex].pluginInfo.description.c_str()*/);
+	gPropHost->propSetString(effectProps, kOfxPropPluginDescription, 0, globalData[pluginIndex].pluginInfo.description.c_str());
 
 	// define the contexts we can be used in
 	gPropHost->propSetString(effectProps, kOfxImageEffectPropSupportedContexts, 0, kOfxImageEffectContextFilter);
@@ -1581,6 +1583,7 @@ static OfxStatus describe(int pluginIndex, OfxImageEffectHandle effect)
 // The main function
 static OfxStatus pluginMain(int pluginIndex, const char *action, const void *handle, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
+// LOG << "main: " << pluginIndex << " " << action;
 	try {
 	// cast to appropriate type
 	OfxImageEffectHandle effect = (OfxImageEffectHandle)handle;

@@ -8,13 +8,21 @@
  #
  #  Copyright   : Tobias Fleischer / reduxFX Productions (http://www.reduxfx.com)
  #
- #  License     : CeCILL-B v1.0
- #                ( http://www.cecill.info/licences/Licence_CeCILL-B_V1-en.html )
+ #  Licenses        : This file is 'dual-licensed', you have to choose one
+ #                    of the two licenses below to apply.
  #
- #  This software is governed either by the CeCILL-B license
+ #                    CeCILL-C
+ #                    The CeCILL-C license is close to the GNU LGPL.
+ #                    ( http://www.cecill.info/licences/Licence_CeCILL-C_V1-en.html )
+ #
+ #                or  CeCILL v2.0
+ #                    The CeCILL license is compatible with the GNU GPL.
+ #                    ( http://www.cecill.info/licences/Licence_CeCILL_V2-en.html )
+ #
+ #  This software is governed either by the CeCILL or the CeCILL-C license
  #  under French law and abiding by the rules of distribution of free software.
  #  You can  use, modify and or redistribute the software under the terms of
- #  the CeCILL-B licenses as circulated by CEA, CNRS and INRIA
+ #  the CeCILL or CeCILL-C licenses as circulated by CEA, CNRS and INRIA
  #  at the following URL: "http://www.cecill.info".
  #
  #  As a counterpart to the access to the source code and  rights to copy,
@@ -35,27 +43,26 @@
  #  same conditions as regards security.
  #
  #  The fact that you are presently reading this means that you have had
- #  knowledge of the CeCILL-B licenses and that you accept its terms.
+ #  knowledge of the CeCILL and CeCILL-C licenses and that you accept its terms.
  #
 */
 
-#include <iostream>
-#include "gmic_parser.h"
-#include "gmic_libc.h"
-#include "gmic.h"
+// version, name and description for the plugin
+#define	MAJOR_VERSION		0
+#define	MINOR_VERSION		3
+#define	BUILD_VERSION		2
+#define PLUGIN_DESCRIPTION	"Wrapper for the G'MIC framework (http://www.gmic.eu) written by Tobias Fleischer (http://www.reduxfx.com).";
 
-#include <math.h>
-
-// name and description for the plugin
+#ifdef OFX_PLUGIN
 #define PLUGIN_NAME	        "GMIC"
 #define PLUGIN_CATEGORY		"GMIC"
-#define PLUGIN_UNIQUEID		"eu.gmic.plugin"
-#define PLUGIN_DESCRIPTION	"OpenFX wrapper for the G'MIC framework (http://www.gmic.eu).\nWritten by Tobias Fleischer (http://www.reduxfx.com).";
-
-// version information
-#define	MAJOR_VERSION		1
-#define	MINOR_VERSION		0
-#define	BUILD_VERSION		1
+#define PLUGIN_UNIQUEID		"GMIC"
+#else
+// AE plugin needs these with spaces to replace them with proper effect names in the gmic_ae_tool
+#define PLUGIN_NAME	        "G'MIC Plugin                   "
+#define PLUGIN_CATEGORY		"G'MIC                          "
+#define PLUGIN_UNIQUEID		"gmic_plugin                    "
+#endif
 
 #ifndef OFX_PLUGIN
 #ifndef AE_PLUGIN
@@ -93,16 +100,43 @@
     #include "RFX_AE_Utils.h"
 #endif
 
+#include "gmic_parser.h"
+#include "gmic_libc.h"
+#include <math.h>
+
+#include "RFX_FileUtils.h"
+
+using namespace reduxfx;
+
 #ifdef OFX_PLUGIN
 #include "gmic_stdlib_gmic.h"
 #include <sstream>
-#include <stdlib.h> 
+#include <stdlib.h>
+#ifdef DEBUG
+#include <iostream>
+#endif
 
-#include "RFX_Parameter.h"
-#include "RFX_StringUtils.h"
 
-using namespace reduxfx;
-using namespace std;
+string get_gmic_rc_path()
+{
+	string path;
+	const char *_path_rc = 0;
+/*	if (!_path_rc) _path_rc = getenv("GMIC_PATH");
+	if (!_path_rc) _path_rc = getenv("GMIC_GIMP_PATH");
+	if (!_path_rc) _path_rc = getenv("XDG_CONFIG_HOME"); */
+	if (!_path_rc) {
+#ifndef _WIN32
+		_path_rc = getenv("HOME");
+		if (_path_rc) {
+			path = string(_path_rc) + "/.config/gmic/";
+		}
+#else
+		_path_rc = getenv("APPDATA");
+#endif
+	}
+	if (path == "") path = string(_path_rc) + "/gmic/";
+	return path;
+}
 
 class PluginGlobalData
 {
@@ -110,9 +144,26 @@ public:
 	vector<EffectData> pluginData;
 	vector<string> pluginContent;
 	PluginGlobalData() {
-                gmic_parse_multi(string((const char*)gmic_stdlib_gmic, gmic_stdlib_gmic_len), &pluginData, &pluginContent);
+		string effectContent = loadStringFromFile(get_gmic_rc_path() + "gmic_ofx.gmic");
+		if (effectContent == "") effectContent = loadStringFromFile(get_gmic_rc_path() + "gmic_stdlib.gmic");
+		if (effectContent == "") {
+			const char* lib = gmic_get_stdlib();
+			effectContent = string(lib);
+			gmic_delete_external((float*)lib);
+			if (
+				(int)effectContent.find("#@gimp :") < 0 && 
+				(int)effectContent.find("#@gmic_plugin :") < 0 && 
+				(int)effectContent.find("#@gui :") < 0) {
+				effectContent = "";
+			}
+		} 
+		if (effectContent == "") {
+			effectContent = string((const char*)gmic_stdlib_gmic, gmic_stdlib_gmic_len);
+		}
+		gmic_parse_multi(effectContent, &pluginData, &pluginContent);
 	};
 };
+
 PluginGlobalData pluginGlobalData;
 
 #endif
@@ -152,17 +203,17 @@ void* createCustomGlobalData() { return new MyGlobalData(); }
 void destroyCustomGlobalData(void* customGlobalDataP) { delete (MyGlobalData*)customGlobalDataP; }
 void* createCustomSequenceData() { return new MySequenceData(); }
 void destroyCustomSequenceData(void* customSequenceDataP) { delete (MySequenceData*)customSequenceDataP; }
-void* flattenCustomSequenceData(void* /*customUnflatSequenceDataP*/, int& /*flatSize*/) { return NULL; }
-void* unflattenCustomSequenceData(void* /*customSequenceDataP*/, int /*flatSize*/) { return new MySequenceData(); }
+void* flattenCustomSequenceData(void* customUnflatSequenceDataP, int& flatSize) { return NULL; }
+void* unflattenCustomSequenceData(void* customSequenceDataP, int flatSize) { return new MySequenceData(); }
 
-int pluginSetdown(GlobalData* /*globalDataP*/, ContextData* /*contextDataP*/) { return 0; }
+int pluginSetdown(GlobalData* globalDataP, ContextData* contextDataP) { return 0; }
 
-int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
+int pluginSetup(GlobalData* globalDataP, ContextData* contextDataP)
 {
 	globalDataP->scale = 255.f;
 	globalDataP->buttonName = "Reload";
 
-	//MyGlobalData* myGlobalDataP = (MyGlobalData*)globalDataP->customGlobalDataP;
+	MyGlobalData* myGlobalDataP = (MyGlobalData*)globalDataP->customGlobalDataP;
 
 	EffectData effectData;
 	effectData.multiLayer = true;
@@ -185,7 +236,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 	
 	globalDataP->inplaceProcessing = false;
 
-	globalDataP->param[0] = Parameter("Input", PT_LAYER);
+	globalDataP->param[0] = Parameter("Input", "", PT_LAYER);
 	int p = 1;
 	for (int i = 0; i < (int)effectData.param.size(); i++) {
 		int t = PT_FLOAT;
@@ -228,46 +279,58 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 			t = PT_LAYER;
 		}
 		globalDataP->param[p] = Parameter(
-			effectData.param[i].name, t, (float)atof(effectData.param[i].minValue.c_str()), (float)atof(effectData.param[i].maxValue.c_str()), d1, d2, d3, d4, effectData.param[i].text);
+			effectData.param[i].name, "", t, (float)atof(effectData.param[i].minValue.c_str()), (float)atof(effectData.param[i].maxValue.c_str()), d1, d2, d3, d4, effectData.param[i].text);
 		globalDataP->param[p].flags = flags;
 		if (h) globalDataP->param[p].displayStatus = DS_HIDDEN;
 		p++;
 	}
 
+//	globalDataP->param[p++] = Parameter("Dummy", PT_FLOAT);
+
 	if (effectData.multiLayer) {
-		globalDataP->param[p++] = Parameter("Ext. In 1", PT_LAYER);
-		globalDataP->param[p++] = Parameter("Ext. In 2", PT_LAYER);
-		globalDataP->param[p++] = Parameter("Ext. In 3", PT_LAYER);
-		globalDataP->param[p++] = Parameter("Ext. In 4", PT_LAYER);
+		globalDataP->param[p++] = Parameter("Ext. In 1", "", PT_LAYER);
+		globalDataP->param[p++] = Parameter("Ext. In 2", "", PT_LAYER);
+		globalDataP->param[p++] = Parameter("Ext. In 3", "", PT_LAYER);
+		globalDataP->param[p++] = Parameter("Ext. In 4", "", PT_LAYER);
 	}	
-	globalDataP->param[p] = Parameter("Command", PT_TEXT, 0, 0, 0, 0, 0, 0, "-blur 2"); if (hasContent) globalDataP->param[p].displayStatus = DS_HIDDEN; p++;
-	globalDataP->param[p] = Parameter("Advanced Options", PT_TOPIC_START); globalDataP->param[p].flags = 1; p++;
-	globalDataP->param[p++] = Parameter("Output Layer", PT_SELECT, 0, 10, 1, 0, 0, 0, "Merged|Layer 0|Layer 1|Layer 2|Layer 3|Layer 4|Layer 5|Layer 6|Layer 7|Layer 8|Layer 9|");
-	globalDataP->param[p++] = Parameter("Resize Mode", PT_SELECT, 0, 5, 1, 0, 0, 0, "Fixed (Inplace)|Dynamic|Downsample 1/2|Downsample 1/4|Downsample 1/8|Downsample 1/16");
-	globalDataP->param[p++] = Parameter("Ignore Alpha", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
-	globalDataP->param[p] = Parameter("Preview/Draft Mode", PT_BOOL, 0, 1, 0, 0, 0, 0, ""); if (!hasContent || effectData.command == effectData.preview_command) globalDataP->param[p].displayStatus = DS_HIDDEN; p++;
-	globalDataP->param[p++] = Parameter("Advanced Options", PT_TOPIC_END);
+	globalDataP->param[p] = Parameter("Command", "", PT_TEXT, 0, 0, 0, 0, 0, 0, "-blur 2"); if (hasContent) globalDataP->param[p].displayStatus = DS_HIDDEN; p++;
+	globalDataP->param[p] = Parameter("Advanced Options", "", PT_TOPIC_START); globalDataP->param[p].flags = 1; p++;
+	globalDataP->param[p++] = Parameter("Output Layer", "", PT_SELECT, 0, 10, 1, 0, 0, 0, "Merged|Layer 0|Layer 1|Layer 2|Layer 3|Layer 4|Layer 5|Layer 6|Layer 7|Layer 8|Layer 9|");
+	globalDataP->param[p++] = Parameter("Resize Mode", "", PT_SELECT, 0, 5, 1, 0, 0, 0, "Fixed (Inplace)|Dynamic|Downsample 1/2|Downsample 1/4|Downsample 1/8|Downsample 1/16");
+	globalDataP->param[p++] = Parameter("Ignore Alpha", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
+	globalDataP->param[p] = Parameter("Preview/Draft Mode", "", PT_BOOL, 0, 1, 0, 0, 0, 0, ""); if (!hasContent || effectData.command == effectData.preview_command) globalDataP->param[p].displayStatus = DS_HIDDEN; p++;
+	globalDataP->param[p++] = Parameter("Log Verbosity", "", PT_SELECT, 0, 4, 0, 0, 0, 0, "Off|Level 1|Level 2|Level 3|");
+	globalDataP->param[p++] = Parameter("Advanced Options", "", PT_TOPIC_END);
 	globalDataP->nofParams = p;
 
 	string d = effectData.notes;
-	strReplace(d, "\n", "\\n");
-	globalDataP->pluginInfo.description = d;
+/*
+	for (int i = 0; i < effectData.notes.size(); i++)
+		if (effectData.notes[i] >= 32 && effectData.notes[i] < 128) d += effectData.notes[i];
+*/
+	d = strRemoveXmlTags(d, true);
+	d = strToAscii(d);
+	strReplace(d, "<", "(");
+	strReplace(d, ">", ")");
+//	strReplace(d, "\n", "\\n");
+	globalDataP->pluginInfo.description = d + "\n\n" + PLUGIN_DESCRIPTION;
 
 	return 0;
 }
 
-#define PARAM_COMMAND (globalDataP->nofParams - 7)
-#define PARAM_OUTPUT (globalDataP->nofParams - 5)
-#define PARAM_RESIZE (globalDataP->nofParams - 4)
-#define PARAM_NOALPHA (globalDataP->nofParams - 3)
-#define PARAM_PREVIEW (globalDataP->nofParams - 2)
+#define PARAM_COMMAND (globalDataP->nofParams - 8)
+#define PARAM_OUTPUT (globalDataP->nofParams - 6)
+#define PARAM_RESIZE (globalDataP->nofParams - 5)
+#define PARAM_NOALPHA (globalDataP->nofParams - 4)
+#define PARAM_PREVIEW (globalDataP->nofParams - 3)
+#define PARAM_VERBOSITY (globalDataP->nofParams - 2)
 
-int pluginParamChange(int index, SequenceData* sequenceDataP, GlobalData* globalDataP, ContextData* /*contextDataP*/)
+int pluginParamChange(int index, SequenceData* sequenceDataP, GlobalData* globalDataP, ContextData* contextDataP)
 {
 	if (index == PARAM_RESIZE) {
 		globalDataP->inplaceProcessing = PAR_VAL(index) < 1.f;
 	} else {
-		//MyGlobalData* myGlobalDataP = (MyGlobalData*)globalDataP->customGlobalDataP;
+		MyGlobalData* myGlobalDataP = (MyGlobalData*)globalDataP->customGlobalDataP;
 
 #ifdef AE_PLUGIN	
 		string cmd = PAR_VAL(PARAM_PREVIEW) > 0 ? myGlobalDataP->effectData.preview_command:myGlobalDataP->effectData.command;
@@ -308,6 +371,18 @@ int pluginParamChange(int index, SequenceData* sequenceDataP, GlobalData* global
 
 int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextData* contextDataP)
 {
+	/*
+	float* fi = (float*)sequenceDataP->inWorld[0].data;
+	float* fo = (float*)sequenceDataP->outWorld.data;
+	for (int x = 0; x < sequenceDataP->outWorld.width * sequenceDataP->outWorld.height * 4; x++)
+	{
+		*fo = *fi * 2.f;//(float)(rand() % 100) / 100.f;
+		fi++;
+		fo++;
+	}
+	return 0;
+	*/
+
 	int err = 0;
 
 	MySequenceData* mySequenceDataP = (MySequenceData*)sequenceDataP->customSequenceDataP;
@@ -339,7 +414,10 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	}
 
 	string cmd = mySequenceDataP->command;
-	if (cmd == "") {
+#ifdef OFX_PLUGIN
+	if (cmd == "") 
+#endif
+	{
 		pluginParamChange(0, sequenceDataP, globalDataP, contextDataP);
 		cmd = mySequenceDataP->command;
 	}
@@ -361,7 +439,9 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		}
 		cmd += " -resize " + intToString(sequenceDataP->inWorld[0].width) + "," + intToString(sequenceDataP->inWorld[0].height);
  	}
+	int verbosity = (int)PAR_VAL(PARAM_VERBOSITY) - 1;
 
+	cmd = "-v " + intToString(verbosity) + " " + cmd;
 	// cmd += " -display";
 	// set some variables that are defined globally for the GIMP plugin
 	// not really needed as the effects should work independently of GIMP
@@ -396,8 +476,10 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 #ifdef OFX_PLUGIN
 		 if (gMessageSuite) {
 			gMessageSuite->message(contextDataP->instance, kOfxMessageError, "G'MIC Error", errmsg.c_str());
+#ifdef DEBUG
 		} else {
 			cout << "ERROR: " << errmsg << endl;
+#endif
 		}
 #endif
 #ifdef AE_PLUGIN
@@ -432,7 +514,14 @@ void getPluginInfo(int pluginIndex, PluginInfo& pluginInfo)
 	pluginInfo.name = pluginGlobalData.pluginData[pluginIndex].name;
 	pluginInfo.identifier = pluginGlobalData.pluginData[pluginIndex].uniqueId;
 	pluginInfo.category = pluginGlobalData.pluginData[pluginIndex].category;
-	pluginInfo.description = pluginGlobalData.pluginData[pluginIndex].notes;
+	
+	string d = pluginGlobalData.pluginData[pluginIndex].notes;
+	//strReplace(d, "\n", "\\n");
+	d = strRemoveXmlTags(d, true);
+	d = strToAscii(d);
+	strReplace(d, "<", "(");
+	strReplace(d, ">", ")");
+	pluginInfo.description = d + "\n\n" + PLUGIN_DESCRIPTION;
 	pluginInfo.major_version = MAJOR_VERSION;
 	pluginInfo.minor_version = MINOR_VERSION;
 }
@@ -440,7 +529,7 @@ void getPluginInfo(int pluginIndex, PluginInfo& pluginInfo)
 #else
 
 extern "C" DllExport PF_Err EntryPointFunc(PF_Cmd cmd, PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* param[], PF_LayerDef* outputP, void* extraP)
-{ 
+{
 	if (cmd == PF_Cmd_DO_DIALOG) {
 		GlobalData* globalDataP = ((AE_GlobalData*)PF_LOCK_HANDLE(in_data->global_data))->globalDataP;
 		pluginSetup(globalDataP, NULL);

@@ -7,13 +7,21 @@
  #
  #  Copyright   : Tobias Fleischer / reduxFX Productions (http://www.reduxfx.com)
  #
- #  License     : CeCILL-B v1.0
- #                ( http://www.cecill.info/licences/Licence_CeCILL-B_V1-en.html )
+ #  Licenses        : This file is 'dual-licensed', you have to choose one
+ #                    of the two licenses below to apply.
  #
- #  This software is governed either by the CeCILL-B license
+ #                    CeCILL-C
+ #                    The CeCILL-C license is close to the GNU LGPL.
+ #                    ( http://www.cecill.info/licences/Licence_CeCILL-C_V1-en.html )
+ #
+ #                or  CeCILL v2.0
+ #                    The CeCILL license is compatible with the GNU GPL.
+ #                    ( http://www.cecill.info/licences/Licence_CeCILL_V2-en.html )
+ #
+ #  This software is governed either by the CeCILL or the CeCILL-C license
  #  under French law and abiding by the rules of distribution of free software.
  #  You can  use, modify and or redistribute the software under the terms of
- #  the CeCILL-B licenses as circulated by CEA, CNRS and INRIA
+ #  the CeCILL or CeCILL-C licenses as circulated by CEA, CNRS and INRIA
  #  at the following URL: "http://www.cecill.info".
  #
  #  As a counterpart to the access to the source code and  rights to copy,
@@ -34,27 +42,25 @@
  #  same conditions as regards security.
  #
  #  The fact that you are presently reading this means that you have had
- #  knowledge of the CeCILL-B licenses and that you accept its terms.
+ #  knowledge of the CeCILL and CeCILL-C licenses and that you accept its terms.
  #
 */
 
 #ifdef _WIN32
 #pragma warning (disable:4996)
 #endif
-#pragma once
-#ifndef _RFX_UTILS_H
-#define _RFX_UTILS_H
+
+#ifndef RFX_UTILS_H
+#define RFX_UTILS_H
 
 #include <map>
 #include <string>
 #include <sstream>
-using namespace std;
+#include <cmath>
 
 #ifdef _WIN32
 #include <Windows.h>
 #endif
-
-#include "RFX_Parameter.h"
 
 #define	CLR_STRUCT(STRUCT) memset(&STRUCT, 0, sizeof(STRUCT));
 
@@ -70,10 +76,14 @@ using namespace std;
 #define fmax(a,b) (((a)>(b))?(a):(b))
 #define fmin(a,b) (((a)<(b))?(a):(b))
 
+using namespace std;
+namespace reduxfx {
+
 inline float saturate(float a)
 {
 	return ((a)>1.0f?1.0f:((a)<0.0f?0.0f:(a)));
 }
+#if 0
 inline float linearStep(float edge0, float edge1, float x)
 {
 	return saturate((x - edge0)/(edge1 - edge0));
@@ -88,16 +98,13 @@ inline float smootherStep(float edge0, float edge1, float x)
 	x = saturate((x - edge0)/(edge1 - edge0));
 	return x*x*x*(x*(x*6.0f - 15.0f) + 10.0f);
 }
-/*
 inline int round(float d)
 { 
 	return (int)floor(d + 0.5f); 
 }
-*/
 
 typedef std::map<std::string, std::string> strStrMap;
 
-namespace reduxfx {
 
 inline void openOS(const string& s)
 {
@@ -327,27 +334,26 @@ inline void setPixel_RGB_32(unsigned char** buf, float& r, float& g, float& b, f
 	*buf = (unsigned char*)p;
 }
 
-#if 0
 static float luma(const float r, const float g, const float b)
 {
 	return 0.299f * r + 0.587f * g + 0.114f * b;
 }
 
-static void convertRGB2YUV(const float r, const float g, const float b, float& y, float& u, float& v)
+inline void convertRGB2YUV(const float r, const float g, const float b, float& y, float& u, float& v)
 {
 	y = 0.299f * r + 0.587f * g + 0.114f * b;
 	u = (b - y) * 0.565f;
 	v = (r - y) * 0.713f;
 }
 
-static void convertYUV2RGB(const float y, const float u, const float v, float& r, float& g, float& b)
+inline void convertYUV2RGB(const float y, const float u, const float v, float& r, float& g, float& b)
 {
 	r = saturate(y + 1.403f * v);
 	g = saturate(y - 0.344f * u - 1.403f * v);
 	b = saturate(y + 1.770f * u);
 }
 
-static void convertRGB2HSL(const float r, const float g, const float b, float& h, float& s, float& l)
+inline void convertRGB2HSL(const float r, const float g, const float b, float& h, float& s, float& l)
 {
 	h = 0.0f;
 	s = 0.0f;
@@ -373,7 +379,7 @@ static void convertRGB2HSL(const float r, const float g, const float b, float& h
 	}
 }
 
-static void convertHSL2RGB(const float h, const float s, const float l, float& r, float& g, float& b)
+inline void convertHSL2RGB(const float h, const float s, const float l, float& r, float& g, float& b)
 {
 	float pred = saturate(fabs(h * 6.0f - 3.0f) - 1.0f);
 	float pgreen = saturate(2.0f - fabs(h * 6.0f - 2.0f));
@@ -384,7 +390,7 @@ static void convertHSL2RGB(const float h, const float s, const float l, float& r
 	b = (pblue - 0.5f) * C + l;
 }
 
-static void convertRGB2HSV(const float r, const float g, const float b, float& h, float& s, float& v)
+inline void convertRGB2HSV(const float r, const float g, const float b, float& h, float& s, float& v)
 {
 	h = 0.0f;
 	s = 0.0f;
@@ -405,7 +411,7 @@ static void convertRGB2HSV(const float r, const float g, const float b, float& h
 	}
 };
 
-static void convertHSV2RGB(const float h, const float s, const float v, float& r, float& g, float& b)
+inline void convertHSV2RGB(const float h, const float s, const float v, float& r, float& g, float& b)
 {
 	float pred = saturate(fabs(h * 6.0f - 3.0f) - 1.0f);
 	float pgreen = saturate(2.0f - fabs(h * 6.0f - 2.0f));
@@ -419,7 +425,9 @@ inline float radians(float a)
 {
 	return M_PI * a / 180.0f;
 }
+#endif
 
+#if 0
 static reduxfx::World convertWorld(const reduxfx::World& src, reduxfx::PixelFormat dstPixelFormat, int dstBitDepth, bool flipY = false)
 {
 	reduxfx::World dst;
@@ -492,8 +500,7 @@ static reduxfx::World convertWorld(const reduxfx::World& src, reduxfx::PixelForm
 	
 	return dst;
 }
-#endif // 0
+#endif
+
 };
-
-
 #endif
