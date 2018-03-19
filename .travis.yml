@@ -41,7 +41,7 @@ before_install:
       sudo apt-get install libfftw3-dev;
     fi
   - if [ ${TRAVIS_OS_NAME} = "osx" ]; then
-      brew install fftw;
+      brew install fftw || true;
     fi
 
 install:
@@ -71,12 +71,11 @@ script:
       echo "Don't build on coverity_scan branch.";
       exit 0;
     fi
-  - make -C Plugin gmic.cpp gmic_libc.cpp
   - make $J CONFIG=debug
   - make $J nomulti CONFIG=debug
   - if [ "$CC" = "gcc" ]; then
-      make -C Plugin clean;
-      make -C Plugin CONFIG=debug OPENMP=1;
+      make -C GMIC_OFX clean;
+      make -C GMIC_OFX CONFIG=debug OPENMP=1;
     fi
 
 # ubuntu-toolchain-r/test contains recent versions of gcc
