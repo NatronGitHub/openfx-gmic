@@ -14,12 +14,16 @@ CXXFLAGS += \
 -I$(SRCDIR)/Helpers \
 -I$(SRCDIR)/openfx/include \
 -I$(SRCDIR)/openfx/Examples/include \
--Dgmic_build -Dgmic_is_parallel -Dcimg_use_abort -Dcimg_display=0 -Dcimg_appname=\"gmic\" -Dcimg_namespace_suffix=openfx_gmic -Dcimg_verbosity=0 -Dcimg_library=cimg_library_openfx_gmic
+-Dgmic_build -Dgmic_is_parallel -Dcimg_use_abort -Dcimg_display=0 -Dcimg_appname=\"gmic\" -Dcimg_namespace_suffix=openfx_gmic -Dcimg_verbosity=0 -Dcimg_library=cimg_library_openfx_gmic -Dgmic_is_parallel
 
 # FFTW (license: GPLv2), necessary to get Fourier transform on
 # images with dimensions that are not power-of-two
 FFTW3_CXXFLAGS =`pkg-config --cflags fftw3` -Dcimg_use_fftw3
-FFTW3_LINKFLAGS =`pkg-config --libs fftw3` -lfftw3_threads
+FFTW3_LINKFLAGS =`pkg-config --libs fftw3`
+# fftw_init_threads is in a separate lib on Unix
+ifeq ($(OS),$(filter $(OS),Linux FreeBSD Darwin))
+  FFTW3_LINKFLAGS += -lfftw3_threads
+endif
 
 # Zlib, necessary to uncompress the glic stdlib
 ZLIB_CXXFLAGS=`pkg-config --cflags zlib` -Dcimg_use_zlib
@@ -36,7 +40,3 @@ ifeq ($(OPENMP),1)
   LINKFLAGS += -fopenmp
 endif
 
-# gmic_is_parallel requires POSIX threads
-ifeq ($(OS),$(filter $(OS),Linux FreeBSD Darwin))
-  CXXFLAGS += -Dgmic_is_parallel
-endif
