@@ -37,6 +37,12 @@ before_install:
       echo -n | openssl s_client -connect https://scan.coverity.com:443 | sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' | sudo tee -a /etc/ssl/certs/ca- ;
     fi
   - export J='-j3'
+  - if [ ${TRAVIS_OS_NAME} = "linux" ]; then
+      sudo apt-get install libfftw3-dev
+    fi
+  - if [ ${TRAVIS_OS_NAME} = "osx" ]; then
+      brew install fftw
+    fi
 
 install:
   - git submodule update --init --recursive
@@ -79,8 +85,10 @@ addons:
     sources:
     - ubuntu-toolchain-r-test
     packages:
+    - ca-certificates
     - gcc-7
     - g++-7
+    - libfftw3-dev
   coverity_scan:
     # customized build script URL
     # TRAVIS_REPO_SLUG: owner_name/repo_name of repository currently being built
