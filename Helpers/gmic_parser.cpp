@@ -77,7 +77,8 @@ string getUniqueId(const string& name)
 			|| (name[i] >= '0' && name[i] <= '9'))
 			uniqueid += name[i];
 	}
-	return "gmic_" + strLowercase(uniqueid);
+    // The recommended format is the reverse domain name format of the developer, for example "uk.co.thefoundry", followed by the developer's unique name for the plug-in. e.g. "uk.co.thefoundry.F_Kronos".
+	return "eu.gmic." + uniqueid;
 }
 
 static
