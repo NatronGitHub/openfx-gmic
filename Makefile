@@ -1,15 +1,17 @@
 SUBDIRS = GMIC_OFX
 
-all: sources subdirs
+GITSOURCES = CImg.h gmic.cpp gmic.h gmic_stdlib.h gmic_libc.cpp gmic_libc.h gmic_stdlib_gmic.h
 
-.PHONY: subdirs clean install uninstall $(SUBDIRS)
+all: subdirs
+
+.PHONY: sources subdirs clean install uninstall $(SUBDIRS)
 
 nomulti:
 	$(MAKE) SUBDIRS="$(SUBDIRS_NOMULTI)"
 
 subdirs: $(SUBDIRS)
 
-$(SUBDIRS):
+$(SUBDIRS): sources
 	(cd $@ && $(MAKE))
 
 clean:
@@ -17,6 +19,7 @@ clean:
 	  echo "(cd $$i && $(MAKE) $@)"; \
 	  (cd $$i && $(MAKE) $@); \
 	done
+	rm $(GITSOURCES)
 
 install:
 	@for i in $(SUBDIRS) ; do \
@@ -29,10 +32,6 @@ uninstall:
 	  echo "(cd $$i && $(MAKE) $@)"; \
 	  (cd $$i && $(MAKE) $@); \
 	done
-
-GITSOURCES = gmic.cpp gmic_libc.cpp gmic_plugin.cpp
-
-.PHONY: sources
 
 sources: $(GITSOURCES)
 
@@ -70,6 +69,3 @@ gmic_libc.h:
 
 gmic_stdlib_gmic.h:
 	curl -s -S -o $@ https://raw.githubusercontent.com/dtschump/gmic-community/$(GMICCOMMUNITYVERSION)/libcgmic/$@
-
-realclean:
-	rm CImg.h gmic.cpp gmic.h gmic_stdlib.h
