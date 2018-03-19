@@ -427,6 +427,7 @@ static void setParamData(int pluginIndex, MyInstanceData* myData)
 #endif
 
 // tells the host what region we are capable of filling
+static
 OfxStatus getSpatialRoD(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
 	// retrieve any instance data associated with this effect
@@ -445,6 +446,7 @@ OfxStatus getSpatialRoD(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPro
 }
 
 // tells the host how much of the input we need to fill the given window
+static
 OfxStatus getSpatialRoI(int /*pluginIndex*/, OfxImageEffectHandle /*effect*/, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
 	// get the RoI the effect is interested in from inArgs
@@ -460,6 +462,7 @@ OfxStatus getSpatialRoI(int /*pluginIndex*/, OfxImageEffectHandle /*effect*/, Of
 // Tells the host how many frames we can fill, only called in the general context.
 // This is actually redundant as this is the default behaviour, but for illustrative
 // purposes.
+static
 OfxStatus getTemporalDomain(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPropertySetHandle /*inArgs*/, OfxPropertySetHandle outArgs)
 {
 	MyInstanceData *myData = getMyInstanceData(effect);
@@ -504,9 +507,9 @@ static OfxStatus isIdentity(int /*pluginIndex*/, OfxImageEffectHandle /*effect*/
 	return kOfxStatReplyDefault;
 }
 
+#ifdef ABOUT_DIALOG
 static void showAboutDialog(int pluginIndex, MyInstanceData* /*myData*/)
 {
-#ifdef ABOUT_DIALOG
 	try
 	{
 		// normal about dialog
@@ -523,8 +526,8 @@ static void showAboutDialog(int pluginIndex, MyInstanceData* /*myData*/)
 	catch(...)
 	{
 	}
-#endif
 }
+#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 // function called when the instance has been changed by anything
@@ -632,6 +635,8 @@ public:
 	};
 };
 
+#if defined(PLANAR_BUFFER) && !defined(NO_MULTITHREADED_CONVERSION)
+static
 void convert_RGBA8P_to_RGBA8(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -653,6 +658,7 @@ void convert_RGBA8P_to_RGBA8(ConvertData& data, const int startLine, const int e
 	}
 }
 
+static
 void convert_RGBA8P_to_RGBA32(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -674,6 +680,7 @@ void convert_RGBA8P_to_RGBA32(ConvertData& data, const int startLine, const int 
 	}
 }
 
+static
 void convert_RGBA8_to_RGBA8P(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -694,7 +701,9 @@ void convert_RGBA8_to_RGBA8P(ConvertData& data, const int startLine, const int e
 		}
 	}
 }
+#endif // PLANAR_BUFFER
 
+static
 void convert_RGBA32P_to_RGBA32(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -716,6 +725,8 @@ void convert_RGBA32P_to_RGBA32(ConvertData& data, const int startLine, const int
 	}
 }
 
+#if 0
+static
 void convert_RGBA32_to_RGBA32(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -730,6 +741,9 @@ void convert_RGBA32_to_RGBA32(ConvertData& data, const int startLine, const int 
 		}
 	}
 }
+#endif
+
+static
 void convert_RGBA32P_to_RGBA8(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -751,6 +765,7 @@ void convert_RGBA32P_to_RGBA8(ConvertData& data, const int startLine, const int 
 	}
 }
 
+static
 void convert_RGBA32_to_RGBA32P(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -772,6 +787,8 @@ void convert_RGBA32_to_RGBA32P(ConvertData& data, const int startLine, const int
 	}
 }
 
+#ifndef PLANAR_BUFFER
+static
 void convert_RGBA8_to_RGBA32(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -788,7 +805,9 @@ void convert_RGBA8_to_RGBA32(ConvertData& data, const int startLine, const int e
 		}
 	}
 }
+#endif // !PLANAR_BUFFER
 
+static
 void convert_RGBA8_to_RGBA32P(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -806,6 +825,8 @@ void convert_RGBA8_to_RGBA32P(ConvertData& data, const int startLine, const int 
 	}
 }
 
+#ifndef PLANAR_BUFFER
+static
 void convert_RGBA32_to_RGBA8(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -822,7 +843,10 @@ void convert_RGBA32_to_RGBA8(ConvertData& data, const int startLine, const int e
 		}
 	}
 }
+#endif // !PLANAR_BUFFER
 
+#if defined(PLANAR_BUFFER) && !defined(NO_MULTITHREADED_CONVERSION)
+static
 void convert_RGBA32_to_RGBA8P(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
@@ -839,6 +863,7 @@ void convert_RGBA32_to_RGBA8P(ConvertData& data, const int startLine, const int 
 		}
 	}
 }
+#endif
 
 // the process code that the host sees
 static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
@@ -1683,6 +1708,7 @@ static OfxPluginEntryPoint* pluginMainNthFunc(int nth)
 }
 #undef NTHFUNC
 
+static
 void initPlugins()
 {
 	int n = getNofPlugins();

@@ -117,6 +117,7 @@ using namespace reduxfx;
 #endif
 
 
+static
 string get_gmic_rc_path()
 {
 	string path;
@@ -203,21 +204,21 @@ void* createCustomGlobalData() { return new MyGlobalData(); }
 void destroyCustomGlobalData(void* customGlobalDataP) { delete (MyGlobalData*)customGlobalDataP; }
 void* createCustomSequenceData() { return new MySequenceData(); }
 void destroyCustomSequenceData(void* customSequenceDataP) { delete (MySequenceData*)customSequenceDataP; }
-void* flattenCustomSequenceData(void* customUnflatSequenceDataP, int& flatSize) { return NULL; }
-void* unflattenCustomSequenceData(void* customSequenceDataP, int flatSize) { return new MySequenceData(); }
+void* flattenCustomSequenceData(void* /*customUnflatSequenceDataP*/, int& /*flatSize*/) { return NULL; }
+void* unflattenCustomSequenceData(void* /*customSequenceDataP*/, int /*flatSize*/) { return new MySequenceData(); }
 
-int pluginSetdown(GlobalData* globalDataP, ContextData* contextDataP) { return 0; }
+int pluginSetdown(GlobalData* /*globalDataP*/, ContextData* /*contextDataP*/) { return 0; }
 
-int pluginSetup(GlobalData* globalDataP, ContextData* contextDataP)
+int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 {
 	globalDataP->scale = 255.f;
 	globalDataP->buttonName = "Reload";
 
-	MyGlobalData* myGlobalDataP = (MyGlobalData*)globalDataP->customGlobalDataP;
 
 	EffectData effectData;
 	effectData.multiLayer = true;
 #ifdef AE_PLUGIN
+	MyGlobalData* myGlobalDataP = (MyGlobalData*)globalDataP->customGlobalDataP;
 	string filename = globalDataP->pluginFilename;
 	int pos = (int)filename.find_last_of(".");
 	if (pos > 0) filename = filename.substr(0, pos);
@@ -325,14 +326,14 @@ int pluginSetup(GlobalData* globalDataP, ContextData* contextDataP)
 #define PARAM_PREVIEW (globalDataP->nofParams - 3)
 #define PARAM_VERBOSITY (globalDataP->nofParams - 2)
 
-int pluginParamChange(int index, SequenceData* sequenceDataP, GlobalData* globalDataP, ContextData* contextDataP)
+int pluginParamChange(int index, SequenceData* sequenceDataP, GlobalData* globalDataP, ContextData* /*contextDataP*/)
 {
 	if (index == PARAM_RESIZE) {
 		globalDataP->inplaceProcessing = PAR_VAL(index) < 1.f;
 	} else {
-		MyGlobalData* myGlobalDataP = (MyGlobalData*)globalDataP->customGlobalDataP;
 
 #ifdef AE_PLUGIN	
+		MyGlobalData* myGlobalDataP = (MyGlobalData*)globalDataP->customGlobalDataP;
 		string cmd = PAR_VAL(PARAM_PREVIEW) > 0 ? myGlobalDataP->effectData.preview_command:myGlobalDataP->effectData.command;
 #else
 		string cmd = PAR_VAL(PARAM_PREVIEW) > 0 ? pluginGlobalData.pluginData[globalDataP->pluginIndex].preview_command:pluginGlobalData.pluginData[globalDataP->pluginIndex].command;
