@@ -102,7 +102,7 @@
 
 #include "gmic_parser.h"
 #include "gmic_libc.h"
-#include <math.h>
+#include <cmath>
 
 #include "RFX_FileUtils.h"
 
@@ -111,7 +111,7 @@ using namespace reduxfx;
 #ifdef OFX_PLUGIN
 #include "gmic_stdlib_gmic.h"
 #include <sstream>
-#include <stdlib.h>
+#include <cstdlib>
 #ifdef DEBUG
 #include <iostream>
 #endif

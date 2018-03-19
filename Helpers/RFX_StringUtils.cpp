@@ -56,7 +56,7 @@
 #include <vector>
 #include <fstream>
 #include <cassert>
-#include <string.h>
+#include <cstring>
 
 using namespace std;
 

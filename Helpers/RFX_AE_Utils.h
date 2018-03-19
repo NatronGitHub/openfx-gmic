@@ -50,8 +50,9 @@
 #ifndef _RFX_AE_UTILS_H
 #define _RFX_AE_UTILS_H
 
-#include <math.h>
+#include <cmath>
 #include <string>
+
 #include "RFX_Utils.h"
 #include "RFX_Parameter.h"
 #include "RFX_StringUtils.h"

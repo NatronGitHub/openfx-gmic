@@ -52,8 +52,9 @@
 #include <stdexcept>
 #include <new>
 #include <cstring>
-#include <math.h>
-#include <stdlib.h>
+#include <cmath>
+#include <cstdlib>
+#include <cstdio>
 #include "ofxImageEffect.h"
 #include "ofxMemory.h"
 #include "ofxUtilities.H"
@@ -505,6 +506,7 @@ static OfxStatus isIdentity(int /*pluginIndex*/, OfxImageEffectHandle /*effect*/
 
 static void showAboutDialog(int pluginIndex, MyInstanceData* /*myData*/)
 {
+#ifdef ABOUT_DIALOG
 	try
 	{
 		// normal about dialog
@@ -513,16 +515,15 @@ static void showAboutDialog(int pluginIndex, MyInstanceData* /*myData*/)
 		strReplace(sDescription, "\\n", "\n");
 		sDescription = sDescription.substr(0, 201);
 		string sName = string(PLUGIN_NAME);
-		char msg[250];
+		char msg[1024];
 		sprintf(msg, "%s %d.%d\r%s", sName.c_str(), MAJOR_VERSION, MINOR_VERSION, sDescription.c_str());
-#ifdef ABOUT_DIALOG
 		CTMsgDlg dlg(400, 150);
 		dlg.ShowDialog(sName, string(msg), "", "", "OK", false, "");
-#endif
 	}
 	catch(...)
 	{
 	}
+#endif
 }
 
 ////////////////////////////////////////////////////////////////////////////////
