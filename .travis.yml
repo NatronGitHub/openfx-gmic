@@ -2,7 +2,7 @@ env:
   global:
    # The next declaration is the encrypted COVERITY_SCAN_TOKEN, created
    #   via the "travis encrypt" command using the project repo's public key
-   - secure: "iwtzaP52fgbTQDzUVroo6+YZ225LdX5etj9AZxwJrmR8CO8G57aLofP3mXAkmWixGHMGGHXhTOcvFcffCNxOyTf6v1j8r3cxChzswj1FEUVq1+NUHysIaRwp/Q2ldJ09Db4OfKM2Xf7S6nSgrOUR1QZh8rKqexynW+NbhRZrP+s="
+   - secure: "BHTVqzY9M4J483xNY2wzKX2FGMs6nzFCUnOLPCZxPImox64q1KX/jt8EYjuCjB52UhRm86Wh+tbTONnLZxEbBeLkzvZpM+8yi3wuVf3KUqedykD1p1SHo+ZDnWLt+H3nRpF2TcaJP3XDRJ16Hkf7udOxwfTAHPiDm/v3UR1OvQ0vn/oUBA1ghzh93HbHf1ZTOQRRuNp0rI1Me1HX17MX2IeLvGD1LXx/VzxI6pQVIw/7/EXJfs/f9Gc7zx9cv6fjS3umWg+Y7rEYvc97kniGZ0ZRrWbJPuFNv0XKmls78LrBLmnG5NyAWiYPE/3I4Fn4qgz689r/O7b60YSqaQiU9zbBrEDDCs+GsF1FgSdoPJaa/Ks6UY8xVUWohZiC81o7OtGSiX8bnoYOD1zvY6QYG8AUrkp1Wbxem/nZB38UeeJUI3OMNBjYnISV6eHO7dvIXdy27gj8ib+nVpAGMUXj6bNVLvIFT2z7MT+9RJL3AC1Id9PjkmmDk101MRqdGCT9lkC93PnxSBYuzLSmpYMjt0RrEaPPa6iMHIDK5xoo1UiPe1TbucYrk/Tvk2SIq6qHAK7fJ0ZKmdE2YafGzFAMIQ8xP/rJTpHPhSHpMe9D4GE3huG8hVXGgHmy/OHirQtmJzRvZ2wgFtA2Akrb5UmolJmHR5msY3zsY6d1Oq/mwaA="
    # Coverity run condition (avoid matrix multiple runs), need customized
    # build script. Need an update if new matrix cases.
    - coverity_scan_run_condition='"$CC" = gcc -a "$TRAVIS_OS_NAME" != osx'
