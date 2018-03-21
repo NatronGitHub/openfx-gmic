@@ -122,7 +122,7 @@ void processNote(const string& s, EffectData& cd)
     const string dst_prefix = dst_prefix_c;
 	string r = s;
 	// r = replaceHtml(r);
-	strReplace(r, "note(0,", "note(");
+	strReplace(r, "note(0,", "note(", false, true);
 	string n = strLowercase(r);
 	int p1 = (int)n.find("note(");
 	if (p1 >= 0) {
@@ -266,18 +266,18 @@ string gmic_parse_single(const string& content, EffectData& cd)
 			if (line.substr(0, dst_prefix.size() + 3) != dst_prefix + " : ") {
 				processCommand(line, cd);
 			} else {
-				n = strLowercase(n);
+				//n = strLowercase(n);
 				if (inNote) {
 					processNote(line, cd);
 					if (n != "" && (n[n.size() - 1] == ')' || n[n.size() - 1] == ']' || n[n.size() - 1] == '}')) {
 						inNote = false;
 					}
 				} else {
-					strReplace(n, "note{", "note(");
-					strReplace(n, "note[", "note(");
-					strReplace(n, "link(", "note(");
-					strReplace(n, "link{", "note(");
-					strReplace(n, "link[", "note(");
+					strReplace(n, "note{", "note(", false, true);
+					strReplace(n, "note[", "note(", false, true);
+					strReplace(n, "link(", "note(", false, true);
+					strReplace(n, "link{", "note(", false, true);
+					strReplace(n, "link[", "note(", false, true);
 					sPos = (int)n.find("note(");
 					if (sPos >= 0 || inNote) {
 						if (n != "" &&
