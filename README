@@ -11,7 +11,7 @@ This is a very early test release, use at your own risk! Expect crashes and weir
 Feel free to report any errors you encounter, but be aware that this is pretty much still a proof-of-concept prototype interface.
 
 WHAT IS IT?
-This is an attempt to make (part of) the functionality of the G'MIC open-source framework for image processing (http://www.gmic.eu) available in video editing hosts.
+This is an attempt to make (part of) the functionality of the G'MIC open-source framework for image processing (http://gmic.eu) available in video editing hosts.
 Currently supported hosts are:
   Adobe After Effects (CS6 or higher)
   Adobe Premiere Pro (CS6 or higher)

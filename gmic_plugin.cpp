@@ -51,7 +51,7 @@
 #define	MAJOR_VERSION		0
 #define	MINOR_VERSION		3
 #define	BUILD_VERSION		2
-#define PLUGIN_DESCRIPTION	"Wrapper for the G'MIC framework (http://www.gmic.eu) written by Tobias Fleischer (http://www.reduxfx.com).";
+#define PLUGIN_DESCRIPTION	"Wrapper for the G'MIC framework (http://gmic.eu) written by Tobias Fleischer (http://www.reduxfx.com).";
 
 #ifdef OFX_PLUGIN
 #define PLUGIN_NAME	        "GMIC"
