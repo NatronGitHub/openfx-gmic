@@ -242,7 +242,9 @@ string gmic_parse_single(const string& content, EffectData& cd)
 {
 	const string src_prefix_old = src_prefix_old_c;
 	const string src_prefix = src_prefix_c;
+	const string src_prefix_en = src_prefix + "_en";
 	const string dst_prefix = dst_prefix_c;
+	const string dst_prefix_en = dst_prefix + "_en";
 	string result;
 	bool inNote = false;
 	bool inChoice = false;
@@ -255,10 +257,13 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	vector<string> lines;
 	strSplit(content, '\n', lines);
 	for (int i = 0; i < (int)lines.size(); i++) {
+        printf("[%d]: %s\n", i,lines[i].c_str());
 		string line = strTrim(lines[i], " \r\n\t");
 		if (line.size() > 0 && line[0] != '#') result += line + "\n";
 		strReplace(line, src_prefix_old, dst_prefix);
+		strReplace(line, src_prefix_en, dst_prefix);
 		strReplace(line, src_prefix, dst_prefix);
+		strReplace(line, dst_prefix_en, dst_prefix);
 		string n = strTrim(line, " \r\n\t");
 		int sPos = (int)line.find(":");
 		int sPos2 = (int)line.find("#");
@@ -350,18 +355,13 @@ string gmic_parse_single(const string& content, EffectData& cd)
 		cd.multiLayer = true;
 	else
 		cd.multiLayer = false;
-	cd.uniqueId = getUniqueId(cd.name);
 	cd.notes = strTrim(cd.notes, "\n");
 
-#ifdef OFX_PLUGIN
-	strReplace(cd.name, "&amp;", "&&");
-	strReplace(cd.category, "&amp;", "&&");
-	strReplace(cd.notes, "&amp;", "&&");
-#else
-	strReplace(cd.name, "&amp;", "&");
-	strReplace(cd.category, "&amp;", "&");
-	strReplace(cd.notes, "&amp;", "&");
-#endif
+	cd.name = strRemoveXmlTags(cd.name, true);
+	cd.category = strRemoveXmlTags(cd.category, true);
+	cd.notes = strRemoveXmlTags(cd.notes, true);
+	cd.uniqueId = getUniqueId(cd.name);
+
 	return result;
 }
 
@@ -377,6 +377,7 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 	int l = 0;
 	while (getline(ss, line)) {
 		if ( (line.substr(0, src_prefix.size() + 1) == src_prefix + " ") ||
+             (line.substr(0, src_prefix.size() + 4) == src_prefix + "_en ") ||
              (line.substr(0, src_prefix_old.size() + 1) == src_prefix_old + " ") ) {
 			if (line != "") line2 += line + "\n";
 			l++;
@@ -392,10 +393,10 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 						strReplace(line2, src_prefix_old, dst_prefix);
                         gmic_parse_single(line2, cd);
 					}
-
+                    printf("%s/%s\n", cd.category.c_str(), cd.name.c_str());
 					bool doOutput = true;
 					// skip entries from the about category
-					if ((int)strLowercase(cd.category).find("about") >= 0) {
+					if (cd.category == "About" && cd.uniqueId != "eu.gmic.AboutGMIC") {
 						doOutput = false;
 					} else if ((int)strLowercase(cd.category).find("various") >= 0) {
 						doOutput = false;
@@ -405,13 +406,6 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 						doOutput = false;
 					}
 					if (doOutput && cd.name != "" && l > 1) {
-						cd.name = "G'MIC " + cd.name;
-						strReplace(cd.name, "[", "");
-						strReplace(cd.name, "]", "");
-						strReplace(cd.name, " - ", " ");
-						strReplace(cd.name, "inverse", "inv.");
-						//cd.category = "G'MIC " + cd.category;
-cd.category = "GMIC/" + cd.category;
 						if (cds) cds->push_back(cd);
 						if (lines) lines->push_back(line2);
 					}
@@ -423,6 +417,20 @@ cd.category = "GMIC/" + cd.category;
 			}
 		}
 	}
+    for (vector<EffectData>::iterator it = cds->begin(); it != cds->end(); ++it) {
+        // post-process
+        EffectData& cd = *it;
+        if (cd.category == "About") {
+            cd.category = "GMIC";
+        } else {
+            cd.category = "GMIC/" + cd.category;
+            cd.name = "G'MIC " + cd.name;
+        }
+        strReplace(cd.name, "[", "");
+        strReplace(cd.name, "]", "");
+        strReplace(cd.name, " - ", " ");
+        strReplace(cd.name, "inverse", "inv.");
+    }
 }
 
 }
