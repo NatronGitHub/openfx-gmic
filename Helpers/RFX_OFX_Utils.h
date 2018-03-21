@@ -58,6 +58,9 @@
 #include "ofxImageEffect.h"
 #include "ofxMemory.h"
 #include "ofxUtilities.H"
+#ifdef OFX_EXTENSIONS_NATRON
+#include "ofxNatron.h"
+#endif
 
 #ifndef NO_MULTITHREADED_CONVERSION
 #include <thread>
@@ -157,6 +160,7 @@ OfxInteractSuiteV1		*gInteractHost = 0;
 
 // some flags about the host's behaviour
 int gHostSupportsMultipleBitDepths = false;
+int gHostIsNatron = false;
 
 // GlobalData* globalDataP = NULL;
 vector<OfxPlugin> gPlugins;
@@ -426,10 +430,25 @@ static void setParamData(int pluginIndex, MyInstanceData* myData)
 }
 #endif
 
+static
+bool
+renderScaleIsOne(OfxPropertySetHandle inArgs)
+{
+    double renderScale[2];
+    OfxStatus stat = gPropHost->propGetDoubleN(inArgs, kOfxImageEffectPropRenderScale, 2, renderScale);
+    if (stat == kOfxStatOK && (renderScale[0] != 1. || renderScale[1] != 1.)) {
+        return false;
+    }
+    return true;
+}
+
 // tells the host what region we are capable of filling
 static
 OfxStatus getSpatialRoD(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
+    if (!renderScaleIsOne(inArgs)) {
+        return kOfxStatFailed;
+    }
 	// retrieve any instance data associated with this effect
 	MyInstanceData *myData = getMyInstanceData(effect);
 
@@ -449,6 +468,9 @@ OfxStatus getSpatialRoD(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPro
 static
 OfxStatus getSpatialRoI(int /*pluginIndex*/, OfxImageEffectHandle /*effect*/, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
+    if (!renderScaleIsOne(inArgs)) {
+        return kOfxStatFailed;
+    }
 	// get the RoI the effect is interested in from inArgs
 	OfxRectD roi;
 	gPropHost->propGetDoubleN(inArgs, kOfxImageEffectPropRegionOfInterest, 4, &roi.x1);
@@ -502,8 +524,11 @@ static OfxStatus getClipPreferences(int /*pluginIndex*/, OfxImageEffectHandle ef
 }
 
 // are the settings of the effect performing an identity operation
-static OfxStatus isIdentity(int /*pluginIndex*/, OfxImageEffectHandle /*effect*/, OfxPropertySetHandle /*inArgs*/, OfxPropertySetHandle /*outArgs*/)
+static OfxStatus isIdentity(int /*pluginIndex*/, OfxImageEffectHandle /*effect*/, OfxPropertySetHandle inArgs, OfxPropertySetHandle /*outArgs*/)
 {
+    if (!renderScaleIsOne(inArgs)) {
+        return kOfxStatFailed;
+    }
 	return kOfxStatReplyDefault;
 }
 
@@ -868,6 +893,9 @@ void convert_RGBA32_to_RGBA8P(ConvertData& data, const int startLine, const int 
 // the process code that the host sees
 static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
+    if (!renderScaleIsOne(inArgs)) {
+        return kOfxStatFailed;
+    }
 	ContextData contextData;
 	setContextData(contextData, instance, inArgs, outArgs, pluginIndex);
 
@@ -1411,7 +1439,7 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 	// set the component types we can handle on our output
 	gPropHost->propSetString(props, kOfxImageEffectPropSupportedComponents, 0, kOfxImageComponentRGBA);
 
-	gPropHost->propSetString(props, kOfxImageEffectPluginRenderThreadSafety, 0, kOfxImageEffectRenderUnsafe);//kOfxImageEffectRenderInstanceSafe);
+    gPropHost->propSetString(props, kOfxImageEffectPluginRenderThreadSafety, 0, kOfxImageEffectRenderFullySafe); // kOfxImageEffectRenderUnsafe);//kOfxImageEffectRenderInstanceSafe);
 	gPropHost->propSetInt(props, kOfxImageEffectPropSupportsTiles, 0, 0);
 	gPropHost->propSetInt(props, kOfxImageEffectPluginPropHostFrameThreading, 0, 0);
 	gPropHost->propSetInt(props, kOfxImageEffectPropSupportsMultiResolution, 0, 0);
@@ -1545,12 +1573,68 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 	return kOfxStatOK;
 }
 
+// Check the effect descriptor for potentially bad XML in the OFX Plugin cache.
+//
+// The function that wrote string properties to the OFX plugin cache used to
+// escape only que quote (") character. As a result, if one of the string
+// properties in the Image Effect descriptor contains special characters,
+// the host may be unable to read the plugin cache, giving an "xml error 4"
+// (error 4 is XML_ERROR_INVALID_TOKEN).
+//
+// The plugin label and grouping may not contain any of these bad characters.
+// The plugin description may contain characters that do not corrupt the XML,
+// because kOfxActionDescribe is usually called at plugin loading.
+//
+// Version with the bug:
+// https://github.com/ofxa/openfx/blob/34ff595a2918e9e4065603d7fc4d500ae9efc421/HostSupport/include/ofxhXml.h
+// Version without the bug:
+// https://github.com/ofxa/openfx/blob/64ba52fff61894759fbf3942b92659b02b2b17cd/HostSupport/include/ofxhXml.h
+//
+// With the old version:
+// - All characters within 0x01..0x1f and 0x7F..0x9F, except \t \b \r (0x09 0x0A 0X0D) are forbidden
+//   in label and grouping, because these may be used to build the GUI before loading the plugin.
+//   They may appear in the description, although it is not recommended.
+// - The '<' and '&' characters generate bad XML in all cases
+// - The '>' and '\'' characters are tolerated by the expat parser, although the XML is not valid
+static string validateXMLString(std::string const & s)
+{
+    string r;
+    for (size_t i=0;i<s.size();i++) {
+        // The are exactly five characters which must be escaped
+        // http://www.w3.org/TR/xml/#syntax
+        switch (s[i]) {
+            case '\t':
+            case '\n':
+            case '\r':
+            case '"':
+            case '\'':
+            case '>':
+                break;
+            case '<':
+                break;
+            case '&':
+                break;
+            default: {
+                unsigned char c = (unsigned char)(s[i]);
+                if ( !((0x01 <= c && c <= 0x1f) || (0x7F <= c && c <= 0x9F)) ) {
+                    r += c;
+                }
+            } break;
+        }
+    }
+    return r;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // the plugin's description routine
 static OfxStatus describe(int pluginIndex, OfxImageEffectHandle effect)
 {
 	// record a few host features
 	gPropHost->propGetInt(gHost->host, kOfxImageEffectPropSupportsMultipleClipDepths, 0, &gHostSupportsMultipleBitDepths);
+#ifdef OFX_EXTENSIONS_NATRON
+	gPropHost->propGetInt(gHost->host, kNatronOfxHostIsNatron, 0, &gHostIsNatron);
+#endif
+
 
 	// get the property handle for the plugin
 	OfxPropertySetHandle effectProps;
@@ -1568,9 +1652,16 @@ static OfxStatus describe(int pluginIndex, OfxImageEffectHandle effect)
 	gPropHost->propSetString(effectProps, kOfxImageEffectPropSupportedPixelDepths, 1, kOfxBitDepthByte);
 
 	// set some labels and the group it belongs to
-	gPropHost->propSetString(effectProps, kOfxPropLabel, 0, globalData[pluginIndex].pluginInfo.name.c_str());
-	gPropHost->propSetString(effectProps, kOfxImageEffectPluginPropGrouping, 0, globalData[pluginIndex].pluginInfo.category.c_str());
-	gPropHost->propSetString(effectProps, kOfxPropPluginDescription, 0, globalData[pluginIndex].pluginInfo.description.c_str());
+	if (gHostIsNatron) {
+		gPropHost->propSetString(effectProps, kOfxPropLabel, 0, globalData[pluginIndex].pluginInfo.name.c_str());
+		gPropHost->propSetString(effectProps, kOfxImageEffectPluginPropGrouping, 0, globalData[pluginIndex].pluginInfo.category.c_str());
+		gPropHost->propSetString(effectProps, kOfxPropPluginDescription, 0, globalData[pluginIndex].pluginInfo.description.c_str());
+	} else {
+		// workaround for bugs in the OpenFX plugin cache, e.g. in Nuke
+		gPropHost->propSetString(effectProps, kOfxPropLabel, 0, validateXMLString(globalData[pluginIndex].pluginInfo.name).c_str());
+		gPropHost->propSetString(effectProps, kOfxImageEffectPluginPropGrouping, 0, validateXMLString(globalData[pluginIndex].pluginInfo.category).c_str());
+		gPropHost->propSetString(effectProps, kOfxPropPluginDescription, 0, validateXMLString(globalData[pluginIndex].pluginInfo.description).c_str());
+	}
 
 	// define the contexts we can be used in
 	gPropHost->propSetString(effectProps, kOfxImageEffectPropSupportedContexts, 0, kOfxImageEffectContextFilter);

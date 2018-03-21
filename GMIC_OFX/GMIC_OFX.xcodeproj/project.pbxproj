@@ -488,6 +488,7 @@
 					gmic_build,
 					"gmic_is_parallel=1",
 					"cimg_library=cimg_library_openfx_gmic",
+					OFX_PLUGIN,
 				);
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
@@ -524,6 +525,7 @@
 					gmic_build,
 					"gmic_is_parallel=1",
 					"cimg_library=cimg_library_openfx_gmic",
+					OFX_PLUGIN,
 				);
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
