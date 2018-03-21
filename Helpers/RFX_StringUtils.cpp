@@ -390,9 +390,17 @@ string strRemoveXmlTags(const string& s, bool replaceEntities)
 	}
 	if (replaceEntities) {
 		strReplace(r, "&amp;", "&");
-        strReplace(r, "\\251", "(C)");
-        //	strReplace(r, "&#244;", "ô");
-		//strReplace(r, "&#233;", "e");
+		strReplace(r, "\\251", "(C)");
+		strReplace(r, "&#224;", "a"); // agrave
+		strReplace(r, "&#225;", "a"); // aacute
+		strReplace(r, "&#228;", "a"); // auml
+		strReplace(r, "&#229;", "a"); // aring
+		strReplace(r, "&#231;", "c"); // ccedil
+		strReplace(r, "&#232;", "e"); // egrave
+		strReplace(r, "&#233;", "e"); // eacute
+		strReplace(r, "&#239;", "i"); // iuml
+		strReplace(r, "&#244;", "o"); // ocirc
+		strReplace(r, "&#252;", "u"); // uuml
 		for (int i = 230; i < 255; i++) {
 			unsigned char c = (unsigned char)i;
 			string ss; ss += c;
