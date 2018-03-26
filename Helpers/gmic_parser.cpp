@@ -257,7 +257,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	vector<string> lines;
 	strSplit(content, '\n', lines);
 	for (int i = 0; i < (int)lines.size(); i++) {
-        printf("[%d]: %s\n", i,lines[i].c_str());
+		//printf("[%d]: %s\n", i,lines[i].c_str());
 		string line = strTrim(lines[i], " \r\n\t");
 		if (line.size() > 0 && line[0] != '#') result += line + "\n";
 		strReplace(line, src_prefix_old, dst_prefix);
@@ -393,7 +393,7 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 						strReplace(line2, src_prefix_old, dst_prefix);
                         gmic_parse_single(line2, cd);
 					}
-                    printf("%s/%s\n", cd.category.c_str(), cd.name.c_str());
+					//printf("%s/%s\n", cd.category.c_str(), cd.name.c_str());
 					bool doOutput = true;
 					// skip entries from the about category
 					if (cd.category == "About" && cd.uniqueId != "eu.gmic.AboutGMIC") {
