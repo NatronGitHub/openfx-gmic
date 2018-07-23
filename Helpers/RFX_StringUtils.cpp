@@ -151,7 +151,7 @@ string intToString(const int i)
 string floatToString(const float i)
 {
     stringstream ss;
-    ss << i;
+    ss << setprecision(8) << i;
     return ss.str();
 }
 

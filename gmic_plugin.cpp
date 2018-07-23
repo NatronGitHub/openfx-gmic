@@ -1,3 +1,4 @@
+/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:t; tab-width:2; c-basic-offset: 2 -*- */
 /*
  #
  #  File        : gmic_plugin.cpp
@@ -47,11 +48,31 @@
  #
 */
 
+// History:
+// 0.3.2:
+// - original version from https://github.com/dtschump/gmic-community/tree/master/gmic_plugin
+// 1.0.0: (these changes were only tested for the OpenFX plugin)
+// - Source input is now always the topmost G'MIC layer, other inputs are below
+// - handle separator() as a PT_SEPARATOR parameter
+// - handle point(...)
+// - handle note(...) as a label parameter (PT_TEXT with flags=4)
+// - handle filein(..) and fileout(...)
+// - color(...) is now RGBA
+// - better handle link(...)
+// - correctly handle multiple parameters on the same line, or multi-line parameters of any kind.
+// - the G'MIC command-line is only computed when rendering, not at each param change (because converting pixel coords to % for point(...) requires image size)
+// - bug fixes
+//
+// TODO:
+// - there may be any number of gmic parameters per line, see for example fx_hearts
+// - why doesn't "mineral mosaic" show the note after the separator?
+//
 // version, name and description for the plugin
-#define	MAJOR_VERSION		0
-#define	MINOR_VERSION		3
-#define	BUILD_VERSION		2
-#define PLUGIN_DESCRIPTION	"Wrapper for the G'MIC framework (http://gmic.eu) written by Tobias Fleischer (http://www.reduxfx.com).";
+#define	MAJOR_VERSION		1
+#define	MINOR_VERSION		0
+#define	BUILD_VERSION		0
+
+#define PLUGIN_DESCRIPTION	"Wrapper for the G'MIC framework (http://gmic.eu) written by Tobias Fleischer (http://www.reduxfx.com) and Frederic Devernay.";
 
 #ifdef OFX_PLUGIN
 #define PLUGIN_NAME	        "GMIC"
@@ -183,7 +204,7 @@ public:
 class MySequenceData
 {
 public:
-	string command;
+	//string command;
 	gmic_interface_options options;
 
 	MySequenceData() {
@@ -237,7 +258,11 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 	
 	globalDataP->inplaceProcessing = false;
 
+#ifdef AE_PLUGIN
 	globalDataP->param[0] = Parameter("Input", "", PT_LAYER);
+#else
+	globalDataP->param[0] = Parameter(kOfxImageEffectSimpleSourceClipName, "", PT_LAYER);
+#endif
 	int p = 1;
 	for (int i = 0; i < (int)effectData.param.size(); i++) {
 		int t = PT_FLOAT;
@@ -247,40 +272,67 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		float d2 = 0.f;
 		float d3 = 0.f;
 		float d4 = 0.f;
-		if (effectData.param[i].paramType == "color") {
+		const EffectParameter& param = effectData.param[i];
+		const std::string& name = param.name;
+		const std::string& minValue = param.minValue;
+		const std::string& maxValue = param.maxValue;
+		const std::string& defaultValue = param.defaultValue;
+		const std::string& text = param.text;
+		const std::string& paramType = param.paramType;
+		if (paramType == "color") {
 			vector<string> r;
 			t = PT_COLOR;
-			strSplit(effectData.param[i].defaultValue + "|||", '|', r);
+			strSplit(defaultValue + "|||", '|', r);
 			d1 = (float)atof(r[0].c_str()) / 255.f;
 			d2 = (float)atof(r[1].c_str()) / 255.f;
 			d3 = (float)atof(r[2].c_str()) / 255.f;
-			d4 = 1.0f;
+			d4 = (float)atof(r[2].c_str()) / 255.f;
+		} else if (paramType == "point") {
+			vector<string> r;
+			t = PT_POINT;
+			strSplit(defaultValue + "|", '|', r);
+			d1 = (float)atof(r[0].c_str());
+			d2 = (float)atof(r[1].c_str());
 		} else {
-			d1 = (float)atof(effectData.param[i].defaultValue.c_str());
+			d1 = (float)atof(defaultValue.c_str());
 			d2 = d1; d3 = d1; d4 = d1;
-		}
-		if (effectData.param[i].paramType == "const") {
-			h = true;
-			t = PT_TEXT;
-		} else if (effectData.param[i].paramType == "text") {
-			t = PT_TEXT;
-		} else if (effectData.param[i].paramType == "file") {
-			t = PT_TEXT;
-			flags = 2;
-		} else if (effectData.param[i].paramType == "folder") {
-			t = PT_TEXT;
-			flags = 3;
-		} else if (effectData.param[i].paramType == "int") {
-			t = PT_INT;
-		} else if (effectData.param[i].paramType == "bool") {
-			t = PT_BOOL;
-		} else if (effectData.param[i].paramType == "choice") {
-			t = PT_SELECT;
-		} else if (effectData.param[i].paramType == "input") {
-			t = PT_LAYER;
+			if (paramType == "bool" || paramType == "button") {
+				t = PT_BOOL;
+			} else if (paramType == "choice") {
+				t = PT_SELECT;
+				// "color" and "point": see above
+			} else if (paramType == "value") {
+				h = true;
+				t = PT_TEXT;
+			} else if (paramType == "file" || paramType == "fileout") {
+				t = PT_TEXT;
+				flags = 2;
+			} else if (paramType == "filein") {
+				t = PT_TEXT;
+				flags = 5;
+			} else if (paramType == "float") {
+				t = PT_FLOAT;
+			} else if (paramType == "folder") {
+				t = PT_TEXT;
+				flags = 3;
+			} else if (paramType == "int") {
+				t = PT_INT;
+			} else if (paramType == "note" || paramType == "link") {
+				t = PT_TEXT;
+				//text = strRemoveXmlTags(strTrim(text, " \t\r\n'\""));
+				flags = 4;
+			} else if (paramType == "text") {
+				t = PT_TEXT;
+			} else if (paramType == "separator") {
+				t = PT_SEPARATOR;
+			} else if (paramType == "input") {
+				t = PT_LAYER;
+			} else {
+				assert(false);
+			}
 		}
 		globalDataP->param[p] = Parameter(
-			effectData.param[i].name, "", t, (float)atof(effectData.param[i].minValue.c_str()), (float)atof(effectData.param[i].maxValue.c_str()), d1, d2, d3, d4, effectData.param[i].text);
+		  name, "", t, (float)atof(minValue.c_str()), (float)atof(maxValue.c_str()), d1, d2, d3, d4, text);
 		globalDataP->param[p].flags = flags;
 		if (h) globalDataP->param[p].displayStatus = DS_HIDDEN;
 		p++;
@@ -289,19 +341,38 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 //	globalDataP->param[p++] = Parameter("Dummy", PT_FLOAT);
 
 	if (effectData.multiLayer) {
-		globalDataP->param[p++] = Parameter("Ext. In 1", "", PT_LAYER);
-		globalDataP->param[p++] = Parameter("Ext. In 2", "", PT_LAYER);
-		globalDataP->param[p++] = Parameter("Ext. In 3", "", PT_LAYER);
-		globalDataP->param[p++] = Parameter("Ext. In 4", "", PT_LAYER);
+		globalDataP->param[p] = Parameter("Layer -1", "", PT_LAYER);
+		++p;
+		globalDataP->param[p] = Parameter("Layer -2", "", PT_LAYER);
+		++p;
+		globalDataP->param[p] = Parameter("Layer -3", "", PT_LAYER);
+		++p;
+		globalDataP->param[p] = Parameter("Layer -4", "", PT_LAYER);
+		++p;
 	}	
-	globalDataP->param[p] = Parameter("Command", "", PT_TEXT, 0, 0, 0, 0, 0, 0, "-blur 2"); if (hasContent) globalDataP->param[p].displayStatus = DS_HIDDEN; p++;
-	globalDataP->param[p] = Parameter("Advanced Options", "", PT_TOPIC_START); globalDataP->param[p].flags = 1; p++;
-	globalDataP->param[p++] = Parameter("Output Layer", "", PT_SELECT, 0, 10, 1, 0, 0, 0, "Merged|Layer 0|Layer 1|Layer 2|Layer 3|Layer 4|Layer 5|Layer 6|Layer 7|Layer 8|Layer 9|");
-	globalDataP->param[p++] = Parameter("Resize Mode", "", PT_SELECT, 0, 5, 1, 0, 0, 0, "Fixed (Inplace)|Dynamic|Downsample 1/2|Downsample 1/4|Downsample 1/8|Downsample 1/16");
-	globalDataP->param[p++] = Parameter("Ignore Alpha", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
-	globalDataP->param[p] = Parameter("Preview/Draft Mode", "", PT_BOOL, 0, 1, 0, 0, 0, 0, ""); if (!hasContent || effectData.command == effectData.preview_command) globalDataP->param[p].displayStatus = DS_HIDDEN; p++;
-	globalDataP->param[p++] = Parameter("Log Verbosity", "", PT_SELECT, 0, 4, 0, 0, 0, 0, "Off|Level 1|Level 2|Level 3|");
-	globalDataP->param[p++] = Parameter("Advanced Options", "", PT_TOPIC_END);
+	globalDataP->param[p] = Parameter("Command", "", PT_TEXT, 0, 0, 0, 0, 0, 0, "-blur 2");
+	if (hasContent) {
+		globalDataP->param[p].displayStatus = DS_HIDDEN;
+	}
+	++p;
+	globalDataP->param[p] = Parameter("Advanced Options", "", PT_TOPIC_START);
+	globalDataP->param[p].flags = 1;
+	++p;
+	globalDataP->param[p] = Parameter("Output Layer", "", PT_SELECT, 0, 10, 1, 0, 0, 0, "Merged|Layer 0|Layer -1|Layer -2|Layer -3|Layer -4|Layer -5|Layer -6|Layer -7|Layer -8|Layer -9|");
+	++p;
+	globalDataP->param[p] = Parameter("Resize Mode", "", PT_SELECT, 0, 5, 1, 0, 0, 0, "Fixed (Inplace)|Dynamic|Downsample 1/2|Downsample 1/4|Downsample 1/8|Downsample 1/16");
+	++p;
+	globalDataP->param[p] = Parameter("Ignore Alpha", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
+	++p;
+	globalDataP->param[p] = Parameter("Preview/Draft Mode", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
+	if (!hasContent || effectData.command == effectData.preview_command) {
+		globalDataP->param[p].displayStatus = DS_HIDDEN;
+	}
+	++p;
+	globalDataP->param[p] = Parameter("Log Verbosity", "", PT_SELECT, 0, 4, 0, 0, 0, 0, "Off|Level 1|Level 2|Level 3|");
+	++p;
+	globalDataP->param[p] = Parameter("Advanced Options", "", PT_TOPIC_END);
+	++p;
 	globalDataP->nofParams = p;
 
 	string d = effectData.notes;
@@ -326,46 +397,60 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 #define PARAM_PREVIEW (globalDataP->nofParams - 3)
 #define PARAM_VERBOSITY (globalDataP->nofParams - 2)
 
+static
+std::string
+gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP)
+{
+#ifdef AE_PLUGIN
+    MyGlobalData* myGlobalDataP = (MyGlobalData*)globalDataP->customGlobalDataP;
+    string cmd = PAR_VAL(PARAM_PREVIEW) > 0 ? myGlobalDataP->effectData.preview_command:myGlobalDataP->effectData.command;
+#else
+    string cmd = PAR_VAL(PARAM_PREVIEW) > 0 ? pluginGlobalData.pluginData[globalDataP->pluginIndex].preview_command:pluginGlobalData.pluginData[globalDataP->pluginIndex].command;
+#endif
+
+    if (cmd == "") {
+        cmd = PAR_TXT(PARAM_COMMAND);
+    } else {
+        cmd = "-" + strTrim(cmd, " \t\r\n") + " ";
+        for (int i = 1; i < globalDataP->nofParams - 6; i++) {
+            if (PAR_TYPE(i) == PT_INT || PAR_TYPE(i) == PT_BOOL || PAR_TYPE(i) == PT_SELECT)
+                cmd += intToString((int)PAR_VAL(i)) + ",";
+            else if (PAR_TYPE(i) == PT_FLOAT)
+                cmd += floatToString(PAR_VAL(i)) + ",";
+            else if (PAR_TYPE(i) == PT_TEXT) {
+                if (i == PARAM_COMMAND && globalDataP->param[PARAM_COMMAND].displayStatus == DS_HIDDEN) continue;
+                if (globalDataP->param[i].flags == 4) {
+                    // label/note
+                    continue;
+                }
+                string s = PAR_TXT(i);
+                cmd += "\"" + s + "\",";
+            } else if (PAR_TYPE(i) == PT_COLOR) {
+                cmd +=
+                floatToString((255.f * PAR_CH(i, 0))) + "," +
+                floatToString((255.f * PAR_CH(i, 1))) + "," +
+                floatToString((255.f * PAR_CH(i, 2))) + ",";
+                floatToString((255.f * PAR_CH(i, 3))) + ",";
+            } else if (PAR_TYPE(i) == PT_POINT) {
+                cmd +=
+                floatToString(PAR_CH(i, 0)) + "," +
+                floatToString(PAR_CH(i, 1)) + ",";
+            }
+        }
+        cmd = cmd.substr(0, cmd.size() - 1);
+    }
+
+    strReplace(cmd, "\r", " ");
+    strReplace(cmd, "\n", " ");
+
+    return cmd;
+}
+
 int pluginParamChange(int index, SequenceData* sequenceDataP, GlobalData* globalDataP, ContextData* /*contextDataP*/)
 {
 	if (index == PARAM_RESIZE) {
 		globalDataP->inplaceProcessing = PAR_VAL(index) < 1.f;
 	} else {
-
-#ifdef AE_PLUGIN	
-		MyGlobalData* myGlobalDataP = (MyGlobalData*)globalDataP->customGlobalDataP;
-		string cmd = PAR_VAL(PARAM_PREVIEW) > 0 ? myGlobalDataP->effectData.preview_command:myGlobalDataP->effectData.command;
-#else
-		string cmd = PAR_VAL(PARAM_PREVIEW) > 0 ? pluginGlobalData.pluginData[globalDataP->pluginIndex].preview_command:pluginGlobalData.pluginData[globalDataP->pluginIndex].command;
-#endif
-
-		if (cmd == "") {
-			cmd = PAR_TXT(PARAM_COMMAND);
-		} else {
-			cmd = "-" + strTrim(cmd, " \t\r\n") + " ";
-			for (int i = 1; i < globalDataP->nofParams - 6; i++) {
-				if (PAR_TYPE(i) == PT_INT || PAR_TYPE(i) == PT_BOOL || PAR_TYPE(i) == PT_SELECT)
-					cmd += intToString((int)PAR_VAL(i)) + ",";
-				else if (PAR_TYPE(i) == PT_FLOAT)
-					cmd += floatToString(PAR_VAL(i)) + ",";
-				else if (PAR_TYPE(i) == PT_TEXT) {
-					if (i == PARAM_COMMAND && globalDataP->param[PARAM_COMMAND].displayStatus == DS_HIDDEN) continue;
-					string s = PAR_TXT(i);
-					cmd += "\"" + s + "\",";
-				} else if (PAR_TYPE(i) == PT_COLOR)
-					cmd += 
-						intToString((int)(255.f * PAR_CH(i, 0))) + "," +
-						intToString((int)(255.f * PAR_CH(i, 1))) + "," +
-						intToString((int)(255.f * PAR_CH(i, 2))) + ",255,";
-			}
-			cmd = cmd.substr(0, cmd.size() - 1);
-		}
-
-		strReplace(cmd, "\r", " ");
-		strReplace(cmd, "\n", " ");
-
-		MySequenceData* mySequenceDataP = (MySequenceData*)sequenceDataP->customSequenceDataP;
-		mySequenceDataP->command = cmd;
 	}
 	return 0;
 }
@@ -403,9 +488,9 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	if (nofImages == 0) return err;
 
 	for (unsigned int i = 0; i < nofImages; i++) {
-		images[i].width = sequenceDataP->inWorld[nofImages - i - 1].width;
-		images[i].height = sequenceDataP->inWorld[nofImages - i - 1].height;
-		images[i].data = sequenceDataP->inWorld[nofImages - i - 1].data;
+		images[i].width = sequenceDataP->inWorld[i].width;
+		images[i].height = sequenceDataP->inWorld[i].height;
+		images[i].data = sequenceDataP->inWorld[i].data;
 		images[i].spectrum = 4;
 		images[i].depth = 1;
 		images[i].name[0] = '\0';
@@ -414,14 +499,7 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		strcpy(images[i].name, string("input" + intToString(i)).c_str());
 	}
 
-	string cmd = mySequenceDataP->command;
-#ifdef OFX_PLUGIN
-	if (cmd == "") 
-#endif
-	{
-		pluginParamChange(0, sequenceDataP, globalDataP, contextDataP);
-		cmd = mySequenceDataP->command;
-	}
+	string cmd = gmicCommand(sequenceDataP, globalDataP);
 
 	if (PAR_VAL(PARAM_OUTPUT) == 0.f) {
 		cmd += " -gimp_merge_layers";
@@ -449,6 +527,7 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 //	cmd = "_input_mode=1 _output_mode=0 _verbosity_mode=0 _preview_mode=0 _preview_size=0 " + cmd;
 
 	int result = gmic_call(cmd.c_str(), &nofImages, &images[0], &(((MySequenceData*)(sequenceDataP->customSequenceDataP))->options));
+	string errmsg = string(((MySequenceData*)(sequenceDataP->customSequenceDataP))->options.error_message_buffer);
 
 	if (result == 0) {
 		if (!globalDataP->inplaceProcessing) {
@@ -458,21 +537,27 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 				if (idx < 0) idx = 0;
 			}
 
-			size_t sz = sequenceDataP->outWorld.width * sequenceDataP->outWorld.height * min(4, (int)images[idx].spectrum) * sizeof(float);
-			memcpy((unsigned char*)sequenceDataP->outWorld.data, (unsigned char*)images[idx].data, sz);
+			if ((unsigned)sequenceDataP->outWorld.width == images[idx].width && (unsigned)sequenceDataP->outWorld.height == images[idx].height) {
+				size_t sz = sequenceDataP->outWorld.width * sequenceDataP->outWorld.height * min(4, (int)images[idx].spectrum) * sizeof(float);
+				memcpy((unsigned char*)sequenceDataP->outWorld.data, (unsigned char*)images[idx].data, sz);
 
-			if (images[idx].spectrum < 4) {
-				size_t sz2 = sequenceDataP->outWorld.width * sequenceDataP->outWorld.height;
-				float* p = (float*)sequenceDataP->outWorld.data + sz2 * 3;
-				std::fill(p, p + sz2 , 255.f);
+				if (images[idx].spectrum < 4) {
+					size_t sz2 = sequenceDataP->outWorld.width * sequenceDataP->outWorld.height;
+					float* p = (float*)sequenceDataP->outWorld.data + sz2 * 3;
+					std::fill(p, p + sz2 , 255.f);
 
-				for (unsigned int i = 1; i < 4 - images[idx].spectrum; i++) {
-					p = (float*)sequenceDataP->outWorld.data + sz2 * i;
-					memcpy(p, sequenceDataP->outWorld.data, sz2 * sizeof(float));
+					for (unsigned int i = 1; i < 4 - images[idx].spectrum; i++) {
+						p = (float*)sequenceDataP->outWorld.data + sz2 * i;
+						memcpy(p, sequenceDataP->outWorld.data, sz2 * sizeof(float));
+					}
 				}
+			} else {
+				result = -1;
+				errmsg = "The image produced by G'MIC has the wrong size.";
 			}
 		}
-	} else {
+	}
+	if (result != 0) {
 		string errmsg = string(((MySequenceData*)(sequenceDataP->customSequenceDataP))->options.error_message_buffer);
 #ifdef OFX_PLUGIN
 		 if (gMessageSuite) {

@@ -1,3 +1,4 @@
+/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:t; tab-width:2; c-basic-offset: 2 -*- */
 /*
  #
  #  File        : RFX_Parameter.h
@@ -85,6 +86,7 @@ enum ParamType
 	PT_VEC2 = 12,
 	PT_VEC3 = 13,
 	PT_TEXT = 14,
+	PT_SEPARATOR = 15,
 };
 
 enum DisplayStatus

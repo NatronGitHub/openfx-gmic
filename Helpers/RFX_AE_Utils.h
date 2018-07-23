@@ -1365,7 +1365,7 @@ static PF_Err paramsSetup(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef*
 			PF_END_TOPIC(
 				i // id
 			);
-		} else {
+		} else if (PAR_TYPE(i) == PT_FLOAT)  {
 			def.ui_flags |= PF_PUI_INVISIBLE;
 			PF_ADD_FLOAT(
 				globalDataP->param[i].displayName.c_str(), // name
@@ -1379,6 +1379,8 @@ static PF_Err paramsSetup(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef*
 				0, //flags
 				i // id
 				);
+		} else {
+			assert(false);
 		}
 	}
 

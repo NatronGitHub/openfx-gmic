@@ -1,3 +1,4 @@
+/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:t; tab-width:2; c-basic-offset: 2 -*- */
 /*
  #
  #  File        : gmic_parser.h
@@ -155,6 +156,10 @@ void processParam(const string& s, EffectParameter& cp)
 	int p1 = (int)r.find(":");
 	int p2 = (int)r.find("=");
 	if (p2 < 0) return;
+	if (p1 > p2) {
+		// ":" should be before "="
+		p1 = -1;
+	}
 	cp.name = strTrim(r.substr(p1 + 1, p2 - p1 - 2));
 	r = strTrim(r.substr(p2 + 1));
 	p1 = (int)r.find_first_of("([{");
@@ -168,54 +173,24 @@ void processParam(const string& s, EffectParameter& cp)
 	strReplace(pval, "true", "1");
 	strReplace(pval, "false", "0");
 
+	// For parameters description, see "Specific rules for the universal plug-in"
+	// in the gmic_stdlib.gmic file in the G'MIC sources.
 	if (cp.paramType == "bool") {
+		// 'bool(default_value={ 0 | 1 | false | true })'
+		// Add a boolean parameter (0 or 1) (as a checkbutton).
 		cp.defaultValue = pval;
 		cp.minValue = "0";
 		cp.maxValue = "1";
-	} else if (cp.paramType == "file") {
-//		cp.paramType = "text";
-		cp.text = strTrim(pval, "\"");
-		if (cp.text == "") cp.text = "test.txt";
-		cp.defaultValue = cp.text;
-	} else if (cp.paramType == "folder") {
-//		cp.paramType = "text";
-		cp.text = strTrim(pval, "\"");
-		if (cp.text == "") cp.text = "./";
-		cp.defaultValue = cp.text;
 	} else if (cp.paramType == "button") {
+		// 'button(_alignment)'
+		// Add a boolean parameter (0 or 1) (as a button).
 		cp.paramType = "bool";
 		cp.minValue = "0";
 		cp.maxValue = "1";
 		cp.defaultValue = "0";
-	} else if (cp.paramType == "text") { // || cp.paramType == "flags") {
-		p1 = (int)pval.find(",");
-		p2 = (int)pval.find("\"");
-		if (p1 >= 0 && p1 < p2) {
-			cp.maxValue = pval.substr(0, p1);
-			pval = pval.substr(p1 + 1);
-		} else {
-			cp.maxValue = "0";
-		}
-		cp.text = strTrim(pval, "\"");
-		cp.defaultValue = cp.text;
-	} else if (cp.paramType == "color") {
-		cp.defaultValue = pval;
-		strReplace(cp.defaultValue, ",", "|");
-	} else if (cp.paramType == "int" || cp.paramType == "float") {
-		p1 = (int)pval.find(",");
-		p2 = (int)pval.rfind(",");
-		if (p1 == p2) {
-			cp.minValue = pval.substr(0, p1);
-			cp.maxValue = pval.substr(p1);
-			cp.defaultValue = cp.minValue;
-		} else {
-			cp.defaultValue = pval.substr(0, p1);
-			cp.maxValue = pval.substr(p2 + 1);
-			cp.minValue = pval.substr(p1 + 1, p2 - p1 - 1);
-		}
-	} else if (cp.paramType == "input") {
-		cp.defaultValue = strTrim(pval, "\"");
 	} else if (cp.paramType == "choice") {
+		// 'choice(_default_indice,Choice0,..,ChoiceN)'
+		// Add a integer parameter (as a combobox).
 		p1 = (int)pval.find(",");
 		p2 = (int)pval.find("\"");
 		if (p1 < p2) {
@@ -235,6 +210,96 @@ void processParam(const string& s, EffectParameter& cp)
 		strReplace(cp.text, "\"", "");
 		cp.minValue = "0";
 		cp.maxValue = intToString((int)c.size() - 1);
+	} else if (cp.paramType == "color") {
+		// 'color(R,_G,_B,_A)'
+		// Add R,G,B[,A] parameters (as a colorchooser).
+		cp.defaultValue = pval;
+		strReplace(cp.defaultValue, ",", "|");
+	} else if (cp.paramType == "point") {
+		// 'point(_X,_Y,_removable={ -1 | 0 | 1 },_burst={ 0 | 1 },_R,_G,_B,_[-]A,_radius%,_is_visible={ 0 | 1 })'
+		// Add X,Y parameters (as a moveable point over the preview)
+		p1 = (int)pval.find(",");
+		p2 = (int)pval.find(",", p1 + 1);
+		if (p2 != (int)std::string::npos) { // ignore everything except the default value
+			cp.defaultValue = pval.substr(0, p2);
+		} else {
+			cp.defaultValue = pval;
+		}
+		strReplace(cp.defaultValue, ",", "|");
+	} else if (cp.paramType == "value") {
+		// 'value(value)'
+		// Add a pre-defined value parameter (not displayed).
+		cp.defaultValue = pval;
+	} else if (cp.paramType == "file") {
+		// 'file[_in,_out](_default_filename)'
+		// Add a filename parameter (as a filechooser).
+//		cp.paramType = "text";
+		cp.text = strTrim(pval, "\"");
+		if (cp.text == "") cp.text = "test.txt";
+		cp.defaultValue = cp.text;
+	} else if (cp.paramType == "float" || cp.paramType == "int") {
+		// 'float(default_value,min_value,max_value)'
+		// Add a float-valued parameter (as a float slider).
+		// 'int(default_value,min_value,max_value)'
+		// Add a integer parameter (as an integer slider).
+		p1 = (int)pval.find(",");
+		p2 = (int)pval.rfind(",");
+		if (p1 == p2) {
+			cp.minValue = pval.substr(0, p1);
+			cp.maxValue = pval.substr(p1);
+			cp.defaultValue = cp.minValue;
+		} else {
+			cp.defaultValue = pval.substr(0, p1);
+			cp.maxValue = pval.substr(p2 + 1);
+			cp.minValue = pval.substr(p1 + 1, p2 - p1 - 1);
+		}
+	} else if (cp.paramType == "folder") {
+		// 'folder(_default_foldername)'
+		// Add a foldername parameter (as a folderchooser).
+//		cp.paramType = "text";
+		cp.text = strTrim(pval, "\"");
+		if (cp.text == "") cp.text = "./";
+		cp.defaultValue = cp.text;
+	} else if (cp.paramType == "link") {
+		// 'link(_alignment,_label,URL)'
+		// Display a URL (do not add a parameter).
+		p1 = (int)pval.find(",");
+		p2 = (int)pval.find(",", p1 + 1);
+		if (p2 != (int)std::string::npos) {
+			// alignment, label, URL
+			cp.text = strTrim(pval.substr(p1+1, p2-1), " \t\r\n'\"") + ": " + strTrim(pval.substr(p2+1), " \t\r\n'\"");
+		} else if (p1 != (int)std::string::npos) {
+			// label, URL
+			cp.text = strTrim(pval.substr(0, p1-1), " \t\r\n'\"") + ": " + strTrim(pval.substr(p1+1), " \t\r\n'\"");
+		} else {
+			// URL
+			cp.text = strTrim(pval, " \t\r\n'\"");
+		}
+		strReplace(cp.text, ",", ": ");
+	} else if (cp.paramType == "note") {
+		// 'note(_label)'
+		// Display a label (do not add a parameter).
+		cp.text = pval;
+	} else if (cp.paramType == "text") { // || cp.paramType == "flags") {
+		// 'text(_is_multiline={ 0 | 1 },_default text)'
+		// Add a single or multi-line text parameter (as a text entry).
+		p1 = (int)pval.find(",");
+		p2 = (int)pval.find("\"");
+		if (p1 >= 0 && p1 < p2) {
+			cp.maxValue = pval.substr(0, p1);
+			pval = pval.substr(p1 + 1);
+		} else {
+			cp.maxValue = "0";
+		}
+		cp.text = strTrim(pval, "\"");
+		cp.defaultValue = cp.text;
+	} else if (cp.paramType == "separator") {
+		// 'separator()'
+		// Display an horizontal separator (do not add a parameter).Add a single or multi-line text parameter (as a text entry).
+		(void)0;
+	} else if (cp.paramType == "input") {
+		// ???? not in the G'MIC doc (see gmic_stdlib.gmic)
+		cp.defaultValue = strTrim(pval, "\"");
 	}
 }
 
@@ -246,8 +311,8 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	const string dst_prefix = dst_prefix_c;
 	const string dst_prefix_en = dst_prefix + "_en";
 	string result;
-	bool inNote = false;
-	bool inChoice = false;
+	bool inMulti = false;
+	std::string inMultiClose = "";
 	cd.name = "";
 	cd.command = "";
 	cd.preview_command = "";
@@ -259,6 +324,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	for (int i = 0; i < (int)lines.size(); i++) {
 		//printf("[%d]: %s\n", i,lines[i].c_str());
 		string line = strTrim(lines[i], " \r\n\t");
+        // TODO: there should be a "while" loop here, in case there are several parameters on the line
 		if (line.size() > 0 && line[0] != '#') result += line + "\n";
 		strReplace(line, src_prefix_old, dst_prefix);
 		strReplace(line, src_prefix_en, dst_prefix);
@@ -271,52 +337,58 @@ string gmic_parse_single(const string& content, EffectData& cd)
 			if (line.substr(0, dst_prefix.size() + 3) != dst_prefix + " : ") {
 				processCommand(line, cd);
 			} else {
-				//n = strLowercase(n);
-				if (inNote) {
-					processNote(line, cd);
-					if (n != "" && (n[n.size() - 1] == ')' || n[n.size() - 1] == ']' || n[n.size() - 1] == '}')) {
-						inNote = false;
-					}
-				} else {
-					strReplace(n, "note{", "note(", false, true);
-					strReplace(n, "note[", "note(", false, true);
-					strReplace(n, "link(", "note(", false, true);
-					strReplace(n, "link{", "note(", false, true);
-					strReplace(n, "link[", "note(", false, true);
-					sPos = (int)n.find("note(");
-					if (sPos >= 0 || inNote) {
-						if (n != "" &&
-							(n[n.size() - 1] != ')' && n[n.size() - 1] != ']' && n[n.size() - 1] != '}')
-							) inNote = true;
-						if (sPos >= 0) n = n.substr(sPos + 5);
-						processNote(n, cd);
-					} else {
-						if (inChoice) {
-							string p = line;
-							strReplace(p, dst_prefix + " : ", "");
-							cd.param[cd.param.size() - 1].name += p;
-							line = strTrim(line);
-							if (n[n.size() - 1] == ')' || n[n.size() - 1] == ']' || n[n.size() - 1] == '}') {
-								inChoice = false;
-							}
-						} else if (line != "" && line != dst_prefix + " : ") {
-							EffectParameter p;
-							p.name = line;
-							sPos = (int)line.find("eparator");
-							if (sPos > 0) {
-								p.name = line.substr(sPos);
-								sPos = (int)p.name.find(")");
-								p.name = p.name.substr(sPos + 1);
-								p.name = strTrim(p.name, ", ");
-							}
-							if ((int)p.name.find("(") > 0 || (int)p.name.find("[") > 0 || (int)p.name.find("{") > 0) {
-								cd.param.push_back(p);
-							}
+				strReplace(line, dst_prefix + " : ", "");
+				while (!line.empty()) {
+					if (inMulti) {
+						int pEnd = (int)line.find(inMultiClose);
+						if (pEnd > 0) {
+							cd.param[cd.param.size() - 1].name += line.substr(0, pEnd + 1);
+							inMulti = false;
+							line = strTrim(line.substr(pEnd));
+						} else {
+							cd.param[cd.param.size() - 1].name += line;
+							line.clear();
 						}
+						continue;
+					}
+					int ePos = (int)line.find("=");
+					if (ePos < 0) {
+						// garbage?
+						line.clear();
+						continue;
+					} else {
+						int pStart = (int)line.find_first_of("([{", ePos + 1);
+						int pEnd = -1;
+						if (pStart > 0) {
+							if (line[pStart] == '(') {
+								inMultiClose = ")";
+							} else if (line[pStart] == '[') {
+								inMultiClose = "]";
+							} else if (line[pStart] == '{') {
+								inMultiClose = "}";
+							} 
+							pEnd = (int)line.find(inMultiClose, pStart + 1);
 
-						if ( (int)n.find("choice(") >= 0 || (int)n.find("choice{") >= 0 || (int)n.find("choice[") >= 0 ) {
-							if (n[n.size() - 1] != ')' && n[n.size() - 1] != ']' && n[n.size() - 1] != '}') {
-								inChoice = true;
+							if (pStart > 0 && pEnd > 0) {
+								// there is one more param
+								EffectParameter p;
+								p.name = line.substr(0, pEnd+1);
+								//std::cout << p.name << std::endl;
+								cd.param.push_back(p);
+								line = strTrim(line.substr(pEnd + 1), ", ");
+								if (!line.empty()) {
+									line = dst_prefix + " : " + line;
+								}
+							} else if (pStart > 0) {
+								// multi-line
+								EffectParameter p;
+								p.name = line;
+								cd.param.push_back(p);
+								inMulti = true;
+								line.clear();
+							} else {
+								// garbage?
+								line.clear();
 							}
 						}
 					}

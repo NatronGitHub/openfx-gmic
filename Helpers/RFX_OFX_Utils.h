@@ -1,3 +1,4 @@
+/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:t; tab-width:2; c-basic-offset: 2 -*- */
 /*
  #
  #  File        : RFX_OFX_Utils.h
@@ -60,6 +61,9 @@
 #include "ofxUtilities.H"
 #ifdef OFX_EXTENSIONS_NATRON
 #include "ofxNatron.h"
+#endif
+#ifdef OFX_EXTENSIONS_NUKE
+#include "nuke/fnPublicOfxExtensions.h"
 #endif
 
 #ifndef NO_MULTITHREADED_CONVERSION
@@ -305,7 +309,7 @@ static OfxStatus destroyInstance(int /*pluginIndex*/, OfxImageEffectHandle effec
 	return kOfxStatOK;
 }
 
-static void getAllParamData(int pluginIndex, MyInstanceData* myData, OfxTime t)
+static void getAllParamData(int pluginIndex, const OfxRectI& dstRect, MyInstanceData* myData, OfxTime t)
 {
 	for (int i = 0; i < globalData[pluginIndex].nofParams; i++) {
 		if (globalData[pluginIndex].param[i].paramType == PT_FLOAT) {
@@ -317,16 +321,18 @@ static void getAllParamData(int pluginIndex, MyInstanceData* myData, OfxTime t)
 			gParamHost->paramGetValueAtTime(myData->param[i], t, &v);
 			myData->sequenceDataP->floatValue[i][0] = (float)v;
 		} else if (globalData[pluginIndex].param[i].paramType == PT_COLOR) {
-			double myR, myG, myB;
-			gParamHost->paramGetValueAtTime(myData->param[i], t, &myR, &myG, &myB);
+			double myR, myG, myB, myA;
+			gParamHost->paramGetValueAtTime(myData->param[i], t, &myR, &myG, &myB, &myA);
 			myData->sequenceDataP->floatValue[i][0] = (float)myR;
 			myData->sequenceDataP->floatValue[i][1] = (float)myG;
 			myData->sequenceDataP->floatValue[i][2] = (float)myB;
+			myData->sequenceDataP->floatValue[i][2] = (float)myA;
 		} else if (globalData[pluginIndex].param[i].paramType == PT_POINT) {
+			// point parameter is in % in gmic: no need to scale
 			double myX, myY;
 			gParamHost->paramGetValueAtTime(myData->param[i], t, &myX, &myY);
-			myData->sequenceDataP->floatValue[i][0] = (float)myX * myData->sequenceDataP->downsample_x;
-			myData->sequenceDataP->floatValue[i][1] = (float)myY * myData->sequenceDataP->downsample_y;
+			myData->sequenceDataP->floatValue[i][0] = (float)myX * 100. / (dstRect.x2 - dstRect.x1); // * myData->sequenceDataP->downsample_x;
+			myData->sequenceDataP->floatValue[i][1] = 100.f - (float)myY * 100. / (dstRect.y2 - dstRect.y1); // * myData->sequenceDataP->downsample_y;
 		} else if (globalData[pluginIndex].param[i].paramType == PT_ANGLE) {
 			double v;
 			gParamHost->paramGetValueAtTime(myData->param[i], t, &v);
@@ -346,7 +352,7 @@ static void getAllParamData(int pluginIndex, MyInstanceData* myData, OfxTime t)
 	}
 }
 
-static void getParamData(int pluginIndex, int paramIndex, MyInstanceData* myData, OfxTime t)
+static void getParamData(int pluginIndex, const OfxRectI& dstRect, int paramIndex, MyInstanceData* myData, OfxTime t)
 {
 	int i = paramIndex;
 	if (globalData[pluginIndex].param[i].paramType == PT_FLOAT) {
@@ -358,16 +364,18 @@ static void getParamData(int pluginIndex, int paramIndex, MyInstanceData* myData
 		gParamHost->paramGetValueAtTime(myData->param[i], t, &v);
 		myData->sequenceDataP->floatValue[i][0] = (float)v;
 	} else if (globalData[pluginIndex].param[i].paramType == PT_COLOR) {
-		double myR, myG, myB;
-		gParamHost->paramGetValueAtTime(myData->param[i], t, &myR, &myG, &myB);
+		double myR, myG, myB, myA;
+		gParamHost->paramGetValueAtTime(myData->param[i], t, &myR, &myG, &myB, &myA);
 		myData->sequenceDataP->floatValue[i][0] = (float)myR;
 		myData->sequenceDataP->floatValue[i][1] = (float)myG;
 		myData->sequenceDataP->floatValue[i][2] = (float)myB;
+		myData->sequenceDataP->floatValue[i][3] = (float)myA;
 	} else if (globalData[pluginIndex].param[i].paramType == PT_POINT) {
+		// point parameter is in % in gmic: no need to scale
 		double myX, myY;
 		gParamHost->paramGetValueAtTime(myData->param[i], t, &myX, &myY);
-		myData->sequenceDataP->floatValue[i][0] = (float)myX * myData->sequenceDataP->downsample_x;
-		myData->sequenceDataP->floatValue[i][1] = (float)myY * myData->sequenceDataP->downsample_y;
+		myData->sequenceDataP->floatValue[i][0] = (float)myX * 100. / (dstRect.x2 - dstRect.x1); // * myData->sequenceDataP->downsample_x;
+		myData->sequenceDataP->floatValue[i][1] = 100.f - (float)myY * 100. / (dstRect.y2 - dstRect.y1); // * myData->sequenceDataP->downsample_y;
 	} else if (globalData[pluginIndex].param[i].paramType == PT_ANGLE) {
 		double v;
 		gParamHost->paramGetValueAtTime(myData->param[i], t, &v);
@@ -391,7 +399,7 @@ static void getParamData(int pluginIndex, int paramIndex, MyInstanceData* myData
 }
 
 #if 0
-static void setParamData(int pluginIndex, MyInstanceData* myData)
+static void setParamData(int pluginIndex, const OfxRectI& dstRect, MyInstanceData* myData)
 {
 	for (int i = 0; i < globalData[pluginIndex].nofParams; i++) {
 		if (globalData[pluginIndex].param[i].paramType == PT_FLOAT) {
@@ -404,10 +412,12 @@ static void setParamData(int pluginIndex, MyInstanceData* myData)
 			double myR = (double)myData->sequenceDataP->floatValue[i][0];
 			double myG = (double)myData->sequenceDataP->floatValue[i][1];
 			double myB = (double)myData->sequenceDataP->floatValue[i][2];
-			gParamHost->paramSetValue(myData->param[i], myR, myG, myB);
+			double myA = (double)myData->sequenceDataP->floatValue[i][3];
+			gParamHost->paramSetValue(myData->param[i], myR, myG, myB, myA);
 		} else if (globalData[pluginIndex].param[i].paramType == PT_POINT) {
-			double myX = (double)myData->sequenceDataP->floatValue[i][0] / myData->sequenceDataP->downsample_x;
-			double myY = (double)myData->sequenceDataP->floatValue[i][1] / myData->sequenceDataP->downsample_y;
+			// point parameter is in % in gmic: no need to scale
+			double myX = (double)myData->sequenceDataP->floatValue[i][0] / 100. * (dstRect.x2 - dstRect.x1); // / myData->sequenceDataP->downsample_x;
+			double myY = (1. - (double)myData->sequenceDataP->floatValue[i][1] / 100.) * (dstRect.y2 - dstRect.y1); // / myData->sequenceDataP->downsample_y;
 			gParamHost->paramSetValue(myData->param[i], myX, myY);
 		} else if (globalData[pluginIndex].param[i].paramType == PT_ANGLE) {
 			double v;
@@ -618,17 +628,6 @@ static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance,
 			showAboutDialog(pluginIndex, myData);
 		}
 #endif
-		for (int i = 0; i < globalData[pluginIndex].nofParams; i++) {
-			if (globalData[pluginIndex].param[i].paramName == string(objChanged)) {
-				OfxTime time;
-				gPropHost->propGetDouble(inArgs, kOfxPropTime, 0, &time);
-				getParamData(pluginIndex, i, myData, time);
-				pluginParamChange(i, myData->sequenceDataP, &globalData[pluginIndex], &contextData);
-				break;
-			}
-		}
-
-
 	}
 	
 	// don't trap any 
@@ -946,7 +945,7 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 		myData->sequenceDataP->downsample_x = (float)renderScale.x;
 		myData->sequenceDataP->downsample_y = (float)renderScale.y;
 		
-		getAllParamData(pluginIndex, myData, time);
+		getAllParamData(pluginIndex, dstRect, myData, time);
 
 		// get the input image(s)
 		int i = 0;
@@ -1338,15 +1337,16 @@ static void paramAddFloat(OfxParamSetHandle effectParams, OfxPropertySetHandle& 
 	gPropHost->propSetDouble(props, kOfxParamPropDigits, 0, precision);	
 }
 
-static void paramAddColor(OfxParamSetHandle effectParams, OfxPropertySetHandle& props, const char* paramName, double red, double green, double blue)
+static void paramAddColor(OfxParamSetHandle effectParams, OfxPropertySetHandle& props, const char* paramName, double red, double green, double blue, double alpha)
 {
-	OfxStatus stat = gParamHost->paramDefine(effectParams, kOfxParamTypeRGB, paramName, &props);
+	OfxStatus stat = gParamHost->paramDefine(effectParams, kOfxParamTypeRGBA, paramName, &props);
 	if (stat != kOfxStatOK) {
 		throw OfxuStatusException(stat);
 	}
 	gPropHost->propSetDouble(props, kOfxParamPropDefault, 0, red);
 	gPropHost->propSetDouble(props, kOfxParamPropDefault, 1, green);
 	gPropHost->propSetDouble(props, kOfxParamPropDefault, 2, blue);
+	gPropHost->propSetDouble(props, kOfxParamPropDefault, 3, alpha);
 }
 
 static void paramAddText(OfxParamSetHandle effectParams, OfxPropertySetHandle& props, const char* paramName, const char* defaultText, int textType)
@@ -1355,16 +1355,27 @@ static void paramAddText(OfxParamSetHandle effectParams, OfxPropertySetHandle& p
 	if (stat != kOfxStatOK) {
 		throw OfxuStatusException(stat);
 	}
-	gPropHost->propSetString(props, kOfxParamPropDefault, 0, defaultText);
 	if (textType == 0) { // single-line
+		gPropHost->propSetString(props, kOfxParamPropDefault, 0, defaultText);
 		gPropHost->propSetString(props, kOfxParamPropStringMode, 0, kOfxParamStringIsSingleLine);
 	} else if (textType == 1) { // multi-line
+		gPropHost->propSetString(props, kOfxParamPropDefault, 0, defaultText);
 		gPropHost->propSetString(props, kOfxParamPropStringMode, 0, kOfxParamStringIsMultiLine);
-	} else if (textType == 2) { // file
+	} else if (textType == 2) { // file / fileout
+		gPropHost->propSetString(props, kOfxParamPropDefault, 0, defaultText);
 		gPropHost->propSetString(props, kOfxParamPropStringMode, 0, kOfxParamStringIsFilePath);
 		gPropHost->propSetInt(props, kOfxParamPropStringFilePathExists, 0, 0);
 	} else if (textType == 3) { // folder
+		gPropHost->propSetString(props, kOfxParamPropDefault, 0, defaultText);
 		gPropHost->propSetString(props, kOfxParamPropStringMode, 0, kOfxParamStringIsDirectoryPath);
+	} else if (textType == 4) { // label
+		std::string text = strTrim(strRemoveXmlTags(defaultText, true), " \t\r\n'\"");
+		gPropHost->propSetString(props, kOfxParamPropDefault, 0, text.c_str());
+		gPropHost->propSetString(props, kOfxParamPropStringMode, 0, kOfxParamStringIsLabel);
+		gPropHost->propSetString(props, kOfxParamPropHint, 0, text.c_str()); // for long labels
+	} else if (textType == 5) { // filein
+		gPropHost->propSetString(props, kOfxParamPropStringMode, 0, kOfxParamStringIsFilePath);
+		gPropHost->propSetInt(props, kOfxParamPropStringFilePathExists, 0, 1);
 	}
 }
 
@@ -1391,6 +1402,7 @@ static void paramAddPoint(OfxParamSetHandle effectParams, OfxPropertySetHandle& 
 	gPropHost->propSetDouble(props, kOfxParamPropDefault, 1, defaultY);
 	gPropHost->propSetString(props, kOfxParamPropDoubleType, 0, kOfxParamDoubleTypeXYAbsolute);
 	gPropHost->propSetString(props, kOfxParamPropDefaultCoordinateSystem, 0, kOfxParamCoordinatesNormalised);
+	gPropHost->propSetInt(props, kOfxParamPropUseHostOverlayHandle, 0, 1);
 }
 
 static void paramAddAngle(OfxParamSetHandle effectParams, OfxPropertySetHandle& props, const char* paramName, double defaultValue)
@@ -1432,7 +1444,7 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 	gPropHost->propGetString(inArgs, kOfxImageEffectPropContext, 0, &context);
 	// bool isGeneralContext = strcmp(context, kOfxImageEffectContextGeneral) == 0;
 
-	OfxPropertySetHandle props;
+	OfxPropertySetHandle props = NULL;
 	// define the single output clip in both contexts
 	gEffectHost->clipDefine(effect, "Output", &props);
 
@@ -1450,14 +1462,12 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 	gEffectHost->getParamSet(effect, &paramSet);
 
 	{
-	OfxPropertySetHandle props;
 	gParamHost->paramDefine(paramSet, kOfxParamTypeCustom, "SequenceData", &props);
 	gPropHost->propSetInt(props, kOfxParamPropSecret, 0, 1);
 	}
 	
 #ifdef ABOUT_DIALOG
 	{
-	OfxPropertySetHandle props;
 #ifndef ABOUT_DIALOG_CAPTION
 #define ABOUT_DIALOG_CAPTION "About"
 #endif
@@ -1468,102 +1478,115 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 	string group;
 	int l = 0;
 	for (int i = 0; i < globalData[pluginIndex].nofParams; i++) {
-		OfxPropertySetHandle props;
-
-		float mmin = globalData[pluginIndex].param[i].minValue;
-		float mmax = globalData[pluginIndex].param[i].maxValue;
+		const reduxfx::Parameter& param = globalData[pluginIndex].param[i];
+		float mmin = param.minValue;
+		float mmax = param.maxValue;
 		
-		if (globalData[pluginIndex].param[i].paramType == PT_FLOAT) {
+		if (param.paramType == PT_FLOAT) {
 			paramAddFloat(paramSet, props,
-				globalData[pluginIndex].param[i].paramName.c_str(), // param
+				param.paramName.c_str(), // param
 				mmin, //valid min
 				mmax, //valid max
-				globalData[pluginIndex].param[i].defaultValue[0], //default
+				param.defaultValue[0], //default
 				2, //precision
-				globalData[pluginIndex].param[i].flags //display flags
+				param.flags //display flags
 				);
-		} else if (globalData[pluginIndex].param[i].paramType == PT_COLOR) {
+		} else if (param.paramType == PT_COLOR) {
 			paramAddColor(
 				paramSet, props,
-				globalData[pluginIndex].param[i].paramName.c_str(), // param
-				globalData[pluginIndex].param[i].defaultValue[0], 
-				globalData[pluginIndex].param[i].defaultValue[1], 
-				globalData[pluginIndex].param[i].defaultValue[2]
+				param.paramName.c_str(), // param
+				param.defaultValue[0], 
+				param.defaultValue[1], 
+				param.defaultValue[2],
+				param.defaultValue[3]
 				); 
-		} else if (globalData[pluginIndex].param[i].paramType == PT_TEXT) {
+		} else if (param.paramType == PT_TEXT) {
+			std::string txt = param.text;
+			strReplace(txt, "\\r", "\r");
+			strReplace(txt, "\\n", "\n");
 			paramAddText(
 				paramSet, props,
-				globalData[pluginIndex].param[i].paramName.c_str(), // param
-				globalData[pluginIndex].param[i].text.c_str(), globalData[pluginIndex].param[i].flags); 
-		} else if (globalData[pluginIndex].param[i].paramType == PT_INT) {
+				param.paramName.c_str(), // param
+				txt.c_str(), param.flags);
+		} else if (param.paramType == PT_INT) {
 			paramAddInt(
 				paramSet, props,
-				globalData[pluginIndex].param[i].paramName.c_str(), // param
+				param.paramName.c_str(), // param
 				(int)mmin, //valid min
 				(int)mmax, //valid max
-				(int)globalData[pluginIndex].param[i].defaultValue[0] //default
+				(int)param.defaultValue[0] //default
 				);
-		} else if (globalData[pluginIndex].param[i].paramType == PT_POINT) {
+		} else if (param.paramType == PT_POINT) {
+			// point parameter is in % in gmic: no need to scale
 			paramAddPoint(
 				paramSet, props,
-				globalData[pluginIndex].param[i].paramName.c_str(), // param
-				globalData[pluginIndex].param[i].defaultValue[0], //default
-				globalData[pluginIndex].param[i].defaultValue[1] //default
+				param.paramName.c_str(), // param
+				param.defaultValue[0]/100., //default
+				param.defaultValue[1]/100. //default
 			);
-		} else if (globalData[pluginIndex].param[i].paramType == PT_BOOL) {
+		} else if (param.paramType == PT_BOOL) {
 			paramAddBool(
 				paramSet, props,
-				globalData[pluginIndex].param[i].paramName.c_str(), // param
-				(int)globalData[pluginIndex].param[i].defaultValue[0] //default
+				param.paramName.c_str(), // param
+				(int)param.defaultValue[0] //default
 			);
-		} else if (globalData[pluginIndex].param[i].paramType == PT_SELECT) {	
-			string t = globalData[pluginIndex].param[i].text;
+		} else if (param.paramType == PT_SELECT) {	
+			string t = param.text;
 			// t = strReplace(t, "|-|", "|(-|");
 			vector<string> choices;
 			strSplit(t, '|', choices);
 			paramAddChoice(
 				paramSet, props,
-				globalData[pluginIndex].param[i].paramName.c_str(), // param
-				(int)globalData[pluginIndex].param[i].maxValue+1, //max
-				(int)(min(globalData[pluginIndex].param[i].maxValue,globalData[pluginIndex].param[i].defaultValue[0])), //default
+				param.paramName.c_str(), // param
+				(int)param.maxValue+1, //max
+				(int)(min(param.maxValue,param.defaultValue[0])), //default
 				choices // choices
 			);
-		} else if (globalData[pluginIndex].param[i].paramType == PT_ANGLE) {	
+		} else if (param.paramType == PT_ANGLE) {	
 			paramAddAngle(
 				paramSet, props,
-				globalData[pluginIndex].param[i].paramName.c_str(), // param
-				globalData[pluginIndex].param[i].defaultValue[0] //default
+				param.paramName.c_str(), // param
+				param.defaultValue[0] //default
 			);
-		} else if (globalData[pluginIndex].param[i].paramType == PT_LAYER) {
-			gEffectHost->clipDefine(effect, globalData[pluginIndex].param[i].paramName.c_str(), &props);
+		} else if (param.paramType == PT_SEPARATOR) {
+			// props still contains the properties for the previous parameter
+#ifdef OFX_EXTENSIONS_NUKE
+			if (props) {
+				gPropHost->propSetInt(props, kOfxParamPropLayoutHint, 0, kOfxParamPropLayoutHintDivider);
+			}
+#endif
+			continue;
+		} else if (param.paramType == PT_LAYER) {
+			gEffectHost->clipDefine(effect, param.paramName.c_str(), &props);
 			if (i > 0) {
 				gPropHost->propSetInt(props, kOfxImageClipPropOptional, 0, 1);
 			}
 			gPropHost->propSetString(props, kOfxImageEffectPropSupportedComponents, 0, kOfxImageComponentRGBA);
 			l++;
 			continue;
-		} else if (globalData[pluginIndex].param[i].paramType == PT_TOPIC_START) {	
-			gParamHost->paramDefine(paramSet, kOfxParamTypeGroup, globalData[pluginIndex].param[i].paramName.c_str(), &props);
-			if (globalData[pluginIndex].param[i].flags>0) gPropHost->propSetInt(props, kOfxParamPropGroupOpen, 0, 0);
+		} else if (param.paramType == PT_TOPIC_START) {	
+			gParamHost->paramDefine(paramSet, kOfxParamTypeGroup, param.paramName.c_str(), &props);
+			if (param.flags>0) gPropHost->propSetInt(props, kOfxParamPropGroupOpen, 0, 0);
 			gPropHost->propSetInt(props, kOfxParamPropAnimates, 0, 0);
-			gPropHost->propSetInt(props, kOfxParamPropGroupOpen, 0, globalData[pluginIndex].param[i].flags>0?0:1);
-			group = globalData[pluginIndex].param[i].paramName;
-		} else if (globalData[pluginIndex].param[i].paramType == PT_TOPIC_END) {	
+			gPropHost->propSetInt(props, kOfxParamPropGroupOpen, 0, param.flags>0?0:1);
+			group = param.paramName;
+		} else if (param.paramType == PT_TOPIC_END) {	
 			group = "";
 			continue;
 		} else {
+			assert(false);
 			continue;
 		}
 
-		if (globalData[pluginIndex].param[i].displayStatus == DS_DISABLED) {
+		if (param.displayStatus == DS_DISABLED) {
 			gPropHost->propSetInt(props, kOfxParamPropEnabled, 0, 0);
-		} else if (globalData[pluginIndex].param[i].displayStatus == DS_HIDDEN) {
+		} else if (param.displayStatus == DS_HIDDEN) {
 			gPropHost->propSetInt(props, kOfxParamPropSecret, 0, 1);
 		}
-		gPropHost->propSetString(props, kOfxParamPropScriptName, 0, globalData[pluginIndex].param[i].paramName.c_str());
-		gPropHost->propSetString(props, kOfxPropLabel, 0, globalData[pluginIndex].param[i].displayName.c_str());
+		gPropHost->propSetString(props, kOfxParamPropScriptName, 0, param.paramName.c_str());
+		gPropHost->propSetString(props, kOfxPropLabel, 0, param.displayName.c_str());
 
-		if (group != "" && globalData[pluginIndex].param[i].paramType != PT_TOPIC_START) 
+		if (group != "" && param.paramType != PT_TOPIC_START) 
 			gPropHost->propSetString(props, kOfxParamPropParent, 0, group.c_str());
 	}
 	if (globalData[pluginIndex].nofInputs == 0) {

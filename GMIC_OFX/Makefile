@@ -11,6 +11,7 @@ RESOURCES = GMIC.png
 # we need zlib to decompress the G'MIC standard library, and FFTW3 for many effects that use the FFT (the CImg builtin FFT only works with power-of-two dimensions)
 CXXFLAGS += \
 -DOFX_EXTENSIONS_NATRON \
+-DOFX_EXTENSIONS_NUKE \
 -DOFX_PLUGIN \
 -I$(SRCDIR)/Helpers \
 -I$(SRCDIR)/openfx/include \
