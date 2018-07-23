@@ -53,6 +53,7 @@
 #include <stdexcept>
 #include <new>
 #include <cstring>
+#include <cassert>
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>

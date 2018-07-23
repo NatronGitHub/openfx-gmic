@@ -52,6 +52,7 @@
 
 #include <cmath>
 #include <string>
+#include <cassert>
 
 #include "RFX_Utils.h"
 #include "RFX_Parameter.h"

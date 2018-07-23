@@ -133,6 +133,7 @@ using namespace reduxfx;
 #include "gmic_stdlib_gmic.h"
 #include <sstream>
 #include <cstdlib>
+#include <cassert>
 #ifdef DEBUG
 #include <iostream>
 #endif
