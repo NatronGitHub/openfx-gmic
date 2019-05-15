@@ -1,7 +1,7 @@
 SUBDIRS = GMIC_OFX
 
 GMICSOURCES = CImg.h gmic.cpp gmic.h gmic_stdlib.h
-GMICVER=2.3.3
+GMICVER=2.6.2
 GMICSRC=gmic_$(GMICVER).tar.gz
 GMICSRCDIR=gmic-$(GMICVER)
 
@@ -76,7 +76,8 @@ $(GMICSOURCES): $(GMICSRC)
 # commit 09c9f56ba2fe02568667d0cf03c132c828c67bef is 15 may 2018
 # commit cb58e3713bf5c1dda100edd200fec063a9067b00 is  6 jun 2018
 # commit ccfb3190aa414c4c09db643e1ea6ff446dbbd67f is 26 jun 2018
-GMICCOMMUNITYVERSION=ccfb3190aa414c4c09db643e1ea6ff446dbbd67f
+# commit 67f4417aebb7f789473121855179e3cfd5b38a20 is  9 may 2019 (gmic 2.6.2)
+GMICCOMMUNITYVERSION=67f4417aebb7f789473121855179e3cfd5b38a20
 
 gmic_libc.cpp: gmic_libc.h gmic_stdlib_gmic.h
 	curl -L -s -S -o $@ https://raw.githubusercontent.com/dtschump/gmic-community/$(GMICCOMMUNITYVERSION)/libcgmic/$@
