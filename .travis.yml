@@ -12,36 +12,41 @@ env:
    # Travis CI has 1.5 cores per VM, take advantage of it
    - MAKEFLAGS="-j 2"
 
-os:
-  - linux
-  - osx
-
 language: cpp
 
-compiler:
-  - gcc
-  - clang
-
 matrix:
-  exclude:
-    - os: osx
+  include:
+    - os: linux
       compiler: gcc
+    - os: linux
+      compiler: clang
+    - os: osx
+      compiler: clang
+    - os: windows
+      filter_secrets: false # https://travis-ci.community/t/choco-install-hangs-forever/307/22
   fast_finish: true
 
 before_install:
-  - env
-  - df
-  - date -u
-  - uname -a
+  - if [ ${TRAVIS_OS_NAME} = "linux" -o ${TRAVIS_OS_NAME} = "osx" ]; then
+      env;
+      df;
+      date -u;
+      uname -a;
+      export J='-j3';
+    fi
   - if [ ${TRAVIS_OS_NAME} = "linux" ]; then
       echo -n | openssl s_client -connect scan.coverity.com:443 | sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' | sudo tee -a /etc/ssl/certs/ca- ;
     fi
-  - export J='-j3'
   - if [ ${TRAVIS_OS_NAME} = "linux" ]; then
       sudo apt-get install libfftw3-dev;
     fi
   - if [ ${TRAVIS_OS_NAME} = "osx" ]; then
       brew install fftw || true;
+    fi
+  - if [ ${TRAVIS_OS_NAME} = "windows" ]; then
+      choco install wget 7zip;
+      wget -q ftp://ftp.fftw.org/pub/fftw/fftw-3.3.4-dll64.zip;
+      7z x fftw-3.3.4-dll64.zip;
     fi
   - git submodule update --init --recursive
   - if [ ${TRAVIS_OS_NAME} = "linux" -a "$CC" = "gcc" ];
@@ -55,6 +60,7 @@ before_install:
         sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 90;
         sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-8 90;
     fi
+  - if [ ${TRAVIS_OS_NAME} = "windows" ]; then choco install curl patch make cmake; fi
 
 install:
   - if [[ ${COVERITY_BUILD_DISABLED} == 1 ]];
@@ -71,11 +77,19 @@ script:
       echo "Don't build on coverity_scan branch.";
       exit 0;
     fi
-  - make $J CONFIG=debug
-  - make $J nomulti CONFIG=debug
-  - if [ "$CC" = "gcc" ]; then
-      make -C GMIC_OFX clean;
-      make -C GMIC_OFX CONFIG=debug OPENMP=1;
+  - make sources
+  - if [ ${TRAVIS_OS_NAME} = "linux" -o ${TRAVIS_OS_NAME} = "osx" ]; then
+      make $J CONFIG=debug;
+      make $J nomulti CONFIG=debug;
+      if [ "$CC" = "gcc" ]; then
+        make -C CImg clean;
+        make -C CImg CONFIG=debug OPENMP=1;
+      fi
+    fi
+  - if [ ${TRAVIS_OS_NAME} = "windows" ]; then
+      mkdir build && cd build;
+      cmake .. ;
+      cmake --build . ; 
     fi
 
 # ubuntu-toolchain-r/test contains recent versions of gcc
