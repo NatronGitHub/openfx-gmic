@@ -208,4 +208,11 @@ ELSE()
   INSTALL(FILES Info.plist
     DESTINATION GMIC.ofx.bundle/Contents
   )
+
+  IF("${OFX_ARCH_NAME}" EQUAL "Win32" OR "${OFX_ARCH_NAME}" EQUAL "Win64")
+    INSTALL(FILES libfftw3-3.dll
+      DESTINATION GMIC.ofx.bundle/Contents/${OFX_ARCH_NAME}
+    )
+  ENDIF()
+
 ENDIF()
