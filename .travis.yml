@@ -46,7 +46,7 @@ before_install:
   - if [ ${TRAVIS_OS_NAME} = "windows" ]; then
       choco install wget 7zip;
       wget -q ftp://ftp.fftw.org/pub/fftw/fftw-3.3.4-dll64.zip;
-      7z x fftw-3.3.4-dll64.zip;
+      7z x fftw-3.3.4-dll64.zip libfftw3-3.dll fftw3.h;
     fi
   - git submodule update --init --recursive
   - if [ ${TRAVIS_OS_NAME} = "linux" -a "$CC" = "gcc" ];
@@ -82,8 +82,8 @@ script:
       make $J CONFIG=debug;
       make $J nomulti CONFIG=debug;
       if [ "$CC" = "gcc" ]; then
-        make -C CImg clean;
-        make -C CImg CONFIG=debug OPENMP=1;
+        make CONFIG=debug clean;
+        make $J CONFIG=debug OPENMP=1;
       fi
     fi
   - if [ ${TRAVIS_OS_NAME} = "windows" ]; then
