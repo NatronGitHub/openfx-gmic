@@ -118,34 +118,6 @@ void processCommand(const string& s, EffectData& cd)
 }
 
 static
-void processNote(const string& s, EffectData& cd)
-{
-    const string dst_prefix = dst_prefix_c;
-	string r = s;
-	// r = replaceHtml(r);
-	strReplace(r, "note(0,", "note(", false, true);
-	string n = strLowercase(r);
-	int p1 = (int)n.find("note(");
-	if (p1 >= 0) {
-		r = r.substr(p1 + 4);
-		p1 = (int)r.find_last_of(")]}");
-		if (p1 > 0) {
-			r = r.substr(0, p1 - 1);
-		}
-	}
-	strReplace(r, "\",\"", ": ");
-	strReplace(r, "\")", "");
-	strReplace(r, "(\"", "");
-	strReplace(r, "\"", "");
-	strReplace(r, "}", "");
-	strReplace(r, "]", "");
-	strReplace(r, "\\n", "");
-	strReplace(r, ": : ", ": ");
-	strReplace(r, dst_prefix + " : ", "");
-	if (r != "") cd.notes += r + "\n";
-}
-
-static
 void processParam(const string& s, EffectParameter& cp)
 {
 	string r = s;
@@ -340,6 +312,14 @@ string gmic_parse_single(const string& content, EffectData& cd)
 				strReplace(line, dst_prefix + " : ", "");
 				while (!line.empty()) {
 					if (inMulti) {
+						string &name = cd.param[cd.param.size() - 1].name;
+						// Only add a space if the previous line does not end with "\n" or "\"
+						// (see eg. the "Privacy Notice" in gmic_stdlib.gmic)
+						if (name.size() < 2 ||
+							!(name[name.size()-2] == '\\' && name[name.size()-1] == 'n') ||
+							!(name[name.size()-1] == '\\')) {
+							cd.param[cd.param.size() - 1].name += ' ';
+						}
 						int pEnd = (int)line.find(inMultiClose);
 						if (pEnd > 0) {
 							cd.param[cd.param.size() - 1].name += line.substr(0, pEnd + 1);
@@ -443,50 +423,85 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 	const string src_prefix = src_prefix_c;
 	const string dst_prefix = dst_prefix_c;
 	stringstream ss(content);
-	bool inEffect = false;
-	string line, line2, cat;
+	string line, cat, command;
+	vector<string> commands;
 	EffectData cd;
-	int l = 0;
+	//printf("content:\n%s\n", content.c_str());
 	while (getline(ss, line)) {
+		//printf("%s\n%s\n", cat.c_str(), line.c_str());
+		if (line == "#@gui ____<i>About</i>") {
+			printf("about!\n");
+		}
+		if (line == "#@gui ____<b>Various</b>") {
+			printf("various!\n");
+		}
 		if ( (line.substr(0, src_prefix.size() + 1) == src_prefix + " ") ||
-             (line.substr(0, src_prefix.size() + 4) == src_prefix + "_en ") ||
-             (line.substr(0, src_prefix_old.size() + 1) == src_prefix_old + " ") ) {
-			if (line != "") line2 += line + "\n";
-			l++;
-			inEffect = true;
-		} else if (strTrim(line).substr(0, 1) != "#") {
-			if (inEffect) {
-				if (line2 != "") {
-					if (l == 1) {
-						if ( (line2 != src_prefix + " _\n") && (line2 != src_prefix_old + " _\n") ) cat = line2;
+			 (line.substr(0, src_prefix.size() + 4) == src_prefix + "_en ") ||
+			 (line.substr(0, src_prefix_old.size() + 1) == src_prefix_old + " ") ) {
+			// This is a @gui line or equivalent.
+			// Three possibilities:
+			// "#@gui Folder name" -> new category
+			// "#@gui Command name : ..." -> new plugin
+			// "#@gui : ..." -> plugin parameters description
+			string::size_type spc = line.find(' ');
+			if (spc != string::npos && line[spc+1] == ':') {
+				// plugin parameters description
+				command += '\n' + line;
+			} else {
+				string::size_type col = line.find(':', spc + 1);
+				if (col == string::npos) {
+					// new Folder/category
+					if (!command.empty()) {
+						commands.push_back(cat + '\n' + command);
+						command.clear();
+					}
+					cat = line;
+					if (cat == "#@gui ____<i>About</i>") {
+						command = "#@gui About G'MIC : fx_gmicky, fx_gmicky_preview";
+					}
+				} else if (col != spc + 1) {
+					if (cat == "#@gui ____<i>About</i>") {
+						// add new title
+						command += "\n#@gui : note = note{" + line.substr(spc+1, col - spc - 1) + '}';
 					} else {
-						line2 = cat + line2;
-						strReplace(line2, src_prefix, dst_prefix);
-						strReplace(line2, src_prefix_old, dst_prefix);
-                        gmic_parse_single(line2, cd);
+						// new command/Plugin
+						if (!command.empty()) {
+							commands.push_back(cat + '\n' + command);
+							command.clear();
+						}
+						command = line;
 					}
-					//printf("%s/%s\n", cd.category.c_str(), cd.name.c_str());
-					bool doOutput = true;
-					// skip entries from the about category
-					if (cd.category == "About" && cd.uniqueId != "eu.gmic.AboutGMIC") {
-						doOutput = false;
-					} else if ((int)strLowercase(cd.category).find("various") >= 0) {
-						doOutput = false;
-					} else if ((int)strLowercase(line2).find("[interactive]") >= 0) {
-						doOutput = false;
-					} else if ((int)strLowercase(line2).find("[animated]") >= 0) {
-						doOutput = false;
-					}
-					if (doOutput && cd.name != "" && l > 1) {
-						if (cds) cds->push_back(cd);
-						if (lines) lines->push_back(line2);
-					}
-
-					line2 = "";
-					l = 0;
 				}
-				inEffect = false;
 			}
+		}
+	}
+	// push last command being processed
+	if (!command.empty()) {
+		commands.push_back(cat + '\n' + command);
+		command.clear();
+	}
+
+	for (vector<string>::const_iterator it = commands.begin(); it != commands.end(); ++it) {
+		string line2 = *it;
+		strReplace(line2, src_prefix, dst_prefix);
+		strReplace(line2, src_prefix_old, dst_prefix);
+		gmic_parse_single(line2, cd);
+		//printf("%s/%s\n", cd.category.c_str(), cd.name.c_str());
+		bool doOutput = true;
+		// skip entries from the about category
+		if (cd.category == "About" && cd.uniqueId != "eu.gmic.AboutGMIC") {
+			//doOutput = false;
+		} else if (cd.category == "Various") {
+			//doOutput = false;
+			doOutput = true;
+		} else if ((int)strLowercase(line2).find("[interactive]") >= 0) {
+			doOutput = false;
+		} else if (cd.category == "Sequences" || (int)strLowercase(line2).find("[animated]") >= 0) {
+			doOutput = false;
+		}
+		if (doOutput && !cd.name.empty()) {
+			if (cds) cds->push_back(cd);
+			if (lines) lines->push_back(line2);
 		}
 	}
     for (vector<EffectData>::iterator it = cds->begin(); it != cds->end(); ++it) {
