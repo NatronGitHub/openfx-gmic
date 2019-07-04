@@ -168,8 +168,10 @@ public:
 	vector<string> pluginContent;
 	PluginGlobalData() {
 		string effectContent = loadStringFromFile(get_gmic_rc_path() + "gmic_ofx.gmic");
-		if (effectContent == "") effectContent = loadStringFromFile(get_gmic_rc_path() + "gmic_stdlib.gmic");
-		if (effectContent == "") {
+		if (effectContent.empty()) {
+			effectContent = loadStringFromFile(get_gmic_rc_path() + "gmic_stdlib.gmic");
+		}
+		if (effectContent.empty()) {
 			const char* lib = gmic_get_stdlib();
 			effectContent = string(lib);
 			gmic_delete_external((float*)lib);
@@ -180,7 +182,7 @@ public:
 				effectContent = "";
 			}
 		} 
-		if (effectContent == "") {
+		if (effectContent.empty()) {
 			effectContent = string((const char*)gmic_stdlib_gmic, gmic_stdlib_gmic_len);
 		}
 		gmic_parse_multi(effectContent, &pluginData, &pluginContent);
@@ -320,7 +322,9 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 				t = PT_INT;
 			} else if (paramType == "note" || paramType == "link") {
 				t = PT_TEXT;
-				//text = strRemoveXmlTags(strTrim(text, " \t\r\n'\""));
+				string note = strRemoveXmlTags(strTrim(text, " \t\r\n'\""));
+				strReplace(note, "\\n", "\n");
+				effectData.notes += note + '\n';
 				flags = 4;
 			} else if (paramType == "text") {
 				t = PT_TEXT;
@@ -386,7 +390,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 	strReplace(d, "<", "(");
 	strReplace(d, ">", ")");
 //	strReplace(d, "\n", "\\n");
-	globalDataP->pluginInfo.description = d + "\n\n" + PLUGIN_DESCRIPTION;
+	globalDataP->pluginInfo.description = d + "\n" + PLUGIN_DESCRIPTION;
 
 	return 0;
 }
