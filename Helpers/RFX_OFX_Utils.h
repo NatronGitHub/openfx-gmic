@@ -353,51 +353,6 @@ static void getAllParamData(int pluginIndex, const OfxRectI& dstRect, MyInstance
 	}
 }
 
-static void getParamData(int pluginIndex, const OfxRectI& dstRect, int paramIndex, MyInstanceData* myData, OfxTime t)
-{
-	int i = paramIndex;
-	if (globalData[pluginIndex].param[i].paramType == PT_FLOAT) {
-		double v;
-		gParamHost->paramGetValueAtTime(myData->param[i], t, &v);
-		myData->sequenceDataP->floatValue[i][0] = (float)v;
-	} else if (globalData[pluginIndex].param[i].paramType == PT_INT) {
-		int v;
-		gParamHost->paramGetValueAtTime(myData->param[i], t, &v);
-		myData->sequenceDataP->floatValue[i][0] = (float)v;
-	} else if (globalData[pluginIndex].param[i].paramType == PT_COLOR) {
-		double myR, myG, myB, myA;
-		gParamHost->paramGetValueAtTime(myData->param[i], t, &myR, &myG, &myB, &myA);
-		myData->sequenceDataP->floatValue[i][0] = (float)myR;
-		myData->sequenceDataP->floatValue[i][1] = (float)myG;
-		myData->sequenceDataP->floatValue[i][2] = (float)myB;
-		myData->sequenceDataP->floatValue[i][3] = (float)myA;
-	} else if (globalData[pluginIndex].param[i].paramType == PT_POINT) {
-		// point parameter is in % in gmic: no need to scale
-		double myX, myY;
-		gParamHost->paramGetValueAtTime(myData->param[i], t, &myX, &myY);
-		myData->sequenceDataP->floatValue[i][0] = (float)myX * 100. / (dstRect.x2 - dstRect.x1); // * myData->sequenceDataP->downsample_x;
-		myData->sequenceDataP->floatValue[i][1] = 100.f - (float)myY * 100. / (dstRect.y2 - dstRect.y1); // * myData->sequenceDataP->downsample_y;
-	} else if (globalData[pluginIndex].param[i].paramType == PT_ANGLE) {
-		double v;
-		gParamHost->paramGetValueAtTime(myData->param[i], t, &v);
-		if (globalData[pluginIndex].param[i].flags > 0)
-			myData->sequenceDataP->floatValue[i][0] = -M_PI * (float)v / 180.0f;
-		else
-			myData->sequenceDataP->floatValue[i][0] = (float)v;
-	} else if (globalData[pluginIndex].param[i].paramType == PT_SELECT) {
-		int v;
-		gParamHost->paramGetValueAtTime(myData->param[i], t, &v);
-		myData->sequenceDataP->floatValue[i][0] = (float)v;
-	} else if (globalData[pluginIndex].param[i].paramType == PT_BOOL) {
-		int v;
-		gParamHost->paramGetValueAtTime(myData->param[i], t, &v);
-		myData->sequenceDataP->floatValue[i][0] = (float)v;
-	} else if (globalData[pluginIndex].param[i].paramType == PT_TEXT) {
-		char* v = NULL;
-		gParamHost->paramGetValueAtTime(myData->param[i], t, &v);
-		myData->sequenceDataP->textValue[i] = string(v);
-	}
-}
 
 #if 0
 static void setParamData(int pluginIndex, const OfxRectI& dstRect, MyInstanceData* myData)
