@@ -42,8 +42,12 @@ ZLIB_LINKFLAGS=`pkg-config --libs zlib`
 LIBCURL_CXXFLAGS=`pkg-config --cflags libcurl` -Dcimg_use_curl
 LIBCURL_LINKFLAGS=`pkg-config --libs libcurl`
 
-CXXFLAGS += $(FFTW3_CXXFLAGS) $(ZLIB_CXXFLAGS) $(LIBCURL_CXXFLAGS)
-LINKFLAGS += $(FFTW3_LINKFLAGS) $(ZLIB_LINKFLAGS) $(LIBCURL_LINKFLAGS)
+# libpng, necessary for HaldCLUTs:
+LIBPNG_CXXFLAGS=`pkg-config --cflags libpng` -Dcimg_use_png
+LIBPNG_LINKFLAGS=`pkg-config --libs libpng`
+
+CXXFLAGS += $(FFTW3_CXXFLAGS) $(ZLIB_CXXFLAGS) $(LIBCURL_CXXFLAGS) $(LIBPNG_CXXFLAGS)
+LINKFLAGS += $(FFTW3_LINKFLAGS) $(ZLIB_LINKFLAGS) $(LIBCURL_LINKFLAGS) $(LIBPNG_LINKFLAGS)
 
 VPATH = $(SRCDIR):$(SRCDIR)/Helpers
 
