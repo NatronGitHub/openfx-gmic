@@ -242,15 +242,15 @@ string strToAscii(string& s)
 {
 #define ascii_conv(a,b) else if (s[i] == a) s[i] = b;
 #ifdef _WIN32
-	strReplace(s, "\xC4", "Ae"); // ƒ
-	strReplace(s, "\xD6", "Oe"); // ÷
-	strReplace(s, "\xDC", "Ue"); // ‹
-	strReplace(s, "\xC6", "Ae"); // ∆
-	strReplace(s, "\xDF", "ss"); // ﬂ
-	strReplace(s, "\xE6", "ae"); // Ê
-	strReplace(s, "\xE4", "ae"); // ‰
-	strReplace(s, "\xF6", "oe"); // ˆ
-	strReplace(s, "\xFC", "ue"); // ¸
+	strReplace(s, "\xC4", "Ae"); // ∆í
+	strReplace(s, "\xD6", "Oe"); // √∑
+	strReplace(s, "\xDC", "Ue"); // ‚Äπ
+	strReplace(s, "\xC6", "Ae"); // ‚àÜ
+	strReplace(s, "\xDF", "ss"); // Ô¨Ç
+	strReplace(s, "\xE6", "ae"); // √ä
+	strReplace(s, "\xE4", "ae"); // ‚Ä∞
+	strReplace(s, "\xF6", "oe"); // ÀÜ
+	strReplace(s, "\xFC", "ue"); // ¬∏
 #else
 	strReplace(s, "\xa7", "ss");
 	strReplace(s, "\x80", "Ae");
@@ -270,56 +270,56 @@ string strToAscii(string& s)
 #ifdef _WIN32
 		ascii_conv('\xbf', '?') // ?
 		ascii_conv('\xa1', '!') // !
-		ascii_conv('\xC0', 'A') // ¿
-		ascii_conv('\xC1', 'A') // ¡
-		ascii_conv('\xC2', 'A') // ¬
-		ascii_conv('\xC3', 'A') // √
-		ascii_conv('\xC5', 'A') // ≈
-		ascii_conv('\xC7', 'C') // «
-		ascii_conv('\xC8', 'E') // »
-		ascii_conv('\xC9', 'E') // …
-		ascii_conv('\xCA', 'E') //  
-		ascii_conv('\xCB', 'E') // À
-		ascii_conv('\xCC', 'I') // Ã
-		ascii_conv('\xCD', 'I') // Õ
-		ascii_conv('\xCE', 'I') // Œ
-		ascii_conv('\xCF', 'I') // œ
-		ascii_conv('\xD0', 'D') // –
-		ascii_conv('\xD1', 'N') // —
-		ascii_conv('\xD2', 'O') // “
-		ascii_conv('\xD3', 'O') // ”
-		ascii_conv('\xD4', 'O') // ‘
-		ascii_conv('\xD5', 'O') // ’
+		ascii_conv('\xC0', 'A') // ÔøΩ
+		ascii_conv('\xC1', 'A') // ÔøΩ
+		ascii_conv('\xC2', 'A') // ÔøΩ
+		ascii_conv('\xC3', 'A') // ÔøΩ
+		ascii_conv('\xC5', 'A') // ÔøΩ
+		ascii_conv('\xC7', 'C') // ÔøΩ
+		ascii_conv('\xC8', 'E') // ÔøΩ
+		ascii_conv('\xC9', 'E') // ÔøΩ
+		ascii_conv('\xCA', 'E') // ÔøΩ
+		ascii_conv('\xCB', 'E') // ÔøΩ
+		ascii_conv('\xCC', 'I') // ÔøΩ
+		ascii_conv('\xCD', 'I') // ÔøΩ
+		ascii_conv('\xCE', 'I') // ÔøΩ
+		ascii_conv('\xCF', 'I') // ÔøΩ
+		ascii_conv('\xD0', 'D') // ÔøΩ
+		ascii_conv('\xD1', 'N') // ÔøΩ
+		ascii_conv('\xD2', 'O') // ÔøΩ
+		ascii_conv('\xD3', 'O') // ÔøΩ
+		ascii_conv('\xD4', 'O') // ÔøΩ
+		ascii_conv('\xD5', 'O') // ÔøΩ
 		ascii_conv('\xD8', 'O') // O
-		ascii_conv('\xD9', 'U') // Ÿ
-		ascii_conv('\xDA', 'U') // ⁄
-		ascii_conv('\xDB', 'U') // €
-		ascii_conv('\xDD', 'Y') // ›
-		ascii_conv('\xE0', 'a') // ‡
-		ascii_conv('\xE1', 'a') // ·
-		ascii_conv('\xE2', 'a') // ‚
-		ascii_conv('\xE3', 'a') // „
-		ascii_conv('\xE5', 'a') // Â
-		ascii_conv('\xE7', 'c') // Á
-		ascii_conv('\xE8', 'e') // Ë
-		ascii_conv('\xE9', 'e') // È
-		ascii_conv('\xEA', 'e') // Í
-		ascii_conv('\xEB', 'e') // Î
-		ascii_conv('\xEC', 'i') // Ï
-		ascii_conv('\xED', 'i') // Ì
-		ascii_conv('\xEE', 'i') // Ó
-		ascii_conv('\xEF', 'i') // Ô
-		ascii_conv('\xF1', 'n') // Ò
-		ascii_conv('\xF2', 'o') // Ú
-		ascii_conv('\xF3', 'o') // Û
-		ascii_conv('\xF4', 'o') // Ù
-		ascii_conv('\xF5', 'o') // ı
-		ascii_conv('\xF8', 'o') // ¯
-		ascii_conv('\xF9', 'u') // ˘
-		ascii_conv('\xFA', 'u') // ˙
-		ascii_conv('\xFB', 'u') // ˚
-		ascii_conv('\xFD', 'y') // ˝
-		ascii_conv('\xFF', 'y') // ˇ
+		ascii_conv('\xD9', 'U') // ≈∏
+		ascii_conv('\xDA', 'U') // ‚ÅÑ
+		ascii_conv('\xDB', 'U') // ‚Ç¨
+		ascii_conv('\xDD', 'Y') // ‚Ä∫
+		ascii_conv('\xE0', 'a') // ‚Ä°
+		ascii_conv('\xE1', 'a') // ¬∑
+		ascii_conv('\xE2', 'a') // ‚Äö
+		ascii_conv('\xE3', 'a') // ‚Äû
+		ascii_conv('\xE5', 'a') // √Ç
+		ascii_conv('\xE7', 'c') // √Å
+		ascii_conv('\xE8', 'e') // √ã
+		ascii_conv('\xE9', 'e') // √à
+		ascii_conv('\xEA', 'e') // √ç
+		ascii_conv('\xEB', 'e') // √é
+		ascii_conv('\xEC', 'i') // √è
+		ascii_conv('\xED', 'i') // √å
+		ascii_conv('\xEE', 'i') // √ì
+		ascii_conv('\xEF', 'i') // √î
+		ascii_conv('\xF1', 'n') // √í
+		ascii_conv('\xF2', 'o') // √ö
+		ascii_conv('\xF3', 'o') // √õ
+		ascii_conv('\xF4', 'o') // √ô
+		ascii_conv('\xF5', 'o') // ƒ±
+		ascii_conv('\xF8', 'o') // ¬Ø
+		ascii_conv('\xF9', 'u') // Àò
+		ascii_conv('\xFA', 'u') // Àô
+		ascii_conv('\xFB', 'u') // Àö
+		ascii_conv('\xFD', 'y') // Àù
+		ascii_conv('\xFF', 'y') // Àá
 #else
 		ascii_conv('\x81', 'A')
 		ascii_conv('\x82', 'C')
@@ -390,6 +390,8 @@ string strRemoveXmlTags(const string& s, bool replaceEntities)
 	}
 	if (replaceEntities) {
 		strReplace(r, "&amp;", "&");
+		strReplace(r, "&nbsp;", " ");
+		strReplace(r, "&hearts;", "");
 		strReplace(r, "\\251", "(C)");
 		strReplace(r, "&#224;", "a"); // agrave
 		strReplace(r, "&#225;", "a"); // aacute
