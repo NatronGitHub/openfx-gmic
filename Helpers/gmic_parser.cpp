@@ -349,7 +349,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 							} 
 							pEnd = (int)line.find(inMultiClose, pStart + 1);
 
-							if (pStart > 0 && pEnd > 0) {
+							if (pEnd > 0) {
 								// there is one more param
 								EffectParameter p;
 								p.name = line.substr(0, pEnd+1);
@@ -359,15 +359,12 @@ string gmic_parse_single(const string& content, EffectData& cd)
 								if (!line.empty()) {
 									line = dst_prefix + " : " + line;
 								}
-							} else if (pStart > 0) {
+							} else {
 								// multi-line
 								EffectParameter p;
 								p.name = line;
 								cd.param.push_back(p);
 								inMulti = true;
-								line.clear();
-							} else {
-								// garbage?
 								line.clear();
 							}
 						}
@@ -503,6 +500,9 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 			if (cds) cds->push_back(cd);
 			if (lines) lines->push_back(line2);
 		}
+	}
+	if (!cds) {
+		return;
 	}
     for (vector<EffectData>::iterator it = cds->begin(); it != cds->end(); ++it) {
         // post-process

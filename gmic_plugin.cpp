@@ -166,7 +166,9 @@ string get_gmic_rc_path()
 		_path_rc = getenv("APPDATA");
 #endif
 	}
-	if (path == "") path = string(_path_rc) + "/gmic/";
+	if (_path_rc && path.empty()) {
+		path = string(_path_rc) + "/gmic/";
+	}
 	return path;
 }
 
@@ -220,6 +222,7 @@ public:
 	gmic_interface_options options;
 
 	MySequenceData() {
+		options.custom_commands = NULL;
 		options.error_message_buffer = new char[256];
 		options.error_message_buffer[0] = '\0';
 		options.ignore_stdlib = false;
@@ -227,6 +230,7 @@ public:
 		options.p_progress = NULL;
 		options.output_format = E_FORMAT_FLOAT;
 		options.interleave_output = false;
+		options.no_inplace_processing = false;
 	};
 	~MySequenceData() {
 		delete[] options.error_message_buffer;
@@ -507,7 +511,7 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		images[i].name[0] = '\0';
 		images[i].format = E_FORMAT_FLOAT;
 		images[i].is_interleaved = false;
-		strcpy(images[i].name, string("input" + intToString(i)).c_str());
+		strncpy(images[i].name, string("input" + intToString(i)).c_str(), sizeof(images[i].name));
 	}
 
 	string cmd = gmicCommand(sequenceDataP, globalDataP);

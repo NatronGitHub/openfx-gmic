@@ -296,7 +296,7 @@ static OfxStatus destroyInstance(int /*pluginIndex*/, OfxImageEffectHandle effec
 {
 	// get my instance data
 	MyInstanceData* myData = getMyInstanceData(effect);
-	if (myData->sequenceDataP) {
+	if (myData && myData->sequenceDataP) {
 		if (myData->sequenceDataP->customSequenceDataP) {
 			destroyCustomSequenceData(myData->sequenceDataP->customSequenceDataP);
 			myData->sequenceDataP->customSequenceDataP = NULL;
@@ -404,7 +404,7 @@ static
 bool
 renderScaleIsOne(OfxPropertySetHandle inArgs)
 {
-    double renderScale[2];
+    double renderScale[2] = {1., 1.};
     OfxStatus stat = gPropHost->propGetDoubleN(inArgs, kOfxImageEffectPropRenderScale, 2, renderScale);
     if (stat == kOfxStatOK && (renderScale[0] != 1. || renderScale[1] != 1.)) {
         return false;
@@ -899,14 +899,14 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 	try
 	{
 		// get the output image
-		int dstRowBytes, dstBitDepth;
-		OfxRectI dstRect;
+		int dstRowBytes = 0, dstBitDepth = 0;
+		OfxRectI dstRect = {0, 0, 0, 0};
 		outputImg = ofxuGetImage(myData->output, time, dstRowBytes, dstBitDepth, dstIsAlpha, dstRect, dstData);
 
 		if (outputImg == NULL) throw OfxuNoImageException();
 		float scale = globalData[pluginIndex].scale;
 
-		OfxPointD renderScale;
+		OfxPointD renderScale = {1., 1.};
 		gPropHost->propGetDoubleN(inArgs, kOfxImageEffectPropRenderScale, 2, &renderScale.x);
 		OfxRectI renderWindow;
 		gPropHost->propGetIntN(inArgs, kOfxImageEffectPropRenderWindow, 4, &renderWindow.x1);
@@ -921,8 +921,8 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 		int i = 0;
 		for (int p = 0; p < globalData[pluginIndex].nofParams; p++) {
 			if (globalData[pluginIndex].param[p].paramType != PT_LAYER) continue;
-			int srcRowBytes, srcBitDepth;
-			OfxRectI srcRect;
+			int srcRowBytes = 0, srcBitDepth = 0;
+			OfxRectI srcRect = {0, 0, 0, 0};
 			bool srcIsAlpha = false;
 			void *srcData = NULL;
 
@@ -1285,7 +1285,7 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 			delete (unsigned char*)myData->sequenceDataP->inWorld[i].data;
 		}
 	}
-	if (customOutputData) delete (unsigned char*)myData->sequenceDataP->outWorld.data;
+	if (customOutputData) delete [] (unsigned char*)myData->sequenceDataP->outWorld.data;
 	if (outputImg) gEffectHost->clipReleaseImage(outputImg);
 	
 	return status;

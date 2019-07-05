@@ -115,6 +115,7 @@ public:
 		rowBytes = 0;
 		origin_x = 0;
 		origin_y = 0;
+		pixelFormat = PF_RGBA;
 	};
 };
 
