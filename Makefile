@@ -25,6 +25,8 @@ clean:
 	  echo "(cd $$i && $(MAKE) $@)"; \
 	  (cd $$i && $(MAKE) $@); \
 	done
+
+distclean:
 	-rm $(GMICSRC) $(GMICSOURCES) $(GITSOURCES)
 
 install:
