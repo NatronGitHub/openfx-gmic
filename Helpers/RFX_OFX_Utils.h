@@ -439,16 +439,19 @@ static
 OfxStatus getSpatialRoI(int /*pluginIndex*/, OfxImageEffectHandle /*effect*/, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
     if (!renderScaleIsOne(inArgs)) {
+		// GMIC does not support render scale
         return kOfxStatFailed;
     }
-	// get the RoI the effect is interested in from inArgs
-	OfxRectD roi;
-	gPropHost->propGetDoubleN(inArgs, kOfxImageEffectPropRegionOfInterest, 4, &roi.x1);
+	// GMIC does not supports tiles
+	return kOfxStatReplyDefault;
+	// // get the RoI the effect is interested in from inArgs
+	// OfxRectD roi;
+	// gPropHost->propGetDoubleN(inArgs, kOfxImageEffectPropRegionOfInterest, 4, &roi.x1);
 
-	// the input needed is the same as the output, so set that on the source clip
-	gPropHost->propSetDoubleN(outArgs, "OfxImageClipPropRoI_Source", 4, &roi.x1);
+	// // the input needed is the same as the output, so set that on the source clip
+	// gPropHost->propSetDoubleN(outArgs, "OfxImageClipPropRoI_Source", 4, &roi.x1);
 
-	return kOfxStatOK;
+	// return kOfxStatOK;
 }
 
 // Tells the host how many frames we can fill, only called in the general context.
@@ -1529,6 +1532,11 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 				gPropHost->propSetInt(props, kOfxImageClipPropOptional, 0, 1);
 			}
 			gPropHost->propSetString(props, kOfxImageEffectPropSupportedComponents, 0, kOfxImageComponentRGBA);
+			gPropHost->propSetString(props, kOfxImageEffectPluginRenderThreadSafety, 0, kOfxImageEffectRenderFullySafe); // kOfxImageEffectRenderUnsafe);//kOfxImageEffectRenderInstanceSafe);
+			gPropHost->propSetInt(props, kOfxImageEffectPropSupportsTiles, 0, 0);
+			gPropHost->propSetInt(props, kOfxImageEffectPluginPropHostFrameThreading, 0, 0);
+			gPropHost->propSetInt(props, kOfxImageEffectPropSupportsMultiResolution, 0, 0);
+			gPropHost->propSetInt(props, kOfxImageEffectPropTemporalClipAccess, 0, 1);
 			l++;
 			continue;
 		} else if (param.paramType == PT_TOPIC_START) {	
