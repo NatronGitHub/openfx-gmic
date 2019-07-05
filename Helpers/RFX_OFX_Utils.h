@@ -349,6 +349,10 @@ static void getAllParamData(int pluginIndex, const OfxRectI& dstRect, MyInstance
 			int v;
 			gParamHost->paramGetValueAtTime(myData->param[i], t, &v);
 			myData->sequenceDataP->floatValue[i][0] = (float)v;
+		} else if (globalData[pluginIndex].param[i].paramType == PT_TEXT) {
+			char* v;
+			gParamHost->paramGetValueAtTime(myData->param[i], t, &v);
+			myData->sequenceDataP->textValue[i] = v;
 		}
 	}
 }
@@ -389,7 +393,7 @@ static void setParamData(int pluginIndex, const OfxRectI& dstRect, MyInstanceDat
 			int v = (int)myData->sequenceDataP->floatValue[i][0];
 			gParamHost->paramSetValue(myData->param[i], v);
 		} else if (globalData[pluginIndex].param[i].paramType == PT_TEXT) {
-			string s = myData->sequenceDataP->textValue[i];
+			const string& s = myData->sequenceDataP->textValue[i];
 			gParamHost->paramSetValue(myData->param[i], s.c_str());
 		}
 	}
@@ -1458,12 +1462,19 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 				); 
 		} else if (param.paramType == PT_TEXT) {
 			std::string txt = param.text;
+			bool multiline = false;
 			strReplace(txt, "\\r", "\r");
 			strReplace(txt, "\\n", "\n");
+			multiline |= (txt.find_first_of("\r\n") != string::npos);
+			int flags = param.flags;
+			// force the param to be multiline if there are newlines in the default value
+			if (multiline && flags == 0) {
+				flags = 1;
+			}
 			paramAddText(
 				paramSet, props,
 				param.paramName.c_str(), // param
-				txt.c_str(), param.flags);
+				txt.c_str(), flags);
 		} else if (param.paramType == PT_INT) {
 			paramAddInt(
 				paramSet, props,
