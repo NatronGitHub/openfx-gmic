@@ -327,7 +327,7 @@ static void getAllParamData(int pluginIndex, const OfxRectI& dstRect, MyInstance
 			myData->sequenceDataP->floatValue[i][0] = (float)myR;
 			myData->sequenceDataP->floatValue[i][1] = (float)myG;
 			myData->sequenceDataP->floatValue[i][2] = (float)myB;
-			myData->sequenceDataP->floatValue[i][2] = (float)myA;
+			myData->sequenceDataP->floatValue[i][3] = (float)myA;
 		} else if (globalData[pluginIndex].param[i].paramType == PT_POINT) {
 			// point parameter is in % in gmic: no need to scale
 			double myX, myY;
