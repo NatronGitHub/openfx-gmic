@@ -374,6 +374,10 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		globalDataP->param[p].displayStatus = DS_HIDDEN;
 	}
 	++p;
+	globalDataP->param[p] = Parameter("Random Seed", "", PT_INT, 0, 1<<24, 0, 0, 0, 0, "");
+	++p;
+	globalDataP->param[p] = Parameter("Animate Random Seed", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
+	++p;
 	globalDataP->param[p] = Parameter("Log Verbosity", "", PT_SELECT, 0, 4, 0, 0, 0, 0, "Off|Level 1|Level 2|Level 3|");
 	++p;
 	globalDataP->param[p] = Parameter("Advanced Options", "", PT_TOPIC_END);
@@ -395,11 +399,13 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 	return 0;
 }
 
-#define PARAM_COMMAND (globalDataP->nofParams - 8)
-#define PARAM_OUTPUT (globalDataP->nofParams - 6)
-#define PARAM_RESIZE (globalDataP->nofParams - 5)
-#define PARAM_NOALPHA (globalDataP->nofParams - 4)
-#define PARAM_PREVIEW (globalDataP->nofParams - 3)
+#define PARAM_COMMAND (globalDataP->nofParams - 9)
+#define PARAM_OUTPUT (globalDataP->nofParams - 8)
+#define PARAM_RESIZE (globalDataP->nofParams - 7)
+#define PARAM_NOALPHA (globalDataP->nofParams - 6)
+#define PARAM_PREVIEW (globalDataP->nofParams - 5)
+#define PARAM_SRAND (globalDataP->nofParams - 4)
+#define PARAM_ANIMSEED (globalDataP->nofParams - 3)
 #define PARAM_VERBOSITY (globalDataP->nofParams - 2)
 
 static
@@ -524,8 +530,13 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		cmd += " -resize " + intToString(sequenceDataP->inWorld[0].width) + "," + intToString(sequenceDataP->inWorld[0].height);
  	}
 	int verbosity = (int)PAR_VAL(PARAM_VERBOSITY) - 1;
+	int seed = (int)PAR_VAL(PARAM_SRAND);
+	bool animated_seed = (int)PAR_VAL(PARAM_ANIMSEED);
+	if (animated_seed) {
+		seed += (int)sequenceDataP->time;
+	}
 
-	cmd = "-v " + intToString(verbosity) + " " + cmd;
+	cmd = "-v " + intToString(verbosity) + " -srand " + intToString(seed) + " " + cmd;
 	// cmd += " -display";
 	// set some variables that are defined globally for the GIMP plugin
 	// not really needed as the effects should work independently of GIMP
