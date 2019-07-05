@@ -115,6 +115,15 @@
 // this should in most cases NOT be set, unless you (or a specific library) need the pixel buffers in this format
 #define PLANAR_BUFFER
 
+#define PARAM_COMMAND (globalDataP->nofParams - 9)
+#define PARAM_OUTPUT (globalDataP->nofParams - 8)
+#define PARAM_RESIZE (globalDataP->nofParams - 7)
+#define PARAM_NOALPHA (globalDataP->nofParams - 6)
+#define PARAM_PREVIEW (globalDataP->nofParams - 5)
+#define PARAM_SRAND (globalDataP->nofParams - 4)
+#define PARAM_ANIMSEED (globalDataP->nofParams - 3)
+#define PARAM_VERBOSITY (globalDataP->nofParams - 2)
+
 #ifdef OFX_PLUGIN
     #include "RFX_OFX_Utils.h"
 #else
@@ -374,7 +383,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		globalDataP->param[p].displayStatus = DS_HIDDEN;
 	}
 	++p;
-	globalDataP->param[p] = Parameter("Random Seed", "", PT_INT, 0, 1<<24, 0, 0, 0, 0, "");
+	globalDataP->param[p] = Parameter("Global Random Seed", "", PT_INT, 0, 1<<24, 0, 0, 0, 0, "");
 	++p;
 	globalDataP->param[p] = Parameter("Animate Random Seed", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
 	++p;
@@ -398,15 +407,6 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 
 	return 0;
 }
-
-#define PARAM_COMMAND (globalDataP->nofParams - 9)
-#define PARAM_OUTPUT (globalDataP->nofParams - 8)
-#define PARAM_RESIZE (globalDataP->nofParams - 7)
-#define PARAM_NOALPHA (globalDataP->nofParams - 6)
-#define PARAM_PREVIEW (globalDataP->nofParams - 5)
-#define PARAM_SRAND (globalDataP->nofParams - 4)
-#define PARAM_ANIMSEED (globalDataP->nofParams - 3)
-#define PARAM_VERBOSITY (globalDataP->nofParams - 2)
 
 static
 std::string

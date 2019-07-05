@@ -436,7 +436,7 @@ OfxStatus getSpatialRoD(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPro
 
 // tells the host how much of the input we need to fill the given window
 static
-OfxStatus getSpatialRoI(int /*pluginIndex*/, OfxImageEffectHandle /*effect*/, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
+OfxStatus getSpatialRoI(int /*pluginIndex*/, OfxImageEffectHandle /*effect*/, OfxPropertySetHandle inArgs, OfxPropertySetHandle /*outArgs*/)
 {
     if (!renderScaleIsOne(inArgs)) {
 		// GMIC does not support render scale
@@ -474,7 +474,7 @@ OfxStatus getTemporalDomain(int /*pluginIndex*/, OfxImageEffectHandle effect, Of
 }
 
 // Set our clip preferences 
-static OfxStatus getClipPreferences(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPropertySetHandle /*inArgs*/, OfxPropertySetHandle outArgs)
+static OfxStatus getClipPreferences(int pluginIndex, OfxImageEffectHandle effect, OfxPropertySetHandle /*inArgs*/, OfxPropertySetHandle outArgs)
 {
 	// retrieve any instance data associated with this effect
 	MyInstanceData *myData = getMyInstanceData(effect);
@@ -493,6 +493,13 @@ static OfxStatus getClipPreferences(int /*pluginIndex*/, OfxImageEffectHandle ef
 	if (gHostSupportsMultipleBitDepths) {
 		gPropHost->propSetString(outArgs, "OfxImageClipPropDepth_Output", 0, bitDepthStr);
 	}
+	int v = 0;
+	GlobalData* globalDataP = &globalData[pluginIndex];
+	gParamHost->paramGetValue(myData->param[PARAM_ANIMSEED], &v);
+	if (v) {
+		gPropHost->propSetInt(outArgs, kOfxImageEffectFrameVarying, 0, 1);
+	}
+
 	return kOfxStatOK;
 }
 
@@ -1689,6 +1696,8 @@ static OfxStatus describe(int pluginIndex, OfxImageEffectHandle effect)
 			globalData[pluginIndex].pluginFilename = p;
 		}
 	}
+
+    gPropHost->propSetString(effectProps, kOfxImageEffectPropClipPreferencesSlaveParam, 0, "Animate Random Seed");
 
 	return kOfxStatOK;
 }
