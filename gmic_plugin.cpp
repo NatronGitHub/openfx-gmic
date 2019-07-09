@@ -289,7 +289,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		float d3 = 0.f;
 		float d4 = 0.f;
 		const EffectParameter& param = effectData.param[i];
-		const std::string& name = param.name;
+		std::string name = param.name;
 		const std::string& minValue = param.minValue;
 		const std::string& maxValue = param.maxValue;
 		const std::string& defaultValue = param.defaultValue;
@@ -309,6 +309,13 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 			strSplit(defaultValue + "|", '|', r);
 			d1 = (float)atof(r[0].c_str());
 			d2 = (float)atof(r[1].c_str());
+#ifdef OFX_PLUGIN
+			// erase any occurence of " (%)" in the string, because the displayed parameter will be in pixels
+			size_t start_pos = name.find(" (%)");
+    		if(start_pos != string::npos) {
+				name.erase(start_pos, 4);
+			}
+#endif
 		} else {
 			d1 = (float)atof(defaultValue.c_str());
 			d2 = d1; d3 = d1; d4 = d1;
@@ -578,7 +585,6 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		}
 	}
 	if (result != 0) {
-		string errmsg = string(((MySequenceData*)(sequenceDataP->customSequenceDataP))->options.error_message_buffer);
 #ifdef OFX_PLUGIN
 		 if (gMessageSuite) {
 			gMessageSuite->message(contextDataP->instance, kOfxMessageError, "G'MIC Error", errmsg.c_str());

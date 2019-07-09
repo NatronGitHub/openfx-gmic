@@ -100,6 +100,8 @@ using namespace reduxfx;
 #define PF_Err_INTERNAL_STRUCT_DAMAGED 512
 #define A_long long
 
+#define kSupportsRenderScale 1
+
 struct ContextData
 {
     int pluginIndex;
@@ -310,7 +312,7 @@ static OfxStatus destroyInstance(int /*pluginIndex*/, OfxImageEffectHandle effec
 	return kOfxStatOK;
 }
 
-static void getAllParamData(int pluginIndex, const OfxRectI& dstRect, MyInstanceData* myData, OfxTime t)
+static void getAllParamData(int pluginIndex, const OfxRectI& dstRect, MyInstanceData* myData, OfxTime t, const OfxPointD& renderScale)
 {
 	for (int i = 0; i < globalData[pluginIndex].nofParams; i++) {
 		if (globalData[pluginIndex].param[i].paramType == PT_FLOAT) {
@@ -329,11 +331,11 @@ static void getAllParamData(int pluginIndex, const OfxRectI& dstRect, MyInstance
 			myData->sequenceDataP->floatValue[i][2] = (float)myB;
 			myData->sequenceDataP->floatValue[i][3] = (float)myA;
 		} else if (globalData[pluginIndex].param[i].paramType == PT_POINT) {
-			// point parameter is in % in gmic: no need to scale
+			// point parameter is in % (percent) in gmic: no need to scale
 			double myX, myY;
 			gParamHost->paramGetValueAtTime(myData->param[i], t, &myX, &myY);
-			myData->sequenceDataP->floatValue[i][0] = (float)myX * 100. / (dstRect.x2 - dstRect.x1); // * myData->sequenceDataP->downsample_x;
-			myData->sequenceDataP->floatValue[i][1] = 100.f - (float)myY * 100. / (dstRect.y2 - dstRect.y1); // * myData->sequenceDataP->downsample_y;
+			myData->sequenceDataP->floatValue[i][0] = (float)(myX * 100. * renderScale.x / (dstRect.x2 - dstRect.x1)); // * myData->sequenceDataP->downsample_x;
+			myData->sequenceDataP->floatValue[i][1] = 100.f - (float)(myY * 100. * renderScale.y / (dstRect.y2 - dstRect.y1)); // * myData->sequenceDataP->downsample_y;
 		} else if (globalData[pluginIndex].param[i].paramType == PT_ANGLE) {
 			double v;
 			gParamHost->paramGetValueAtTime(myData->param[i], t, &v);
@@ -359,7 +361,7 @@ static void getAllParamData(int pluginIndex, const OfxRectI& dstRect, MyInstance
 
 
 #if 0
-static void setParamData(int pluginIndex, const OfxRectI& dstRect, MyInstanceData* myData)
+static void setParamData(int pluginIndex, const OfxRectI& dstRect, MyInstanceData* myData, const OfxPointD& renderScale)
 {
 	for (int i = 0; i < globalData[pluginIndex].nofParams; i++) {
 		if (globalData[pluginIndex].param[i].paramType == PT_FLOAT) {
@@ -375,9 +377,9 @@ static void setParamData(int pluginIndex, const OfxRectI& dstRect, MyInstanceDat
 			double myA = (double)myData->sequenceDataP->floatValue[i][3];
 			gParamHost->paramSetValue(myData->param[i], myR, myG, myB, myA);
 		} else if (globalData[pluginIndex].param[i].paramType == PT_POINT) {
-			// point parameter is in % in gmic: no need to scale
-			double myX = (double)myData->sequenceDataP->floatValue[i][0] / 100. * (dstRect.x2 - dstRect.x1); // / myData->sequenceDataP->downsample_x;
-			double myY = (1. - (double)myData->sequenceDataP->floatValue[i][1] / 100.) * (dstRect.y2 - dstRect.y1); // / myData->sequenceDataP->downsample_y;
+			// point parameter is in % (percent) in gmic: no need to scale
+			double myX = (double)myData->sequenceDataP->floatValue[i][0] / (100. * renderScale.x) * (dstRect.x2 - dstRect.x1); // / myData->sequenceDataP->downsample_x;
+			double myY = (1. - (double)myData->sequenceDataP->floatValue[i][1] / (100. *renderScale.y)) * (dstRect.y2 - dstRect.y1); // / myData->sequenceDataP->downsample_y;
 			gParamHost->paramSetValue(myData->param[i], myX, myY);
 		} else if (globalData[pluginIndex].param[i].paramType == PT_ANGLE) {
 			double v;
@@ -400,6 +402,7 @@ static void setParamData(int pluginIndex, const OfxRectI& dstRect, MyInstanceDat
 }
 #endif
 
+#if kSupportsRenderScale != 1
 static
 bool
 renderScaleIsOne(OfxPropertySetHandle inArgs)
@@ -411,14 +414,17 @@ renderScaleIsOne(OfxPropertySetHandle inArgs)
     }
     return true;
 }
+#endif
 
 // tells the host what region we are capable of filling
 static
 OfxStatus getSpatialRoD(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
+#if kSupportsRenderScale != 1
     if (!renderScaleIsOne(inArgs)) {
         return kOfxStatFailed;
     }
+#endif
 	// retrieve any instance data associated with this effect
 	MyInstanceData *myData = getMyInstanceData(effect);
 
@@ -436,12 +442,14 @@ OfxStatus getSpatialRoD(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPro
 
 // tells the host how much of the input we need to fill the given window
 static
-OfxStatus getSpatialRoI(int /*pluginIndex*/, OfxImageEffectHandle /*effect*/, OfxPropertySetHandle inArgs, OfxPropertySetHandle /*outArgs*/)
+OfxStatus getSpatialRoI(int /*pluginIndex*/, OfxImageEffectHandle /*effect*/, OfxPropertySetHandle /*inArgs*/, OfxPropertySetHandle /*outArgs*/)
 {
+#if kSupportsRenderScale != 1
     if (!renderScaleIsOne(inArgs)) {
 		// GMIC does not support render scale
         return kOfxStatFailed;
     }
+#endif
 	// GMIC does not supports tiles
 	return kOfxStatReplyDefault;
 	// // get the RoI the effect is interested in from inArgs
@@ -506,9 +514,11 @@ static OfxStatus getClipPreferences(int pluginIndex, OfxImageEffectHandle effect
 // are the settings of the effect performing an identity operation
 static OfxStatus isIdentity(int /*pluginIndex*/, OfxImageEffectHandle /*effect*/, OfxPropertySetHandle inArgs, OfxPropertySetHandle /*outArgs*/)
 {
+#if kSupportsRenderScale != 1
     if (!renderScaleIsOne(inArgs)) {
         return kOfxStatFailed;
     }
+#endif
 	return kOfxStatReplyDefault;
 }
 
@@ -862,9 +872,11 @@ void convert_RGBA32_to_RGBA8P(ConvertData& data, const int startLine, const int 
 // the process code that the host sees
 static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
+#if kSupportsRenderScale != 1
     if (!renderScaleIsOne(inArgs)) {
         return kOfxStatFailed;
     }
+#endif
 	ContextData contextData;
 	setContextData(contextData, instance, inArgs, outArgs, pluginIndex);
 
@@ -915,7 +927,7 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 		myData->sequenceDataP->downsample_x = (float)renderScale.x;
 		myData->sequenceDataP->downsample_y = (float)renderScale.y;
 		
-		getAllParamData(pluginIndex, dstRect, myData, time);
+		getAllParamData(pluginIndex, dstRect, myData, time, renderScale);
 
 		// get the input image(s)
 		int i = 0;
@@ -1426,6 +1438,8 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 	gPropHost->propSetInt(props, kOfxImageEffectPluginPropHostFrameThreading, 0, 0);
 	gPropHost->propSetInt(props, kOfxImageEffectPropSupportsMultiResolution, 0, 0);
 	gPropHost->propSetInt(props, kOfxImageEffectPropTemporalClipAccess, 0, 1);
+	gPropHost->propSetInt(props, kOfxImageEffectPropSupportsMultipleClipPARs, 0, 0);
+	gPropHost->propSetInt(props, kOfxImageEffectPropSupportsMultipleClipDepths, 0, 0);
 
 	// fetch the parameter set from the effect
 	OfxParamSetHandle paramSet;
@@ -1494,7 +1508,7 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 				(int)param.defaultValue[0] //default
 				);
 		} else if (param.paramType == PT_POINT) {
-			// point parameter is in % in gmic: no need to scale
+			// point parameter is in % (percent) in gmic: no need to scale
 			paramAddPoint(
 				paramSet, props,
 				param.paramName.c_str(), // param
