@@ -426,12 +426,6 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 	//printf("content:\n%s\n", content.c_str());
 	while (getline(ss, line)) {
 		//printf("%s\n%s\n", cat.c_str(), line.c_str());
-		if (line == "#@gui ____<i>About</i>") {
-			printf("about!\n");
-		}
-		if (line == "#@gui ____<b>Various</b>") {
-			printf("various!\n");
-		}
 		if ( (line.substr(0, src_prefix.size() + 1) == src_prefix + " ") ||
 			 (line.substr(0, src_prefix.size() + 4) == src_prefix + "_en ") ||
 			 (line.substr(0, src_prefix_old.size() + 1) == src_prefix_old + " ") ) {
