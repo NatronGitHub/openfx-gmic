@@ -102,6 +102,7 @@ addons:
     - gcc-8
     - g++-8
     - libfftw3-dev
+    - libgl-dev
   coverity_scan:
     # customized build script URL
     # TRAVIS_REPO_SLUG: owner_name/repo_name of repository currently being built
