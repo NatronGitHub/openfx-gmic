@@ -1,7 +1,7 @@
 SUBDIRS = GMIC_OFX
 
 GMICSOURCES = CImg.h gmic.cpp gmic.h gmic_stdlib.h
-GMICVER=2.8.4
+GMICVER=2.9.0
 GMICSRC=gmic_$(GMICVER).tar.gz
 GMICSRCDIR=gmic-$(GMICVER)
 
@@ -89,6 +89,7 @@ distclean: clean
 # commit 2c643575e212b5a677e481769f3fd896f6cc8ecb is 11 jan 2020 (gmic 2.8.2)
 # commit 09ffcc59fcbaae0546eedeb81bc076e51f10a4fa is 21 jan 2020 (gmic 2.8.3)
 # commit 6a9d0e344162af3376aee7b652721d972a070e6b is 10 feb 2020 (gmic 2.8.4)
+# commit 003f70a0be5b5f6758a52edc77a129f5b2692887 is 27 mar 2020 (gmic 2.9.0)
 GMICCOMMUNITYVERSION=6a9d0e344162af3376aee7b652721d972a070e6b
 
 gmic_libc.cpp: gmic_libc.h gmic_stdlib_gmic.h
