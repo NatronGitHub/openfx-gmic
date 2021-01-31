@@ -24,6 +24,8 @@ matrix:
       compiler: clang
     - os: windows
       filter_secrets: false # https://travis-ci.community/t/choco-install-hangs-forever/307/22
+  allow_failures:
+    - os: windows # ibecause of error C2572 with gmic 2.8.4, see https://travis-ci.org/github/NatronGitHub/openfx-gmic/jobs/699201724
   fast_finish: true
 
 before_install:
