@@ -125,7 +125,7 @@ extern int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, C
 extern int getNofPlugins();
 extern void getPluginInfo(int pluginIndex, PluginInfo& pluginInfo);
 
-#if defined __APPLE__ || defined linux || defined __FreeBSD__
+#if defined __APPLE__ || defined __linux__ || defined __FreeBSD__
 #define EXPORT __attribute__((visibility("default")))
 #elif defined _WIN32
 #define EXPORT OfxExport
