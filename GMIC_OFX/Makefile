@@ -28,11 +28,7 @@ CXXFLAGS += \
 # FFTW (license: GPLv2), necessary to get Fourier transform on
 # images with dimensions that are not power-of-two
 FFTW3_CXXFLAGS =`pkg-config --cflags fftw3` -Dcimg_use_fftw3
-FFTW3_LINKFLAGS =`pkg-config --libs fftw3`
-# fftw_init_threads is in a separate lib on Unix
-ifeq ($(OS),$(filter $(OS),Linux FreeBSD Darwin))
-  FFTW3_LINKFLAGS += -lfftw3_threads
-endif
+FFTW3_LINKFLAGS =`pkg-config --libs fftw3` -lfftw3_threads
 
 # Zlib, necessary to uncompress the glic stdlib
 ZLIB_CXXFLAGS=`pkg-config --cflags zlib` -Dcimg_use_zlib
