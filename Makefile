@@ -94,11 +94,12 @@ distclean: clean
 GMICCOMMUNITYVERSION=6a9d0e344162af3376aee7b652721d972a070e6b
 #GMICCOMMUNITYVERSION=003f70a0be5b5f6758a52edc77a129f5b2692887 # shows 0 plugins
 
+GMIC_BASE_URL=https://raw.githubusercontent.com/GreycLab/gmic-community/$(GMICCOMMUNITYVERSION)/libcgmic
 gmic_libc.cpp: gmic_libc.h gmic_stdlib_gmic.h
-	curl -L -s -S -o $@ https://raw.githubusercontent.com/dtschump/gmic-community/$(GMICCOMMUNITYVERSION)/libcgmic/$@
+	curl -L -s -S -o $@ $(GMIC_BASE_URL)/$@
 
 gmic_libc.h:
-	curl -L -s -S -o $@ https://raw.githubusercontent.com/dtschump/gmic-community/$(GMICCOMMUNITYVERSION)/libcgmic/$@
+	curl -L -s -S -o $@ $(GMIC_BASE_URL)/$@
 
 gmic_stdlib_gmic.h:
-	curl -L -s -S -o $@ https://raw.githubusercontent.com/dtschump/gmic-community/$(GMICCOMMUNITYVERSION)/libcgmic/$@
+	curl -L -s -S -o $@ $(GMIC_BASE_URL)/$@
