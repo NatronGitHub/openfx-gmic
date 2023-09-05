@@ -50,28 +50,6 @@ $(GMICSOURCES): $(GMICSRC)
 distclean: clean
 	-rm $(GMICSRC) $(GMICSOURCES) $(GITSOURCES)
 
-# # CImg
-# # commit f510b430acfa3194ef935a189346ddda012dc68e is CImg 2.2.3+
-# CIMGVERSION=f510b430acfa3194ef935a189346ddda012dc68e
-
-# CImg.h:
-# 	curl -L -s -S -o $@ https://raw.githubusercontent.com/dtschump/CImg/$(CIMGVERSION)/$@
-
-# # G'MIC
-# # commit fec116d3380454f2667322fa196fb3bdb246acb9 is GMIC 2.2.3+
-# GMICVERSION=fec116d3380454f2667322fa196fb3bdb246acb9
-
-# gmic.cpp: CImg.h gmic.h gmic_stdlib.h
-# 	curl -L -s -S -o $@ https://raw.githubusercontent.com/dtschump/gmic/$(GMICVERSION)/src/$@
-
-# gmic.h:
-# 	curl -L -s -S -o $@ https://raw.githubusercontent.com/dtschump/gmic/$(GMICVERSION)/src/$@
-
-# # get the latest gmic_stdlib.h
-
-# gmic_stdlib.h:
-# 	curl -L -s -S -o $@ http://gmic.eu/gmic_stdlib.h
-
 ################
 # gmic-community
 # commit 249ac90ac824eb99d233d8738f95658e92f270c9 is 20 dec 2017
