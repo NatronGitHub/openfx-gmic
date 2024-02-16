@@ -42,7 +42,7 @@ uninstall:
 sources: $(GMICSOURCES) $(GITSOURCES)
 
 $(GMICSRC):
-	curl -L -s -S -o $@ http://gmic.eu/files/source/$(GMICSRC)
+	curl --retry 5 --retry-all-errors -L -s -S -o $@ http://gmic.eu/files/source/$(GMICSRC)
 
 $(GMICSOURCES): $(GMICSRC)
 	tar --strip-components 2 -zxvf $< $(patsubst %,$(GMICSRCDIR)/src/%, $@)
@@ -74,10 +74,10 @@ GMICCOMMUNITYVERSION=6a9d0e344162af3376aee7b652721d972a070e6b
 
 GMIC_BASE_URL=https://raw.githubusercontent.com/GreycLab/gmic-community/$(GMICCOMMUNITYVERSION)/libcgmic
 gmic_libc.cpp: gmic_libc.h gmic_stdlib_gmic.h
-	curl -L -s -S -o $@ $(GMIC_BASE_URL)/$@
+	curl --retry 5 --retry-all-errors -L -s -S -o $@ $(GMIC_BASE_URL)/$@
 
 gmic_libc.h:
-	curl -L -s -S -o $@ $(GMIC_BASE_URL)/$@
+	curl --retry 5 --retry-all-errors -L -s -S -o $@ $(GMIC_BASE_URL)/$@
 
 gmic_stdlib_gmic.h:
-	curl -L -s -S -o $@ $(GMIC_BASE_URL)/$@
+	curl --retry 5 --retry-all-errors -L -s -S -o $@ $(GMIC_BASE_URL)/$@
