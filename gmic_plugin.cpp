@@ -115,7 +115,10 @@
 // this should in most cases NOT be set, unless you (or a specific library) need the pixel buffers in this format
 #define PLANAR_BUFFER
 
-#define PARAM_COMMAND (globalDataP->nofParams - 9)
+// Layout of the last parameters (see pluginSetup): Command, [Advanced Options group start], Output Layer,
+// Resize Mode, Ignore Alpha, Preview/Draft Mode, Global Random Seed, Animate Random Seed, Log Verbosity,
+// [group end].
+#define PARAM_COMMAND (globalDataP->nofParams - 10)
 #define PARAM_OUTPUT (globalDataP->nofParams - 8)
 #define PARAM_RESIZE (globalDataP->nofParams - 7)
 #define PARAM_NOALPHA (globalDataP->nofParams - 6)
@@ -302,7 +305,9 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 			d1 = (float)atof(r[0].c_str()) / 255.f;
 			d2 = (float)atof(r[1].c_str()) / 255.f;
 			d3 = (float)atof(r[2].c_str()) / 255.f;
-			d4 = (float)atof(r[2].c_str()) / 255.f;
+			// color(R,_G,_B,_A): only pass alpha to G'MIC if the filter declares it
+			flags = (r.size() > 3 && !r[3].empty()) ? 4 : 3;
+			d4 = (flags == 4) ? (float)atof(r[3].c_str()) / 255.f : 1.f;
 		} else if (paramType == "point") {
 			vector<string> r;
 			t = PT_POINT;
@@ -434,13 +439,12 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP)
         cmd = PAR_TXT(PARAM_COMMAND);
     } else {
         cmd = "-" + strTrim(cmd, " \t\r\n") + " ";
-        for (int i = 1; i < globalDataP->nofParams - 6; i++) {
+        for (int i = 1; i < PARAM_COMMAND; i++) { // filter parameters only
             if (PAR_TYPE(i) == PT_INT || PAR_TYPE(i) == PT_BOOL || PAR_TYPE(i) == PT_SELECT)
                 cmd += intToString((int)PAR_VAL(i)) + ",";
             else if (PAR_TYPE(i) == PT_FLOAT)
                 cmd += floatToString(PAR_VAL(i)) + ",";
             else if (PAR_TYPE(i) == PT_TEXT) {
-                if (i == PARAM_COMMAND && globalDataP->param[PARAM_COMMAND].displayStatus == DS_HIDDEN) continue;
                 if (globalDataP->param[i].flags == 4) {
                     // label/note
                     continue;
@@ -452,7 +456,9 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP)
                 floatToString((255.f * PAR_CH(i, 0))) + "," +
                 floatToString((255.f * PAR_CH(i, 1))) + "," +
                 floatToString((255.f * PAR_CH(i, 2))) + ",";
-                floatToString((255.f * PAR_CH(i, 3))) + ",";
+                if (globalDataP->param[i].flags == 4) {
+                    cmd += floatToString((255.f * PAR_CH(i, 3))) + ",";
+                }
             } else if (PAR_TYPE(i) == PT_POINT) {
                 cmd +=
                 floatToString(PAR_CH(i, 0)) + "," +
