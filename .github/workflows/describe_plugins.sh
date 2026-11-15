@@ -1,0 +1,44 @@
+#!/bin/bash
+# Build a minimal HostSupport host and run describe + describeInContext on every plug-in.
+# Usage: describe_plugins.sh <dir containing GMIC.ofx.bundle> <minimum number of plug-ins>
+# Uses $CXX (default c++) and $HOST_LDFLAGS (extra link flags, e.g. -L/opt/local/lib).
+set -euo pipefail
+
+BUNDLE_DIR=$(cd "$1" && pwd)
+MIN_PLUGINS=$2
+SRC=$(cd "$(dirname "$0")/../.." && pwd)
+WORK=$(mktemp -d)
+CXX=${CXX:-c++}
+
+cp -R "$SRC/openfx/HostSupport/include" "$SRC/openfx/HostSupport/src" "$WORK/"
+cp -R "$SRC/openfx/include" "$WORK/ofxinclude"
+
+# HostSupport rejects duplicate param/clip definitions with kOfxStatErrExists, which plug-ins
+# usually ignore: log them, so that this test can fail on them.
+perl -0pi -e 's|(// "kOfxStatErrExists - if a parameter of that name exists already in this plugin")|fprintf(stderr, "DUPLICATE_PARAM %s\\n", name); $1|' "$WORK/src/ofxhParam.cpp"
+perl -0pi -e 's|(            // clip names are unique)|            fprintf(stderr, "DUPLICATE_CLIP %s\\n", name);\n$1|' "$WORK/src/ofxhImageEffect.cpp"
+if [ "$(grep -c DUPLICATE_PARAM "$WORK/src/ofxhParam.cpp")" != 1 ] || [ "$(grep -c DUPLICATE_CLIP "$WORK/src/ofxhImageEffect.cpp")" != 1 ]; then
+    echo "Error: could not instrument HostSupport (openfx changed?), update $0"
+    exit 1
+fi
+
+# shellcheck disable=SC2086
+$CXX -std=c++11 -O1 -w -DOFX_EXTENSIONS_NUKE -DOFX_EXTENSIONS_NATRON \
+    -I"$WORK/include" -I"$WORK/ofxinclude" \
+    "$WORK"/src/*.cpp "$SRC/.github/workflows/describe_plugins.cpp" \
+    ${HOST_LDFLAGS:-} -lexpat ${HOST_LIBS:-} -o "$WORK/describe_plugins"
+
+# run with an empty HOME, so that no user G'MIC configuration (~/.config/gmic) is picked up
+mkdir -p "$WORK/home"
+cd "$WORK"
+status=0
+HOME="$WORK/home" OFX_PLUGIN_PATH="$BUNDLE_DIR" ./describe_plugins "$MIN_PLUGINS" 2> describe.log || status=$?
+if grep -E "DUPLICATE_PARAM|DUPLICATE_CLIP" describe.log; then
+    echo "FAIL: duplicate param/clip definitions (see above)"
+    status=1
+fi
+if [ $status != 0 ]; then
+    echo "--- last lines of the host log:"
+    tail -n 30 describe.log
+fi
+exit $status
