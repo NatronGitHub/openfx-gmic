@@ -100,10 +100,10 @@ GMICCOMMUNITYVERSION=6a9d0e344162af3376aee7b652721d972a070e6b
 
 GMIC_BASE_URL=https://raw.githubusercontent.com/GreycLab/gmic-community/$(GMICCOMMUNITYVERSION)/libcgmic
 gmic_libc.cpp: gmic_libc.h gmic_stdlib_gmic.h
-	curl --retry 5 --retry-all-errors -L -s -S -o $@ $(GMIC_BASE_URL)/$@
+	curl -f --retry 5 --retry-all-errors -L -s -S -o $@ $(GMIC_BASE_URL)/$@ || (rm -f $@; exit 1)
 
 gmic_libc.h:
-	curl --retry 5 --retry-all-errors -L -s -S -o $@ $(GMIC_BASE_URL)/$@
+	curl -f --retry 5 --retry-all-errors -L -s -S -o $@ $(GMIC_BASE_URL)/$@ || (rm -f $@; exit 1)
 
 gmic_stdlib_gmic.h:
-	curl --retry 5 --retry-all-errors -L -s -S -o $@ $(GMIC_BASE_URL)/$@
+	curl -f --retry 5 --retry-all-errors -L -s -S -o $@ $(GMIC_BASE_URL)/$@ || (rm -f $@; exit 1)
