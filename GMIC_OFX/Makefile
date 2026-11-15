@@ -49,7 +49,14 @@ VPATH = $(SRCDIR):$(SRCDIR)/Helpers
 
 # openmp
 ifeq ($(OPENMP),1)
-  CXXFLAGS += -Dcimg_use_openmp -fopenmp
-  LINKFLAGS += -fopenmp
+  ifeq ($(shell uname -s),Darwin)
+    # Apple clang has no -fopenmp driver support: use the OpenMP runtime from MacPorts (libomp)
+    LIBOMP_PREFIX ?= /opt/local
+    CXXFLAGS += -Dcimg_use_openmp -Xpreprocessor -fopenmp -I$(LIBOMP_PREFIX)/include/libomp
+    LINKFLAGS += -L$(LIBOMP_PREFIX)/lib/libomp -lomp
+  else
+    CXXFLAGS += -Dcimg_use_openmp -fopenmp
+    LINKFLAGS += -fopenmp
+  endif
 endif
 
