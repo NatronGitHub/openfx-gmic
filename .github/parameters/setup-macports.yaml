@@ -11,3 +11,4 @@ ports:
   - name: curl
   - name: libpng
   - name: expat
+  - name: gsed

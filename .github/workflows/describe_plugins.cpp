@@ -1,6 +1,6 @@
 // Minimal OpenFX host used by CI: loads every plug-in found in OFX_PLUGIN_PATH, runs
-// kOfxActionLoad, kOfxActionDescribe and kOfxImageEffectActionDescribeInContext (Filter, else
-// General) on each, and fails if any plug-in cannot be described or if fewer than
+// kOfxActionLoad, kOfxActionDescribe and kOfxImageEffectActionDescribeInContext (Filter if the
+// plug-in supports it, else General) on each, and fails if any plug-in cannot be described or if fewer than
 // MIN_PLUGINS (argv[1]) plug-ins were found.
 //
 // Duplicate param/clip definitions are rejected by HostSupport with kOfxStatErrExists; CI builds
@@ -8,6 +8,7 @@
 // fails if any appear (see ci.yml).
 #include <cstdio>
 #include <cstdlib>
+#include <set>
 #include <string>
 
 #include "ofxhPluginCache.h"
@@ -48,15 +49,22 @@ int main(int argc, char** argv)
     for (size_t i = 0; i < plugins.size(); ++i) {
         const std::string id = plugins[i]->getIdentifier();
         fprintf(stderr, "PLUGIN %s\n", id.c_str());
-        ImageEffect::Descriptor* d = plugins[i]->getContext(kOfxImageEffectContextFilter);
-        if (!d) {
-            d = plugins[i]->getContext(kOfxImageEffectContextGeneral);
+        // Pick the context from what the plug-in advertises (Filter if available, else General),
+        // and fail if describing that context fails: getContext() also returns NULL when the
+        // describe actions fail, so falling back to another context would hide a regression.
+        const std::set<std::string>& contexts = plugins[i]->getContexts();
+        std::string context;
+        if (contexts.count(kOfxImageEffectContextFilter)) {
+            context = kOfxImageEffectContextFilter;
+        } else if (contexts.count(kOfxImageEffectContextGeneral)) {
+            context = kOfxImageEffectContextGeneral;
         }
+        ImageEffect::Descriptor* d = context.empty() ? NULL : plugins[i]->getContext(context);
         if (d) {
             ++ok;
         } else {
             ++failed;
-            printf("DESCRIBE_FAILED %s\n", id.c_str());
+            printf("DESCRIBE_FAILED %s (context: %s)\n", id.c_str(), context.empty() ? "no Filter or General context" : context.c_str());
         }
     }
     printf("plugins=%zu described=%d failed=%d\n", plugins.size(), ok, failed);
