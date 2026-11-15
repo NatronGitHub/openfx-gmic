@@ -299,7 +299,10 @@ static bool usesSeveralLayers(const string& content)
 			continue;
 		}
 		size_t c1 = l.find(':');
-		size_t c2 = (c1 == string::npos) ? string::npos : l.find(':', c1 + 1);
+		if (c1 == string::npos) {
+			continue; // category line without the "_" prefix, e.g. "#@gui <i>Misc</i>"
+		}
+		size_t c2 = l.find(':', c1 + 1);
 		if (c2 != string::npos) {
 			const string mode = strTrim(l.substr(c2 + 1), " \t\r");
 			if (!mode.empty() && (mode[0] == '*' || mode[0] == '+')) {
