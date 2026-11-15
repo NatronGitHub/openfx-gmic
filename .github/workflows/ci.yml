@@ -64,7 +64,7 @@ jobs:
           path: GMIC_OFX/Linux-64-release/GMIC.ofx.bundle
 
   macos:
-    name: macOS 15 (MacPorts)
+    name: macOS 15 (Apple clang, MacPorts libraries)
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -83,24 +83,22 @@ jobs:
             gmic_libc.h
             gmic_stdlib_gmic.h
           key: gmic-src-${{ hashFiles('Makefile') }}
-      # MacPorts clang: the newest one not newer than the MacPorts default for the OS
-      # (18 on macOS 15), as in Natron's tools/jenkins/compiler-common.sh
+      # Apple clang (the system compiler) with the MacPorts libraries, found through MacPorts'
+      # pkg-config: MacPorts LLVM/clang is not used to build on macOS.
       - name: Build (release)
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
-          make -j4 CONFIG=release CXX="clang++-mp-18 -stdlib=libc++" \
-            CXXFLAGS_EXTRA="-isysroot $(xcrun --sdk macosx --show-sdk-path)"
+          make -j4 CONFIG=release
       - name: Describe all plug-ins
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
-          CXX="clang++-mp-18 -stdlib=libc++ -isysroot $(xcrun --sdk macosx --show-sdk-path) -I/opt/local/include" \
+          CXX="clang++ -I/opt/local/include" \
             HOST_LDFLAGS=-L/opt/local/lib \
             .github/workflows/describe_plugins.sh GMIC_OFX/Darwin-64-release $GMIC_PLUGIN_COUNT
       - name: Build (debug)
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
-          make -j4 CONFIG=debug CXX="clang++-mp-18 -stdlib=libc++" \
-            CXXFLAGS_EXTRA="-isysroot $(xcrun --sdk macosx --show-sdk-path)"
+          make -j4 CONFIG=debug
       - name: Upload bundle
         uses: actions/upload-artifact@v4
         with:
