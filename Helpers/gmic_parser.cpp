@@ -98,6 +98,10 @@ void processCommand(const string& s, EffectData& cd)
 	if (sPos2 >= 0) cd.name = strTrim(r1.substr(sPos2 + dst_prefix.size()), " \n");
 
 	string r2 = r.substr(sPos + 1);
+	// optional input mode after the preview command ("#@gui Name : cmd, preview : *"): not part of
+	// either command (it is used by usesSeveralLayers())
+	sPos = (int)r2.find(":");
+	if (sPos >= 0) r2 = r2.substr(0, sPos);
 	string r3 = r2;
 	sPos = (int)r2.find(",");
 	if (sPos >= 0) {
@@ -282,6 +286,28 @@ void processParam(const string& s, EffectParameter& cp)
 // "lower layer" (e.g. Stylize: "Custom Style (Top Layer)", Smooth [Guided]: "Guide As = Top Layer").
 static bool usesSeveralLayers(const string& content)
 {
+	// explicit input mode on the filter line: "#@gui Name : cmd, preview : *" (or "+"),
+	// e.g. Align Layers, Blend [Standard], Transfer Colors
+	vector<string> lines;
+	strSplit(content, '\n', lines);
+	for (size_t i = 0; i < lines.size(); ++i) {
+		const string& l = lines[i];
+		// the prefix is "#@gui", or "#@gmic_plugin" once gmic_parse_multi() rewrote it; skip
+		// parameter lines ("#@gui : ...") and category lines ("#@gui ____Category")
+		size_t sp = l.find(' ');
+		if (l.compare(0, 2, "#@") != 0 || sp == string::npos || sp + 1 >= l.size() || l[sp + 1] == ':' || l[sp + 1] == '_') {
+			continue;
+		}
+		size_t c1 = l.find(':');
+		size_t c2 = (c1 == string::npos) ? string::npos : l.find(':', c1 + 1);
+		if (c2 != string::npos) {
+			const string mode = strTrim(l.substr(c2 + 1), " \t\r");
+			if (!mode.empty() && (mode[0] == '*' || mode[0] == '+')) {
+				return true;
+			}
+		}
+		break; // only the first (filter) line declares the input mode
+	}
 	if ((int)content.find(" layers") > 0) {
 		return true;
 	}
@@ -295,7 +321,7 @@ static bool usesSeveralLayers(const string& content)
 		size_t pos = lc.find(refs[i]);
 		while (pos != string::npos) {
 			size_t end = pos + strlen(refs[i]);
-			// whole word only ("top layers" is covered above, reject e.g. "top layered")
+			// whole word only (reject e.g. "top layered")
 			if ((pos == 0 || !isalnum((unsigned char)lc[pos - 1])) && (end >= lc.size() || !isalnum((unsigned char)lc[end]))) {
 				return true;
 			}
