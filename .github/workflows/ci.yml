@@ -83,22 +83,23 @@ jobs:
             gmic_libc.h
             gmic_stdlib_gmic.h
           key: gmic-src-${{ hashFiles('Makefile') }}
-      # Apple clang (the system compiler) with the MacPorts libraries, found through MacPorts'
-      # pkg-config: MacPorts LLVM/clang is not used to build on macOS.
+      # Apple clang (the system compiler, pinned to /usr/bin so that a MacPorts clang_select can't
+      # take over clang++) with the MacPorts libraries, found through MacPorts' pkg-config:
+      # MacPorts LLVM/clang is not used to build on macOS.
       - name: Build (release)
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
-          make -j4 CONFIG=release
+          make -j4 CONFIG=release CC=/usr/bin/clang CXX=/usr/bin/clang++
       - name: Describe all plug-ins
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
-          CXX="clang++ -I/opt/local/include" \
+          CXX="/usr/bin/clang++ -I/opt/local/include" \
             HOST_LDFLAGS=-L/opt/local/lib \
             .github/workflows/describe_plugins.sh GMIC_OFX/Darwin-64-release $GMIC_PLUGIN_COUNT
       - name: Build (debug)
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
-          make -j4 CONFIG=debug
+          make -j4 CONFIG=debug CC=/usr/bin/clang CXX=/usr/bin/clang++
       - name: Upload bundle
         uses: actions/upload-artifact@v4
         with:
