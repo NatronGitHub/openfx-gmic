@@ -45,7 +45,9 @@ sources: $(GMICSOURCES) $(GITSOURCES)
 # that an HTTP error page is never saved as the tarball, and verify the checksum.
 GMICSRC_SHA256_2.8.4=b2a279bdf981595b30d8d7828fabf9a620cde06eae8db345a8cddf2160c25379
 GMICSRC_SHA256=$(GMICSRC_SHA256_$(GMICVER))
-GMICSRC_URLS=https://gmic.eu/files/source/$(GMICSRC) https://distfiles.macports.org/gmic/$(GMICSRC)
+# GreycLab/gmic on GitHub is now the main G'MIC repository; its releases (3.3.1 and later)
+# attach gmic_<ver>.tar.gz. It is tried last because it has no 2.x release.
+GMICSRC_URLS=https://gmic.eu/files/source/$(GMICSRC) https://distfiles.macports.org/gmic/$(GMICSRC) https://github.com/GreycLab/gmic/releases/download/v.$(GMICVER)/$(GMICSRC)
 
 $(GMICSRC):
 	@for url in $(GMICSRC_URLS); do \
