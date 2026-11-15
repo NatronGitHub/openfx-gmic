@@ -50,6 +50,8 @@
 
 #include "gmic_parser.h"
 
+#include <cctype>
+#include <cstring>
 #include <string>
 #include <iostream>
 #include <fstream>
@@ -275,6 +277,34 @@ void processParam(const string& s, EffectParameter& cp)
 	}
 }
 
+// Does the filter use more than one input layer? G'MIC filters have no explicit declaration, so look
+// at the GUI text: "... layers", or a reference to a "top layer", "bottom layer", "upper layer" or
+// "lower layer" (e.g. Stylize: "Custom Style (Top Layer)", Smooth [Guided]: "Guide As = Top Layer").
+static bool usesSeveralLayers(const string& content)
+{
+	if ((int)content.find(" layers") > 0) {
+		return true;
+	}
+	string lc = content;
+	for (size_t i = 0; i < lc.size(); ++i) {
+		lc[i] = (char)tolower((unsigned char)lc[i]);
+	}
+	static const char* const refs[] = { "top layer", "bottom layer", "upper layer", "lower layer",
+	                                    "top-layer", "bottom-layer", "upper-layer", "lower-layer" };
+	for (size_t i = 0; i < sizeof(refs) / sizeof(refs[0]); ++i) {
+		size_t pos = lc.find(refs[i]);
+		while (pos != string::npos) {
+			size_t end = pos + strlen(refs[i]);
+			// whole word only ("top layers" is covered above, reject e.g. "top layered")
+			if ((pos == 0 || !isalnum((unsigned char)lc[pos - 1])) && (end >= lc.size() || !isalnum((unsigned char)lc[end]))) {
+				return true;
+			}
+			pos = lc.find(refs[i], pos + 1);
+		}
+	}
+	return false;
+}
+
 string gmic_parse_single(const string& content, EffectData& cd)
 {
 	const string src_prefix_old = src_prefix_old_c;
@@ -400,10 +430,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 			}
 		}
 	}
-	if ((int)content.find(" layers") > 0)
-		cd.multiLayer = true;
-	else
-		cd.multiLayer = false;
+	cd.multiLayer = usesSeveralLayers(content);
 	cd.notes = strTrim(cd.notes, "\n");
 
 	cd.name = strRemoveXmlTags(cd.name, true);
