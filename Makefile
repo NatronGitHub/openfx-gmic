@@ -49,18 +49,23 @@ GMICSRC_SHA256=$(GMICSRC_SHA256_$(GMICVER))
 # attach gmic_<ver>.tar.gz. It is tried last because it has no 2.x release.
 GMICSRC_URLS=https://gmic.eu/files/source/$(GMICSRC) https://distfiles.macports.org/gmic/$(GMICSRC) https://github.com/GreycLab/gmic/releases/download/v.$(GMICVER)/$(GMICSRC)
 
+# The checksum is mandatory: when bumping GMICVER, add GMICSRC_SHA256_<version>
+# (or pass GMICSRC_SHA256=<sha256> on the make command line).
 $(GMICSRC):
-	@for url in $(GMICSRC_URLS); do \
+	@if [ -z "$(GMICSRC_SHA256)" ]; then \
+	  echo "Error: no sha256 known for $(GMICSRC): add GMICSRC_SHA256_$(GMICVER) to the Makefile"; exit 1; \
+	fi; \
+	for url in $(GMICSRC_URLS); do \
 	  rm -f $@.tmp; \
 	  echo "Fetching $$url"; \
 	  if curl -f --retry 5 --retry-all-errors -L -s -S -o $@.tmp "$$url" && gzip -t $@.tmp 2>/dev/null; then \
-	    if [ -z "$(GMICSRC_SHA256)" ]; then \
-	      echo "Warning: no known sha256 for $(GMICSRC), not verified"; mv $@.tmp $@; exit 0; \
-	    fi; \
 	    if command -v sha256sum >/dev/null 2>&1; then sum=`sha256sum $@.tmp | cut -d' ' -f1`; \
 	    else sum=`shasum -a 256 $@.tmp | cut -d' ' -f1`; fi; \
-	    if [ "$$sum" = "$(GMICSRC_SHA256)" ]; then mv $@.tmp $@; exit 0; fi; \
-	    echo "Warning: checksum mismatch for $$url"; \
+	    if [ "$$sum" = "$(GMICSRC_SHA256)" ]; then \
+	      if mv $@.tmp $@; then exit 0; fi; \
+	      echo "Error: could not install $@"; break; \
+	    fi; \
+	    echo "Warning: checksum mismatch for $$url (got $$sum)"; \
 	  fi; \
 	done; \
 	rm -f $@.tmp; echo "Error: could not download a valid $(GMICSRC)"; exit 1
