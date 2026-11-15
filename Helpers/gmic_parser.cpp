@@ -93,7 +93,7 @@ void processCommand(const string& s, EffectData& cd)
 	r = strRemoveXmlTags(r, false);
 	int sPos = (int)r.find(":");
 	if (sPos < 0) return;
-	string r1 = r.substr(0, sPos - 1);
+	string r1 = r.substr(0, sPos); // G'MIC >= 3 writes "Name:cmd,preview" without spaces
 	int sPos2 = (int)r1.find(dst_prefix);
 	if (sPos2 >= 0) cd.name = strTrim(r1.substr(sPos2 + dst_prefix.size()), " \n");
 
@@ -106,7 +106,7 @@ void processCommand(const string& s, EffectData& cd)
 	sPos = (int)r2.find(",");
 	if (sPos >= 0) {
 		r3 = r2.substr(sPos + 1);
-		r2 = r2.substr(1, sPos - 1);
+		r2 = r2.substr(0, sPos);
 	}
 	strReplace(r3, "(0)", "");
 	strReplace(r3, "(1)", "");
@@ -143,7 +143,8 @@ void processParam(const string& s, EffectParameter& cp)
 	p1 = (int)r.find_first_of("([{");
 	if (p1 < 0) return;
 	cp.paramType = strTrim(r.substr(0, p1));
-	strReplace(cp.paramType, "_", "");
+	strReplace(cp.paramType, "_", ""); // "_type": no preview refresh
+	strReplace(cp.paramType, "~", ""); // "~type" (G'MIC >= 3): not randomized
 	cp.paramType = strLowercase(cp.paramType);
 	string pval = strTrim(r.substr(p1 + 1));
 	pval = pval.substr(0, pval.size() - 1);
@@ -361,6 +362,11 @@ string gmic_parse_single(const string& content, EffectData& cd)
 		strReplace(line, src_prefix_en, dst_prefix);
 		strReplace(line, src_prefix, dst_prefix);
 		strReplace(line, dst_prefix_en, dst_prefix);
+		// G'MIC >= 3 writes parameter lines as "#@gui :Name=type(...)": normalize to "#@gui : Name=..."
+		if (line.compare(0, dst_prefix.size() + 2, dst_prefix + " :") == 0 &&
+			line.compare(0, dst_prefix.size() + 3, dst_prefix + " : ") != 0) {
+			line.insert(dst_prefix.size() + 2, " ");
+		}
 		string n = strTrim(line, " \r\n\t");
 		int sPos = (int)line.find(":");
 		int sPos2 = (int)line.find("#");
@@ -470,6 +476,14 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	return result;
 }
 
+// "#@gui ____<i>About</i>" (G'MIC 2) or "#@gui <i>About</i>" (G'MIC >= 3)
+static bool isAboutCategory(const string& cat)
+{
+	string c = cat.substr(cat.find(' ') == string::npos ? cat.size() : cat.find(' '));
+	c = strTrim(c, " \t\r_");
+	return c == "<i>About</i>";
+}
+
 void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<string>* lines)
 {
 	const string src_prefix_old = src_prefix_old_c;
@@ -503,11 +517,11 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 						command.clear();
 					}
 					cat = line;
-					if (cat == "#@gui ____<i>About</i>") {
+					if (isAboutCategory(cat)) {
 						command = "#@gui About G'MIC : fx_gmicky, fx_gmicky_preview";
 					}
 				} else if (col != spc + 1) {
-					if (cat == "#@gui ____<i>About</i>") {
+					if (isAboutCategory(cat)) {
 						// add new title
 						command += "\n#@gui : note = note{" + line.substr(spc+1, col - spc - 1) + '}';
 					} else {

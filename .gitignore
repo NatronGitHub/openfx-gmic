@@ -183,6 +183,7 @@ gmic_libc.cpp
 gmic_libc.h
 gmic_stdlib.h
 gmic_stdlib_gmic.h
+gmic_stdlib_community.h
 ofxTestLog.txt
 
 # QtCreator user files

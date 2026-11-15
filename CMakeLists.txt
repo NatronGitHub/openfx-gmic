@@ -93,7 +93,11 @@ FILE(GLOB GMIC_SOURCES
   "CImg.h"
   "gmic.cpp"
   "gmic.h"
-  "gmic_stdlib.h"
+  "gmic_stdlib_community.h"
+  "gmic_libc.cpp"
+  "gmic_libc.h"
+  "gmic_plugin.cpp"
+  "Helpers/gmic_parser.cpp"
   "Helpers/RFX_FileUtils.cpp"
   "Helpers/RFX_StringUtils.cpp"
   "Helpers/*h"
@@ -119,7 +123,7 @@ elseif(${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD" OR ${CMAKE_SYSTEM_NAME} STREQUAL 
     set_target_properties(GMIC PROPERTIES INSTALL_RPATH "$ORIGIN/../../Libraries")
 endif()
 
-TARGET_COMPILE_DEFINITIONS(GMIC PRIVATE OFX_EXTENSIONS_NUKE OFX_EXTENSIONS_NATRON NOMINMAX OFX_PLUGIN gmic_build gmic_is_parallel cimg_use_abort cimg_display=0 cimg_appname=\"gmic\" cimg_namespace_suffix=openfx_gmic cimg_verbosity=0 cimg_library=cimg_library_openfx_gmic)
+TARGET_COMPILE_DEFINITIONS(GMIC PRIVATE OFX_EXTENSIONS_NUKE OFX_EXTENSIONS_NATRON NOMINMAX OFX_PLUGIN gmic_core gmic_is_parallel cimg_use_abort cimg_display=0 cimg_appname=\"gmic\" cimg_verbosity=0)
 #TARGET_LINK_LIBRARIES(GMIC Support ${OPENGL_gl_LIBRARY})
 TARGET_LINK_LIBRARIES(GMIC ${OPENGL_gl_LIBRARY})
 

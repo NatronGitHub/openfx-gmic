@@ -28,7 +28,7 @@ permissions:
 
 env:
   # number of plug-ins expected from the pinned G'MIC version: update when upgrading G'MIC
-  GMIC_PLUGIN_COUNT: 360
+  GMIC_PLUGIN_COUNT: 1205
 
 jobs:
   linux:

@@ -1815,6 +1815,7 @@ static OfxPluginEntryPoint* pluginMainNthFunc(int nth)
 {
     switch (nth) {
         NTHFUNC1000(0);
+        NTHFUNC1000(1000); // G'MIC 4 has more than 1000 filters
     }
     return 0;
 }
