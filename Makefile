@@ -41,8 +41,34 @@ uninstall:
 
 sources: $(GMICSOURCES) $(GITSOURCES)
 
+# gmic.eu may refuse downloads (HTTP 403 seen in 2026): try each mirror in turn, use curl -f so
+# that an HTTP error page is never saved as the tarball, and verify the checksum.
+GMICSRC_SHA256_2.8.4=b2a279bdf981595b30d8d7828fabf9a620cde06eae8db345a8cddf2160c25379
+GMICSRC_SHA256=$(GMICSRC_SHA256_$(GMICVER))
+# GreycLab/gmic on GitHub is now the main G'MIC repository; its releases (3.3.1 and later)
+# attach gmic_<ver>.tar.gz. It is tried last because it has no 2.x release.
+GMICSRC_URLS=https://gmic.eu/files/source/$(GMICSRC) https://distfiles.macports.org/gmic/$(GMICSRC) https://github.com/GreycLab/gmic/releases/download/v.$(GMICVER)/$(GMICSRC)
+
+# The checksum is mandatory: when bumping GMICVER, add GMICSRC_SHA256_<version>
+# (or pass GMICSRC_SHA256=<sha256> on the make command line).
 $(GMICSRC):
-	curl --retry 5 --retry-all-errors -L -s -S -o $@ http://gmic.eu/files/source/$(GMICSRC)
+	@if [ -z "$(GMICSRC_SHA256)" ]; then \
+	  echo "Error: no sha256 known for $(GMICSRC): add GMICSRC_SHA256_$(GMICVER) to the Makefile"; exit 1; \
+	fi; \
+	for url in $(GMICSRC_URLS); do \
+	  rm -f $@.tmp; \
+	  echo "Fetching $$url"; \
+	  if curl -f --retry 5 --retry-all-errors -L -s -S -o $@.tmp "$$url" && gzip -t $@.tmp 2>/dev/null; then \
+	    if command -v sha256sum >/dev/null 2>&1; then sum=`sha256sum $@.tmp | cut -d' ' -f1`; \
+	    else sum=`shasum -a 256 $@.tmp | cut -d' ' -f1`; fi; \
+	    if [ "$$sum" = "$(GMICSRC_SHA256)" ]; then \
+	      if mv $@.tmp $@; then exit 0; fi; \
+	      echo "Error: could not install $@"; break; \
+	    fi; \
+	    echo "Warning: checksum mismatch for $$url (got $$sum)"; \
+	  fi; \
+	done; \
+	rm -f $@.tmp; echo "Error: could not download a valid $(GMICSRC)"; exit 1
 
 $(GMICSOURCES): $(GMICSRC)
 	tar --strip-components 2 -zxvf $< $(patsubst %,$(GMICSRCDIR)/src/%, $@)
