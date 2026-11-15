@@ -41,8 +41,27 @@ uninstall:
 
 sources: $(GMICSOURCES) $(GITSOURCES)
 
+# gmic.eu may refuse downloads (HTTP 403 seen in 2026): try each mirror in turn, use curl -f so
+# that an HTTP error page is never saved as the tarball, and verify the checksum.
+GMICSRC_SHA256_2.8.4=b2a279bdf981595b30d8d7828fabf9a620cde06eae8db345a8cddf2160c25379
+GMICSRC_SHA256=$(GMICSRC_SHA256_$(GMICVER))
+GMICSRC_URLS=https://gmic.eu/files/source/$(GMICSRC) https://distfiles.macports.org/gmic/$(GMICSRC)
+
 $(GMICSRC):
-	curl --retry 5 --retry-all-errors -L -s -S -o $@ http://gmic.eu/files/source/$(GMICSRC)
+	@for url in $(GMICSRC_URLS); do \
+	  rm -f $@.tmp; \
+	  echo "Fetching $$url"; \
+	  if curl -f --retry 5 --retry-all-errors -L -s -S -o $@.tmp "$$url" && gzip -t $@.tmp 2>/dev/null; then \
+	    if [ -z "$(GMICSRC_SHA256)" ]; then \
+	      echo "Warning: no known sha256 for $(GMICSRC), not verified"; mv $@.tmp $@; exit 0; \
+	    fi; \
+	    if command -v sha256sum >/dev/null 2>&1; then sum=`sha256sum $@.tmp | cut -d' ' -f1`; \
+	    else sum=`shasum -a 256 $@.tmp | cut -d' ' -f1`; fi; \
+	    if [ "$$sum" = "$(GMICSRC_SHA256)" ]; then mv $@.tmp $@; exit 0; fi; \
+	    echo "Warning: checksum mismatch for $$url"; \
+	  fi; \
+	done; \
+	rm -f $@.tmp; echo "Error: could not download a valid $(GMICSRC)"; exit 1
 
 $(GMICSOURCES): $(GMICSRC)
 	tar --strip-components 2 -zxvf $< $(patsubst %,$(GMICSRCDIR)/src/%, $@)
