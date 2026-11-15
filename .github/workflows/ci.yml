@@ -1,0 +1,155 @@
+name: Continuous Integration
+
+on:
+  workflow_dispatch: {}
+  # pushes to master (and tags) only: pull requests are built by the pull_request trigger,
+  # so that each PR push is not built twice
+  push:
+    branches: [ master ]
+    tags: [ '*' ]
+    paths-ignore:
+      - COPYING
+      - README
+      - 'Licence_*.txt'
+      - '.github/ISSUE_TEMPLATE/**'
+  pull_request:
+    paths-ignore:
+      - COPYING
+      - README
+      - 'Licence_*.txt'
+      - '.github/ISSUE_TEMPLATE/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # number of plug-ins expected from the pinned G'MIC version: update when upgrading G'MIC
+  GMIC_PLUGIN_COUNT: 360
+
+jobs:
+  linux:
+    name: Linux (Ubuntu 24.04)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libfftw3-dev zlib1g-dev libcurl4-openssl-dev libpng-dev libexpat1-dev libgl-dev libglu1-mesa-dev
+      - name: Cache G'MIC sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            gmic_*.tar.gz
+            gmic_libc.cpp
+            gmic_libc.h
+            gmic_stdlib_gmic.h
+          key: gmic-src-${{ hashFiles('Makefile') }}
+      - name: Build (release)
+        run: make -j4 CONFIG=release
+      - name: Describe all plug-ins
+        run: .github/workflows/describe_plugins.sh GMIC_OFX/Linux-64-release $GMIC_PLUGIN_COUNT
+      - name: Build (debug)
+        run: make -j4 CONFIG=debug
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: openfx-gmic-linux-release
+          path: GMIC_OFX/Linux-64-release/GMIC.ofx.bundle
+
+  macos:
+    name: macOS 15 (MacPorts)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install MacPorts and dependencies
+        uses: melusina-org/setup-macports@103eded5f10979e927bffcd6d0b86cbbdb2c3bb3 # v1.1.6
+        with:
+          parameters: .github/parameters/setup-macports.yaml
+      - name: Cache G'MIC sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            gmic_*.tar.gz
+            gmic_libc.cpp
+            gmic_libc.h
+            gmic_stdlib_gmic.h
+          key: gmic-src-${{ hashFiles('Makefile') }}
+      # MacPorts clang: the newest one not newer than the MacPorts default for the OS
+      # (18 on macOS 15), as in Natron's tools/jenkins/compiler-common.sh
+      - name: Build (release)
+        run: |
+          export PATH=/opt/local/bin:/opt/local/sbin:$PATH
+          make -j4 CONFIG=release CXX="clang++-mp-18 -stdlib=libc++" \
+            CXXFLAGS_EXTRA="-isysroot $(xcrun --sdk macosx --show-sdk-path)"
+      - name: Describe all plug-ins
+        run: |
+          export PATH=/opt/local/bin:/opt/local/sbin:$PATH
+          CXX="clang++-mp-18 -stdlib=libc++ -isysroot $(xcrun --sdk macosx --show-sdk-path) -I/opt/local/include" \
+            HOST_LDFLAGS=-L/opt/local/lib \
+            .github/workflows/describe_plugins.sh GMIC_OFX/Darwin-64-release $GMIC_PLUGIN_COUNT
+      - name: Build (debug)
+        run: |
+          export PATH=/opt/local/bin:/opt/local/sbin:$PATH
+          make -j4 CONFIG=debug CXX="clang++-mp-18 -stdlib=libc++" \
+            CXXFLAGS_EXTRA="-isysroot $(xcrun --sdk macosx --show-sdk-path)"
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: openfx-gmic-macos-release
+          path: GMIC_OFX/Darwin-64-release/GMIC.ofx.bundle
+
+  windows:
+    name: Windows (MSYS2 MinGW64)
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git make
+            mingw-w64-x86_64-cc mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-fftw mingw-w64-x86_64-zlib mingw-w64-x86_64-curl mingw-w64-x86_64-libpng
+            mingw-w64-x86_64-expat
+      - name: Cache G'MIC sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            gmic_*.tar.gz
+            gmic_libc.cpp
+            gmic_libc.h
+            gmic_stdlib_gmic.h
+          key: gmic-src-${{ hashFiles('Makefile') }}
+      - name: Build (release)
+        run: make -j4 CONFIG=release
+      - name: Describe all plug-ins
+        run: |
+          BUILD_DIR=$(find GMIC_OFX -maxdepth 1 -type d -name 'MINGW64*-release' | head -1)
+          .github/workflows/describe_plugins.sh "$BUILD_DIR" $GMIC_PLUGIN_COUNT
+      - name: Build (debug)
+        run: make -j4 CONFIG=debug
+      - name: Collect bundle
+        run: |
+          mkdir -p Bundle
+          cp -R "$(find GMIC_OFX -maxdepth 1 -type d -name 'MINGW64*-release' | head -1)/GMIC.ofx.bundle" Bundle/
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: openfx-gmic-windows-release
+          path: Bundle/GMIC.ofx.bundle

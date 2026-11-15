@@ -1,0 +1,14 @@
+version: '2.12.7'
+prefix: '/opt/local'
+ports:
+  - name: pkgconfig
+  - name: clang-18
+  - name: fftw-3
+    deselect: [ gfortran ]
+  - name: fftw-3-single
+    deselect: [ gfortran ]
+  - name: zlib
+  - name: curl
+  - name: libpng
+  - name: expat
+  - name: gsed
