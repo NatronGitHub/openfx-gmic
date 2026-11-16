@@ -335,8 +335,9 @@ static void getAllParamData(int pluginIndex, const OfxRectI& dstRect, MyInstance
 			// point parameter is in % (percent) in gmic: no need to scale
 			double myX, myY;
 			gParamHost->paramGetValueAtTime(myData->param[i], t, &myX, &myY);
-			myData->sequenceDataP->floatValue[i][0] = (float)(myX * 100. * renderScale.x / (dstRect.x2 - dstRect.x1)); // * myData->sequenceDataP->downsample_x;
-			myData->sequenceDataP->floatValue[i][1] = 100.f - (float)(myY * 100. * renderScale.y / (dstRect.y2 - dstRect.y1)); // * myData->sequenceDataP->downsample_y;
+			// percent of the image, from its top-left corner (G'MIC's y goes down)
+			myData->sequenceDataP->floatValue[i][0] = (float)((myX * renderScale.x - dstRect.x1) * 100. / (dstRect.x2 - dstRect.x1));
+			myData->sequenceDataP->floatValue[i][1] = 100.f - (float)((myY * renderScale.y - dstRect.y1) * 100. / (dstRect.y2 - dstRect.y1));
 		} else if (globalData[pluginIndex].param[i].paramType == PT_ANGLE) {
 			double v;
 			gParamHost->paramGetValueAtTime(myData->param[i], t, &v);
@@ -379,8 +380,8 @@ static void setParamData(int pluginIndex, const OfxRectI& dstRect, MyInstanceDat
 			gParamHost->paramSetValue(myData->param[i], myR, myG, myB, myA);
 		} else if (globalData[pluginIndex].param[i].paramType == PT_POINT) {
 			// point parameter is in % (percent) in gmic: no need to scale
-			double myX = (double)myData->sequenceDataP->floatValue[i][0] / (100. * renderScale.x) * (dstRect.x2 - dstRect.x1); // / myData->sequenceDataP->downsample_x;
-			double myY = (1. - (double)myData->sequenceDataP->floatValue[i][1] / (100. *renderScale.y)) * (dstRect.y2 - dstRect.y1); // / myData->sequenceDataP->downsample_y;
+			double myX = (dstRect.x1 + (double)myData->sequenceDataP->floatValue[i][0] / 100. * (dstRect.x2 - dstRect.x1)) / renderScale.x;
+			double myY = (dstRect.y1 + (1. - (double)myData->sequenceDataP->floatValue[i][1] / 100.) * (dstRect.y2 - dstRect.y1)) / renderScale.y;
 			gParamHost->paramSetValue(myData->param[i], myX, myY);
 		} else if (globalData[pluginIndex].param[i].paramType == PT_ANGLE) {
 			double v;
@@ -443,7 +444,7 @@ OfxStatus getSpatialRoD(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPro
 
 // tells the host how much of the input we need to fill the given window
 static
-OfxStatus getSpatialRoI(int /*pluginIndex*/, OfxImageEffectHandle /*effect*/, OfxPropertySetHandle /*inArgs*/, OfxPropertySetHandle /*outArgs*/)
+OfxStatus getSpatialRoI(int pluginIndex, OfxImageEffectHandle effect, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
 #if kSupportsRenderScale != 1
     if (!renderScaleIsOne(inArgs)) {
@@ -451,8 +452,23 @@ OfxStatus getSpatialRoI(int /*pluginIndex*/, OfxImageEffectHandle /*effect*/, Of
         return kOfxStatFailed;
     }
 #endif
-	// GMIC does not supports tiles
-	return kOfxStatReplyDefault;
+	// G'MIC processes whole images: ask for the full region of definition of every input, not just
+	// the part under the render window (the default), which gave a cropped input when the viewer
+	// shows part of the image (issue #2)
+	MyInstanceData *myData = getMyInstanceData(effect);
+	OfxTime time = 0.;
+	gPropHost->propGetDouble(inArgs, kOfxPropTime, 0, &time);
+	int i = 0;
+	for (int p = 0; p < globalData[pluginIndex].nofParams && i < MAX_NOF_LAYERS; p++) {
+		if (globalData[pluginIndex].param[p].paramType != PT_LAYER) continue;
+		OfxRectD rod;
+		if (myData->input[i] && gEffectHost->clipGetRegionOfDefinition(myData->input[i], time, &rod) == kOfxStatOK) {
+			const std::string roiName = std::string("OfxImageClipPropRoI_") + globalData[pluginIndex].param[p].paramName;
+			gPropHost->propSetDoubleN(outArgs, roiName.c_str(), 4, &rod.x1);
+		}
+		++i;
+	}
+	return kOfxStatOK;
 	// // get the RoI the effect is interested in from inArgs
 	// OfxRectD roi;
 	// gPropHost->propGetDoubleN(inArgs, kOfxImageEffectPropRegionOfInterest, 4, &roi.x1);
@@ -934,9 +950,9 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 		myData->sequenceDataP->downsample_x = (float)renderScale.x;
 		myData->sequenceDataP->downsample_y = (float)renderScale.y;
 		
-		getAllParamData(pluginIndex, dstRect, myData, time, renderScale);
-
-		// get the input image(s)
+		// get the input image(s); the parameters are fetched afterwards, since point parameters are
+		// relative to the first input's rectangle (the image G'MIC processes), not the output's
+		OfxRectI firstSrcRect = dstRect;
 		int i = 0;
 		for (int p = 0; p < globalData[pluginIndex].nofParams; p++) {
 			if (globalData[pluginIndex].param[p].paramType != PT_LAYER) continue;
@@ -948,21 +964,9 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 			myData->sequenceDataP->inputConnected[i] = false;
 			if (ofxuIsClipConnected(instance, globalData[pluginIndex].param[p].paramName.c_str())) {
 				myData->sequenceDataP->inputConnected[i] = true;
-				double tofs = time;
-				int ofs = (int)(myData->sequenceDataP->floatValue[i][0]);
-				int ofs_type = (int)(myData->sequenceDataP->floatValue[i][1]); //0:relative,1:absolute,2:granularity
-				if (ofs_type == 0) {
-					tofs += ofs * (1 + myData->sequenceDataP->timeSpread) * time_step;
-				} else if (ofs_type == 1) {
-					tofs = ofs * time_step;
-				} else {
-					if (ofs <= 0) {
-						tofs = 0;
-					} else if (ofs > 1) {
-						tofs = (int)(floor( (float)tofs/ ( (float)ofs * time_step) ) * (float)ofs) * time_step;
-					}
-				}
-				if (tofs < 0) tofs = 0;
+				// every input at the render time: a per-layer time offset was read from floatValue[i],
+				// which holds the value of the i-th filter parameter, not a layer setting
+				const double tofs = time;
 				sourceImg[i] = ofxuGetImage(myData->input[i], tofs, srcRowBytes, srcBitDepth, srcIsAlpha, srcRect, srcData);
 			}
 			if (sourceImg[i] == NULL) {
@@ -975,6 +979,9 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 				}
 			}
 
+			if (i == 0 && srcRect.x2 > srcRect.x1 && srcRect.y2 > srcRect.y1) firstSrcRect = srcRect; // not an empty rectangle (point conversion divides by its size)
+			myData->sequenceDataP->inWorld[i].origin_x = srcRect.x1;
+			myData->sequenceDataP->inWorld[i].origin_y = srcRect.y1;
 			myData->sequenceDataP->inWorld[i].width = (srcRect.x2 - srcRect.x1);
 			myData->sequenceDataP->inWorld[i].height = (srcRect.y2 - srcRect.y1);
 			myData->sequenceDataP->inWorld[i].bitDepth = srcBitDepth;
@@ -1123,7 +1130,11 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 			i++;
 		}
 
+		getAllParamData(pluginIndex, firstSrcRect, myData, time, renderScale);
+
 		myData->sequenceDataP->outWorld.pixelFormat = PF_RGBA;
+		myData->sequenceDataP->outWorld.origin_x = dstRect.x1;
+		myData->sequenceDataP->outWorld.origin_y = dstRect.y1;
 		myData->sequenceDataP->outWorld.width = (dstRect.x2 - dstRect.x1);
 		myData->sequenceDataP->outWorld.height = (dstRect.y2 - dstRect.y1);
 		myData->sequenceDataP->outWorld.rowBytes = dstRowBytes;
@@ -1538,7 +1549,7 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 				paramSet, props,
 				param.paramName.c_str(), // param
 				param.defaultValue[0]/100., //default
-				param.defaultValue[1]/100. //default
+				1. - param.defaultValue[1]/100. //default: G'MIC's y goes down, OFX normalised y goes up
 			);
 		} else if (param.paramType == PT_BOOL) {
 			paramAddBool(

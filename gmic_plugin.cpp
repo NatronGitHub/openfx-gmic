@@ -630,27 +630,49 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 			if (nofImages == 0 || (unsigned)idx >= nofImages || images[idx].spectrum == 0 || !images[idx].data) {
 				result = -1;
 				errmsg = "The image produced by G'MIC is empty.";
-			} else if ((unsigned)sequenceDataP->outWorld.width == images[idx].width && (unsigned)sequenceDataP->outWorld.height == images[idx].height) {
-				// planar output R,G,B,A (sz2 floats each) from 1 (G), 2 (GA), 3 (RGB) or 4+ (RGBA) channels
-				const size_t sz2 = (size_t)sequenceDataP->outWorld.width * (size_t)sequenceDataP->outWorld.height;
-				float* const dst = (float*)sequenceDataP->outWorld.data;
+			} else {
+				// Planar output R,G,B,A from 1 (G), 2 (GA), 3 (RGB) or 4+ (RGBA) channels. The G'MIC
+				// result is anchored at the first input's rectangle, the output has its own rectangle
+				// (both in pixels, rows top-down in the planar buffers): copy the overlap, clear the rest.
+				const World& out = sequenceDataP->outWorld;
+				const int dw = out.width, dh = out.height;
+				const int sw = (int)images[idx].width, sh = (int)images[idx].height;
+				// G'MIC anchors images at their top-left corner: a result of another size than the first
+				// input keeps the input's left and top edges (pixel y goes up)
+				const int sx1 = sequenceDataP->inWorld[0].origin_x;
+				const int sy1 = sequenceDataP->inWorld[0].origin_y + sequenceDataP->inWorld[0].height - sh;
+				const int dx1 = out.origin_x, dy1 = out.origin_y;
+				const size_t dplane = (size_t)dw * (size_t)dh, splane = (size_t)sw * (size_t)sh;
+				float* const dst = (float*)out.data;
 				const float* const src = (const float*)images[idx].data;
 				const unsigned int spectrum = images[idx].spectrum;
-				if (spectrum >= 3) {
-					memcpy(dst, src, sz2 * 3 * sizeof(float));             // R, G, B
-				} else {
-					for (int c = 0; c < 3; ++c) {
-						memcpy(dst + sz2 * c, src, sz2 * sizeof(float)); // gray to R, G, B
+				// source plane for each output channel, or NULL for opaque alpha
+				const float* plane[4];
+				for (int c = 0; c < 3; ++c) plane[c] = src + (spectrum >= 3 ? splane * c : 0);
+				plane[3] = (spectrum == 2) ? src + splane : (spectrum >= 4 ? src + splane * 3 : NULL);
+				const bool same = (sw == dw && sh == dh && sx1 == dx1 && sy1 == dy1);
+				if (!same) {
+					memset(dst, 0, dplane * 4 * sizeof(float));
+				}
+				// overlap, in pixel coordinates (y up)
+				const int x1 = std::max(sx1, dx1), x2 = std::min(sx1 + sw, dx1 + dw);
+				const int y1 = std::max(sy1, dy1), y2 = std::min(sy1 + sh, dy1 + dh);
+				for (int c = 0; c < 4; ++c) {
+					if (same) {
+						if (plane[c]) memcpy(dst + dplane * c, plane[c], dplane * sizeof(float));
+						else std::fill(dst + dplane * c, dst + dplane * (c + 1), 255.f);
+						continue;
+					}
+					for (int y = y1; y < y2; ++y) {
+						float* drow = dst + dplane * c + (size_t)(dh - 1 - (y - dy1)) * dw + (x1 - dx1);
+						if (plane[c]) {
+							const float* srow = plane[c] + (size_t)(sh - 1 - (y - sy1)) * sw + (x1 - sx1);
+							memcpy(drow, srow, (size_t)std::max(0, x2 - x1) * sizeof(float));
+						} else {
+							std::fill(drow, drow + std::max(0, x2 - x1), 255.f);
+						}
 					}
 				}
-				if (spectrum == 2 || spectrum >= 4) {
-					memcpy(dst + sz2 * 3, src + sz2 * (spectrum == 2 ? 1 : 3), sz2 * sizeof(float)); // alpha
-				} else {
-					std::fill(dst + sz2 * 3, dst + sz2 * 4, 255.f);         // opaque
-				}
-			} else {
-				result = -1;
-				errmsg = "The image produced by G'MIC has the wrong size.";
 			}
 		}
 	}
