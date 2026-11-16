@@ -30,7 +30,10 @@ ENABLE_TESTING()
 
 include(FindOpenGL REQUIRED)
 
-set (CMAKE_CXX_STANDARD 11)
+# C++17 by default (Natron RB-2.6 Qt5 builds); C++20 can be chosen with -DCMAKE_CXX_STANDARD=20
+if(NOT DEFINED CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 17)
+endif()
 
 # Use -Ofast when applicable (implies -ffast-math)
 if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
