@@ -2,6 +2,8 @@ version: '2.12.7'
 prefix: '/opt/local'
 ports:
   - name: pkgconfig
+  - name: cmake
+  - name: ninja
   - name: fftw-3
     deselect: [ gfortran ]
   - name: fftw-3-single
