@@ -1655,6 +1655,8 @@ static OfxStatus describe(int pluginIndex, OfxImageEffectHandle effect)
 
 	// say we cannot support multiple pixel depths
 	gPropHost->propSetInt(effectProps, kOfxImageEffectPropSupportsMultipleClipDepths, 0, 0);
+	// nor multiple clip pixel aspect ratios (the default, set explicitly)
+	gPropHost->propSetInt(effectProps, kOfxImageEffectPropSupportsMultipleClipPARs, 0, 0);
 	
 	// set the bit depths the plugin can handle
 	gPropHost->propSetString(effectProps, kOfxImageEffectPropSupportedPixelDepths, 0, kOfxBitDepthFloat);
