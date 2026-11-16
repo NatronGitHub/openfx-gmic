@@ -249,8 +249,8 @@ jobs:
         run: |
           set -eo pipefail
           make -j4 CONFIG=debug OPENMP=1 CXXSTD=c++17
-      # self-contained artifact: the UCRT64 DLLs (found with ntldd, installed only here) are copied
-      # next to GMIC.ofx, and a manifest listing them is embedded with the Windows SDK's mt.exe.
+      # self-contained artifact: the UCRT64 DLLs that GMIC.ofx imports (recursively, objdump -p) are
+      # copied next to it, and a manifest listing them is embedded with the Windows SDK's mt.exe.
       # The describe test then runs a statically linked host with a PATH without /ucrt64/bin, so
       # that the plug-in loads only if it finds its DLLs in the bundle. The plug-in itself links
       # libstdc++/libgcc/libgomp dynamically, as the per-PR build does (see bundle_libs.sh for
@@ -260,7 +260,6 @@ jobs:
         if: env.UPLOAD_ARTIFACTS == 'true'
         run: |
           set -eo pipefail
-          pacman -S --noconfirm --needed mingw-w64-ucrt-x86_64-ntldd
           rm -rf Bundle && mkdir -p Bundle
           cp -R "$(find GMIC_OFX -maxdepth 1 -type d -name '*-release' | head -1)/GMIC.ofx.bundle" Bundle/
           .github/workflows/bundle_libs.sh Bundle/GMIC.ofx.bundle

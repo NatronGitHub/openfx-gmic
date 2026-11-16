@@ -13,13 +13,13 @@
 #   rpaths into $PREFIX, signs the bundle ad hoc (arm64 requires valid signatures; the dylibs
 #   first, then the bundle, which seals them), and fails if a dependency is neither a system
 #   library (/usr/lib, /System) nor bundled.
-# Windows (MSYS2): the DLLs from $MINGW_PREFIX (e.g. /ucrt64) found by ntldd -R are copied next to
-#   the plug-in in Contents/Win64, the plug-in is stripped, and a manifest listing the DLLs is
-#   embedded into it with mt.exe from the Windows SDK, as in Natron's
-#   tools/jenkins/build-Windows-installer.sh: hosts load the plug-in with LoadLibrary(path), which
-#   does not search the plug-in's directory for its dependencies; the manifest makes the loader
-#   look for them there. The imports of every DLL (objdump -p) are then checked: none may be left
-#   in $MINGW_PREFIX/bin.
+# Windows (MSYS2): the DLLs from $MINGW_PREFIX/bin (e.g. /ucrt64/bin) imported by the plug-in,
+#   directly or through these DLLs (objdump -p), are copied next to the plug-in in Contents/Win64,
+#   the plug-in is stripped, and a manifest listing the DLLs is embedded into it with mt.exe from
+#   the Windows SDK, as in Natron's tools/jenkins/build-Windows-installer.sh: hosts load the
+#   plug-in with LoadLibrary(path), which does not search the plug-in's directory for its
+#   dependencies; the manifest makes the loader look for them there. An import that is neither a
+#   System32 DLL nor in $MINGW_PREFIX/bin is an error.
 # Linux: nothing to do (see ci.yml).
 #
 # Limitations of the resulting bundles:
@@ -169,51 +169,49 @@ MINGW*|MSYS*)
     BINDIR=$(find "$BUNDLE/Contents" -maxdepth 1 -type d -name 'Win*' | head -1)
     BIN="$BINDIR/$NAME.ofx"
     [ -f "$BIN" ] || { echo "Error: $NAME.ofx not found in $BUNDLE/Contents/Win*"; exit 1; }
-    command -v ntldd >/dev/null || { echo "Error: ntldd not found (pacman -S ${MINGW_PACKAGE_PREFIX:-mingw-w64-ucrt-x86_64}-ntldd)"; exit 1; }
     lower() { tr '[:upper:]' '[:lower:]'; }
-    WINPREFIX=$(cygpath -m "$PREFIX" | lower)   # e.g. d:/a/_temp/msys64/ucrt64
-    DEPS=$(ntldd -R "$(cygpath -w "$BIN")" | tr -d '\r') || { echo "Error: ntldd failed"; exit 1; }
-    echo "$DEPS"
-    # a DLL that ntldd could not find won't be found at load time either (the API sets, api-ms-*
-    # and ext-ms-*, are resolved by the loader itself)
-    if echo "$DEPS" | grep -i 'not found' | grep -viE '^[[:space:]]*(api|ext)-ms-'; then
-        echo "Error: ntldd could not find the DLLs above"; exit 1
-    fi
+    # DLL names are case-insensitive: the lists are "lowercase-name actual-name"
+    list_dlls() { find "$1" -maxdepth 1 -type f -iname '*.dll' -printf '%f\n' | awk '{print tolower($0), $0}'; }
+    SYSDIR=$(cygpath -S)   # /c/Windows/System32
+    list_dlls "$SYSDIR" > "$TMPD/system"
+    list_dlls "$PREFIX/bin" > "$TMPD/prefix"
+    actual() { awk -v n="$1" '$1 == n {print $2; exit}' "$2"; }
 
-    # ntldd -R lists the dependencies recursively, as "name.dll => C:\path\name.dll (0x...)";
-    # copy those in $PREFIX (the system DLLs are in C:\Windows; on a second run, the DLLs already
-    # copied are found next to the plug-in)
-    for p in $(echo "$DEPS" | awk '$2 == "=>" && $3 != "not" {print $3}'); do
-        m=$(cygpath -m "$p" | lower)
-        case "$m" in
-        "$WINPREFIX"/*)
-            u=$(cygpath -u "$p")
-            echo "* $(basename "$u") ($u)"
-            cp "$u" "$BINDIR/"
-            ;;
-        esac
-    done
-    shopt -s nullglob
-    dlls=( "$BINDIR"/*.dll )
-    if [ ${#dlls[@]} = 0 ]; then
-        echo "Error: ntldd found no DLL from $PREFIX: check its output above"
-        exit 1
-    fi
-
-    # check, independently of ntldd: every DLL imported by the plug-in or a bundled DLL is either
-    # bundled or not from $PREFIX (a system DLL)
-    find "$BINDIR" -maxdepth 1 -type f -printf '%f\n' | lower > "$TMPD/bundled"
-    find "$PREFIX/bin" -maxdepth 1 -type f -printf '%f\n' | lower > "$TMPD/prefix"
+    # closure of the imports (objdump -p, not recursive) over the plug-in and the DLLs copied from
+    # $PREFIX/bin, the system DLLs being leaves (the recursion of ntldd -R into C:\Windows reports
+    # DLLs that some system DLLs import optionally as "not found"). A DLL that is in System32 is
+    # loaded from there, before the plug-in's manifest or PATH are searched; the API sets (api-ms-*,
+    # ext-ms-*) are resolved by the loader. Anything else is an error: it wouldn't load.
+    # On a second run, the DLLs already copied are copied again.
+    todo=( "$BIN" )
+    : > "$TMPD/scanned"
     status=0
-    for f in "$BIN" "${dlls[@]}"; do
+    while [ ${#todo[@]} -gt 0 ]; do
+        f=${todo[0]}; todo=( "${todo[@]:1}" )
         imports=$(objdump -p "$f") || { echo "Error: objdump failed on $f"; exit 1; }
-        for dll in $(printf '%s\n' "$imports" | awk '/DLL Name:/ {print $3}' | tr -d '\r' | lower); do
-            if ! grep -qxF "$dll" "$TMPD/bundled" && grep -qxF "$dll" "$TMPD/prefix"; then
-                echo "Error: $(basename "$f") imports $dll from $PREFIX/bin, which is not bundled"; status=1
+        for dll in $(printf '%s\n' "$imports" | awk '/DLL Name:/ {print $3}' | tr -d '\r' | lower | sort -u); do
+            case "$dll" in api-ms-*|ext-ms-*) continue ;; esac
+            [ -n "$(actual "$dll" "$TMPD/system")" ] && continue
+            grep -qxF "$dll" "$TMPD/scanned" && continue
+            name=$(actual "$dll" "$TMPD/prefix")
+            if [ -z "$name" ]; then
+                echo "Error: $(basename "$f") imports $dll, which is neither in $SYSDIR nor in $PREFIX/bin"
+                status=1
+                continue
             fi
+            echo "$dll" >> "$TMPD/scanned"
+            echo "* $name (imported by $(basename "$f"))"
+            cp "$PREFIX/bin/$name" "$BINDIR/"
+            todo+=( "$BINDIR/$name" )
         done
     done
     [ $status = 0 ] || exit 1
+    shopt -s nullglob
+    dlls=( "$BINDIR"/*.dll )
+    if [ ${#dlls[@]} = 0 ]; then
+        echo "Error: no DLL from $PREFIX/bin is imported: is $BIN an MSYS2 build?"
+        exit 1
+    fi
 
     # strip, then embed a manifest that lists the DLLs (resource 2:
     # ISOLATIONAWARE_MANIFEST_RESOURCE_ID); stripping after embedding would remove it
