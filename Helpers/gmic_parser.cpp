@@ -53,6 +53,7 @@
 #include <cctype>
 #include <cstring>
 #include <cstdlib>
+#include <cstdio>
 #include <map>
 #include <set>
 #include <string>
@@ -644,6 +645,19 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 				for (size_t g = 0; g < guards.size(); ++g) guarded = guarded || guards[g];
 				if (!guarded) flagged.insert(cur);
 			}
+		}
+	}
+	// Main commands that need the preview's state in a way the rules above can't detect. A listed
+	// command that no longer is the main command of a filter (e.g. after a G'MIC update) is
+	// reported on stderr, and makes the describe test fail (.github/workflows/describe_plugins.sh).
+	// - fx_rep_bitplane_shuffle (Bit-Plane Shuffler): without _persistent it runs
+	//   "rep_bitplane_shuffle ...,$cli_base", and cli_base is only set by its preview command.
+	static const char* const curated[] = { "fx_rep_bitplane_shuffle" };
+	for (size_t c = 0; c < sizeof(curated) / sizeof(curated[0]); ++c) {
+		if (mains.count(curated[c])) {
+			flagged.insert(curated[c]);
+		} else if (!mains.empty()) {
+			fprintf(stderr, "G'MIC: PREVIEW_FALLBACK_UNKNOWN %s: not the main command of a filter, update markPersistentFilters()\n", curated[c]);
 		}
 	}
 	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
