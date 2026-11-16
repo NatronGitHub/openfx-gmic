@@ -2,11 +2,28 @@
 // bridge by Tobias Fleischer), which copies every resulting image into the caller's array: an
 // aborted G'MIC returns its image list as it was when it stopped, possibly with more images than
 // the plug-in's fixed array (issue #46).
+// This file also defines the other functions of gmic_libc.h that the plug-in uses, so that
+// gmic_libc.cpp (one more compilation of CImg.h) is not built.
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include "gmic.h"
 #include "gmic_plugin_call.h"
+
+// as in gmic_libc.cpp
+GMIC_DLLINTERFACE int GMIC_CALLCONV gmic_delete_external(float* p)
+{
+	delete[] p;
+	return 0;
+}
+
+// as in gmic_libc.cpp: the decompressed G'MIC stdlib (free it with gmic_delete_external)
+GMIC_DLLINTERFACE const char* GMIC_CALLCONV gmic_get_stdlib()
+{
+	gmic_image<char> lib = gmic::decompress_stdlib();
+	lib._is_shared = true;
+	return lib.data();
+}
 
 static void setError(gmic_interface_options* options, const std::string& message)
 {
@@ -35,9 +52,9 @@ int gmic_plugin_call(const char* cmd, unsigned int* nofImages, gmic_interface_im
 		setError(options, e.what());
 		return -1;
 	}
-	if (options->p_is_abort && *options->p_is_abort) {
-		return 1;
-	}
+	// G'MIC also returns normally when aborted, or after 'quit' (which sets the abort flag too):
+	// the result is the image list as it was then. Whether the render was aborted is for the caller
+	// to tell, from the host.
 	if (list._width > maxImages) {
 		char message[256];
 		std::snprintf(message, sizeof(message), "G'MIC returned %u images, more than the maximum of %u.", list._width, maxImages);

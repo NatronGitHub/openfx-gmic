@@ -12,6 +12,8 @@
 # apart: Apple uses pthread_self() instead, as NetBSD does.
 # https://github.com/NatronGitHub/openfx-gmic/issues/41
 # Upstream report, with the same fix: https://github.com/GreycLab/gmic/issues/219
+# One addition to the upstream diff: gmic.cpp includes <pthread.h> on Apple before get_tid(),
+# which otherwise relies on gmic.h including it when gmic_is_parallel is defined.
 #
 # The changes only affect Apple builds: on Linux and Windows, the preprocessed code is the same.
 # The script fails if the source does not contain the expected code (e.g. after a GMICVER bump):
@@ -25,8 +27,9 @@ guard_old='#if defined(cimg_use_abort) && !defined(__MACOSX__) && !defined(__APP
 guard_new='#if defined(cimg_use_abort)'
 guard_sed='s/^#if defined(cimg_use_abort) \&\& !defined(__MACOSX__) \&\& !defined(__APPLE__)$/#if defined(cimg_use_abort)/'
 
-# get_tid() in gmic.cpp, before and after the patch
-tid_old='inline void* get_tid() {
+# get_tid() in gmic.cpp, with the comment before it, before and after the patch
+tid_old='// Return current thread id.
+inline void* get_tid() {
 #if defined(__MACOSX__) || defined(__APPLE__)
   void* tid = (void*)(cimg_ulong)getpid();
 #elif cimg_OS==1
@@ -42,7 +45,11 @@ tid_old='inline void* get_tid() {
 #endif // #if defined(__MACOSX__) || defined(__APPLE__)
   return tid;
 }'
-tid_new='inline void* get_tid() {
+tid_new='// Return current thread id.
+#if defined(__MACOSX__) || defined(__APPLE__)
+#include <pthread.h> // openfx-gmic: for pthread_self() (not in GreycLab/gmic#219)
+#endif
+inline void* get_tid() {
 #if cimg_OS==1
 #if defined(__NetBSD__) || defined(__MACOSX__) || defined(__APPLE__) || cimg_use_pthread==1
   void* tid = (void*)(cimg_ulong)pthread_self();
@@ -56,9 +63,13 @@ tid_new='inline void* get_tid() {
 #endif // #if cimg_OS==1
   return tid;
 }'
-# sed commands applied to the lines of get_tid() only
-tid_range='/^inline void\* get_tid() {$/,/^}$/'
+# sed commands applied to the lines of get_tid() (and the comment before it) only
+tid_range='/^\/\/ Return current thread id\.$/,/^}$/'
 tid_sed="${tid_range}{
+s/^\\/\\/ Return current thread id\\.\$/&\\
+#if defined(__MACOSX__) || defined(__APPLE__)\\
+#include <pthread.h> \\/\\/ openfx-gmic: for pthread_self() (not in GreycLab\\/gmic#219)\\
+#endif/
 /^#if defined(__MACOSX__) || defined(__APPLE__)\$/d
 /^  void\\* tid = (void\\*)(cimg_ulong)getpid();\$/d
 s/^#elif cimg_OS==1\$/#if cimg_OS==1/
@@ -98,7 +109,7 @@ if [ $tid = yes ]; then
   [ "`get_tid "$f"`" = "$tid_old" ] || fail "get_tid() is not the expected code"
   sed -e "$guard_sed" -e "$tid_sed" "$f" > "$f.patched" || fail "sed failed"
   [ "`get_tid "$f.patched"`" = "$tid_new" ] || fail "the get_tid() patch did not apply"
-  expected_lines=$((`wc -l < "$f"` - 2))
+  expected_lines=$((`wc -l < "$f"` + 1))
 else
   sed -e "$guard_sed" "$f" > "$f.patched" || fail "sed failed"
   expected_lines=`wc -l < "$f"`

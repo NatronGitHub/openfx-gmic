@@ -579,8 +579,12 @@ static int gmicCallAbortable(OfxImageEffectHandle instance, const char* cmd, uns
 		*aborted = true;
 		return -1;
 	}
-	// G'MIC reads this flag from its threads while the render thread sets it (the API takes a
-	// plain bool*, polled in G'MIC's loops; gmic-qt does the same)
+	// G'MIC's abort flag. It is a plain bool, read by G'MIC's threads while the render thread sets
+	// it: that is upstream's design (the API takes a bool*, polled in G'MIC's loops), and gmic-qt
+	// shares its flag across threads the same way. Note that CImg's OpenMP loops find the flag
+	// through gmic::current_is_abort(), which looks up the interpreter by thread: a thread that is
+	// not an interpreter's (e.g. an OpenMP worker evaluating the math abort()) gets a static flag
+	// shared by the whole process, which stays set (upstream behavior, not patched here).
 	bool isAbort = false;
 	GmicCallData d;
 	d.cmd = cmd;
@@ -616,7 +620,8 @@ static int gmicCallAbortable(OfxImageEffectHandle instance, const char* cmd, uns
 		return gmic_plugin_call(cmd, nofImages, images, MAX_NOF_LAYERS, options);
 	}
 
-	{
+	// the worker uses d, isAbort and the images: always join it before returning
+	try {
 		std::unique_lock<std::mutex> lock(d.mutex);
 		while (!d.cond.wait_for(lock, std::chrono::milliseconds(50), [&d] { return d.done; })) {
 			lock.unlock();
@@ -629,6 +634,16 @@ static int gmicCallAbortable(OfxImageEffectHandle instance, const char* cmd, uns
 			}
 			lock.lock();
 		}
+	} catch (...) {
+		// waiting failed (e.g. std::system_error from the mutex): stop G'MIC, wait for it, and fail
+		isAbort = true;
+#ifndef _WIN32
+		pthread_join(thread, NULL);
+#else
+		thread.join();
+#endif
+		options->p_is_abort = NULL;
+		throw;
 	}
 #ifndef _WIN32
 	pthread_join(thread, NULL);
@@ -757,12 +772,13 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 #endif
 	string errmsg = string(mySequenceDataP->options.error_message_buffer);
 
-	if (result == 1) {
-		aborted = true; // G'MIC's abort flag was set
-	}
+	// Only the host tells whether the render was aborted: G'MIC's 'quit' command also sets its
+	// abort flag, and then G'MIC's result (the images at that point) is used as usual.
 	if (aborted) {
-		// the host aborted the render: the result is incomplete, and there is no error to report
-		// (fail the render, so that no host uses or caches the output buffer)
+		// The host aborted the render: the result is incomplete, and there is no error to report.
+		// Fail the render (kOfxStatFailed), so that no host uses or caches the output buffer.
+		// Natron checks whether the render was aborted before looking at the status, so this is
+		// not reported as a failure there.
 		err = PF_Err_INTERNAL_STRUCT_DAMAGED;
 	} else if (result == 0) {
 		if (!globalDataP->inplaceProcessing) {
