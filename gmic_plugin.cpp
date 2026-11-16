@@ -327,19 +327,19 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 			strSplit(defaultValue, '|', r); // drops empty fields: pad below
 			if (r.size() == 1) { r.push_back(r[0]); r.push_back(r[0]); } // gray: color(V)
 			while (r.size() < 3) r.push_back("0");
-			d1 = (float)atof(r[0].c_str()) / 255.f;
-			d2 = (float)atof(r[1].c_str()) / 255.f;
-			d3 = (float)atof(r[2].c_str()) / 255.f;
+			d1 = (float)stringToDouble(r[0]) / 255.f;
+			d2 = (float)stringToDouble(r[1]) / 255.f;
+			d3 = (float)stringToDouble(r[2]) / 255.f;
 			// color(R,_G,_B,_A): only pass alpha to G'MIC if the filter declares it
 			flags = (r.size() > 3 && !r[3].empty()) ? 4 : 3;
-			d4 = (flags == 4) ? (float)atof(r[3].c_str()) / 255.f : 1.f;
+			d4 = (flags == 4) ? (float)stringToDouble(r[3]) / 255.f : 1.f;
 		} else if (paramType == "point") {
 			vector<string> r;
 			t = PT_POINT;
 			strSplit(defaultValue, '|', r); // drops empty fields: pad below
 			while (r.size() < 2) r.push_back("50");
-			d1 = (float)atof(r[0].c_str());
-			d2 = (float)atof(r[1].c_str());
+			d1 = (float)stringToDouble(r[0]);
+			d2 = (float)stringToDouble(r[1]);
 #ifdef OFX_PLUGIN
 			// erase any occurence of " (%)" in the string, because the displayed parameter will be in pixels
 			size_t start_pos = name.find(" (%)");
@@ -348,7 +348,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 			}
 #endif
 		} else {
-			d1 = (float)atof(defaultValue.c_str());
+			d1 = (float)stringToDouble(defaultValue);
 			d2 = d1; d3 = d1; d4 = d1;
 			if (paramType == "bool" || paramType == "button") {
 				t = PT_BOOL;
@@ -391,7 +391,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		// the parser stores in defaultValue (it used to be passed as an empty string)
 		const std::string& paramText = (paramType == "value") ? defaultValue : text;
 		globalDataP->param[p] = Parameter(
-		  name, "", t, (float)atof(minValue.c_str()), (float)atof(maxValue.c_str()), d1, d2, d3, d4, paramText);
+		  name, "", t, (float)stringToDouble(minValue), (float)stringToDouble(maxValue), d1, d2, d3, d4, paramText);
 		globalDataP->param[p].flags = flags;
 		if (h) globalDataP->param[p].displayStatus = DS_HIDDEN;
 		p++;

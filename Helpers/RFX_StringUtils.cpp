@@ -57,6 +57,12 @@
 #include <fstream>
 #include <cassert>
 #include <cstring>
+#include <locale>
+#include <locale.h>
+#include <stdlib.h>
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+#include <xlocale.h> // strtod_l
+#endif
 
 using namespace std;
 
@@ -141,18 +147,63 @@ string strAfterLast(const string& s, const string& ss, const int ofs)
 		return "";
 }
 
+// Number conversions use the classic ("C") locale, whatever the global C or C++ locale of the
+// host: G'MIC and the G'MIC stdlib always use '.' as the decimal separator and no digit grouping
+// (atof and a default stream follow LC_NUMERIC or std::locale::global, e.g. "0,5" or "1 000").
+
 string intToString(const int i)
 {
-    stringstream ss;
+    ostringstream ss;
+    ss.imbue(locale::classic());
     ss << i;
     return ss.str();
 }
 
 string floatToString(const float i)
 {
-    stringstream ss;
+    ostringstream ss;
+    ss.imbue(locale::classic());
     ss << setprecision(8) << i;
     return ss.str();
+}
+
+// strtod in the "C" locale, whatever the current one: strtod_l where available (an istringstream
+// is not a drop-in replacement: libc++ fails on "10a", "0.5f", "1e", "inf", "nan", "2e400"...)
+#if defined(_WIN32)
+// MSVC, and MinGW-w64 with UCRT or a recent msvcrt (the condition of mingw-w64's locale.h)
+#  if defined(_MSC_VER) || defined(_UCRT) || (defined(__MSVCRT_VERSION__) && (__MSVCRT_VERSION__ >= 0x0800 || (__MSVCRT_VERSION__ == 0x0600 && defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0600)))
+#    define RFX_STRTOD_C(str, end) _strtod_l(str, end, cLocale())
+static _locale_t cLocale()
+{
+    static _locale_t loc = _create_locale(LC_NUMERIC, "C"); // never freed
+    return loc;
+}
+#  endif
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__GLIBC__)
+#  define RFX_STRTOD_C(str, end) strtod_l(str, end, cLocale())
+static locale_t cLocale()
+{
+    static locale_t loc = newlocale(LC_NUMERIC_MASK, "C", (locale_t)0); // never freed
+    return loc;
+}
+#endif
+
+double stringToDouble(const string& s)
+{
+    // same result as atof in the "C" locale: leading whitespace skipped, trailing characters
+    // ignored, 0 if there is no number; hexadecimal, inf and nan accepted
+#ifdef RFX_STRTOD_C
+    return RFX_STRTOD_C(s.c_str(), NULL);
+#else
+    // other platforms: use the decimal point of the current C locale instead of '.'
+    string t = s;
+    const char* dp = localeconv()->decimal_point;
+    if (dp && dp[0] && string(dp) != ".") {
+        size_t pos = t.find('.');
+        if (pos != string::npos) t.replace(pos, 1, dp);
+    }
+    return strtod(t.c_str(), NULL);
+#endif
 }
 
 // hex string/buffer conversion
