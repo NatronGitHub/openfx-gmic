@@ -49,7 +49,7 @@ VPATH = $(SRCDIR):$(SRCDIR)/Helpers
 
 # openmp
 ifeq ($(OPENMP),1)
-  ifeq ($(shell uname -s),Darwin)
+  ifeq ($(OS),Darwin) # OS is set by Makefile.master
     # Apple clang has no -fopenmp driver support: use the OpenMP runtime from MacPorts (libomp)
     LIBOMP_PREFIX ?= /opt/local
     CXXFLAGS += -Dcimg_use_openmp -Xpreprocessor -fopenmp -I$(LIBOMP_PREFIX)/include/libomp

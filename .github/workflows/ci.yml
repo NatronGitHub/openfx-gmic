@@ -2,7 +2,7 @@ name: Continuous Integration
 
 # Natron CI policy: per PR/push, exactly three full builds plus tests (macOS 15 arm64 with the
 # system clang and MacPorts libraries, Ubuntu 24.04, Windows MSYS2 UCRT64). Extra variants (debug
-# builds) run weekly or on demand; build artifacts are uploaded only on demand or for tags.
+# builds) run weekly or on demand; build artifacts are uploaded only on demand or for pre-release tags.
 
 on:
   workflow_dispatch: {}
@@ -25,11 +25,11 @@ on:
       - 'Licence_*.txt'
       - '.github/ISSUE_TEMPLATE/**'
 
-# PRs: one group per PR, and a new push cancels the running build. Other events (master, tags,
+# PRs: one group per PR number (branch names can collide across forks), and a new push cancels the running build. Other events (master, tags,
 # schedule, workflow_dispatch): one group per run, so that no run is cancelled or replaced while
 # pending (a concurrency group keeps only one pending run).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -40,8 +40,9 @@ env:
   GMIC_PLUGIN_COUNT: 360
   # extra variants (debug) only on the weekly schedule or on demand
   BUILD_VARIANTS: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
-  # artifacts only on demand or for tags
-  UPLOAD_ARTIFACTS: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
+  # artifacts only on demand or for pre-release tags (containing "alpha", "beta" or "rc", e.g.
+  # Natron-2.6.0-rc1; contains() is case-insensitive)
+  UPLOAD_ARTIFACTS: ${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && (contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc'))) }}
 
 jobs:
   linux:
