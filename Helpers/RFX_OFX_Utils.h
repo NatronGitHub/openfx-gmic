@@ -53,6 +53,7 @@
 #include <stdexcept>
 #include <new>
 #include <cstring>
+#include <cstddef>
 #include <cassert>
 #include <cmath>
 #include <cstdlib>
@@ -492,7 +493,9 @@ static OfxStatus getClipPreferences(int pluginIndex, OfxImageEffectHandle effect
 	ofxuClipGetFormat(myData->input[0], bitDepth, isRGBA, true); // get the unmapped clip component
 
 	// get the strings used to label the various bit depths
-	const char *componentStr = isRGBA ? kOfxImageComponentRGBA : kOfxImageComponentAlpha;
+	// the output clip only supports RGBA (render writes 4 channels), even for an Alpha input
+	(void)isRGBA;
+	const char *componentStr = kOfxImageComponentRGBA;
 
 	// set out output to be the same same as the input, component and bitdepth
 	gPropHost->propSetString(outArgs, "OfxImageClipPropComponents_Output", 0, componentStr);
@@ -646,9 +649,9 @@ void convert_RGBA8P_to_RGBA8(ConvertData& data, const int startLine, const int e
 		unsigned char* in_pixB = (unsigned char*)((char*)data.srcData + sizeof(unsigned char) * data.width * (y + data.height * 2));
 		unsigned char* in_pixA = (unsigned char*)((char*)data.srcData + sizeof(unsigned char) * data.width * (y + data.height * 3));
 #ifdef IMG_FLIP_Y
-		unsigned char* out_pix = (unsigned char*)((char*)data.dstData + ((data.height-1-y) * data.dstRowBytes));
+		unsigned char* out_pix = (unsigned char*)((char*)data.dstData + ((ptrdiff_t)(data.height-1-y) * data.dstRowBytes));
 #else
-		unsigned char* out_pix = (unsigned char*)((char*)data.dstData + (y * data.dstRowBytes));
+		unsigned char* out_pix = (unsigned char*)((char*)data.dstData + ((ptrdiff_t)y * data.dstRowBytes));
 #endif
 		for (int x = 0; x < data.width; x++) {
 			*out_pix++ = *in_pixR; in_pixR += stepWidth;
@@ -668,9 +671,9 @@ void convert_RGBA8P_to_RGBA32(ConvertData& data, const int startLine, const int 
 		unsigned char* in_pixB = (unsigned char*)((char*)data.srcData + sizeof(unsigned char) * data.width * (y + data.height * 2));
 		unsigned char* in_pixA = (unsigned char*)((char*)data.srcData + sizeof(unsigned char) * data.width * (y + data.height * 3));
 #ifdef IMG_FLIP_Y
-		float* out_pix = (float*)((char*)data.dstData + ((data.height-1-y) * data.dstRowBytes));
+		float* out_pix = (float*)((char*)data.dstData + ((ptrdiff_t)(data.height-1-y) * data.dstRowBytes));
 #else
-		float* out_pix = (float*)((char*)data.dstData + (y * data.dstRowBytes));
+		float* out_pix = (float*)((char*)data.dstData + ((ptrdiff_t)y * data.dstRowBytes));
 #endif
 		for (int x = 0; x < data.width; x++) {
 			*out_pix++ = ((float)(*in_pixR) * I_MAX_CHAN8 * data.scale); in_pixR += stepWidth;
@@ -686,9 +689,9 @@ void convert_RGBA8_to_RGBA8P(ConvertData& data, const int startLine, const int e
 {
 	for (int y = startLine; y < endLine; y++) {
 #ifdef IMG_FLIP_Y
-		unsigned char* in_pix = (unsigned char*)((char*)data.srcData + ((data.height-1-y) * data.srcRowBytes));
+		unsigned char* in_pix = (unsigned char*)((char*)data.srcData + ((ptrdiff_t)(data.height-1-y) * data.srcRowBytes));
 #else
-		unsigned char* in_pix = (unsigned char*)((char*)data.srcData + (y * data.srcRowBytes));
+		unsigned char* in_pix = (unsigned char*)((char*)data.srcData + ((ptrdiff_t)y * data.srcRowBytes));
 #endif
 		unsigned char* out_pixR = (unsigned char*)((char*)data.dstData + sizeof(unsigned char) * data.width * (y + data.height * 0));
 		unsigned char* out_pixG = (unsigned char*)((char*)data.dstData + sizeof(unsigned char) * data.width * (y + data.height * 1));
@@ -713,9 +716,9 @@ void convert_RGBA32P_to_RGBA32(ConvertData& data, const int startLine, const int
 		float* in_pixB = (float*)((char*)data.srcData + sizeof(float) * data.width * (y + data.height * 2));
 		float* in_pixA = (float*)((char*)data.srcData + sizeof(float) * data.width * (y + data.height * 3));
 #ifdef IMG_FLIP_Y
-		float* out_pix = (float*)((char*)data.dstData + ((data.height-1-y) * data.dstRowBytes));
+		float* out_pix = (float*)((char*)data.dstData + ((ptrdiff_t)(data.height-1-y) * data.dstRowBytes));
 #else
-		float* out_pix = (float*)((char*)data.dstData + (y * data.dstRowBytes));
+		float* out_pix = (float*)((char*)data.dstData + ((ptrdiff_t)y * data.dstRowBytes));
 #endif
 		for (int x = 0; x < data.width; x++) {
 			*out_pix++ = *in_pixR * data.scale; in_pixR += stepWidth;
@@ -731,11 +734,11 @@ static
 void convert_RGBA32_to_RGBA32(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
-		float* in_pix = (float*)((char*)data.srcData + ((data.height-1-y) * data.srcRowBytes));
+		float* in_pix = (float*)((char*)data.srcData + ((ptrdiff_t)(data.height-1-y) * data.srcRowBytes));
 #ifdef IMG_FLIP_Y
-		float* out_pix = (float*)((char*)data.dstData + ((data.height-1-y) * data.dstRowBytes));
+		float* out_pix = (float*)((char*)data.dstData + ((ptrdiff_t)(data.height-1-y) * data.dstRowBytes));
 #else
-		float* out_pix = (float*)((char*)data.dstData + (y * data.dstRowBytes));
+		float* out_pix = (float*)((char*)data.dstData + ((ptrdiff_t)y * data.dstRowBytes));
 #endif
 		for (int x = 0; x < data.width; x++) {
 			*out_pix++ = *in_pix++ * data.scale;
@@ -753,9 +756,9 @@ void convert_RGBA32P_to_RGBA8(ConvertData& data, const int startLine, const int 
 		float* in_pixB = (float*)((char*)data.srcData + sizeof(float) * data.width * (y + data.height * 2));
 		float* in_pixA = (float*)((char*)data.srcData + sizeof(float) * data.width * (y + data.height * 3));
 #ifdef IMG_FLIP_Y
-		unsigned char* out_pix = (unsigned char*)((char*)data.dstData + ((data.height-1-y) * data.dstRowBytes));
+		unsigned char* out_pix = (unsigned char*)((char*)data.dstData + ((ptrdiff_t)(data.height-1-y) * data.dstRowBytes));
 #else
-		unsigned char* out_pix = (unsigned char*)((char*)data.dstData + (y * data.dstRowBytes));
+		unsigned char* out_pix = (unsigned char*)((char*)data.dstData + ((ptrdiff_t)y * data.dstRowBytes));
 #endif
 		for (int x = 0; x < data.width; x++) {
 			*out_pix++ = (unsigned char)(saturate(*in_pixR * data.scale) * MAX_CHAN8 + 0.5f); in_pixR += stepWidth;
@@ -771,9 +774,9 @@ void convert_RGBA32_to_RGBA32P(ConvertData& data, const int startLine, const int
 {
 	for (int y = startLine; y < endLine; y++) {
 #ifdef IMG_FLIP_Y
-		float* in_pix = (float*)((char*)data.srcData + ((data.height-1-y) * data.srcRowBytes));
+		float* in_pix = (float*)((char*)data.srcData + ((ptrdiff_t)(data.height-1-y) * data.srcRowBytes));
 #else
-		float* in_pix = (float*)((char*)data.srcData + (y * data.srcRowBytes));
+		float* in_pix = (float*)((char*)data.srcData + ((ptrdiff_t)y * data.srcRowBytes));
 #endif
 		float* out_pixR = (float*)((char*)data.dstData + sizeof(float) * data.width * (y + data.height * 0));
 		float* out_pixG = (float*)((char*)data.dstData + sizeof(float) * data.width * (y + data.height * 1));
@@ -793,8 +796,8 @@ static
 void convert_RGBA8_to_RGBA32(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
-		unsigned char* in_pix = (unsigned char*)((char*)data.srcData + (y * data.srcRowBytes));
-		float* out_pixR = (float*)((char*)data.dstData + (y * data.dstRowBytes));
+		unsigned char* in_pix = (unsigned char*)((char*)data.srcData + ((ptrdiff_t)y * data.srcRowBytes));
+		float* out_pixR = (float*)((char*)data.dstData + ((ptrdiff_t)y * data.dstRowBytes));
 		float* out_pixG = out_pixR + 1;
 		float* out_pixB = out_pixR + 2;
 		float* out_pixA = out_pixR + 3;
@@ -812,7 +815,7 @@ static
 void convert_RGBA8_to_RGBA32P(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
-		unsigned char* in_pix = (unsigned char*)((char*)data.srcData + (y * data.srcRowBytes));
+		unsigned char* in_pix = (unsigned char*)((char*)data.srcData + ((ptrdiff_t)y * data.srcRowBytes));
 		float* out_pixR = (float*)((char*)data.dstData + sizeof(float) * data.width * (y + data.height * 0));
 		float* out_pixG = (float*)((char*)data.dstData + sizeof(float) * data.width * (y + data.height * 1));
 		float* out_pixB = (float*)((char*)data.dstData + sizeof(float) * data.width * (y + data.height * 2));
@@ -831,8 +834,8 @@ static
 void convert_RGBA32_to_RGBA8(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
-		float* in_pix = (float*)((char*)data.srcData + (y * data.srcRowBytes));
-		unsigned char* out_pixR = (unsigned char*)((char*)data.dstData + (y * data.dstRowBytes));
+		float* in_pix = (float*)((char*)data.srcData + ((ptrdiff_t)y * data.srcRowBytes));
+		unsigned char* out_pixR = (unsigned char*)((char*)data.dstData + ((ptrdiff_t)y * data.dstRowBytes));
 		unsigned char* out_pixG = out_pixR + 1;
 		unsigned char* out_pixB = out_pixR + 2;
 		unsigned char* out_pixA = out_pixR + 3;
@@ -851,7 +854,7 @@ static
 void convert_RGBA32_to_RGBA8P(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
-		float* in_pix = (float*)((char*)data.srcData + (y * data.srcRowBytes));
+		float* in_pix = (float*)((char*)data.srcData + ((ptrdiff_t)y * data.srcRowBytes));
 		unsigned char* out_pixR = (unsigned char*)((char*)data.dstData + sizeof(float) * data.width * (y + data.height * 0));
 		unsigned char* out_pixG = (unsigned char*)((char*)data.dstData + sizeof(float) * data.width * (y + data.height * 1));
 		unsigned char* out_pixB = (unsigned char*)((char*)data.dstData + sizeof(float) * data.width * (y + data.height * 2));
@@ -976,7 +979,7 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 #if defined(CONVERT_INT_TO_FLOAT)
 			if (srcBitDepth == 8) {
 				myData->sequenceDataP->inWorld[i].rowBytes = myData->sequenceDataP->inWorld[i].width * sizeof(OfxRGBAColourF);
-				myData->sequenceDataP->inWorld[i].data = new unsigned char[myData->sequenceDataP->inWorld[i].height * myData->sequenceDataP->inWorld[i].rowBytes];
+				myData->sequenceDataP->inWorld[i].data = new unsigned char[(size_t)myData->sequenceDataP->inWorld[i].height * (size_t)myData->sequenceDataP->inWorld[i].rowBytes];
 				myData->sequenceDataP->inWorld[i].bitDepth = 32;
 				ConvertData data(srcData, srcRowBytes, myData->sequenceDataP->inWorld[i].data, myData->sequenceDataP->inWorld[i].rowBytes, myData->sequenceDataP->inWorld[i].width, myData->sequenceDataP->inWorld[i].height, scale);
 	
@@ -1005,7 +1008,7 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 #ifdef PLANAR_BUFFER
 			} else if (srcBitDepth == 32) {
 				myData->sequenceDataP->inWorld[i].rowBytes = myData->sequenceDataP->inWorld[i].width * sizeof(OfxRGBAColourF);
-				myData->sequenceDataP->inWorld[i].data = new unsigned char[myData->sequenceDataP->inWorld[i].height * myData->sequenceDataP->inWorld[i].rowBytes];
+				myData->sequenceDataP->inWorld[i].data = new unsigned char[(size_t)myData->sequenceDataP->inWorld[i].height * (size_t)myData->sequenceDataP->inWorld[i].rowBytes];
 				myData->sequenceDataP->inWorld[i].bitDepth = 32;
 				ConvertData data(srcData, srcRowBytes, myData->sequenceDataP->inWorld[i].data, myData->sequenceDataP->inWorld[i].rowBytes, myData->sequenceDataP->inWorld[i].width, myData->sequenceDataP->inWorld[i].height, scale);
 #ifndef NO_MULTITHREADED_CONVERSION
@@ -1028,7 +1031,7 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 #elif defined(CONVERT_FLOAT_TO_INT)
 			if (srcBitDepth == 32) {
 				myData->sequenceDataP->inWorld[i].rowBytes = myData->sequenceDataP->inWorld[i].width * sizeof(OfxRGBAColourB);
-				myData->sequenceDataP->inWorld[i].data = new unsigned char[myData->sequenceDataP->inWorld[i].height * myData->sequenceDataP->inWorld[i].rowBytes];
+				myData->sequenceDataP->inWorld[i].data = new unsigned char[(size_t)myData->sequenceDataP->inWorld[i].height * (size_t)myData->sequenceDataP->inWorld[i].rowBytes];
 				myData->sequenceDataP->inWorld[i].bitDepth = 8;
 				ConvertData data(srcData, srcRowBytes, myData->sequenceDataP->inWorld[i].data, myData->sequenceDataP->inWorld[i].rowBytes, myData->sequenceDataP->inWorld[i].width, myData->sequenceDataP->inWorld[i].height, scale);
 #ifndef NO_MULTITHREADED_CONVERSION
@@ -1056,7 +1059,7 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 #ifdef PLANAR_BUFFER
 			} else if (srcBitDepth == 8) {
 				myData->sequenceDataP->inWorld[i].rowBytes = myData->sequenceDataP->inWorld[i].width * sizeof(OfxRGBAColourB);
-				myData->sequenceDataP->inWorld[i].data = new unsigned char[myData->sequenceDataP->inWorld[i].height * myData->sequenceDataP->inWorld[i].rowBytes];
+				myData->sequenceDataP->inWorld[i].data = new unsigned char[(size_t)myData->sequenceDataP->inWorld[i].height * (size_t)myData->sequenceDataP->inWorld[i].rowBytes];
 				myData->sequenceDataP->inWorld[i].bitDepth = 8;
 				ConvertData data(srcData, srcRowBytes, myData->sequenceDataP->inWorld[i].data, myData->sequenceDataP->inWorld[i].rowBytes, myData->sequenceDataP->inWorld[i].width, myData->sequenceDataP->inWorld[i].height, scale);
 #ifndef NO_MULTITHREADED_CONVERSION
@@ -1076,7 +1079,7 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 #elif defined(PLANAR_BUFFER)
 			if (srcBitDepth == 8) {
 				myData->sequenceDataP->inWorld[i].rowBytes = myData->sequenceDataP->inWorld[i].width * sizeof(OfxRGBAColourB);
-				myData->sequenceDataP->inWorld[i].data = new unsigned char[myData->sequenceDataP->inWorld[i].height * myData->sequenceDataP->inWorld[i].rowBytes];
+				myData->sequenceDataP->inWorld[i].data = new unsigned char[(size_t)myData->sequenceDataP->inWorld[i].height * (size_t)myData->sequenceDataP->inWorld[i].rowBytes];
 				myData->sequenceDataP->inWorld[i].bitDepth = 8;
 				ConvertData data(srcData, srcRowBytes, myData->sequenceDataP->inWorld[i].data, myData->sequenceDataP->inWorld[i].rowBytes, myData->sequenceDataP->inWorld[i].width, myData->sequenceDataP->inWorld[i].height, scale);
 #ifndef NO_MULTITHREADED_CONVERSION
@@ -1092,7 +1095,7 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 #endif
 			} else if (srcBitDepth == 32) {
 				myData->sequenceDataP->inWorld[i].rowBytes = myData->sequenceDataP->inWorld[i].width * sizeof(OfxRGBAColourF);
-				myData->sequenceDataP->inWorld[i].data = new unsigned char[myData->sequenceDataP->inWorld[i].height * myData->sequenceDataP->inWorld[i].rowBytes];
+				myData->sequenceDataP->inWorld[i].data = new unsigned char[(size_t)myData->sequenceDataP->inWorld[i].height * (size_t)myData->sequenceDataP->inWorld[i].rowBytes];
 				myData->sequenceDataP->inWorld[i].bitDepth = 32;
 				ConvertData data(srcData, srcRowBytes, myData->sequenceDataP->inWorld[i].data, myData->sequenceDataP->inWorld[i].rowBytes, myData->sequenceDataP->inWorld[i].width, myData->sequenceDataP->inWorld[i].height, scale);
 #ifndef NO_MULTITHREADED_CONVERSION
@@ -1123,34 +1126,34 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 #if defined(CONVERT_INT_TO_FLOAT)
 		if (dstBitDepth == 8) {
 			myData->sequenceDataP->outWorld.rowBytes = myData->sequenceDataP->outWorld.width * sizeof(OfxRGBAColourF);
-			myData->sequenceDataP->outWorld.data = new unsigned char[myData->sequenceDataP->outWorld.height * myData->sequenceDataP->outWorld.rowBytes];
+			myData->sequenceDataP->outWorld.data = new unsigned char[(size_t)myData->sequenceDataP->outWorld.height * (size_t)myData->sequenceDataP->outWorld.rowBytes];
 			customOutputData = true;
 #ifdef PLANAR_BUFFER
 		} else if (dstBitDepth == 32) {
 			myData->sequenceDataP->outWorld.rowBytes = myData->sequenceDataP->outWorld.width * sizeof(OfxRGBAColourF);
-			myData->sequenceDataP->outWorld.data = new unsigned char[myData->sequenceDataP->outWorld.height * myData->sequenceDataP->outWorld.rowBytes];
+			myData->sequenceDataP->outWorld.data = new unsigned char[(size_t)myData->sequenceDataP->outWorld.height * (size_t)myData->sequenceDataP->outWorld.rowBytes];
 			customOutputData = true;
 #endif
 		}
 #elif defined(CONVERT_FLOAT_TO_INT)
 		if (dstBitDepth == 32) {
 			myData->sequenceDataP->outWorld.rowBytes = myData->sequenceDataP->outWorld.width * sizeof(OfxRGBAColourB);
-			myData->sequenceDataP->outWorld.data = new unsigned char[myData->sequenceDataP->outWorld.height * myData->sequenceDataP->outWorld.rowBytes];
+			myData->sequenceDataP->outWorld.data = new unsigned char[(size_t)myData->sequenceDataP->outWorld.height * (size_t)myData->sequenceDataP->outWorld.rowBytes];
 			customOutputData = true;
 #ifdef PLANAR_BUFFER
 		} else if (dstBitDepth == 8) {
 			myData->sequenceDataP->outWorld.rowBytes = myData->sequenceDataP->outWorld.width * sizeof(OfxRGBAColourB);
-			myData->sequenceDataP->outWorld.data = new unsigned char[myData->sequenceDataP->outWorld.height * myData->sequenceDataP->outWorld.rowBytes];
+			myData->sequenceDataP->outWorld.data = new unsigned char[(size_t)myData->sequenceDataP->outWorld.height * (size_t)myData->sequenceDataP->outWorld.rowBytes];
 			customOutputData = true;
 #endif
 		}
 #elif defined(PLANAR_BUFFER)
 		if (dstBitDepth == 8) {
 			myData->sequenceDataP->outWorld.rowBytes = myData->sequenceDataP->outWorld.width * sizeof(OfxRGBAColourB);
-			myData->sequenceDataP->outWorld.data = new unsigned char[myData->sequenceDataP->outWorld.height * myData->sequenceDataP->outWorld.rowBytes];
+			myData->sequenceDataP->outWorld.data = new unsigned char[(size_t)myData->sequenceDataP->outWorld.height * (size_t)myData->sequenceDataP->outWorld.rowBytes];
 		} else if (dstBitDepth == 32) {
 			myData->sequenceDataP->outWorld.rowBytes = myData->sequenceDataP->outWorld.width * sizeof(OfxRGBAColourF);
-			myData->sequenceDataP->outWorld.data = new unsigned char[myData->sequenceDataP->outWorld.height * myData->sequenceDataP->outWorld.rowBytes];
+			myData->sequenceDataP->outWorld.data = new unsigned char[(size_t)myData->sequenceDataP->outWorld.height * (size_t)myData->sequenceDataP->outWorld.rowBytes];
 		}
 		customOutputData = true;
 #endif
@@ -1283,7 +1286,21 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 		}
 	} catch(OfxuStatusException &ex) {
 		status = ex.status();
+	} catch(std::bad_alloc&) {
+		status = kOfxStatErrMemory;
+	} catch(...) {
+		// e.g. a std::exception from the image conversion: fail this render, but still release
+		// the host images and the converted buffers below
+		status = kOfxStatFailed;
 	}
+
+#ifndef NO_MULTITHREADED_CONVERSION
+	// if an exception interrupted a conversion, wait for the threads already started before
+	// freeing the buffers they use (and destroying a joinable std::thread would terminate)
+	for (int j = 0; j < NOF_CONVERT_THREADS; ++j) {
+		if (t[j].joinable()) t[j].join();
+	}
+#endif
 
 	// release the data pointers
 	for (int i = 0; i < globalData[pluginIndex].nofInputs; i++) {
@@ -1291,10 +1308,14 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 			gEffectHost->clipReleaseImage(sourceImg[i]);
 		}
 		if (customInputData[i]) {
-			delete (unsigned char*)myData->sequenceDataP->inWorld[i].data;
+			delete [] (unsigned char*)myData->sequenceDataP->inWorld[i].data;
+			myData->sequenceDataP->inWorld[i].data = NULL;
 		}
 	}
-	if (customOutputData) delete [] (unsigned char*)myData->sequenceDataP->outWorld.data;
+	if (customOutputData) {
+		delete [] (unsigned char*)myData->sequenceDataP->outWorld.data;
+		myData->sequenceDataP->outWorld.data = NULL;
+	}
 	if (outputImg) gEffectHost->clipReleaseImage(outputImg);
 	
 	return status;

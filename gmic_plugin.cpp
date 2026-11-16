@@ -559,6 +559,11 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		cmd += " -gimp_merge_layers";
 	}
 
+	// gmic_call() copies every resulting image into images[], which has MAX_NOF_LAYERS entries:
+	// keep at most that many (the last ones, since the Output Layer is counted from the end).
+	// Some filters return more by default, e.g. Fade Layers, Morph Layers, Tiles to Layers.
+	cmd += " -if {$!>" + intToString(MAX_NOF_LAYERS) + "} -keep[-" + intToString(MAX_NOF_LAYERS) + "--1] -fi";
+
 	if (PAR_VAL(PARAM_NOALPHA) > 0.f) {
 		strReplace(cmd, "\"", "\\\"");
 		cmd = "-apply_channels \"" + cmd + "\",rgb";
@@ -597,11 +602,11 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 			}
 
 			if ((unsigned)sequenceDataP->outWorld.width == images[idx].width && (unsigned)sequenceDataP->outWorld.height == images[idx].height) {
-				size_t sz = sequenceDataP->outWorld.width * sequenceDataP->outWorld.height * min(4, (int)images[idx].spectrum) * sizeof(float);
+				size_t sz = (size_t)sequenceDataP->outWorld.width * (size_t)sequenceDataP->outWorld.height * (size_t)min(4, (int)images[idx].spectrum) * sizeof(float);
 				memcpy((unsigned char*)sequenceDataP->outWorld.data, (unsigned char*)images[idx].data, sz);
 
 				if (images[idx].spectrum < 4) {
-					size_t sz2 = sequenceDataP->outWorld.width * sequenceDataP->outWorld.height;
+					size_t sz2 = (size_t)sequenceDataP->outWorld.width * (size_t)sequenceDataP->outWorld.height;
 					float* p = (float*)sequenceDataP->outWorld.data + sz2 * 3;
 					std::fill(p, p + sz2 , 255.f);
 
