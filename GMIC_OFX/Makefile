@@ -47,6 +47,13 @@ LINKFLAGS += $(FFTW3_LINKFLAGS) $(ZLIB_LINKFLAGS) $(LIBCURL_LINKFLAGS) $(LIBPNG_
 
 VPATH = $(SRCDIR):$(SRCDIR)/Helpers
 
+# C++ standard: by default, the compiler's default (C++17 with current compilers). Pass e.g.
+# CXXSTD=c++20 to choose one; a -std option given in CXX by the caller (as Natron's build does)
+# is also respected, since no -std option is added otherwise.
+ifneq ($(CXXSTD),)
+  CXXFLAGS += -std=$(CXXSTD)
+endif
+
 # openmp
 ifeq ($(OPENMP),1)
   ifeq ($(OS),Darwin) # OS is set by Makefile.master

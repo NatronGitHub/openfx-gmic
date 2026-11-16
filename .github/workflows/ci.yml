@@ -2,7 +2,8 @@ name: Continuous Integration
 
 # Natron CI policy: per PR/push, exactly three full builds plus tests (macOS 15 arm64 with the
 # system clang and MacPorts libraries, Ubuntu 24.04, Windows MSYS2 UCRT64). Extra variants (debug
-# builds) run weekly or on demand; build artifacts are uploaded only on demand or for pre-release tags.
+# builds, a C++20 build) run weekly or on demand; the per-PR builds use C++17 (Natron RB-2.6
+# policy: Qt5 builds C++17, Qt6 builds C++20); build artifacts are uploaded only on demand or for pre-release tags.
 
 on:
   workflow_dispatch: {}
@@ -70,18 +71,24 @@ jobs:
             gmic_stdlib_gmic.h
           key: gmic-src-${{ hashFiles('Makefile') }}
       - name: Build (release, OpenMP)
-        run: make -j4 CONFIG=release OPENMP=1
+        run: make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17
       - name: Describe all plug-ins
         run: .github/workflows/describe_plugins.sh GMIC_OFX/Linux-64-release $GMIC_PLUGIN_COUNT
       - name: Build (debug)
         if: env.BUILD_VARIANTS == 'true'
-        run: make -j4 CONFIG=debug OPENMP=1
+        run: make -j4 CONFIG=debug OPENMP=1 CXXSTD=c++17
       - name: Upload bundle
         if: env.UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: openfx-gmic-linux-release
           path: GMIC_OFX/Linux-64-release/GMIC.ofx.bundle
+      - name: Build and describe (release, C++20)
+        if: env.BUILD_VARIANTS == 'true'
+        run: |
+          (cd GMIC_OFX && make clean CONFIG=release)
+          make -j4 CONFIG=release OPENMP=1 CXXSTD=c++20
+          .github/workflows/describe_plugins.sh GMIC_OFX/Linux-64-release $GMIC_PLUGIN_COUNT
 
   macos:
     name: macOS 15 arm64 (Apple clang, MacPorts libraries)
@@ -93,7 +100,7 @@ jobs:
       # Apple clang (the system compiler, pinned to /usr/bin so that a MacPorts clang_select can't
       # take over clang++) with the MacPorts libraries found through MacPorts' pkg-config. MacPorts
       # LLVM/clang is not used to build on macOS.
-      MAKE_ARGS: CC=/usr/bin/clang CXX=/usr/bin/clang++ OPENMP=1
+      MAKE_ARGS: CC=/usr/bin/clang CXX=/usr/bin/clang++ OPENMP=1 CXXSTD=c++17
     steps:
       - uses: actions/checkout@v4
         with:
@@ -125,6 +132,15 @@ jobs:
         with:
           name: openfx-gmic-macos-release
           path: GMIC_OFX/Darwin-64-release/GMIC.ofx.bundle
+      - name: Build and describe (release, C++20)
+        if: env.BUILD_VARIANTS == 'true'
+        run: |
+          export PATH=/opt/local/bin:/opt/local/sbin:$PATH
+          (cd GMIC_OFX && make clean CONFIG=release)
+          make -j4 CONFIG=release $MAKE_ARGS CXXSTD=c++20
+          CXX="/usr/bin/clang++ -I/opt/local/include" \
+            HOST_LDFLAGS=-L/opt/local/lib \
+            .github/workflows/describe_plugins.sh GMIC_OFX/Darwin-64-release $GMIC_PLUGIN_COUNT
 
   windows:
     name: Windows (MSYS2 UCRT64)
@@ -158,7 +174,7 @@ jobs:
       - name: Build (release, OpenMP)
         run: |
           set -eo pipefail
-          make -j4 CONFIG=release OPENMP=1
+          make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17
       - name: Describe all plug-ins
         run: |
           set -eo pipefail
@@ -168,7 +184,7 @@ jobs:
         if: env.BUILD_VARIANTS == 'true'
         run: |
           set -eo pipefail
-          make -j4 CONFIG=debug OPENMP=1
+          make -j4 CONFIG=debug OPENMP=1 CXXSTD=c++17
       - name: Collect bundle
         if: env.UPLOAD_ARTIFACTS == 'true'
         run: |
@@ -181,3 +197,11 @@ jobs:
         with:
           name: openfx-gmic-windows-release
           path: Bundle/GMIC.ofx.bundle
+      - name: Build and describe (release, C++20)
+        if: env.BUILD_VARIANTS == 'true'
+        run: |
+          set -eo pipefail
+          (cd GMIC_OFX && make clean CONFIG=release)
+          make -j4 CONFIG=release OPENMP=1 CXXSTD=c++20
+          BUILD_DIR=$(find GMIC_OFX -maxdepth 1 -type d -name '*-release' | head -1)
+          .github/workflows/describe_plugins.sh "$BUILD_DIR" $GMIC_PLUGIN_COUNT
