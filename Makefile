@@ -48,6 +48,9 @@ GMICSRC_SHA256=$(GMICSRC_SHA256_$(GMICVER))
 # GreycLab/gmic on GitHub is the main G'MIC repository, and its releases (3.3.1 and later) attach
 # gmic_<ver>.tar.gz: try it first, then gmic.eu (which may answer 403) and the MacPorts mirror.
 GMICSRC_URLS=https://github.com/GreycLab/gmic/releases/download/v.$(GMICVER)/$(GMICSRC) https://gmic.eu/files/source/$(GMICSRC) https://distfiles.macports.org/gmic/$(GMICSRC)
+# CMakeLists.txt reads GMICSOURCES, GMICVER, GMICSRC, GMICSRCDIR, GMICSRC_SHA256_<version> and
+# GMICSRC_URLS from this file: keep each on one line, as a plain "NAME = value" assignment (no
+# backslash continuation, not inside ifeq), using no other variables than $(GMICVER) and $(GMICSRC).
 
 # The checksum is mandatory: when bumping GMICVER, add GMICSRC_SHA256_<version>
 # (or pass GMICSRC_SHA256=<sha256> on the make command line).

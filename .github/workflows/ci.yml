@@ -114,7 +114,7 @@ jobs:
         run: |
           make -j4 CONFIG=debug OPENMP=1 CXX="g++ -std=c++17"
           cmake --install build --prefix install
-          .github/workflows/compare_bundles.sh GMIC_OFX/Linux-64-debug/GMIC.ofx.bundle install/GMIC.ofx.bundle
+          .github/workflows/compare_bundles.sh GMIC_OFX/Linux-64-debug/GMIC.ofx.bundle install/OFX/Plugins/GMIC.ofx.bundle
       - name: Upload bundle
         if: env.UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@v4
@@ -161,35 +161,33 @@ jobs:
         with:
           parameters: .github/parameters/setup-macports.yaml
       # OFX_DEPLOY_BUNDLES: the install step copies the MacPorts libraries into the bundle
-      # (osxDeploy.sh), as the Makefile's release builds do
-      - name: Build (release, OpenMP)
+      # (osxDeploy.sh) and signs it, as the Makefile's release builds do; the describe test runs on
+      # the installed bundle, so that the deployment is tested on each PR
+      - name: Build and install (release, OpenMP)
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
           cmake -S . -B build $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DOFX_DEPLOY_BUNDLES=ON
           cmake --build build -j4
+          cmake --install build --prefix install
+          codesign --verify --strict install/OFX/Plugins/GMIC.ofx.bundle
       - name: Describe all plug-ins
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
           CXX="/usr/bin/clang++ -I/opt/local/include" \
             HOST_LDFLAGS=-L/opt/local/lib \
-            .github/workflows/describe_plugins.sh build/Plugins $GMIC_PLUGIN_COUNT
+            .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
       - name: Build (debug)
         if: env.BUILD_VARIANTS == 'true'
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
           cmake -S . -B build-debug $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Debug -DOFX_CXX_STANDARD=17
           cmake --build build-debug -j4
-      - name: Install bundle
-        if: env.UPLOAD_ARTIFACTS == 'true'
-        run: |
-          export PATH=/opt/local/bin:/opt/local/sbin:$PATH
-          cmake --install build --prefix Bundle
       - name: Upload bundle
         if: env.UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: openfx-gmic-macos-release
-          path: Bundle/GMIC.ofx.bundle
+          path: install/OFX/Plugins/GMIC.ofx.bundle
       - name: Build and describe (release, C++20)
         if: env.BUILD_VARIANTS == 'true'
         run: |

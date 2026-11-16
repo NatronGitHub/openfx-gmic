@@ -56,16 +56,31 @@ case "$(uname -s)" in
         deps() { objdump -p "$1" | sed -n -e 's/^[[:space:]]*DLL Name: //p'; } ;;
 esac
 
-symbols "$A/$binary" | LC_ALL=C sort > "$WORK/symbols.a"
-symbols "$B/$binary" | LC_ALL=C sort > "$WORK/symbols.b"
+# A tool failure (set -e, pipefail) or an empty list is an error: two empty lists would "match".
+list() { # list <symbols|deps> <bundle> <output>
+    "$1" "$2/$binary" > "$3.raw"
+    if [ "$1" = deps ]; then
+        { grep -v -i -E '^(OpenGL|libGL\.so.*|opengl32\.dll)$' "$3.raw" || [ $? = 1 ]; } > "$3.unsorted"
+    else
+        cp "$3.raw" "$3.unsorted"
+    fi
+    LC_ALL=C sort "$3.unsorted" > "$3"
+    if [ ! -s "$3" ]; then
+        echo "FAIL: no $1 found in $2/$binary"
+        exit 1
+    fi
+}
+
+list symbols "$A" "$WORK/symbols.a"
+list symbols "$B" "$WORK/symbols.b"
 echo "Exported symbols: $(tr '\n' ' ' < "$WORK/symbols.a")"
 if ! diff -u "$WORK/symbols.a" "$WORK/symbols.b"; then
     echo "FAIL: the plug-ins export different symbols (see above)"
     status=1
 fi
 
-deps "$A/$binary" | grep -v -i -E '^(OpenGL|libGL\.so.*|opengl32\.dll)$' | LC_ALL=C sort > "$WORK/deps.a" || true
-deps "$B/$binary" | grep -v -i -E '^(OpenGL|libGL\.so.*|opengl32\.dll)$' | LC_ALL=C sort > "$WORK/deps.b" || true
+list deps "$A" "$WORK/deps.a"
+list deps "$B" "$WORK/deps.b"
 echo "Dependencies: $(tr '\n' ' ' < "$WORK/deps.a")"
 if ! diff -u "$WORK/deps.a" "$WORK/deps.b"; then
     echo "FAIL: the plug-ins link different libraries (see above)"
