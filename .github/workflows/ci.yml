@@ -25,8 +25,11 @@ on:
       - 'Licence_*.txt'
       - '.github/ISSUE_TEMPLATE/**'
 
+# PRs: one group per PR, and a new push cancels the running build. Other events (master, tags,
+# schedule, workflow_dispatch): one group per run, so that no run is cancelled or replaced while
+# pending (a concurrency group keeps only one pending run).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
