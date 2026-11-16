@@ -178,6 +178,31 @@ string get_gmic_rc_path()
 // "Advanced Options" group (start and end) and its 7 parameters
 static const int kNofExtraParams = 1 + 4 + 1 + 2 + 7;
 
+// Ignore Alpha (see pluginProcess): _openfx_gmic_alpha_split stores the alpha channel of every image
+// (an empty image for images without alpha) in the global variable _openfx_gmic_alpha, and
+// _openfx_gmic_alpha_restore appends each one back to the result at the same position, if they have
+// the same size and the result is gray or RGB. When the filter returns another number of images
+// than it got, only the first result (the active layer's) gets the first alpha back: the others
+// can't be matched to an input, and stay without alpha (opaque). Results are processed from the
+// last one, so that appending (which removes the alpha image) does not shift the alphas still to
+// be appended.
+static const char* const kIgnoreAlphaCommands =
+	"\n_openfx_gmic_alpha_split :\n"
+	"  n=$!\n"
+	"  repeat $n {\n"
+	"    if s#$>==2 +channels[$>] 1 channels[$>] 0\n"
+	"    elif s#$>>=4 +channels[$>] 3 channels[$>] 0,2\n"
+	"    else i 0 fi\n"
+	"  }\n"
+	"  store[$n--1] _openfx_gmic_alpha\n"
+	"_openfx_gmic_alpha_restore :\n"
+	"  n=$! i $_openfx_gmic_alpha m={$!-$n==$n?$n:min($n,1)}\n"
+	"  repeat $m {\n"
+	"    k={$m-1-$>} a={$n+$k}\n"
+	"    if w#$k==w#$a&&h#$k==h#$a&&d#$k==d#$a&&(s#$k==1||s#$k==3) a[$k,$a] c fi\n"
+	"  }\n"
+	"  if $!>$n rm[$n--1] fi\n";
+
 class PluginGlobalData
 {
 public:
@@ -573,6 +598,19 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 
 	string cmd = gmicCommand(sequenceDataP, globalDataP);
 
+	// Ignore Alpha: the alpha channels of all the images are split off and stored, the command runs
+	// on all the RGB images at once (multi-input filters see every layer, extra results are kept),
+	// then each result gets back the alpha of the input at the same position (see
+	// kIgnoreAlphaCommands). The command stays at the top level, as with Ignore Alpha off and in
+	// G'MIC-Qt: inside a custom command, $1, $*, $#... in text parameters would be substituted, and
+	// apply_channels processed the images one by one, keeping a single result for each.
+	string customCommands = mySequenceDataP->options.custom_commands ? mySequenceDataP->options.custom_commands : "";
+	if (PAR_VAL(PARAM_NOALPHA) > 0.f) {
+		customCommands += kIgnoreAlphaCommands;
+		mySequenceDataP->options.custom_commands = customCommands.c_str();
+		cmd = "-_openfx_gmic_alpha_split " + cmd + " -_openfx_gmic_alpha_restore";
+	}
+
 	if (PAR_VAL(PARAM_OUTPUT) == 0.f) {
 		// G'MIC >= 2.9 renamed gimp_merge_layers to gui_merge_layers ("Unknown command" otherwise)
 		cmd += " -gui_merge_layers";
@@ -582,18 +620,6 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	// keep at most that many, the first ones (Output Layer "Layer -k" is image [k], see below).
 	// Some filters return more by default, e.g. Fade Layers, Morph Layers, Tiles to Layers.
 	cmd += " -if {$!>" + intToString(MAX_NOF_LAYERS) + "} -keep[0-" + intToString(MAX_NOF_LAYERS - 1) + "] -fi";
-
-	// Ignore Alpha: apply_channels takes the command as a quoted string, which it un-escapes
-	// again, so quoting the command (whose text arguments are already escaped) breaks any text
-	// containing a quote or backslash. Define it as a custom command and apply that instead.
-	string customCommands = mySequenceDataP->options.custom_commands ? mySequenceDataP->options.custom_commands : "";
-	if (PAR_VAL(PARAM_NOALPHA) > 0.f) {
-		strReplace(cmd, "\n", " ");
-		strReplace(cmd, "\r", " ");
-		customCommands += "\n_openfx_gmic_cmd :\n  " + cmd + "\n";
-		mySequenceDataP->options.custom_commands = customCommands.c_str();
-		cmd = "-apply_channels \"_openfx_gmic_cmd\",rgb";
-	}
 	
 	if (!globalDataP->inplaceProcessing) {
 		float ds = PAR_VAL(PARAM_RESIZE);
