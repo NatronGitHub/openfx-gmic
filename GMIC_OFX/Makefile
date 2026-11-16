@@ -16,14 +16,14 @@ CXXFLAGS += \
 -I$(SRCDIR)/Helpers \
 -I$(SRCDIR)/openfx/include \
 -I$(SRCDIR)/openfx/Examples/include \
--Dgmic_build \
+-Dgmic_core \
 -Dgmic_is_parallel \
 -Dcimg_use_abort \
 -Dcimg_display=0 \
 -Dcimg_appname=\"gmic\" \
--Dcimg_namespace_suffix=openfx_gmic \
--Dcimg_verbosity=0 \
--Dcimg_library=cimg_library_openfx_gmic
+-Dcimg_verbosity=0
+# G'MIC >= 3 compiles CImg in its own namespace (gmic_library, with CImg renamed gmic_image), so
+# it cannot clash with the cimg_library of other plug-ins (e.g. openfx-misc) loaded in the same host.
 
 # FFTW (license: GPLv2), necessary to get Fourier transform on
 # images with dimensions that are not power-of-two

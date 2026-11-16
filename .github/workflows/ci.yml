@@ -37,7 +37,7 @@ permissions:
 
 env:
   # number of plug-ins expected from the pinned G'MIC version: update when upgrading G'MIC
-  GMIC_PLUGIN_COUNT: 360
+  GMIC_PLUGIN_COUNT: 1205
   # extra variants (debug) only on the weekly schedule or on demand
   BUILD_VARIANTS: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
   # artifacts only on demand or for pre-release tags (containing "alpha", "beta" or "rc", e.g.

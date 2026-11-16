@@ -142,7 +142,6 @@
 using namespace reduxfx;
 
 #ifdef OFX_PLUGIN
-#include "gmic_stdlib_gmic.h"
 #include <sstream>
 #include <cstdlib>
 #include <cassert>
@@ -175,6 +174,10 @@ string get_gmic_rc_path()
 	return path;
 }
 
+// parameters added by pluginSetup besides the filter's own: Input, 4 layers, Command, the
+// "Advanced Options" group (start and end) and its 7 parameters
+static const int kNofExtraParams = 1 + 4 + 1 + 2 + 7;
+
 class PluginGlobalData
 {
 public:
@@ -196,10 +199,19 @@ public:
 				effectContent = "";
 			}
 		} 
-		if (effectContent.empty()) {
-			effectContent = string((const char*)gmic_stdlib_gmic, gmic_stdlib_gmic_len);
-		}
 		gmic_parse_multi(effectContent, &pluginData, &pluginContent);
+		// Each plug-in has a fixed table of MAX_NOF_PARAMS parameters: the filter's own parameters,
+		// up to 4 extra layers and the fixed trailing parameters (see pluginSetup). Leave out the
+		// few filters that do not fit (e.g. "Transfer Color [Reduced Colors]" in G'MIC 4.0.7,
+		// with several hundred parameters) instead of overflowing the table.
+		for (size_t i = 0; i < pluginData.size(); ) {
+			if ((int)pluginData[i].param.size() + kNofExtraParams > MAX_NOF_PARAMS) {
+				pluginData.erase(pluginData.begin() + i);
+				pluginContent.erase(pluginContent.begin() + i);
+			} else {
+				++i;
+			}
+		}
 	};
 };
 
@@ -293,6 +305,17 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		float d4 = 0.f;
 		const EffectParameter& param = effectData.param[i];
 		std::string name = param.name;
+		// a filter parameter must not reuse the name of a parameter added below (none does in
+		// G'MIC 4.0.7, but a clash would make the host reject the duplicate parameter)
+		static const char* const reservedNames[] = { "Layer -1", "Layer -2", "Layer -3", "Layer -4", "Command",
+			"Advanced Options", "Output Layer", "Resize Mode", "Ignore Alpha", "Preview/Draft Mode",
+			"Global Random Seed", "Animate Random Seed", "Log Verbosity" };
+		for (size_t r = 0; r < sizeof(reservedNames) / sizeof(reservedNames[0]); ++r) {
+			if (name == reservedNames[r]) {
+				name += " (filter)";
+				break;
+			}
+		}
 		const std::string& minValue = param.minValue;
 		const std::string& maxValue = param.maxValue;
 		const std::string& defaultValue = param.defaultValue;
@@ -301,7 +324,9 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		if (paramType == "color") {
 			vector<string> r;
 			t = PT_COLOR;
-			strSplit(defaultValue + "|||", '|', r);
+			strSplit(defaultValue, '|', r); // drops empty fields: pad below
+			if (r.size() == 1) { r.push_back(r[0]); r.push_back(r[0]); } // gray: color(V)
+			while (r.size() < 3) r.push_back("0");
 			d1 = (float)atof(r[0].c_str()) / 255.f;
 			d2 = (float)atof(r[1].c_str()) / 255.f;
 			d3 = (float)atof(r[2].c_str()) / 255.f;
@@ -311,7 +336,8 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		} else if (paramType == "point") {
 			vector<string> r;
 			t = PT_POINT;
-			strSplit(defaultValue + "|", '|', r);
+			strSplit(defaultValue, '|', r); // drops empty fields: pad below
+			while (r.size() < 2) r.push_back("50");
 			d1 = (float)atof(r[0].c_str());
 			d2 = (float)atof(r[1].c_str());
 #ifdef OFX_PLUGIN

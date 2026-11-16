@@ -1811,10 +1811,12 @@ static OfxStatus pluginMainNth(const char *action, const void *handle, OfxProper
 #define NTHFUNC10(nth) NTHFUNC(nth); NTHFUNC(nth+1); NTHFUNC(nth+2); NTHFUNC(nth+3); NTHFUNC(nth+4); NTHFUNC(nth+5); NTHFUNC(nth+6); NTHFUNC(nth+7); NTHFUNC(nth+8); NTHFUNC(nth+9)
 #define NTHFUNC100(nth) NTHFUNC10(nth); NTHFUNC10(nth+10); NTHFUNC10(nth+20); NTHFUNC10(nth+30); NTHFUNC10(nth+40); NTHFUNC10(nth+50); NTHFUNC10(nth+60); NTHFUNC10(nth+70); NTHFUNC10(nth+80); NTHFUNC10(nth+90)
 #define NTHFUNC1000(nth) NTHFUNC100(nth); NTHFUNC100(nth+100); NTHFUNC100(nth+200); NTHFUNC100(nth+300); NTHFUNC100(nth+400); NTHFUNC100(nth+500); NTHFUNC100(nth+600); NTHFUNC100(nth+700); NTHFUNC100(nth+800); NTHFUNC100(nth+900)
+static const int kMaxNofPlugins = 2000; // number of NTHFUNC entries below
 static OfxPluginEntryPoint* pluginMainNthFunc(int nth)
 {
     switch (nth) {
         NTHFUNC1000(0);
+        NTHFUNC1000(1000); // G'MIC 4 has more than 1000 filters
     }
     return 0;
 }
@@ -1824,6 +1826,7 @@ static
 void initPlugins()
 {
 	int n = getNofPlugins();
+	if (n > kMaxNofPlugins) n = kMaxNofPlugins; // no entry point beyond pluginMainNthFunc's table
 	gPlugins.resize(n);
 	globalData.resize(n);
 	for (int i = 0; i < n; i++) {
