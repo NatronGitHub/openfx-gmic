@@ -144,6 +144,7 @@ using namespace reduxfx;
 #ifdef OFX_PLUGIN
 #include <sstream>
 #include <cstdlib>
+#include <cstdio>
 #include <cassert>
 #ifdef DEBUG
 #include <iostream>
@@ -520,7 +521,7 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, bool preview)
 // custom commands of the options (stored in customCommands, which must outlive the call).
 static
 std::string
-fullCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, bool isPreview, string& customCommands)
+fullCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, unsigned int nofImages, bool isPreview, string& customCommands)
 {
 	MySequenceData* mySequenceDataP = (MySequenceData*)sequenceDataP->customSequenceDataP;
 #ifdef AE_PLUGIN
@@ -552,17 +553,38 @@ fullCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, bool isPreview
 		cmd = "-apply_channels \"_openfx_gmic_cmd\",rgb";
 	}
 	
-	// Variables that G'MIC-Qt defines for the filters (GmicProcessor.cpp, FilterThread.cpp):
-	// _host (the host's short name, which the stdlib only compares with "cli" or "paintdotnet"),
-	// and, for a preview run, the preview area: here the whole (possibly downsampled) first input.
-	// G'MIC-Qt also defines _preview_x0.._preview_height when applying the filter, but main
-	// commands use them to detect a preview (e.g. Speech Bubble draws its guides): only define them
-	// for a preview, so that the main commands run as before. _persistent is not defined: filters
-	// whose main command needs it are rendered with the preview command (see pluginProcess).
-	string env = "_host=ofx ";
+	// Variables that G'MIC-Qt defines for the filters (GmicProcessor.cpp, FilterThread.cpp), with
+	// the whole image as the preview area. Its size is the largest input size, as G'MIC-Qt's
+	// LayersExtentProxy::getExtent() (all the inputs have the size of the first one if the Resize
+	// Mode downsamples them).
+	// - _preview_x0/y0/x1/y1, defined by G'MIC-Qt for the preview and when applying the filter:
+	//   e.g. the preview command of Array [Random] [Jumble by Px], which its main command calls,
+	//   crops to it.
+	// - _preview_width/height and _preview_area_width/height only for a preview run: main
+	//   commands use them to detect a preview (Speech Bubble draws its guides). For a preview,
+	//   gui_preview_wh now returns the image size instead of 400x400 for small images.
+	// - _host (G'MIC-Qt's host short name) only for a preview run: the stdlib compares it with
+	//   "cli" or "paintdotnet", but Array [Random] [Jumble by Px]'s preview tests
+	//   '$_host'!='$cli' (always true when _host is defined), so main runs keep it undefined.
+	// _persistent is not defined: filters whose main command needs it are rendered with the
+	// preview command (see pluginProcess).
+	int extentW = 0, extentH = 0;
+	const float dsMode = globalDataP->inplaceProcessing ? 0.f : PAR_VAL(PARAM_RESIZE);
+	if (dsMode >= 2.f) {
+		const int ds = (int)pow(2.f, dsMode - 1.f);
+		extentW = sequenceDataP->inWorld[0].width / ds;
+		extentH = sequenceDataP->inWorld[0].height / ds;
+	} else {
+		for (unsigned int i = 0; i < nofImages; ++i) {
+			extentW = std::max(extentW, sequenceDataP->inWorld[i].width);
+			extentH = std::max(extentH, sequenceDataP->inWorld[i].height);
+		}
+	}
+	const string W = intToString(extentW), H = intToString(extentH);
+	string env = "_preview_x0=0 _preview_y0=0 _preview_x1=" + intToString(extentW - 1) + " _preview_y1=" + intToString(extentH - 1) + " ";
 	if (isPreview) {
-		env += "_preview_x0=0 _preview_y0=0 _preview_x1={w#0-1} _preview_y1={h#0-1}"
-			" _preview_width={w#0} _preview_height={h#0} _preview_area_width={w#0} _preview_area_height={h#0} ";
+		env += "_host=ofx _preview_width=" + W + " _preview_height=" + H +
+			" _preview_area_width=" + W + " _preview_area_height=" + H + " ";
 	}
 	cmd = env + cmd;
 
@@ -655,15 +677,21 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	const bool hasContent = !effectData.command.empty();
 	bool preview = hasContent && (effectData.previewOnly || PAR_VAL(PARAM_PREVIEW) > 0);
 	string customCommands;
-	string cmd = fullCommand(sequenceDataP, globalDataP, preview, customCommands);
+	string cmd = fullCommand(sequenceDataP, globalDataP, nofImages, preview, customCommands);
 	int result = gmic_call(cmd.c_str(), &nofImages, &images[0], &mySequenceDataP->options);
-	if (result != 0 && !preview && effectData.previewFallback && mySequenceDataP->options.no_inplace_processing) {
-		// gmic_call() worked on copies of the inputs, which are unchanged
-		preview = true;
-		cmd = fullCommand(sequenceDataP, globalDataP, preview, customCommands);
-		result = gmic_call(cmd.c_str(), &nofImages, &images[0], &mySequenceDataP->options);
-	}
 	string errmsg = string(mySequenceDataP->options.error_message_buffer);
+	// The retry needs unchanged inputs, i.e. gmic_call() working on copies: always the case in the
+	// OFX build (inplaceProcessing is only set by pluginParamChange(), which only the AE glue calls).
+	if (result != 0 && !preview && effectData.previewFallback && mySequenceDataP->options.no_inplace_processing) {
+		fprintf(stderr, "G'MIC: %s: the main command failed (%s), rendering with the preview command\n",
+				effectData.name.c_str(), errmsg.c_str());
+		preview = true;
+		cmd = fullCommand(sequenceDataP, globalDataP, nofImages, preview, customCommands);
+		result = gmic_call(cmd.c_str(), &nofImages, &images[0], &mySequenceDataP->options);
+		if (result != 0) {
+			errmsg += " (with the preview command: " + string(mySequenceDataP->options.error_message_buffer) + ")";
+		}
+	}
 
 	if (result == 0) {
 		if (!globalDataP->inplaceProcessing) {
