@@ -101,11 +101,6 @@ using namespace reduxfx;
 #define PF_Err_INTERNAL_STRUCT_DAMAGED 512
 #define A_long long
 
-// G'MIC parameters carry no unit, so pixel-sized ones (radii, sizes, amplitudes in pixels) can't be
-// scaled with the render scale: the actions fail for render scales other than 1, which tells the host
-// that render scale is not supported. Natron then renders at full resolution and downscales the
-// result (zoomed-out viewer, proxy mode), which matches the full-resolution render (issue #49).
-#define kSupportsRenderScale 0
 
 struct ContextData
 {
@@ -411,7 +406,6 @@ static void setParamData(int pluginIndex, const OfxRectI& dstRect, double par, M
 }
 #endif
 
-#if kSupportsRenderScale != 1
 static
 bool
 renderScaleIsOne(OfxPropertySetHandle inArgs)
@@ -423,17 +417,45 @@ renderScaleIsOne(OfxPropertySetHandle inArgs)
     }
     return true;
 }
+
+// Render scale (issue #49). G'MIC parameters carry no unit, so pixel-sized ones (radii, sizes,
+// amplitudes in pixels) can't be scaled with the render scale, and a zoomed-out viewer or a proxy
+// render doesn't match the full-resolution render. On Natron, the actions fail for render scales other
+// than 1: Natron then marks the effect as not supporting render scale (OfxEffectInstance tries the
+// region of definition at scale 0.5) and renders it at full resolution, then downscales the result
+// (renderFullScaleThenDownscale in EffectInstance::renderRoI). Other hosts (Resolve, Nuke, Vegas) don't
+// fall back to full resolution, and the render would fail: there, render scales are accepted as
+// before, with unscaled pixel-sized parameters. Natron is recognized by kNatronOfxHostIsNatron, not by
+// kOfxPropName, which Natron can set to another host's name for compatibility.
+static
+bool
+hostRendersFullScaleWithoutRenderScale()
+{
+    int isNatron = 0;
+#ifdef OFX_EXTENSIONS_NATRON
+    if (gHost && gPropHost) {
+        gPropHost->propGetInt(gHost->host, kNatronOfxHostIsNatron, 0, &isNatron);
+    }
 #endif
+    return isNatron != 0;
+}
+
+// the same rule for every action that has a render scale (region of definition, regions of interest,
+// isIdentity, render): true if the action must fail
+static
+bool
+renderScaleRefused(OfxPropertySetHandle inArgs)
+{
+    return hostRendersFullScaleWithoutRenderScale() && !renderScaleIsOne(inArgs);
+}
 
 // tells the host what region we are capable of filling
 static
 OfxStatus getSpatialRoD(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
-#if kSupportsRenderScale != 1
-    if (!renderScaleIsOne(inArgs)) {
+    if (renderScaleRefused(inArgs)) {
         return kOfxStatFailed;
     }
-#endif
 	// retrieve any instance data associated with this effect
 	MyInstanceData *myData = getMyInstanceData(effect);
 
@@ -453,12 +475,10 @@ OfxStatus getSpatialRoD(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPro
 static
 OfxStatus getSpatialRoI(int pluginIndex, OfxImageEffectHandle effect, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
-#if kSupportsRenderScale != 1
-    if (!renderScaleIsOne(inArgs)) {
+    if (renderScaleRefused(inArgs)) {
 		// GMIC does not support render scale
         return kOfxStatFailed;
     }
-#endif
 	// G'MIC processes whole images: ask for the full region of definition of every input, not just
 	// the part under the render window (the default), which gave a cropped input when the viewer
 	// shows part of the image (issue #2)
@@ -505,19 +525,30 @@ OfxStatus getTemporalDomain(int /*pluginIndex*/, OfxImageEffectHandle effect, Of
 	return kOfxStatOK;
 }
 
-// G'MIC filters work on straight (unpremultiplied) colours: premultiplied inputs are unpremultiplied
-// before G'MIC, and the result is premultiplied back unless the main input is unpremultiplied (issue
-// #43). The output is premultiplied for premultiplied and opaque inputs (a filter may produce alpha),
-// unpremultiplied for unpremultiplied inputs. Used by getClipPreferences and render, so that the
-// declared and the rendered premultiplication agree.
-static bool outputIsPremultiplied(MyInstanceData* myData)
+// true if a clip or image property set is flagged premultiplied
+static bool propsArePremultiplied(OfxPropertySetHandle props)
 {
 	const char* premult = NULL;
-	OfxPropertySetHandle props = NULL;
-	if (myData && myData->input[0] && gEffectHost->clipGetPropertySet(myData->input[0], &props) == kOfxStatOK && props) {
+	if (props) {
 		gPropHost->propGetString(props, kOfxImageEffectPropPreMultiplication, 0, &premult);
 	}
-	return !(premult && strcmp(premult, kOfxImageUnPreMultiplied) == 0);
+	return premult && strcmp(premult, kOfxImagePreMultiplied) == 0;
+}
+
+// Premultiplication (issue #43). G'MIC filters work on straight (unpremultiplied) colours: premultiplied
+// inputs are unpremultiplied before G'MIC. The output is declared premultiplied (and the result is
+// premultiplied back) only if the main input is premultiplied. Otherwise it is declared
+// unpremultiplied: the result has straight colours, and for an input flagged opaque whose alpha isn't 1
+// (e.g. a Read with "Output Premult" set to Opaque) multiplying by that alpha would darken the image;
+// declaring the output opaque would be wrong as soon as the result has an alpha other than 1, which
+// the plug-in can't know before rendering.
+static bool mainInputIsPremultiplied(MyInstanceData* myData)
+{
+	OfxPropertySetHandle props = NULL;
+	if (!myData || !myData->input[0] || gEffectHost->clipGetPropertySet(myData->input[0], &props) != kOfxStatOK) {
+		return false;
+	}
+	return propsArePremultiplied(props);
 }
 
 // Set our clip preferences
@@ -538,7 +569,7 @@ static OfxStatus getClipPreferences(int pluginIndex, OfxImageEffectHandle effect
 
 	// set out output to be the same same as the input, component and bitdepth
 	gPropHost->propSetString(outArgs, "OfxImageClipPropComponents_Output", 0, componentStr);
-	gPropHost->propSetString(outArgs, kOfxImageEffectPropPreMultiplication, 0, outputIsPremultiplied(myData) ? kOfxImagePreMultiplied : kOfxImageUnPreMultiplied);
+	gPropHost->propSetString(outArgs, kOfxImageEffectPropPreMultiplication, 0, mainInputIsPremultiplied(myData) ? kOfxImagePreMultiplied : kOfxImageUnPreMultiplied);
 	// The output depth is not set: the plug-in declares kOfxImageEffectPropSupportsMultipleClipDepths=0,
 	// so the host gives all clips the same depth (and a spec-conformant host refuses the write).
 	int v = 0;
@@ -554,11 +585,9 @@ static OfxStatus getClipPreferences(int pluginIndex, OfxImageEffectHandle effect
 // are the settings of the effect performing an identity operation
 static OfxStatus isIdentity(int /*pluginIndex*/, OfxImageEffectHandle /*effect*/, OfxPropertySetHandle inArgs, OfxPropertySetHandle /*outArgs*/)
 {
-#if kSupportsRenderScale != 1
-    if (!renderScaleIsOne(inArgs)) {
+    if (renderScaleRefused(inArgs)) {
         return kOfxStatFailed;
     }
-#endif
 	return kOfxStatReplyDefault;
 }
 
@@ -919,9 +948,36 @@ void convert_RGBA32_to_RGBA8P(ConvertData& data, const int startLine, const int 
 #error "the premultiplication handling in render() expects float planar buffers (CONVERT_INT_TO_FLOAT and PLANAR_BUFFER)"
 #endif
 
-// (un)premultiply a float planar RGBA buffer (RRR... GGG... BBB... AAA...) whose values go up to
-// maxValue. Unpremultiplying leaves the colour of transparent pixels (alpha <= 0) unchanged.
-static void premultiplyPlanar(float* data, int width, int height, float maxValue, bool unpremultiply)
+// The buffers below are float planar RGBA (RRR... GGG... BBB... AAA...), with values up to maxValue.
+
+// alpha at or below this fraction of maxValue is treated as transparent when unpremultiplying
+#define kUnpremultiplyMinAlpha 1e-5f
+
+// Unpremultiply, in place. Pixels with an alpha at or below kUnpremultiplyMinAlpha * maxValue (or NaN)
+// keep their colour: dividing by a tiny alpha would give huge values that a filter (e.g. a blur) would
+// spread over their neighbours. Premultiplying back multiplies them by that alpha, so a premultiplied
+// pixel with alpha 0 and colour > 0 (additive, e.g. a glow) loses its colour in the round trip.
+static void unpremultiplyPlanar(float* data, int width, int height, float maxValue)
+{
+	if (!data || width <= 0 || height <= 0) return;
+	const size_t n = (size_t)width * (size_t)height;
+	float* r = data;
+	float* g = data + n;
+	float* b = data + 2 * n;
+	const float* a = data + 3 * n;
+	const float minAlpha = kUnpremultiplyMinAlpha * maxValue;
+	for (size_t k = 0; k < n; ++k) {
+		if (!(a[k] > minAlpha)) continue;
+		const float f = maxValue / a[k];
+		r[k] *= f;
+		g[k] *= f;
+		b[k] *= f;
+	}
+}
+
+// Premultiply, in place. The factor alpha / maxValue is clamped to [0,1] (NaN gives 0), so that a
+// G'MIC alpha below 0 or above maxValue can't produce colours outside [0, alpha].
+static void premultiplyPlanar(float* data, int width, int height, float maxValue)
 {
 	if (!data || width <= 0 || height <= 0) return;
 	const size_t n = (size_t)width * (size_t)height;
@@ -930,27 +986,51 @@ static void premultiplyPlanar(float* data, int width, int height, float maxValue
 	float* b = data + 2 * n;
 	const float* a = data + 3 * n;
 	for (size_t k = 0; k < n; ++k) {
-		float f;
-		if (unpremultiply) {
-			if (!(a[k] > 0.f)) continue;
-			f = maxValue / a[k];
-		} else {
-			f = a[k] / maxValue;
-		}
+		float f = a[k] / maxValue;
+		if (!(f > 0.f)) f = 0.f; // also NaN
+		else if (f > 1.f) f = 1.f;
 		r[k] *= f;
 		g[k] *= f;
 		b[k] *= f;
 	}
 }
 
+// A result without alpha (1 or 3 channels) from a premultiplied main input: with straight colours it
+// would be opaque everywhere, with hard bright edges where the input was transparent. Before the
+// premultiplication handling, G'MIC got the premultiplied colours, i.e. the input composited over
+// black, and the result looked composited over black too. To keep that look, the colours are
+// multiplied by the main input's alpha and the output alpha stays opaque. Only done when the result
+// has the main input's size (G'MIC anchors it at the input's rectangle): out is the output buffer,
+// in the main input's buffer, both in pixel coordinates with rows top-down.
+static void multiplyByInputAlphaPlanar(const World& out, const World& in, float maxValue)
+{
+	if (!out.data || !in.data) return;
+	const int x1 = std::max(out.origin_x, in.origin_x), x2 = std::min(out.origin_x + out.width, in.origin_x + in.width);
+	const int y1 = std::max(out.origin_y, in.origin_y), y2 = std::min(out.origin_y + out.height, in.origin_y + in.height);
+	const size_t dplane = (size_t)out.width * (size_t)out.height, splane = (size_t)in.width * (size_t)in.height;
+	float* const dst = (float*)out.data;
+	const float* const srcA = (const float*)in.data + 3 * splane;
+	for (int y = y1; y < y2; ++y) {
+		const size_t drow = (size_t)(out.height - 1 - (y - out.origin_y)) * out.width;
+		const size_t srow = (size_t)(in.height - 1 - (y - in.origin_y)) * in.width;
+		for (int x = x1; x < x2; ++x) {
+			float f = srcA[srow + (x - in.origin_x)] / maxValue;
+			if (!(f > 0.f)) f = 0.f;
+			else if (f > 1.f) f = 1.f;
+			const size_t k = drow + (x - out.origin_x);
+			dst[k] *= f;
+			dst[dplane + k] *= f;
+			dst[2 * dplane + k] *= f;
+		}
+	}
+}
+
 // the process code that the host sees
 static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
-#if kSupportsRenderScale != 1
-    if (!renderScaleIsOne(inArgs)) {
+    if (renderScaleRefused(inArgs)) {
         return kOfxStatFailed;
     }
-#endif
 	ContextData contextData;
 	setContextData(contextData, instance, inArgs, outArgs, pluginIndex);
 
@@ -1005,6 +1085,7 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 		// relative to the first input's rectangle (the image G'MIC processes), not the output's
 		OfxRectI firstSrcRect = dstRect;
 		double firstSrcPAR = 1.;
+		bool firstSrcPremultiplied = false;
 		gPropHost->propGetDouble(outputImg, kOfxImagePropPixelAspectRatio, 0, &firstSrcPAR);
 		int i = 0;
 		for (int p = 0; p < globalData[pluginIndex].nofParams; p++) {
@@ -1185,12 +1266,9 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 #endif
 			// G'MIC works on straight colours: unpremultiply premultiplied inputs (the converted buffer
 			// is float planar for both 8-bit and float images, so this also covers 8-bit inputs)
-			{
-				const char* premult = NULL;
-				gPropHost->propGetString(sourceImg[i], kOfxImageEffectPropPreMultiplication, 0, &premult);
-				if (premult && strcmp(premult, kOfxImagePreMultiplied) == 0 && customInputData[i] && myData->sequenceDataP->inWorld[i].bitDepth == 32) {
-					premultiplyPlanar((float*)myData->sequenceDataP->inWorld[i].data, myData->sequenceDataP->inWorld[i].width, myData->sequenceDataP->inWorld[i].height, scale, true);
-				}
+			if (propsArePremultiplied(sourceImg[i]) && customInputData[i] && myData->sequenceDataP->inWorld[i].bitDepth == 32) {
+				if (i == 0) firstSrcPremultiplied = true;
+				unpremultiplyPlanar((float*)myData->sequenceDataP->inWorld[i].data, myData->sequenceDataP->inWorld[i].width, myData->sequenceDataP->inWorld[i].height, scale);
 			}
 			i++;
 		}
@@ -1248,10 +1326,20 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 			throw OfxuStatusException(kOfxStatFailed);
 		}
 
-		// the G'MIC result has straight colours: premultiply it if the output is declared premultiplied
-		// (see getClipPreferences), before the conversion to the output depth
-		if (customOutputData && outputIsPremultiplied(myData)) {
-			premultiplyPlanar((float*)myData->sequenceDataP->outWorld.data, myData->sequenceDataP->outWorld.width, myData->sequenceDataP->outWorld.height, scale, false);
+		// the G'MIC result has straight colours, converted here before the conversion to the output depth
+		if (customOutputData) {
+			const SequenceData* sd = myData->sequenceDataP;
+			if (firstSrcPremultiplied && !globalData[pluginIndex].inplaceProcessing && !sd->resultHasAlpha &&
+				sd->resultWidth == sd->inWorld[0].width && sd->resultHeight == sd->inWorld[0].height) {
+				// no alpha in the result: keep the look of the input composited over black (see
+				// multiplyByInputAlphaPlanar)
+				multiplyByInputAlphaPlanar(sd->outWorld, sd->inWorld[0], scale);
+			}
+			// premultiply if the output image is premultiplied: the host's value, normally the one
+			// declared in getClipPreferences
+			if (propsArePremultiplied(outputImg)) {
+				premultiplyPlanar((float*)sd->outWorld.data, sd->outWorld.width, sd->outWorld.height, scale);
+			}
 		}
 
 #if defined(CONVERT_INT_TO_FLOAT)

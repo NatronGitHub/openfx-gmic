@@ -531,6 +531,8 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	*/
 
 	int err = 0;
+	sequenceDataP->resultHasAlpha = true;
+	sequenceDataP->resultWidth = sequenceDataP->resultHeight = 0;
 
 	MySequenceData* mySequenceDataP = (MySequenceData*)sequenceDataP->customSequenceDataP;
 	mySequenceDataP->options.no_inplace_processing = !globalDataP->inplaceProcessing;
@@ -646,6 +648,9 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 				float* const dst = (float*)out.data;
 				const float* const src = (const float*)images[idx].data;
 				const unsigned int spectrum = images[idx].spectrum;
+				sequenceDataP->resultHasAlpha = (spectrum == 2 || spectrum >= 4);
+				sequenceDataP->resultWidth = sw;
+				sequenceDataP->resultHeight = sh;
 				// source plane for each output channel, or NULL for opaque alpha
 				const float* plane[4];
 				for (int c = 0; c < 3; ++c) plane[c] = src + (spectrum >= 3 ? splane * c : 0);
