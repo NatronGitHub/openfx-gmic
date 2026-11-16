@@ -2,6 +2,9 @@
 # Build a minimal HostSupport host and run describe + describeInContext on every plug-in.
 # Usage: describe_plugins.sh <dir containing GMIC.ofx.bundle> <minimum number of plug-ins>
 # Uses $CXX (default c++) and $HOST_LDFLAGS (extra link flags, e.g. -L/opt/local/lib).
+# If $HOST_RUN_PATH is set, the host runs with PATH=$HOST_RUN_PATH (the build still uses the
+# current PATH): on Windows, with a statically linked host and a PATH without the MSYS2 bin
+# directory, this checks that the plug-in finds the DLLs bundled with it.
 set -euo pipefail
 
 BUNDLE_DIR=$(cd "$1" && pwd)
@@ -36,7 +39,8 @@ $CXX -std=c++11 -O1 -w -DOFX_EXTENSIONS_NUKE -DOFX_EXTENSIONS_NATRON \
 mkdir -p "$WORK/home"
 cd "$WORK"
 status=0
-HOME="$WORK/home" OFX_PLUGIN_PATH="$BUNDLE_DIR" ./describe_plugins "$MIN_PLUGINS" 2> describe.log || status=$?
+HOME="$WORK/home" OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
+    ./describe_plugins "$MIN_PLUGINS" 2> describe.log || status=$?
 if grep -E "DUPLICATE_PARAM|DUPLICATE_CLIP" describe.log; then
     echo "FAIL: duplicate param/clip definitions (see above)"
     status=1

@@ -174,7 +174,9 @@ jobs:
       # self-contained artifact (on a copy, the build directory is left as is): the release build's
       # osxDeploy.sh already copied the MacPorts dylibs into Contents/Libraries; bundle_libs.sh
       # copies any that's missing, removes the rpaths into /opt/local, signs the bundle ad hoc, and
-      # fails if anything still refers to /opt/local
+      # fails if a dependency is neither a system library nor bundled. The artifact requires the
+      # runner's macOS version or newer, and must be unquarantined after download
+      # (xattr -dr com.apple.quarantine GMIC.ofx.bundle); see the header of bundle_libs.sh.
       - name: Bundle libraries
         if: env.UPLOAD_ARTIFACTS == 'true'
         run: |
@@ -248,7 +250,12 @@ jobs:
           set -eo pipefail
           make -j4 CONFIG=debug OPENMP=1 CXXSTD=c++17
       # self-contained artifact: the UCRT64 DLLs (found with ntldd, installed only here) are copied
-      # next to GMIC.ofx, and a manifest listing them is embedded with the Windows SDK's mt.exe
+      # next to GMIC.ofx, and a manifest listing them is embedded with the Windows SDK's mt.exe.
+      # The describe test then runs a statically linked host with a PATH without /ucrt64/bin, so
+      # that the plug-in loads only if it finds its DLLs in the bundle. The plug-in itself links
+      # libstdc++/libgcc/libgomp dynamically, as the per-PR build does (see bundle_libs.sh for
+      # the clash with a host's DLLs of the same names). Limitations of the artifacts: see the
+      # header of bundle_libs.sh.
       - name: Collect bundle and libraries
         if: env.UPLOAD_ARTIFACTS == 'true'
         run: |
@@ -257,7 +264,8 @@ jobs:
           rm -rf Bundle && mkdir -p Bundle
           cp -R "$(find GMIC_OFX -maxdepth 1 -type d -name '*-release' | head -1)/GMIC.ofx.bundle" Bundle/
           .github/workflows/bundle_libs.sh Bundle/GMIC.ofx.bundle
-          .github/workflows/describe_plugins.sh Bundle $GMIC_PLUGIN_COUNT
+          CXX="c++ -DXML_STATIC" HOST_LDFLAGS=-static HOST_RUN_PATH=/c/Windows/System32:/c/Windows \
+            .github/workflows/describe_plugins.sh Bundle $GMIC_PLUGIN_COUNT
       - name: Upload bundle
         if: env.UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@v4
