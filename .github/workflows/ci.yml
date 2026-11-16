@@ -39,7 +39,7 @@ permissions:
 env:
   # number of plug-ins expected from the pinned G'MIC version: update when upgrading G'MIC
   GMIC_PLUGIN_COUNT: 1205
-  # extra variants (debug) only on the weekly schedule or on demand
+  # extra variants (debug, C++20) only on the weekly schedule or on demand
   BUILD_VARIANTS: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
   # artifacts only on demand or for pre-release tags (containing "alpha", "beta" or "rc", e.g.
   # Natron-2.6.0-rc1; contains() is case-insensitive)
@@ -70,13 +70,14 @@ jobs:
             gmic_libc.h
             gmic_stdlib_gmic.h
           key: gmic-src-${{ hashFiles('Makefile') }}
+      # the standard is given in CXX, as Natron's build does (the other jobs use CXXSTD)
       - name: Build (release, OpenMP)
-        run: make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17
+        run: make -j4 CONFIG=release OPENMP=1 CXX="g++ -std=c++17"
       - name: Describe all plug-ins
         run: .github/workflows/describe_plugins.sh GMIC_OFX/Linux-64-release $GMIC_PLUGIN_COUNT
       - name: Build (debug)
         if: env.BUILD_VARIANTS == 'true'
-        run: make -j4 CONFIG=debug OPENMP=1 CXXSTD=c++17
+        run: make -j4 CONFIG=debug OPENMP=1 CXX="g++ -std=c++17"
       - name: Upload bundle
         if: env.UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@v4

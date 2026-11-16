@@ -47,9 +47,9 @@ LINKFLAGS += $(FFTW3_LINKFLAGS) $(ZLIB_LINKFLAGS) $(LIBCURL_LINKFLAGS) $(LIBPNG_
 
 VPATH = $(SRCDIR):$(SRCDIR)/Helpers
 
-# C++ standard: by default, the compiler's default (C++17 with current compilers). Pass e.g.
-# CXXSTD=c++20 to choose one; a -std option given in CXX by the caller (as Natron's build does)
-# is also respected, since no -std option is added otherwise.
+# C++ standard: by default none is added, so the compiler's default applies (gnu++17 with current
+# compilers), or a -std option given in CXX by the caller (as Natron's build does). Pass e.g.
+# CXXSTD=c++20 to choose one: it comes after CXX on the compile line, so it overrides a -std in CXX.
 ifneq ($(CXXSTD),)
   CXXFLAGS += -std=$(CXXSTD)
 endif
