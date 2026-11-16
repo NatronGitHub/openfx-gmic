@@ -579,9 +579,9 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	}
 
 	// gmic_call() copies every resulting image into images[], which has MAX_NOF_LAYERS entries:
-	// keep at most that many (the last ones, since the Output Layer is counted from the end).
+	// keep at most that many, the first ones (Output Layer "Layer -k" is image [k], see below).
 	// Some filters return more by default, e.g. Fade Layers, Morph Layers, Tiles to Layers.
-	cmd += " -if {$!>" + intToString(MAX_NOF_LAYERS) + "} -keep[-" + intToString(MAX_NOF_LAYERS) + "--1] -fi";
+	cmd += " -if {$!>" + intToString(MAX_NOF_LAYERS) + "} -keep[0-" + intToString(MAX_NOF_LAYERS - 1) + "] -fi";
 
 	// Ignore Alpha: apply_channels takes the command as a quoted string, which it un-escapes
 	// again, so quoting the command (whose text arguments are already escaped) breaks any text
@@ -621,11 +621,12 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 
 	if (result == 0) {
 		if (!globalDataP->inplaceProcessing) {
-			int idx = (int)PAR_VAL(PARAM_OUTPUT);
-			if (idx > 0) {
-				idx = nofImages - idx;
-				if (idx < 0) idx = 0;
-			}
+			// Output Layer: 0 is Merged (a single image), k > 0 is "Layer -(k-1)", i.e. image [k-1],
+			// counted from the top of the stack like the inputs (Source = [0] = "Layer 0", the active
+			// layer in G'MIC-Qt, then the "Layer -1" input = [1]...). Past the last result: the last one.
+			int idx = (int)PAR_VAL(PARAM_OUTPUT) - 1;
+			if (idx < 0) idx = 0;
+			if (nofImages > 0 && (unsigned)idx >= nofImages) idx = (int)nofImages - 1;
 
 			if (nofImages == 0 || (unsigned)idx >= nofImages || images[idx].spectrum == 0 || !images[idx].data) {
 				result = -1;
