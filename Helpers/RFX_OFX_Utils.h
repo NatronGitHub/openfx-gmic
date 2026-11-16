@@ -979,7 +979,7 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 				}
 			}
 
-			if (i == 0) firstSrcRect = srcRect;
+			if (i == 0 && srcRect.x2 > srcRect.x1 && srcRect.y2 > srcRect.y1) firstSrcRect = srcRect; // not an empty rectangle (point conversion divides by its size)
 			myData->sequenceDataP->inWorld[i].origin_x = srcRect.x1;
 			myData->sequenceDataP->inWorld[i].origin_y = srcRect.y1;
 			myData->sequenceDataP->inWorld[i].width = (srcRect.x2 - srcRect.x1);
