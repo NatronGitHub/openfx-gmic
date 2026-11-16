@@ -53,6 +53,7 @@
 #include <stdexcept>
 #include <new>
 #include <cstring>
+#include <cstddef>
 #include <cassert>
 #include <cmath>
 #include <cstdlib>
@@ -648,9 +649,9 @@ void convert_RGBA8P_to_RGBA8(ConvertData& data, const int startLine, const int e
 		unsigned char* in_pixB = (unsigned char*)((char*)data.srcData + sizeof(unsigned char) * data.width * (y + data.height * 2));
 		unsigned char* in_pixA = (unsigned char*)((char*)data.srcData + sizeof(unsigned char) * data.width * (y + data.height * 3));
 #ifdef IMG_FLIP_Y
-		unsigned char* out_pix = (unsigned char*)((char*)data.dstData + ((data.height-1-y) * data.dstRowBytes));
+		unsigned char* out_pix = (unsigned char*)((char*)data.dstData + ((ptrdiff_t)(data.height-1-y) * data.dstRowBytes));
 #else
-		unsigned char* out_pix = (unsigned char*)((char*)data.dstData + (y * data.dstRowBytes));
+		unsigned char* out_pix = (unsigned char*)((char*)data.dstData + ((ptrdiff_t)y * data.dstRowBytes));
 #endif
 		for (int x = 0; x < data.width; x++) {
 			*out_pix++ = *in_pixR; in_pixR += stepWidth;
@@ -670,9 +671,9 @@ void convert_RGBA8P_to_RGBA32(ConvertData& data, const int startLine, const int 
 		unsigned char* in_pixB = (unsigned char*)((char*)data.srcData + sizeof(unsigned char) * data.width * (y + data.height * 2));
 		unsigned char* in_pixA = (unsigned char*)((char*)data.srcData + sizeof(unsigned char) * data.width * (y + data.height * 3));
 #ifdef IMG_FLIP_Y
-		float* out_pix = (float*)((char*)data.dstData + ((data.height-1-y) * data.dstRowBytes));
+		float* out_pix = (float*)((char*)data.dstData + ((ptrdiff_t)(data.height-1-y) * data.dstRowBytes));
 #else
-		float* out_pix = (float*)((char*)data.dstData + (y * data.dstRowBytes));
+		float* out_pix = (float*)((char*)data.dstData + ((ptrdiff_t)y * data.dstRowBytes));
 #endif
 		for (int x = 0; x < data.width; x++) {
 			*out_pix++ = ((float)(*in_pixR) * I_MAX_CHAN8 * data.scale); in_pixR += stepWidth;
@@ -688,9 +689,9 @@ void convert_RGBA8_to_RGBA8P(ConvertData& data, const int startLine, const int e
 {
 	for (int y = startLine; y < endLine; y++) {
 #ifdef IMG_FLIP_Y
-		unsigned char* in_pix = (unsigned char*)((char*)data.srcData + ((data.height-1-y) * data.srcRowBytes));
+		unsigned char* in_pix = (unsigned char*)((char*)data.srcData + ((ptrdiff_t)(data.height-1-y) * data.srcRowBytes));
 #else
-		unsigned char* in_pix = (unsigned char*)((char*)data.srcData + (y * data.srcRowBytes));
+		unsigned char* in_pix = (unsigned char*)((char*)data.srcData + ((ptrdiff_t)y * data.srcRowBytes));
 #endif
 		unsigned char* out_pixR = (unsigned char*)((char*)data.dstData + sizeof(unsigned char) * data.width * (y + data.height * 0));
 		unsigned char* out_pixG = (unsigned char*)((char*)data.dstData + sizeof(unsigned char) * data.width * (y + data.height * 1));
@@ -715,9 +716,9 @@ void convert_RGBA32P_to_RGBA32(ConvertData& data, const int startLine, const int
 		float* in_pixB = (float*)((char*)data.srcData + sizeof(float) * data.width * (y + data.height * 2));
 		float* in_pixA = (float*)((char*)data.srcData + sizeof(float) * data.width * (y + data.height * 3));
 #ifdef IMG_FLIP_Y
-		float* out_pix = (float*)((char*)data.dstData + ((data.height-1-y) * data.dstRowBytes));
+		float* out_pix = (float*)((char*)data.dstData + ((ptrdiff_t)(data.height-1-y) * data.dstRowBytes));
 #else
-		float* out_pix = (float*)((char*)data.dstData + (y * data.dstRowBytes));
+		float* out_pix = (float*)((char*)data.dstData + ((ptrdiff_t)y * data.dstRowBytes));
 #endif
 		for (int x = 0; x < data.width; x++) {
 			*out_pix++ = *in_pixR * data.scale; in_pixR += stepWidth;
@@ -733,11 +734,11 @@ static
 void convert_RGBA32_to_RGBA32(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
-		float* in_pix = (float*)((char*)data.srcData + ((data.height-1-y) * data.srcRowBytes));
+		float* in_pix = (float*)((char*)data.srcData + ((ptrdiff_t)(data.height-1-y) * data.srcRowBytes));
 #ifdef IMG_FLIP_Y
-		float* out_pix = (float*)((char*)data.dstData + ((data.height-1-y) * data.dstRowBytes));
+		float* out_pix = (float*)((char*)data.dstData + ((ptrdiff_t)(data.height-1-y) * data.dstRowBytes));
 #else
-		float* out_pix = (float*)((char*)data.dstData + (y * data.dstRowBytes));
+		float* out_pix = (float*)((char*)data.dstData + ((ptrdiff_t)y * data.dstRowBytes));
 #endif
 		for (int x = 0; x < data.width; x++) {
 			*out_pix++ = *in_pix++ * data.scale;
@@ -755,9 +756,9 @@ void convert_RGBA32P_to_RGBA8(ConvertData& data, const int startLine, const int 
 		float* in_pixB = (float*)((char*)data.srcData + sizeof(float) * data.width * (y + data.height * 2));
 		float* in_pixA = (float*)((char*)data.srcData + sizeof(float) * data.width * (y + data.height * 3));
 #ifdef IMG_FLIP_Y
-		unsigned char* out_pix = (unsigned char*)((char*)data.dstData + ((data.height-1-y) * data.dstRowBytes));
+		unsigned char* out_pix = (unsigned char*)((char*)data.dstData + ((ptrdiff_t)(data.height-1-y) * data.dstRowBytes));
 #else
-		unsigned char* out_pix = (unsigned char*)((char*)data.dstData + (y * data.dstRowBytes));
+		unsigned char* out_pix = (unsigned char*)((char*)data.dstData + ((ptrdiff_t)y * data.dstRowBytes));
 #endif
 		for (int x = 0; x < data.width; x++) {
 			*out_pix++ = (unsigned char)(saturate(*in_pixR * data.scale) * MAX_CHAN8 + 0.5f); in_pixR += stepWidth;
@@ -773,9 +774,9 @@ void convert_RGBA32_to_RGBA32P(ConvertData& data, const int startLine, const int
 {
 	for (int y = startLine; y < endLine; y++) {
 #ifdef IMG_FLIP_Y
-		float* in_pix = (float*)((char*)data.srcData + ((data.height-1-y) * data.srcRowBytes));
+		float* in_pix = (float*)((char*)data.srcData + ((ptrdiff_t)(data.height-1-y) * data.srcRowBytes));
 #else
-		float* in_pix = (float*)((char*)data.srcData + (y * data.srcRowBytes));
+		float* in_pix = (float*)((char*)data.srcData + ((ptrdiff_t)y * data.srcRowBytes));
 #endif
 		float* out_pixR = (float*)((char*)data.dstData + sizeof(float) * data.width * (y + data.height * 0));
 		float* out_pixG = (float*)((char*)data.dstData + sizeof(float) * data.width * (y + data.height * 1));
@@ -795,8 +796,8 @@ static
 void convert_RGBA8_to_RGBA32(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
-		unsigned char* in_pix = (unsigned char*)((char*)data.srcData + (y * data.srcRowBytes));
-		float* out_pixR = (float*)((char*)data.dstData + (y * data.dstRowBytes));
+		unsigned char* in_pix = (unsigned char*)((char*)data.srcData + ((ptrdiff_t)y * data.srcRowBytes));
+		float* out_pixR = (float*)((char*)data.dstData + ((ptrdiff_t)y * data.dstRowBytes));
 		float* out_pixG = out_pixR + 1;
 		float* out_pixB = out_pixR + 2;
 		float* out_pixA = out_pixR + 3;
@@ -814,7 +815,7 @@ static
 void convert_RGBA8_to_RGBA32P(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
-		unsigned char* in_pix = (unsigned char*)((char*)data.srcData + (y * data.srcRowBytes));
+		unsigned char* in_pix = (unsigned char*)((char*)data.srcData + ((ptrdiff_t)y * data.srcRowBytes));
 		float* out_pixR = (float*)((char*)data.dstData + sizeof(float) * data.width * (y + data.height * 0));
 		float* out_pixG = (float*)((char*)data.dstData + sizeof(float) * data.width * (y + data.height * 1));
 		float* out_pixB = (float*)((char*)data.dstData + sizeof(float) * data.width * (y + data.height * 2));
@@ -833,8 +834,8 @@ static
 void convert_RGBA32_to_RGBA8(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
-		float* in_pix = (float*)((char*)data.srcData + (y * data.srcRowBytes));
-		unsigned char* out_pixR = (unsigned char*)((char*)data.dstData + (y * data.dstRowBytes));
+		float* in_pix = (float*)((char*)data.srcData + ((ptrdiff_t)y * data.srcRowBytes));
+		unsigned char* out_pixR = (unsigned char*)((char*)data.dstData + ((ptrdiff_t)y * data.dstRowBytes));
 		unsigned char* out_pixG = out_pixR + 1;
 		unsigned char* out_pixB = out_pixR + 2;
 		unsigned char* out_pixA = out_pixR + 3;
@@ -853,7 +854,7 @@ static
 void convert_RGBA32_to_RGBA8P(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
-		float* in_pix = (float*)((char*)data.srcData + (y * data.srcRowBytes));
+		float* in_pix = (float*)((char*)data.srcData + ((ptrdiff_t)y * data.srcRowBytes));
 		unsigned char* out_pixR = (unsigned char*)((char*)data.dstData + sizeof(float) * data.width * (y + data.height * 0));
 		unsigned char* out_pixG = (unsigned char*)((char*)data.dstData + sizeof(float) * data.width * (y + data.height * 1));
 		unsigned char* out_pixB = (unsigned char*)((char*)data.dstData + sizeof(float) * data.width * (y + data.height * 2));
