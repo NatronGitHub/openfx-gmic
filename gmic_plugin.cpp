@@ -387,8 +387,11 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 				assert(false);
 			}
 		}
+		// a value(...) parameter is a hidden constant argument: its value is the default, which
+		// the parser stores in defaultValue (it used to be passed as an empty string)
+		const std::string& paramText = (paramType == "value") ? defaultValue : text;
 		globalDataP->param[p] = Parameter(
-		  name, "", t, (float)atof(minValue.c_str()), (float)atof(maxValue.c_str()), d1, d2, d3, d4, text);
+		  name, "", t, (float)atof(minValue.c_str()), (float)atof(maxValue.c_str()), d1, d2, d3, d4, paramText);
 		globalDataP->param[p].flags = flags;
 		if (h) globalDataP->param[p].displayStatus = DS_HIDDEN;
 		p++;
@@ -476,6 +479,8 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP)
                     continue;
                 }
                 string s = PAR_TXT(i);
+                // escape double quotes, or a text containing one (e.g. G'MIC code) ends the argument early
+                strReplace(s, "\"", "\\\"");
                 cmd += "\"" + s + "\",";
             } else if (PAR_TYPE(i) == PT_COLOR) {
                 cmd +=
@@ -539,7 +544,13 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		if (!sequenceDataP->inWorld[i].data || !sequenceDataP->inputConnected[i]) break;
 		nofImages++;
 	}
-	if (nofImages == 0) return err;
+	if (nofImages == 0) {
+		// no input image (main input not connected): output transparent black, not uninitialized memory
+		if (sequenceDataP->outWorld.data) {
+			memset(sequenceDataP->outWorld.data, 0, (size_t)sequenceDataP->outWorld.height * (size_t)sequenceDataP->outWorld.rowBytes);
+		}
+		return err;
+	}
 
 	for (unsigned int i = 0; i < nofImages; i++) {
 		images[i].width = sequenceDataP->inWorld[i].width;
@@ -556,7 +567,8 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	string cmd = gmicCommand(sequenceDataP, globalDataP);
 
 	if (PAR_VAL(PARAM_OUTPUT) == 0.f) {
-		cmd += " -gimp_merge_layers";
+		// G'MIC >= 2.9 renamed gimp_merge_layers to gui_merge_layers ("Unknown command" otherwise)
+		cmd += " -gui_merge_layers";
 	}
 
 	// gmic_call() copies every resulting image into images[], which has MAX_NOF_LAYERS entries:
@@ -601,19 +613,26 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 				if (idx < 0) idx = 0;
 			}
 
-			if ((unsigned)sequenceDataP->outWorld.width == images[idx].width && (unsigned)sequenceDataP->outWorld.height == images[idx].height) {
-				size_t sz = (size_t)sequenceDataP->outWorld.width * (size_t)sequenceDataP->outWorld.height * (size_t)min(4, (int)images[idx].spectrum) * sizeof(float);
-				memcpy((unsigned char*)sequenceDataP->outWorld.data, (unsigned char*)images[idx].data, sz);
-
-				if (images[idx].spectrum < 4) {
-					size_t sz2 = (size_t)sequenceDataP->outWorld.width * (size_t)sequenceDataP->outWorld.height;
-					float* p = (float*)sequenceDataP->outWorld.data + sz2 * 3;
-					std::fill(p, p + sz2 , 255.f);
-
-					for (unsigned int i = 1; i < 4 - images[idx].spectrum; i++) {
-						p = (float*)sequenceDataP->outWorld.data + sz2 * i;
-						memcpy(p, sequenceDataP->outWorld.data, sz2 * sizeof(float));
+			if (images[idx].spectrum == 0 || !images[idx].data) {
+				result = -1;
+				errmsg = "The image produced by G'MIC is empty.";
+			} else if ((unsigned)sequenceDataP->outWorld.width == images[idx].width && (unsigned)sequenceDataP->outWorld.height == images[idx].height) {
+				// planar output R,G,B,A (sz2 floats each) from 1 (G), 2 (GA), 3 (RGB) or 4+ (RGBA) channels
+				const size_t sz2 = (size_t)sequenceDataP->outWorld.width * (size_t)sequenceDataP->outWorld.height;
+				float* const dst = (float*)sequenceDataP->outWorld.data;
+				const float* const src = (const float*)images[idx].data;
+				const unsigned int spectrum = images[idx].spectrum;
+				if (spectrum >= 3) {
+					memcpy(dst, src, sz2 * 3 * sizeof(float));             // R, G, B
+				} else {
+					for (int c = 0; c < 3; ++c) {
+						memcpy(dst + sz2 * c, src, sz2 * sizeof(float)); // gray to R, G, B
 					}
+				}
+				if (spectrum == 2 || spectrum >= 4) {
+					memcpy(dst + sz2 * 3, src + sz2 * (spectrum == 2 ? 1 : 3), sz2 * sizeof(float)); // alpha
+				} else {
+					std::fill(dst + sz2 * 3, dst + sz2 * 4, 255.f);         // opaque
 				}
 			} else {
 				result = -1;
@@ -623,8 +642,12 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	}
 	if (result != 0) {
 #ifdef OFX_PLUGIN
-		 if (gMessageSuite) {
-			gMessageSuite->message(contextDataP->instance, kOfxMessageError, "G'MIC Error", errmsg.c_str());
+		if (gMessageSuiteV2) {
+			// persistent message on the node (cleared by the next successful render), instead of a
+			// modal message on every render
+			gMessageSuiteV2->setPersistentMessage(contextDataP->instance, kOfxMessageError, "", "%s", errmsg.c_str());
+		} else if (gMessageSuite) {
+			gMessageSuite->message(contextDataP->instance, kOfxMessageError, "G'MIC Error", "%s", errmsg.c_str());
 #ifdef DEBUG
 		} else {
 			cout << "ERROR: " << errmsg << endl;
@@ -637,6 +660,11 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 #endif
 		err = PF_Err_INTERNAL_STRUCT_DAMAGED;
 	}
+#ifdef OFX_PLUGIN
+	else if (gMessageSuiteV2) {
+		gMessageSuiteV2->clearPersistentMessage(contextDataP->instance);
+	}
+#endif
 
 	for (unsigned int i = 0; i < nofImages; i++) {
 		bool found = false;
