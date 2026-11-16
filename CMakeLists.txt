@@ -100,6 +100,8 @@ FILE(GLOB GMIC_SOURCES
   "gmic_libc.cpp"
   "gmic_libc.h"
   "gmic_plugin.cpp"
+  "gmic_plugin_call.cpp"
+  "gmic_plugin_call.h"
   "Helpers/gmic_parser.cpp"
   "Helpers/RFX_FileUtils.cpp"
   "Helpers/RFX_StringUtils.cpp"
