@@ -124,8 +124,12 @@ void processCommand(const string& s, EffectData& cd)
 	strReplace(r3, "+", "");
 	strReplace(r3, "*", "");
 
+	// "_none_" main command: a preview-only filter (the preview's output is the result)
 	sPos = (int)r2.find("_none_");
-	if (sPos >= 0) r2 = r3;
+	if (sPos >= 0) {
+		r2 = r3;
+		cd.previewOnly = true;
+	}
 	sPos = (int)r3.find("_none_");
 	if (sPos >= 0) r3 = r2;
 
@@ -380,6 +384,8 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	cd.command = "";
 	cd.preview_command = "";
 	cd.notes = "";
+	cd.previewOnly = false;
+	cd.previewFallback = false;
 	cd.param.clear();
 
 	vector<string> lines;
@@ -497,6 +503,19 @@ string gmic_parse_single(const string& content, EffectData& cd)
 		}
 	}
 	cd.multiLayer = usesSeveralLayers(content);
+	// a hidden value() parameter holding a placeholder string (e.g. Shear's "place_string_here")
+	// is filled in by G'MIC-Qt from the status set by the preview command (issue #52)
+	for (int i = 0; i < (int)cd.param.size(); i++) {
+		const string& v = cd.param[i].defaultValue;
+		if (cd.param[i].paramType == "value" && !cd.previewOnly && cd.preview_command != cd.command) {
+			for (size_t k = 0; k < v.size(); ++k) {
+				if (isalpha((unsigned char)v[k])) {
+					cd.previewFallback = true;
+					break;
+				}
+			}
+		}
+	}
 	cd.notes = strTrim(cd.notes, "\n");
 
 	cd.name = strRemoveXmlTags(cd.name, true);
@@ -505,6 +524,57 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	cd.uniqueId = getUniqueId(cd.name);
 
 	return result;
+}
+
+// Is "line" the definition of a G'MIC custom command ("[+]name :[ body]", not "name:=expr")?
+// Returns the command name, and the rest of the line (the start of the body) in "rest".
+static string commandDefinition(const string& line, string& rest)
+{
+	size_t i = 0;
+	if (i < line.size() && line[i] == '+') ++i;
+	const size_t b = i;
+	if (i >= line.size() || !(isalpha((unsigned char)line[i]) || line[i] == '_')) return string();
+	while (i < line.size() && (isalnum((unsigned char)line[i]) || line[i] == '_')) ++i;
+	const size_t e = i;
+	while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
+	if (i >= line.size() || line[i] != ':' || (i + 1 < line.size() && line[i + 1] == '=')) return string();
+	rest = line.substr(i + 1);
+	return line.substr(b, e - b);
+}
+
+// G'MIC-Qt always runs the preview command before the main one, and the main command of some
+// filters reuses what the preview stored in the global variable _persistent: some only as a
+// cache (3D Mesh), others cannot work without it (Tupper's Self-Referential Formula is
+// "rm $_persistent"). Mark the filters whose main command definition refers to _persistent, so
+// that they are rendered with the preview command if the main command fails (issue #52).
+static void markPersistentFilters(const string& content, vector<EffectData>& cds)
+{
+	set<string> mains;
+	for (vector<EffectData>::const_iterator it = cds.begin(); it != cds.end(); ++it) {
+		if (!it->previewOnly && it->preview_command != it->command) mains.insert(it->command);
+	}
+	set<string> persistent;
+	stringstream ss(content);
+	string line, cur, rest;
+	while (getline(ss, line)) {
+		if (line.empty() || line[0] == '#') continue;
+		string name = commandDefinition(line, rest);
+		if (!name.empty()) {
+			cur = mains.count(name) ? name : string();
+		} else {
+			rest = line;
+		}
+		if (cur.empty()) continue;
+		size_t c = rest.find_first_not_of(" \t");
+		if (c != string::npos && rest[c] != '#' && rest.find("_persistent") != string::npos) {
+			persistent.insert(cur);
+		}
+	}
+	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
+		if (!it->previewOnly && it->preview_command != it->command && persistent.count(it->command)) {
+			it->previewFallback = true;
+		}
+	}
 }
 
 // "#@gui ____<i>About</i>" (G'MIC 2) or "#@gui <i>About</i>" (G'MIC >= 3)
@@ -602,6 +672,7 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 	if (!cds) {
 		return;
 	}
+	markPersistentFilters(content, *cds);
     // plug-in identifiers must be unique: G'MIC 4 has several filters with the same name in
     // different folders (e.g. the "About" page of each Testing author, "Color Harmonies").
     // The first one keeps its identifier, the others get a numbered suffix.

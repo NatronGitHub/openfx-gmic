@@ -72,6 +72,11 @@ struct EffectData {
 	std::string preview_command;
 	std::string notes;
 	bool multiLayer;
+	// "_none_" main command: always render with the preview command, as G'MIC-Qt's preview
+	bool previewOnly;
+	// the main command may need the state left by G'MIC-Qt's preview (_persistent, or the status
+	// that fills a value() parameter): if it fails, render with the preview command (issue #52)
+	bool previewFallback;
     std::vector<EffectParameter> param;
 };
 
