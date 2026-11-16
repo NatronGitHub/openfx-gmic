@@ -143,6 +143,9 @@ using namespace reduxfx;
 
 #ifdef OFX_PLUGIN
 #include <sstream>
+#include <map>
+#include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <cassert>
 #ifdef DEBUG
@@ -178,20 +181,115 @@ string get_gmic_rc_path()
 // "Advanced Options" group (start and end) and its 7 parameters
 static const int kNofExtraParams = 1 + 4 + 1 + 2 + 7;
 
+// Hot fixes for bugs in the G'MIC standard library (gmic_hotfixes.gmic, embedded by the build as
+// the raw string gmic_hotfixes[]): corrected command definitions, passed to G'MIC as custom
+// commands, which replace the built-in ones.
+#include "gmic_hotfixes.h"
+
+static inline bool gmicIsBlank(char c) { return (unsigned char)c <= ' '; } // as cimg::is_blank
+
+// Get the definitions of the commands that are keys of defs from a G'MIC command file, as G'MIC
+// reads them (see gmic::add_commands): comments, blank lines and leading and trailing blanks
+// removed, each line followed by '\n'. A later definition replaces an earlier one.
+static void gmicGetDefinitions(const string& content, std::map<string, string>& defs)
+{
+	string* def = NULL;
+	const size_t len = content.size();
+	for (size_t pos = 0; pos < len; ) {
+		size_t b = pos, e = content.find('\n', pos);
+		if (e == string::npos) e = len;
+		pos = e + 1;
+		if (content[b] == '#') continue;
+		for (size_t i = b + 1; i < e; ++i) {
+			if (content[i] == '#' && gmicIsBlank(content[i - 1])) { e = i - 1; break; }
+		}
+		while (e > b && gmicIsBlank(content[e - 1])) --e;
+		while (b < e && gmicIsBlank(content[b])) ++b;
+		if (b == e) continue;
+		// a command definition is '[+]name :', where the name has at most 255 characters
+		// [a-zA-Z0-9_] and does not start with a digit, and ':' is not followed by '='
+		size_t n = b + (content[b] == '+' ? 1 : 0), ne = n;
+		while (ne < e && ne - n < 255 && (isalnum((unsigned char)content[ne]) || content[ne] == '_')) ++ne;
+		size_t c = ne;
+		while (c < e && gmicIsBlank(content[c])) ++c;
+		if (ne > n && !isdigit((unsigned char)content[n]) && c < e && content[c] == ':' && (c + 1 == e || content[c + 1] != '=')) {
+			std::map<string, string>::iterator it = defs.find(content.substr(b, ne - b));
+			def = (it == defs.end()) ? NULL : &it->second;
+			if (def) def->clear();
+		}
+		if (def) {
+			def->append(content, b, e - b);
+			*def += '\n';
+		}
+	}
+}
+
+// The hot fixes that apply to the G'MIC standard library stdlib. Each block of gmic_hotfixes.gmic
+// starts with '#@hotfix <command> <checksum>', the FNV-1a 64-bit hash of the built-in definition it
+// fixes: a block is used only if that definition is unchanged, otherwise the fix must be reviewed.
+static string gmicGetHotfixes(const string& stdlib)
+{
+	static const string marker = "#@hotfix ";
+	vector<string> names, checksums, texts;
+	std::istringstream ss(gmic_hotfixes);
+	string line;
+	while (getline(ss, line)) {
+		if (line.compare(0, marker.size(), marker) == 0) {
+			std::istringstream ls(line.substr(marker.size()));
+			string name, checksum;
+			ls >> name >> checksum;
+			names.push_back(name);
+			checksums.push_back(checksum);
+			texts.push_back(string());
+		}
+		if (!texts.empty()) {
+			texts.back() += line + '\n';
+		}
+	}
+	std::map<string, string> defs;
+	for (size_t i = 0; i < names.size(); ++i) {
+		defs[names[i]];
+	}
+	gmicGetDefinitions(stdlib, defs);
+	string hotfixes;
+	for (size_t i = 0; i < names.size(); ++i) {
+		const string& def = defs[names[i]];
+		unsigned long long h = 14695981039346656037ULL;
+		for (size_t j = 0; j < def.size(); ++j) {
+			h = (h ^ (unsigned char)def[j]) * 1099511628211ULL;
+		}
+		char found[17];
+		snprintf(found, sizeof(found), "%016llx", h);
+		if (checksums[i] == found) {
+			hotfixes += texts[i];
+		} else {
+			fprintf(stderr, "openfx-gmic: Warning: hot fix for the G'MIC command '%s' not applied: its built-in definition %s (checksum %s, the fix is for %s), review it in gmic_hotfixes.gmic\n",
+			        names[i].c_str(), def.empty() ? "is missing" : "changed", found, checksums[i].c_str());
+		}
+	}
+	return hotfixes;
+}
+
 class PluginGlobalData
 {
 public:
 	vector<EffectData> pluginData;
 	vector<string> pluginContent;
+	string hotfixes; // custom commands for every run, see gmicGetHotfixes()
 	PluginGlobalData() {
+		string stdlib;
+		{
+			const char* lib = gmic_get_stdlib();
+			stdlib = string(lib);
+			gmic_delete_external((float*)lib);
+		}
+		hotfixes = gmicGetHotfixes(stdlib);
 		string effectContent = loadStringFromFile(get_gmic_rc_path() + "gmic_ofx.gmic");
 		if (effectContent.empty()) {
 			effectContent = loadStringFromFile(get_gmic_rc_path() + "gmic_stdlib.gmic");
 		}
 		if (effectContent.empty()) {
-			const char* lib = gmic_get_stdlib();
-			effectContent = string(lib);
-			gmic_delete_external((float*)lib);
+			effectContent.swap(stdlib);
 			if (
 				(int)effectContent.find("#@gimp :") < 0 && 
 				(int)effectContent.find("#@gmic_plugin :") < 0 && 
@@ -534,10 +632,12 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 
 	MySequenceData* mySequenceDataP = (MySequenceData*)sequenceDataP->customSequenceDataP;
 	mySequenceDataP->options.no_inplace_processing = !globalDataP->inplaceProcessing;
+	// custom commands, set in options.custom_commands below (it must stay valid until gmic_call())
 #ifdef AE_PLUGIN
-	mySequenceDataP->options.custom_commands = ((MyGlobalData*)globalDataP->customGlobalDataP)->effectContent.c_str();
+	string customCommands = ((MyGlobalData*)globalDataP->customGlobalDataP)->effectContent;
 #else
-	mySequenceDataP->options.custom_commands = pluginGlobalData.pluginContent[globalDataP->pluginIndex].c_str();
+	// the filter's #@gui lines, and the hot fixes for G'MIC bugs (gmic_hotfixes.gmic)
+	string customCommands = pluginGlobalData.pluginContent[globalDataP->pluginIndex] + '\n' + pluginGlobalData.hotfixes;
 #endif
 
 	gmic_interface_image images[MAX_NOF_LAYERS];
@@ -586,14 +686,13 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	// Ignore Alpha: apply_channels takes the command as a quoted string, which it un-escapes
 	// again, so quoting the command (whose text arguments are already escaped) breaks any text
 	// containing a quote or backslash. Define it as a custom command and apply that instead.
-	string customCommands = mySequenceDataP->options.custom_commands ? mySequenceDataP->options.custom_commands : "";
 	if (PAR_VAL(PARAM_NOALPHA) > 0.f) {
 		strReplace(cmd, "\n", " ");
 		strReplace(cmd, "\r", " ");
 		customCommands += "\n_openfx_gmic_cmd :\n  " + cmd + "\n";
-		mySequenceDataP->options.custom_commands = customCommands.c_str();
 		cmd = "-apply_channels \"_openfx_gmic_cmd\",rgb";
 	}
+	mySequenceDataP->options.custom_commands = customCommands.c_str();
 	
 	if (!globalDataP->inplaceProcessing) {
 		float ds = PAR_VAL(PARAM_RESIZE);
@@ -617,6 +716,7 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 //	cmd = "_input_mode=1 _output_mode=0 _verbosity_mode=0 _preview_mode=0 _preview_size=0 " + cmd;
 
 	int result = gmic_call(cmd.c_str(), &nofImages, &images[0], &(((MySequenceData*)(sequenceDataP->customSequenceDataP))->options));
+	mySequenceDataP->options.custom_commands = NULL; // customCommands goes out of scope
 	string errmsg = string(((MySequenceData*)(sequenceDataP->customSequenceDataP))->options.error_message_buffer);
 
 	if (result == 0) {

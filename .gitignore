@@ -190,3 +190,4 @@ ofxTestLog.txt
 *.creator.user
 
 *.bak
+gmic_hotfixes.h

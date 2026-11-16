@@ -106,6 +106,25 @@ FILE(GLOB GMIC_SOURCES
   "Helpers/*h"
 )
 
+# Hot fixes for G'MIC bugs (see gmic_hotfixes.gmic and the top-level Makefile), embedded as a
+# C++11 raw string literal into gmic_hotfixes.h, in the build directory. They are written for one
+# G'MIC version: fail if gmic.h is another one, so that each fix gets reviewed.
+SET(GMIC_HOTFIXES ${CMAKE_CURRENT_SOURCE_DIR}/gmic_hotfixes.gmic)
+SET_PROPERTY(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${GMIC_HOTFIXES} ${CMAKE_CURRENT_SOURCE_DIR}/gmic.h)
+FILE(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/gmic.h GMIC_VERSION_LINE REGEX "^#define gmic_version [0-9]+")
+STRING(REGEX REPLACE "^#define gmic_version ([0-9]+).*" "\\1" GMIC_VERSION_NUMBER "${GMIC_VERSION_LINE}")
+FILE(STRINGS ${GMIC_HOTFIXES} GMIC_HOTFIXES_VERSION_LINE REGEX "^#@openfx_gmic_hotfixes ")
+STRING(REGEX REPLACE "^#@openfx_gmic_hotfixes ([0-9.]+).*" "\\1" GMIC_HOTFIXES_VERSION "${GMIC_HOTFIXES_VERSION_LINE}")
+STRING(REPLACE "." "" GMIC_HOTFIXES_VERSION_NUMBER "${GMIC_HOTFIXES_VERSION}")
+IF(NOT "${GMIC_HOTFIXES_VERSION_NUMBER}" STREQUAL "${GMIC_VERSION_NUMBER}")
+  MESSAGE(FATAL_ERROR "gmic_hotfixes.gmic is for G'MIC ${GMIC_HOTFIXES_VERSION}, gmic.h is version ${GMIC_VERSION_NUMBER}: review each fix, see the top of gmic_hotfixes.gmic")
+ENDIF()
+FILE(READ ${GMIC_HOTFIXES} GMIC_HOTFIXES_CONTENT)
+STRING(REPLACE "\r" "" GMIC_HOTFIXES_CONTENT "${GMIC_HOTFIXES_CONTENT}")
+FILE(WRITE ${CMAKE_CURRENT_BINARY_DIR}/gmic_hotfixes.h
+  "// Generated from gmic_hotfixes.gmic by CMake: do not edit.\nstatic const char gmic_hotfixes[] = R\"gmic_hotfixes(\n${GMIC_HOTFIXES_CONTENT})gmic_hotfixes\";\n")
+INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR})
+
 FILE(GLOB GMIC_RESOURCES
   "GMIC_OFX/GMIC.png"
 )
