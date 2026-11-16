@@ -85,4 +85,4 @@ $(GMICSOURCES): $(GMICSRC)
 gmic.h gmic.cpp: patches/gmic-apple-abort.sh
 
 distclean: clean
-	-rm $(GMICSRC) $(GMICSOURCES)
+	-rm -f $(GMICSRC) $(GMICSOURCES) gmic_libc.cpp gmic_stdlib_gmic.h # the last two: left by older builds
