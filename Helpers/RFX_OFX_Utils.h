@@ -950,9 +950,9 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 		myData->sequenceDataP->downsample_x = (float)renderScale.x;
 		myData->sequenceDataP->downsample_y = (float)renderScale.y;
 		
-		getAllParamData(pluginIndex, dstRect, myData, time, renderScale);
-
-		// get the input image(s)
+		// get the input image(s); the parameters are fetched afterwards, since point parameters are
+		// relative to the first input's rectangle (the image G'MIC processes), not the output's
+		OfxRectI firstSrcRect = dstRect;
 		int i = 0;
 		for (int p = 0; p < globalData[pluginIndex].nofParams; p++) {
 			if (globalData[pluginIndex].param[p].paramType != PT_LAYER) continue;
@@ -979,6 +979,7 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 				}
 			}
 
+			if (i == 0) firstSrcRect = srcRect;
 			myData->sequenceDataP->inWorld[i].origin_x = srcRect.x1;
 			myData->sequenceDataP->inWorld[i].origin_y = srcRect.y1;
 			myData->sequenceDataP->inWorld[i].width = (srcRect.x2 - srcRect.x1);
@@ -1128,6 +1129,8 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 #endif
 			i++;
 		}
+
+		getAllParamData(pluginIndex, firstSrcRect, myData, time, renderScale);
 
 		myData->sequenceDataP->outWorld.pixelFormat = PF_RGBA;
 		myData->sequenceDataP->outWorld.origin_x = dstRect.x1;

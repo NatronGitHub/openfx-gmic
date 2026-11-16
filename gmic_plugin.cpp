@@ -637,7 +637,10 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 				const World& out = sequenceDataP->outWorld;
 				const int dw = out.width, dh = out.height;
 				const int sw = (int)images[idx].width, sh = (int)images[idx].height;
-				const int sx1 = sequenceDataP->inWorld[0].origin_x, sy1 = sequenceDataP->inWorld[0].origin_y;
+				// G'MIC anchors images at their top-left corner: a result of another size than the first
+				// input keeps the input's left and top edges (pixel y goes up)
+				const int sx1 = sequenceDataP->inWorld[0].origin_x;
+				const int sy1 = sequenceDataP->inWorld[0].origin_y + sequenceDataP->inWorld[0].height - sh;
 				const int dx1 = out.origin_x, dy1 = out.origin_y;
 				const size_t dplane = (size_t)dw * (size_t)dh, splane = (size_t)sw * (size_t)sh;
 				float* const dst = (float*)out.data;
