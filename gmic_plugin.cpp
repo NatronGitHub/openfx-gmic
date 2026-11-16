@@ -305,8 +305,8 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		float d4 = 0.f;
 		const EffectParameter& param = effectData.param[i];
 		std::string name = param.name;
-		// a filter parameter must not reuse the name of a parameter added below (e.g. "Output Layer"
-		// in G'MIC 4 "Colorize Lineart [Propagation]"): the host rejects duplicate parameters
+		// a filter parameter must not reuse the name of a parameter added below (none does in
+		// G'MIC 4.0.7, but a clash would make the host reject the duplicate parameter)
 		static const char* const reservedNames[] = { "Layer -1", "Layer -2", "Layer -3", "Layer -4", "Command",
 			"Advanced Options", "Output Layer", "Resize Mode", "Ignore Alpha", "Preview/Draft Mode",
 			"Global Random Seed", "Animate Random Seed", "Log Verbosity" };
@@ -324,7 +324,9 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		if (paramType == "color") {
 			vector<string> r;
 			t = PT_COLOR;
-			strSplit(defaultValue + "|||", '|', r);
+			strSplit(defaultValue, '|', r); // drops empty fields: pad below
+			if (r.size() == 1) { r.push_back(r[0]); r.push_back(r[0]); } // gray: color(V)
+			while (r.size() < 3) r.push_back("0");
 			d1 = (float)atof(r[0].c_str()) / 255.f;
 			d2 = (float)atof(r[1].c_str()) / 255.f;
 			d3 = (float)atof(r[2].c_str()) / 255.f;
@@ -334,7 +336,8 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		} else if (paramType == "point") {
 			vector<string> r;
 			t = PT_POINT;
-			strSplit(defaultValue + "|", '|', r);
+			strSplit(defaultValue, '|', r); // drops empty fields: pad below
+			while (r.size() < 2) r.push_back("50");
 			d1 = (float)atof(r[0].c_str());
 			d2 = (float)atof(r[1].c_str());
 #ifdef OFX_PLUGIN

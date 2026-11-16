@@ -52,6 +52,8 @@
 
 #include <cctype>
 #include <cstring>
+#include <cstdlib>
+#include <set>
 #include <string>
 #include <iostream>
 #include <fstream>
@@ -108,10 +110,19 @@ void processCommand(const string& s, EffectData& cd)
 		r3 = r2.substr(sPos + 1);
 		r2 = r2.substr(0, sPos);
 	}
-	strReplace(r3, "(0)", "");
-	strReplace(r3, "(1)", "");
-	strReplace(r3, "(2)", "");
+	// remove the preview options after the preview command: "(N)" (preview mode/split) followed by
+	// "+" (accurate on zoom) and/or "*" (G'MIC >= 3, accurate on parameter change)
+	for (size_t lp = r3.find('('); lp != string::npos; lp = r3.find('(', lp)) {
+		size_t rp = lp + 1;
+		while (rp < r3.size() && isdigit((unsigned char)r3[rp])) ++rp;
+		if (rp > lp + 1 && rp < r3.size() && r3[rp] == ')') {
+			r3.erase(lp, rp - lp + 1);
+		} else {
+			++lp;
+		}
+	}
 	strReplace(r3, "+", "");
+	strReplace(r3, "*", "");
 
 	sPos = (int)r2.find("_none_");
 	if (sPos >= 0) r2 = r3;
@@ -131,14 +142,18 @@ void processParam(const string& s, EffectParameter& cp)
 	cp.maxValue = "";
 	cp.defaultValue = "";
 	cp.text = "";
-	int p1 = (int)r.find(":");
 	int p2 = (int)r.find("=");
 	if (p2 < 0) return;
-	if (p1 > p2) {
-		// ":" should be before "="
-		p1 = -1;
+	// skip a "#@gui :" style prefix if still present; a ':' ending the name itself
+	// ("Opacity (%):=float(...)" in G'MIC 4) is not a prefix separator
+	int start = 0;
+	int p1 = -1;
+	if (r.compare(0, 2, "#@") == 0) {
+		p1 = (int)r.find(":");
+		if (p1 >= 0 && p1 < p2) start = p1 + 1;
 	}
-	cp.name = strTrim(r.substr(p1 + 1, p2 - p1 - 2));
+	// G'MIC 2 writes "Name = type(...)", G'MIC >= 3 "Name=type(...)": don't assume a space before '='
+	cp.name = strTrim(strTrim(r.substr(start, p2 - start)), " \t:");
 	r = strTrim(r.substr(p2 + 1));
 	p1 = (int)r.find_first_of("([{");
 	if (p1 < 0) return;
@@ -190,10 +205,20 @@ void processParam(const string& s, EffectParameter& cp)
 		cp.minValue = "0";
 		cp.maxValue = intToString((int)c.size() - 1);
 	} else if (cp.paramType == "color") {
-		// 'color(R,_G,_B,_A)'
+		// 'color(R,_G,_B,_A)', or 'color(#RRGGBB[AA])' (G'MIC >= 3)
 		// Add R,G,B[,A] parameters (as a colorchooser).
-		cp.defaultValue = pval;
-		strReplace(cp.defaultValue, ",", "|");
+		string v = strTrim(pval);
+		if (!v.empty() && v[0] == '#' && (v.size() == 7 || v.size() == 9) &&
+			v.find_first_not_of("0123456789abcdefABCDEF", 1) == string::npos) {
+			cp.defaultValue = "";
+			for (size_t k = 1; k < v.size(); k += 2) {
+				if (k > 1) cp.defaultValue += "|";
+				cp.defaultValue += intToString((int)strtol(v.substr(k, 2).c_str(), NULL, 16));
+			}
+		} else {
+			cp.defaultValue = v;
+			strReplace(cp.defaultValue, ",", "|");
+		}
 	} else if (cp.paramType == "point") {
 		// 'point(_X,_Y,_removable={ -1 | 0 | 1 },_burst={ 0 | 1 },_R,_G,_B,_[-]A,_radius%,_is_visible={ 0 | 1 })'
 		// Add X,Y parameters (as a moveable point over the preview)
@@ -479,8 +504,11 @@ string gmic_parse_single(const string& content, EffectData& cd)
 // "#@gui ____<i>About</i>" (G'MIC 2) or "#@gui <i>About</i>" (G'MIC >= 3)
 static bool isAboutCategory(const string& cat)
 {
-	string c = cat.substr(cat.find(' ') == string::npos ? cat.size() : cat.find(' '));
-	c = strTrim(c, " \t\r_");
+	size_t sp = cat.find(' ');
+	if (sp == string::npos) {
+		return false;
+	}
+	string c = strTrim(cat.substr(sp), " \t\r_");
 	return c == "<i>About</i>";
 }
 
@@ -568,6 +596,18 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 	if (!cds) {
 		return;
 	}
+    // plug-in identifiers must be unique: G'MIC 4 has several filters with the same name in
+    // different folders (e.g. the "About" page of each Testing author, "Color Harmonies").
+    // The first one keeps its identifier, the others get a numbered suffix.
+    set<string> ids;
+    for (vector<EffectData>::iterator it = cds->begin(); it != cds->end(); ++it) {
+        string id = it->uniqueId;
+        for (int n = 2; ids.count(id); ++n) {
+            id = it->uniqueId + intToString(n);
+        }
+        it->uniqueId = id;
+        ids.insert(id);
+    }
     for (vector<EffectData>::iterator it = cds->begin(); it != cds->end(); ++it) {
         // post-process
         EffectData& cd = *it;
