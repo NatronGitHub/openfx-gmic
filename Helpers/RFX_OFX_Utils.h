@@ -164,6 +164,7 @@ OfxParameterSuiteV1		*gParamHost = 0;
 OfxMemorySuiteV1		*gMemoryHost = 0;
 OfxMultiThreadSuiteV1	*gThreadHost = 0;
 OfxMessageSuiteV1		*gMessageSuite = 0;
+OfxMessageSuiteV2		*gMessageSuiteV2 = 0; // persistent messages, if the host supports them
 OfxInteractSuiteV1		*gInteractHost = 0;
 
 // some flags about the host's behaviour
@@ -815,7 +816,13 @@ static
 void convert_RGBA8_to_RGBA32P(ConvertData& data, const int startLine, const int endLine)
 {
 	for (int y = startLine; y < endLine; y++) {
+		// rows in the same order as convert_RGBA32_to_RGBA32P (and as the output conversions):
+		// without IMG_FLIP_Y here, 8-bit images came out upside down
+#ifdef IMG_FLIP_Y
+		unsigned char* in_pix = (unsigned char*)((char*)data.srcData + ((ptrdiff_t)(data.height-1-y) * data.srcRowBytes));
+#else
 		unsigned char* in_pix = (unsigned char*)((char*)data.srcData + ((ptrdiff_t)y * data.srcRowBytes));
+#endif
 		float* out_pixR = (float*)((char*)data.dstData + sizeof(float) * data.width * (y + data.height * 0));
 		float* out_pixG = (float*)((char*)data.dstData + sizeof(float) * data.width * (y + data.height * 1));
 		float* out_pixB = (float*)((char*)data.dstData + sizeof(float) * data.width * (y + data.height * 2));
@@ -1158,8 +1165,11 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 		customOutputData = true;
 #endif
 
-		// here we call the actual processing function of the plugin!
-		pluginProcess(myData->sequenceDataP, &globalData[pluginIndex], &contextData);
+		// here we call the actual processing function of the plugin! If G'MIC failed, the output
+		// buffer holds no valid image: fail the render instead of converting garbage
+		if (pluginProcess(myData->sequenceDataP, &globalData[pluginIndex], &contextData) != 0) {
+			throw OfxuStatusException(kOfxStatFailed);
+		}
 
 #if defined(CONVERT_INT_TO_FLOAT)
 		if (dstBitDepth == 8) {
@@ -1808,6 +1818,7 @@ static void setHostFunc(OfxHost *hostStruct)
 	gHost = hostStruct;
 	OfxStatus stat = ofxuFetchHostSuites();
 	if (stat == kOfxStatOK) {
+		gMessageSuiteV2 = (OfxMessageSuiteV2*)gHost->fetchSuite(gHost->host, kOfxMessageSuite, 2);
 	}
 }
 

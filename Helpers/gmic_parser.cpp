@@ -185,10 +185,12 @@ void processParam(const string& s, EffectParameter& cp)
 	} else if (cp.paramType == "choice") {
 		// 'choice(_default_indice,Choice0,..,ChoiceN)'
 		// Add a integer parameter (as a combobox).
+		// the first argument is the default index if it is an unquoted integer, also when the
+		// labels themselves are unquoted (e.g. 'choice(4,16,25,36)': default 4, labels 16,25,36)
 		p1 = (int)pval.find(",");
-		p2 = (int)pval.find("\"");
-		if (p1 < p2) {
-			cp.defaultValue = pval.substr(0, p1);
+		string first = strTrim(p1 >= 0 ? pval.substr(0, p1) : string());
+		if (p1 >= 0 && !first.empty() && first.find_first_not_of("0123456789") == string::npos) {
+			cp.defaultValue = first;
 			cp.text = pval.substr(p1 + 1);
 		} else {
 			cp.defaultValue = "0";
@@ -232,14 +234,18 @@ void processParam(const string& s, EffectParameter& cp)
 		strReplace(cp.defaultValue, ",", "|");
 	} else if (cp.paramType == "value") {
 		// 'value(value)'
-		// Add a pre-defined value parameter (not displayed).
-		cp.defaultValue = pval;
-	} else if (cp.paramType == "file") {
+		// Add a pre-defined value parameter (not displayed). It is passed as a quoted string, so
+		// strip quotes from a quoted value ('value("-1")'), or they would be passed literally.
+		cp.defaultValue = strTrim(pval);
+		if (cp.defaultValue.size() >= 2 && cp.defaultValue[0] == '"' && cp.defaultValue[cp.defaultValue.size() - 1] == '"') {
+			cp.defaultValue = cp.defaultValue.substr(1, cp.defaultValue.size() - 2);
+		}
+	} else if (cp.paramType == "file" || cp.paramType == "filein" || cp.paramType == "fileout") {
 		// 'file[_in,_out](_default_filename)'
 		// Add a filename parameter (as a filechooser).
 //		cp.paramType = "text";
 		cp.text = strTrim(pval, "\"");
-		if (cp.text == "") cp.text = "test.txt";
+		// no default: leave it empty (a made-up "test.txt" made filters fail with "Unknown filename")
 		cp.defaultValue = cp.text;
 	} else if (cp.paramType == "float" || cp.paramType == "int") {
 		// 'float(default_value,min_value,max_value)'
