@@ -559,6 +559,11 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		cmd += " -gimp_merge_layers";
 	}
 
+	// gmic_call() copies every resulting image into images[], which has MAX_NOF_LAYERS entries:
+	// keep at most that many (the last ones, since the Output Layer is counted from the end).
+	// Some filters return more by default, e.g. Fade Layers, Morph Layers, Tiles to Layers.
+	cmd += " -if {$!>" + intToString(MAX_NOF_LAYERS) + "} -keep[-" + intToString(MAX_NOF_LAYERS) + "--1] -fi";
+
 	if (PAR_VAL(PARAM_NOALPHA) > 0.f) {
 		strReplace(cmd, "\"", "\\\"");
 		cmd = "-apply_channels \"" + cmd + "\",rgb";

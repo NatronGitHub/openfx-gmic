@@ -492,7 +492,9 @@ static OfxStatus getClipPreferences(int pluginIndex, OfxImageEffectHandle effect
 	ofxuClipGetFormat(myData->input[0], bitDepth, isRGBA, true); // get the unmapped clip component
 
 	// get the strings used to label the various bit depths
-	const char *componentStr = isRGBA ? kOfxImageComponentRGBA : kOfxImageComponentAlpha;
+	// the output clip only supports RGBA (render writes 4 channels), even for an Alpha input
+	(void)isRGBA;
+	const char *componentStr = kOfxImageComponentRGBA;
 
 	// set out output to be the same same as the input, component and bitdepth
 	gPropHost->propSetString(outArgs, "OfxImageClipPropComponents_Output", 0, componentStr);
@@ -976,7 +978,7 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 #if defined(CONVERT_INT_TO_FLOAT)
 			if (srcBitDepth == 8) {
 				myData->sequenceDataP->inWorld[i].rowBytes = myData->sequenceDataP->inWorld[i].width * sizeof(OfxRGBAColourF);
-				myData->sequenceDataP->inWorld[i].data = new unsigned char[myData->sequenceDataP->inWorld[i].height * myData->sequenceDataP->inWorld[i].rowBytes];
+				myData->sequenceDataP->inWorld[i].data = new unsigned char[(size_t)myData->sequenceDataP->inWorld[i].height * (size_t)myData->sequenceDataP->inWorld[i].rowBytes];
 				myData->sequenceDataP->inWorld[i].bitDepth = 32;
 				ConvertData data(srcData, srcRowBytes, myData->sequenceDataP->inWorld[i].data, myData->sequenceDataP->inWorld[i].rowBytes, myData->sequenceDataP->inWorld[i].width, myData->sequenceDataP->inWorld[i].height, scale);
 	
@@ -1005,7 +1007,7 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 #ifdef PLANAR_BUFFER
 			} else if (srcBitDepth == 32) {
 				myData->sequenceDataP->inWorld[i].rowBytes = myData->sequenceDataP->inWorld[i].width * sizeof(OfxRGBAColourF);
-				myData->sequenceDataP->inWorld[i].data = new unsigned char[myData->sequenceDataP->inWorld[i].height * myData->sequenceDataP->inWorld[i].rowBytes];
+				myData->sequenceDataP->inWorld[i].data = new unsigned char[(size_t)myData->sequenceDataP->inWorld[i].height * (size_t)myData->sequenceDataP->inWorld[i].rowBytes];
 				myData->sequenceDataP->inWorld[i].bitDepth = 32;
 				ConvertData data(srcData, srcRowBytes, myData->sequenceDataP->inWorld[i].data, myData->sequenceDataP->inWorld[i].rowBytes, myData->sequenceDataP->inWorld[i].width, myData->sequenceDataP->inWorld[i].height, scale);
 #ifndef NO_MULTITHREADED_CONVERSION
@@ -1028,7 +1030,7 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 #elif defined(CONVERT_FLOAT_TO_INT)
 			if (srcBitDepth == 32) {
 				myData->sequenceDataP->inWorld[i].rowBytes = myData->sequenceDataP->inWorld[i].width * sizeof(OfxRGBAColourB);
-				myData->sequenceDataP->inWorld[i].data = new unsigned char[myData->sequenceDataP->inWorld[i].height * myData->sequenceDataP->inWorld[i].rowBytes];
+				myData->sequenceDataP->inWorld[i].data = new unsigned char[(size_t)myData->sequenceDataP->inWorld[i].height * (size_t)myData->sequenceDataP->inWorld[i].rowBytes];
 				myData->sequenceDataP->inWorld[i].bitDepth = 8;
 				ConvertData data(srcData, srcRowBytes, myData->sequenceDataP->inWorld[i].data, myData->sequenceDataP->inWorld[i].rowBytes, myData->sequenceDataP->inWorld[i].width, myData->sequenceDataP->inWorld[i].height, scale);
 #ifndef NO_MULTITHREADED_CONVERSION
@@ -1056,7 +1058,7 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 #ifdef PLANAR_BUFFER
 			} else if (srcBitDepth == 8) {
 				myData->sequenceDataP->inWorld[i].rowBytes = myData->sequenceDataP->inWorld[i].width * sizeof(OfxRGBAColourB);
-				myData->sequenceDataP->inWorld[i].data = new unsigned char[myData->sequenceDataP->inWorld[i].height * myData->sequenceDataP->inWorld[i].rowBytes];
+				myData->sequenceDataP->inWorld[i].data = new unsigned char[(size_t)myData->sequenceDataP->inWorld[i].height * (size_t)myData->sequenceDataP->inWorld[i].rowBytes];
 				myData->sequenceDataP->inWorld[i].bitDepth = 8;
 				ConvertData data(srcData, srcRowBytes, myData->sequenceDataP->inWorld[i].data, myData->sequenceDataP->inWorld[i].rowBytes, myData->sequenceDataP->inWorld[i].width, myData->sequenceDataP->inWorld[i].height, scale);
 #ifndef NO_MULTITHREADED_CONVERSION
@@ -1076,7 +1078,7 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 #elif defined(PLANAR_BUFFER)
 			if (srcBitDepth == 8) {
 				myData->sequenceDataP->inWorld[i].rowBytes = myData->sequenceDataP->inWorld[i].width * sizeof(OfxRGBAColourB);
-				myData->sequenceDataP->inWorld[i].data = new unsigned char[myData->sequenceDataP->inWorld[i].height * myData->sequenceDataP->inWorld[i].rowBytes];
+				myData->sequenceDataP->inWorld[i].data = new unsigned char[(size_t)myData->sequenceDataP->inWorld[i].height * (size_t)myData->sequenceDataP->inWorld[i].rowBytes];
 				myData->sequenceDataP->inWorld[i].bitDepth = 8;
 				ConvertData data(srcData, srcRowBytes, myData->sequenceDataP->inWorld[i].data, myData->sequenceDataP->inWorld[i].rowBytes, myData->sequenceDataP->inWorld[i].width, myData->sequenceDataP->inWorld[i].height, scale);
 #ifndef NO_MULTITHREADED_CONVERSION
@@ -1092,7 +1094,7 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 #endif
 			} else if (srcBitDepth == 32) {
 				myData->sequenceDataP->inWorld[i].rowBytes = myData->sequenceDataP->inWorld[i].width * sizeof(OfxRGBAColourF);
-				myData->sequenceDataP->inWorld[i].data = new unsigned char[myData->sequenceDataP->inWorld[i].height * myData->sequenceDataP->inWorld[i].rowBytes];
+				myData->sequenceDataP->inWorld[i].data = new unsigned char[(size_t)myData->sequenceDataP->inWorld[i].height * (size_t)myData->sequenceDataP->inWorld[i].rowBytes];
 				myData->sequenceDataP->inWorld[i].bitDepth = 32;
 				ConvertData data(srcData, srcRowBytes, myData->sequenceDataP->inWorld[i].data, myData->sequenceDataP->inWorld[i].rowBytes, myData->sequenceDataP->inWorld[i].width, myData->sequenceDataP->inWorld[i].height, scale);
 #ifndef NO_MULTITHREADED_CONVERSION
@@ -1123,34 +1125,34 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 #if defined(CONVERT_INT_TO_FLOAT)
 		if (dstBitDepth == 8) {
 			myData->sequenceDataP->outWorld.rowBytes = myData->sequenceDataP->outWorld.width * sizeof(OfxRGBAColourF);
-			myData->sequenceDataP->outWorld.data = new unsigned char[myData->sequenceDataP->outWorld.height * myData->sequenceDataP->outWorld.rowBytes];
+			myData->sequenceDataP->outWorld.data = new unsigned char[(size_t)myData->sequenceDataP->outWorld.height * (size_t)myData->sequenceDataP->outWorld.rowBytes];
 			customOutputData = true;
 #ifdef PLANAR_BUFFER
 		} else if (dstBitDepth == 32) {
 			myData->sequenceDataP->outWorld.rowBytes = myData->sequenceDataP->outWorld.width * sizeof(OfxRGBAColourF);
-			myData->sequenceDataP->outWorld.data = new unsigned char[myData->sequenceDataP->outWorld.height * myData->sequenceDataP->outWorld.rowBytes];
+			myData->sequenceDataP->outWorld.data = new unsigned char[(size_t)myData->sequenceDataP->outWorld.height * (size_t)myData->sequenceDataP->outWorld.rowBytes];
 			customOutputData = true;
 #endif
 		}
 #elif defined(CONVERT_FLOAT_TO_INT)
 		if (dstBitDepth == 32) {
 			myData->sequenceDataP->outWorld.rowBytes = myData->sequenceDataP->outWorld.width * sizeof(OfxRGBAColourB);
-			myData->sequenceDataP->outWorld.data = new unsigned char[myData->sequenceDataP->outWorld.height * myData->sequenceDataP->outWorld.rowBytes];
+			myData->sequenceDataP->outWorld.data = new unsigned char[(size_t)myData->sequenceDataP->outWorld.height * (size_t)myData->sequenceDataP->outWorld.rowBytes];
 			customOutputData = true;
 #ifdef PLANAR_BUFFER
 		} else if (dstBitDepth == 8) {
 			myData->sequenceDataP->outWorld.rowBytes = myData->sequenceDataP->outWorld.width * sizeof(OfxRGBAColourB);
-			myData->sequenceDataP->outWorld.data = new unsigned char[myData->sequenceDataP->outWorld.height * myData->sequenceDataP->outWorld.rowBytes];
+			myData->sequenceDataP->outWorld.data = new unsigned char[(size_t)myData->sequenceDataP->outWorld.height * (size_t)myData->sequenceDataP->outWorld.rowBytes];
 			customOutputData = true;
 #endif
 		}
 #elif defined(PLANAR_BUFFER)
 		if (dstBitDepth == 8) {
 			myData->sequenceDataP->outWorld.rowBytes = myData->sequenceDataP->outWorld.width * sizeof(OfxRGBAColourB);
-			myData->sequenceDataP->outWorld.data = new unsigned char[myData->sequenceDataP->outWorld.height * myData->sequenceDataP->outWorld.rowBytes];
+			myData->sequenceDataP->outWorld.data = new unsigned char[(size_t)myData->sequenceDataP->outWorld.height * (size_t)myData->sequenceDataP->outWorld.rowBytes];
 		} else if (dstBitDepth == 32) {
 			myData->sequenceDataP->outWorld.rowBytes = myData->sequenceDataP->outWorld.width * sizeof(OfxRGBAColourF);
-			myData->sequenceDataP->outWorld.data = new unsigned char[myData->sequenceDataP->outWorld.height * myData->sequenceDataP->outWorld.rowBytes];
+			myData->sequenceDataP->outWorld.data = new unsigned char[(size_t)myData->sequenceDataP->outWorld.height * (size_t)myData->sequenceDataP->outWorld.rowBytes];
 		}
 		customOutputData = true;
 #endif
@@ -1283,6 +1285,12 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 		}
 	} catch(OfxuStatusException &ex) {
 		status = ex.status();
+	} catch(std::bad_alloc&) {
+		status = kOfxStatErrMemory;
+	} catch(...) {
+		// e.g. a std::exception from the image conversion: fail this render, but still release
+		// the host images and the converted buffers below
+		status = kOfxStatFailed;
 	}
 
 	// release the data pointers
@@ -1291,10 +1299,14 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 			gEffectHost->clipReleaseImage(sourceImg[i]);
 		}
 		if (customInputData[i]) {
-			delete (unsigned char*)myData->sequenceDataP->inWorld[i].data;
+			delete [] (unsigned char*)myData->sequenceDataP->inWorld[i].data;
+			myData->sequenceDataP->inWorld[i].data = NULL;
 		}
 	}
-	if (customOutputData) delete [] (unsigned char*)myData->sequenceDataP->outWorld.data;
+	if (customOutputData) {
+		delete [] (unsigned char*)myData->sequenceDataP->outWorld.data;
+		myData->sequenceDataP->outWorld.data = NULL;
+	}
 	if (outputImg) gEffectHost->clipReleaseImage(outputImg);
 	
 	return status;
