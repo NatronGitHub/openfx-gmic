@@ -11,3 +11,4 @@ ports:
   - name: libpng
   - name: expat
   - name: gsed
+  - name: libomp
