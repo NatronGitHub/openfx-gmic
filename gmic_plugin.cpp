@@ -285,9 +285,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 #else
 	effectData = pluginGlobalData.pluginData[globalDataP->pluginIndex];
 	bool hasContent = true;
-#endif	
-	
-	globalDataP->inplaceProcessing = false;
+#endif
 
 #ifdef AE_PLUGIN
 	globalDataP->param[0] = Parameter("Input", "", PT_LAYER);
@@ -419,6 +417,10 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 	++p;
 	globalDataP->param[p] = Parameter("Output Layer", "", PT_SELECT, 0, 10, 1, 0, 0, 0, "Merged|Layer 0|Layer -1|Layer -2|Layer -3|Layer -4|Layer -5|Layer -6|Layer -7|Layer -8|Layer -9|");
 	++p;
+	// "Fixed (Inplace)" (index 0) behaves like "Dynamic": the result is always resized to the input
+	// size. Its special path (a per-plug-in in-place flag, set from one instance by a parameter
+	// change callback that the OFX glue never called, and skipping the output copy) was removed.
+	// The entry is kept so that saved projects keep their option indices and labels.
 	globalDataP->param[p] = Parameter("Resize Mode", "", PT_SELECT, 0, 5, 1, 0, 0, 0, "Fixed (Inplace)|Dynamic|Downsample 1/2|Downsample 1/4|Downsample 1/8|Downsample 1/16");
 	++p;
 	globalDataP->param[p] = Parameter("Ignore Alpha", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
@@ -507,33 +509,19 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP)
     return cmd;
 }
 
-int pluginParamChange(int index, SequenceData* sequenceDataP, GlobalData* globalDataP, ContextData* /*contextDataP*/)
+// parameter change callback of the host glue (only the AE glue calls it): nothing to do, see
+// "Resize Mode" in pluginSetup
+int pluginParamChange(int /*index*/, SequenceData* /*sequenceDataP*/, GlobalData* /*globalDataP*/, ContextData* /*contextDataP*/)
 {
-	if (index == PARAM_RESIZE) {
-		globalDataP->inplaceProcessing = PAR_VAL(index) < 1.f;
-	} else {
-	}
 	return 0;
 }
 
 int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextData* contextDataP)
 {
-	/*
-	float* fi = (float*)sequenceDataP->inWorld[0].data;
-	float* fo = (float*)sequenceDataP->outWorld.data;
-	for (int x = 0; x < sequenceDataP->outWorld.width * sequenceDataP->outWorld.height * 4; x++)
-	{
-		*fo = *fi * 2.f;//(float)(rand() % 100) / 100.f;
-		fi++;
-		fo++;
-	}
-	return 0;
-	*/
-
 	int err = 0;
 
 	MySequenceData* mySequenceDataP = (MySequenceData*)sequenceDataP->customSequenceDataP;
-	mySequenceDataP->options.no_inplace_processing = !globalDataP->inplaceProcessing;
+	mySequenceDataP->options.no_inplace_processing = true; // the input buffers are not overwritten
 #ifdef AE_PLUGIN
 	mySequenceDataP->options.custom_commands = ((MyGlobalData*)globalDataP->customGlobalDataP)->effectContent.c_str();
 #else
@@ -595,14 +583,16 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		cmd = "-apply_channels \"_openfx_gmic_cmd\",rgb";
 	}
 	
-	if (!globalDataP->inplaceProcessing) {
+	{
+		// Resize Mode: "Downsample 1/N" processes a downsampled input; the result is always resized
+		// to the input size ("Fixed (Inplace)" and "Dynamic" alike)
 		float ds = PAR_VAL(PARAM_RESIZE);
 		if (ds >= 2.f) {
 			ds = pow(2.f, ds - 1.f);
 			cmd = " -resize " + intToString(sequenceDataP->inWorld[0].width / (int)ds) + "," + intToString(sequenceDataP->inWorld[0].height / (int)ds) + " " + cmd;
 		}
 		cmd += " -resize " + intToString(sequenceDataP->inWorld[0].width) + "," + intToString(sequenceDataP->inWorld[0].height);
- 	}
+	}
 	int verbosity = (int)PAR_VAL(PARAM_VERBOSITY) - 1;
 	int seed = (int)PAR_VAL(PARAM_SRAND);
 	bool animated_seed = (int)PAR_VAL(PARAM_ANIMSEED);
@@ -620,57 +610,55 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	string errmsg = string(((MySequenceData*)(sequenceDataP->customSequenceDataP))->options.error_message_buffer);
 
 	if (result == 0) {
-		if (!globalDataP->inplaceProcessing) {
-			int idx = (int)PAR_VAL(PARAM_OUTPUT);
-			if (idx > 0) {
-				idx = nofImages - idx;
-				if (idx < 0) idx = 0;
-			}
+		int idx = (int)PAR_VAL(PARAM_OUTPUT);
+		if (idx > 0) {
+			idx = nofImages - idx;
+			if (idx < 0) idx = 0;
+		}
 
-			if (nofImages == 0 || (unsigned)idx >= nofImages || images[idx].spectrum == 0 || !images[idx].data) {
-				result = -1;
-				errmsg = "The image produced by G'MIC is empty.";
-			} else {
-				// Planar output R,G,B,A from 1 (G), 2 (GA), 3 (RGB) or 4+ (RGBA) channels. The G'MIC
-				// result is anchored at the first input's rectangle, the output has its own rectangle
-				// (both in pixels, rows top-down in the planar buffers): copy the overlap, clear the rest.
-				const World& out = sequenceDataP->outWorld;
-				const int dw = out.width, dh = out.height;
-				const int sw = (int)images[idx].width, sh = (int)images[idx].height;
-				// G'MIC anchors images at their top-left corner: a result of another size than the first
-				// input keeps the input's left and top edges (pixel y goes up)
-				const int sx1 = sequenceDataP->inWorld[0].origin_x;
-				const int sy1 = sequenceDataP->inWorld[0].origin_y + sequenceDataP->inWorld[0].height - sh;
-				const int dx1 = out.origin_x, dy1 = out.origin_y;
-				const size_t dplane = (size_t)dw * (size_t)dh, splane = (size_t)sw * (size_t)sh;
-				float* const dst = (float*)out.data;
-				const float* const src = (const float*)images[idx].data;
-				const unsigned int spectrum = images[idx].spectrum;
-				// source plane for each output channel, or NULL for opaque alpha
-				const float* plane[4];
-				for (int c = 0; c < 3; ++c) plane[c] = src + (spectrum >= 3 ? splane * c : 0);
-				plane[3] = (spectrum == 2) ? src + splane : (spectrum >= 4 ? src + splane * 3 : NULL);
-				const bool same = (sw == dw && sh == dh && sx1 == dx1 && sy1 == dy1);
-				if (!same) {
-					memset(dst, 0, dplane * 4 * sizeof(float));
+		if (nofImages == 0 || (unsigned)idx >= nofImages || images[idx].spectrum == 0 || !images[idx].data) {
+			result = -1;
+			errmsg = "The image produced by G'MIC is empty.";
+		} else {
+			// Planar output R,G,B,A from 1 (G), 2 (GA), 3 (RGB) or 4+ (RGBA) channels. The G'MIC
+			// result is anchored at the first input's rectangle, the output has its own rectangle
+			// (both in pixels, rows top-down in the planar buffers): copy the overlap, clear the rest.
+			const World& out = sequenceDataP->outWorld;
+			const int dw = out.width, dh = out.height;
+			const int sw = (int)images[idx].width, sh = (int)images[idx].height;
+			// G'MIC anchors images at their top-left corner: a result of another size than the first
+			// input keeps the input's left and top edges (pixel y goes up)
+			const int sx1 = sequenceDataP->inWorld[0].origin_x;
+			const int sy1 = sequenceDataP->inWorld[0].origin_y + sequenceDataP->inWorld[0].height - sh;
+			const int dx1 = out.origin_x, dy1 = out.origin_y;
+			const size_t dplane = (size_t)dw * (size_t)dh, splane = (size_t)sw * (size_t)sh;
+			float* const dst = (float*)out.data;
+			const float* const src = (const float*)images[idx].data;
+			const unsigned int spectrum = images[idx].spectrum;
+			// source plane for each output channel, or NULL for opaque alpha
+			const float* plane[4];
+			for (int c = 0; c < 3; ++c) plane[c] = src + (spectrum >= 3 ? splane * c : 0);
+			plane[3] = (spectrum == 2) ? src + splane : (spectrum >= 4 ? src + splane * 3 : NULL);
+			const bool same = (sw == dw && sh == dh && sx1 == dx1 && sy1 == dy1);
+			if (!same) {
+				memset(dst, 0, dplane * 4 * sizeof(float));
+			}
+			// overlap, in pixel coordinates (y up)
+			const int x1 = std::max(sx1, dx1), x2 = std::min(sx1 + sw, dx1 + dw);
+			const int y1 = std::max(sy1, dy1), y2 = std::min(sy1 + sh, dy1 + dh);
+			for (int c = 0; c < 4; ++c) {
+				if (same) {
+					if (plane[c]) memcpy(dst + dplane * c, plane[c], dplane * sizeof(float));
+					else std::fill(dst + dplane * c, dst + dplane * (c + 1), 255.f);
+					continue;
 				}
-				// overlap, in pixel coordinates (y up)
-				const int x1 = std::max(sx1, dx1), x2 = std::min(sx1 + sw, dx1 + dw);
-				const int y1 = std::max(sy1, dy1), y2 = std::min(sy1 + sh, dy1 + dh);
-				for (int c = 0; c < 4; ++c) {
-					if (same) {
-						if (plane[c]) memcpy(dst + dplane * c, plane[c], dplane * sizeof(float));
-						else std::fill(dst + dplane * c, dst + dplane * (c + 1), 255.f);
-						continue;
-					}
-					for (int y = y1; y < y2; ++y) {
-						float* drow = dst + dplane * c + (size_t)(dh - 1 - (y - dy1)) * dw + (x1 - dx1);
-						if (plane[c]) {
-							const float* srow = plane[c] + (size_t)(sh - 1 - (y - sy1)) * sw + (x1 - sx1);
-							memcpy(drow, srow, (size_t)std::max(0, x2 - x1) * sizeof(float));
-						} else {
-							std::fill(drow, drow + std::max(0, x2 - x1), 255.f);
-						}
+				for (int y = y1; y < y2; ++y) {
+					float* drow = dst + dplane * c + (size_t)(dh - 1 - (y - dy1)) * dw + (x1 - dx1);
+					if (plane[c]) {
+						const float* srow = plane[c] + (size_t)(sh - 1 - (y - sy1)) * sw + (x1 - sx1);
+						memcpy(drow, srow, (size_t)std::max(0, x2 - x1) * sizeof(float));
+					} else {
+						std::fill(drow, drow + std::max(0, x2 - x1), 255.f);
 					}
 				}
 			}
