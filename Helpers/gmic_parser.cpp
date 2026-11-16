@@ -234,8 +234,12 @@ void processParam(const string& s, EffectParameter& cp)
 		strReplace(cp.defaultValue, ",", "|");
 	} else if (cp.paramType == "value") {
 		// 'value(value)'
-		// Add a pre-defined value parameter (not displayed).
-		cp.defaultValue = pval;
+		// Add a pre-defined value parameter (not displayed). It is passed as a quoted string, so
+		// strip quotes from a quoted value ('value("-1")'), or they would be passed literally.
+		cp.defaultValue = strTrim(pval);
+		if (cp.defaultValue.size() >= 2 && cp.defaultValue[0] == '"' && cp.defaultValue[cp.defaultValue.size() - 1] == '"') {
+			cp.defaultValue = cp.defaultValue.substr(1, cp.defaultValue.size() - 2);
+		}
 	} else if (cp.paramType == "file" || cp.paramType == "filein" || cp.paramType == "fileout") {
 		// 'file[_in,_out](_default_filename)'
 		// Add a filename parameter (as a filechooser).

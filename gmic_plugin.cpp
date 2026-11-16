@@ -479,7 +479,9 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP)
                     continue;
                 }
                 string s = PAR_TXT(i);
-                // escape double quotes, or a text containing one (e.g. G'MIC code) ends the argument early
+                // G'MIC un-escapes \ and \" inside "...": escape backslashes first (e.g. Windows paths),
+                // then double quotes (or a text containing one, e.g. G'MIC code, ends the argument early)
+                strReplace(s, "\\", "\\\\");
                 strReplace(s, "\"", "\\\"");
                 cmd += "\"" + s + "\",";
             } else if (PAR_TYPE(i) == PT_COLOR) {
@@ -549,6 +551,11 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		if (sequenceDataP->outWorld.data) {
 			memset(sequenceDataP->outWorld.data, 0, (size_t)sequenceDataP->outWorld.height * (size_t)sequenceDataP->outWorld.rowBytes);
 		}
+#ifdef OFX_PLUGIN
+		if (gMessageSuiteV2) {
+			gMessageSuiteV2->clearPersistentMessage(contextDataP->instance);
+		}
+#endif
 		return err;
 	}
 
@@ -576,9 +583,16 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	// Some filters return more by default, e.g. Fade Layers, Morph Layers, Tiles to Layers.
 	cmd += " -if {$!>" + intToString(MAX_NOF_LAYERS) + "} -keep[-" + intToString(MAX_NOF_LAYERS) + "--1] -fi";
 
+	// Ignore Alpha: apply_channels takes the command as a quoted string, which it un-escapes
+	// again, so quoting the command (whose text arguments are already escaped) breaks any text
+	// containing a quote or backslash. Define it as a custom command and apply that instead.
+	string customCommands = mySequenceDataP->options.custom_commands ? mySequenceDataP->options.custom_commands : "";
 	if (PAR_VAL(PARAM_NOALPHA) > 0.f) {
-		strReplace(cmd, "\"", "\\\"");
-		cmd = "-apply_channels \"" + cmd + "\",rgb";
+		strReplace(cmd, "\n", " ");
+		strReplace(cmd, "\r", " ");
+		customCommands += "\n_openfx_gmic_cmd :\n  " + cmd + "\n";
+		mySequenceDataP->options.custom_commands = customCommands.c_str();
+		cmd = "-apply_channels \"_openfx_gmic_cmd\",rgb";
 	}
 	
 	if (!globalDataP->inplaceProcessing) {
@@ -613,7 +627,7 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 				if (idx < 0) idx = 0;
 			}
 
-			if (images[idx].spectrum == 0 || !images[idx].data) {
+			if (nofImages == 0 || (unsigned)idx >= nofImages || images[idx].spectrum == 0 || !images[idx].data) {
 				result = -1;
 				errmsg = "The image produced by G'MIC is empty.";
 			} else if ((unsigned)sequenceDataP->outWorld.width == images[idx].width && (unsigned)sequenceDataP->outWorld.height == images[idx].height) {
