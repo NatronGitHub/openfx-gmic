@@ -1293,6 +1293,14 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 		status = kOfxStatFailed;
 	}
 
+#ifndef NO_MULTITHREADED_CONVERSION
+	// if an exception interrupted a conversion, wait for the threads already started before
+	// freeing the buffers they use (and destroying a joinable std::thread would terminate)
+	for (int j = 0; j < NOF_CONVERT_THREADS; ++j) {
+		if (t[j].joinable()) t[j].join();
+	}
+#endif
+
 	// release the data pointers
 	for (int i = 0; i < globalData[pluginIndex].nofInputs; i++) {
 		if (sourceImg[i]) {
