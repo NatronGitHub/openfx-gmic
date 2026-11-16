@@ -157,6 +157,7 @@ public:
 	string paramName;
 	string displayName;
 	string text;
+	string hint; // tooltip (OFX), empty for none
 	float defaultValue[4];
 	float minValue;
 	float maxValue;

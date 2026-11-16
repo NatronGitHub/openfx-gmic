@@ -180,12 +180,15 @@ static const int kNofExtraParams = 1 + 4 + 1 + 2 + 7;
 
 // Ignore Alpha (see pluginProcess): _openfx_gmic_alpha_split stores the alpha channel of every image
 // (an empty image for images without alpha) in the global variable _openfx_gmic_alpha, and
-// _openfx_gmic_alpha_restore appends each one back to the result at the same position, if they have
-// the same size and the result is gray or RGB. When the filter returns another number of images
-// than it got, only the first result (the active layer's) gets the first alpha back: the others
-// can't be matched to an input, and stay without alpha (opaque). Results are processed from the
-// last one, so that appending (which removes the alpha image) does not shift the alphas still to
-// be appended.
+// _openfx_gmic_alpha_restore gives them back to the gray or RGB results of the same size (a result
+// with its own alpha is kept as is), then frees the stored alphas:
+// - a single input: every such result gets a copy of its alpha (e.g. Channels to Layers);
+// - as many results as inputs: each result gets the alpha of the input at the same position;
+// - several inputs and another number of results: only the first result (the active layer's)
+//   gets the first alpha, the others can't be matched to an input.
+// Results of another size (frames, rotation, crop, resize...) stay without alpha, i.e. opaque.
+// The positional case goes from the last result, so that appending (which removes the alpha
+// image) does not shift the alphas still to be appended.
 static const char* const kIgnoreAlphaCommands =
 	"\n_openfx_gmic_alpha_split :\n"
 	"  n=$!\n"
@@ -196,11 +199,16 @@ static const char* const kIgnoreAlphaCommands =
 	"  }\n"
 	"  store[$n--1] _openfx_gmic_alpha\n"
 	"_openfx_gmic_alpha_restore :\n"
-	"  n=$! i $_openfx_gmic_alpha m={$!-$n==$n?$n:min($n,1)}\n"
-	"  repeat $m {\n"
-	"    k={$m-1-$>} a={$n+$k}\n"
-	"    if w#$k==w#$a&&h#$k==h#$a&&d#$k==d#$a&&(s#$k==1||s#$k==3) a[$k,$a] c fi\n"
-	"  }\n"
+	"  n=$! i $_openfx_gmic_alpha _openfx_gmic_alpha=\n"
+	"  if $!-$n==1\n"
+	"    repeat $n { if w#$>==w#$n&&h#$>==h#$n&&d#$>==d#$n&&(s#$>==1||s#$>==3) a[$>] [$n],c fi }\n"
+	"  else\n"
+	"    m={$!-$n==$n?$n:min($n,1)}\n"
+	"    repeat $m {\n"
+	"      k={$m-1-$>} a={$n+$k}\n"
+	"      if w#$k==w#$a&&h#$k==h#$a&&d#$k==d#$a&&(s#$k==1||s#$k==3) a[$k,$a] c fi\n"
+	"    }\n"
+	"  fi\n"
 	"  if $!>$n rm[$n--1] fi\n";
 
 class PluginGlobalData
@@ -447,6 +455,8 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 	globalDataP->param[p] = Parameter("Resize Mode", "", PT_SELECT, 0, 5, 1, 0, 0, 0, "Fixed (Inplace)|Dynamic|Downsample 1/2|Downsample 1/4|Downsample 1/8|Downsample 1/16");
 	++p;
 	globalDataP->param[p] = Parameter("Ignore Alpha", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
+	globalDataP->param[p].hint = "Run the filter on the RGB channels only, then give the inputs' alpha back to the results. "
+		"Results of another size than the input (frames, rotation, crop, resize...) are opaque.";
 	++p;
 	globalDataP->param[p] = Parameter("Preview/Draft Mode", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
 	if (!hasContent || effectData.command == effectData.preview_command) {
@@ -600,12 +610,14 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 
 	// Ignore Alpha: the alpha channels of all the images are split off and stored, the command runs
 	// on all the RGB images at once (multi-input filters see every layer, extra results are kept),
-	// then each result gets back the alpha of the input at the same position (see
-	// kIgnoreAlphaCommands). The command stays at the top level, as with Ignore Alpha off and in
+	// then the results of the same size get the alpha back (see kIgnoreAlphaCommands: results of
+	// another size are opaque). The command stays at the top level, as with Ignore Alpha off and in
 	// G'MIC-Qt: inside a custom command, $1, $*, $#... in text parameters would be substituted, and
 	// apply_channels processed the images one by one, keeping a single result for each.
-	string customCommands = mySequenceDataP->options.custom_commands ? mySequenceDataP->options.custom_commands : "";
+	// customCommands (the plug-in's commands plus the helpers) must live until gmic_call() returns.
+	string customCommands;
 	if (PAR_VAL(PARAM_NOALPHA) > 0.f) {
+		if (mySequenceDataP->options.custom_commands) customCommands = mySequenceDataP->options.custom_commands;
 		customCommands += kIgnoreAlphaCommands;
 		mySequenceDataP->options.custom_commands = customCommands.c_str();
 		cmd = "-_openfx_gmic_alpha_split " + cmd + " -_openfx_gmic_alpha_restore";
