@@ -72,6 +72,13 @@ $(GMICSRC):
 
 $(GMICSOURCES): $(GMICSRC)
 	tar --strip-components 2 -zxvf $< $(patsubst %,$(GMICSRCDIR)/src/%, $@)
+	@case $@ in gmic.h|gmic.cpp) sh patches/gmic-apple-abort.sh $@ || { rm -f $@; exit 1; };; esac
+
+# Local patches to the extracted G'MIC sources (re-extracted when a patch changes):
+# - gmic-apple-abort.sh: enable G'MIC's abort support on macOS too, without which an error inside
+#   an OpenMP loop terminates the host (https://github.com/NatronGitHub/openfx-gmic/issues/41,
+#   reported upstream as https://github.com/GreycLab/gmic/issues/219)
+gmic.h gmic.cpp: patches/gmic-apple-abort.sh
 
 distclean: clean
 	-rm $(GMICSRC) $(GMICSOURCES)
