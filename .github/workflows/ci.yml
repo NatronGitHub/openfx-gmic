@@ -126,7 +126,10 @@ jobs:
     # macOS arm64 runners are scarce (Natron CI policy): start only once Linux and Windows have
     # passed. Merging only requires Linux and Windows; macOS also builds nightly.
     needs: [changes, linux, windows]
-    if: needs.changes.outputs.run == 'true'
+    # on the nightly run, macOS builds even if a Linux/Windows variant (debug, C++20) failed
+    if: >-
+      always() && needs.changes.outputs.run == 'true' &&
+      (github.event_name == 'schedule' || (needs.linux.result == 'success' && needs.windows.result == 'success'))
     timeout-minutes: 60
     defaults:
       run:
