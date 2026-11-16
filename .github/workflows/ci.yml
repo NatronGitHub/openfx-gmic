@@ -1,7 +1,13 @@
 name: Continuous Integration
 
+# Natron CI policy: per PR/push, exactly three full builds plus tests (macOS 15 arm64 with the
+# system clang and MacPorts libraries, Ubuntu 24.04, Windows MSYS2 UCRT64). Extra variants (debug
+# builds) run weekly or on demand; build artifacts are uploaded only on demand or for pre-release tags.
+
 on:
   workflow_dispatch: {}
+  schedule:
+    - cron: '17 3 * * 1' # weekly, Monday 03:17 UTC: also builds the debug variant
   # pushes to master (and tags) only: pull requests are built by the pull_request trigger,
   # so that each PR push is not built twice
   push:
@@ -19,9 +25,12 @@ on:
       - 'Licence_*.txt'
       - '.github/ISSUE_TEMPLATE/**'
 
+# PRs: one group per PR number (branch names can collide across forks), and a new push cancels the running build. Other events (master, tags,
+# schedule, workflow_dispatch): one group per run, so that no run is cancelled or replaced while
+# pending (a concurrency group keeps only one pending run).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -29,11 +38,19 @@ permissions:
 env:
   # number of plug-ins expected from the pinned G'MIC version: update when upgrading G'MIC
   GMIC_PLUGIN_COUNT: 360
+  # extra variants (debug) only on the weekly schedule or on demand
+  BUILD_VARIANTS: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+  # artifacts only on demand or for pre-release tags (containing "alpha", "beta" or "rc", e.g.
+  # Natron-2.6.0-rc1; contains() is case-insensitive)
+  UPLOAD_ARTIFACTS: ${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && (contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc'))) }}
 
 jobs:
   linux:
     name: Linux (Ubuntu 24.04)
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash -eo pipefail {0}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,7 +58,8 @@ jobs:
       - name: Install packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libfftw3-dev zlib1g-dev libcurl4-openssl-dev libpng-dev libexpat1-dev libgl-dev libglu1-mesa-dev
+          sudo apt-get install -y pkg-config libfftw3-dev zlib1g-dev libcurl4-openssl-dev libpng-dev libexpat1-dev \
+            libgl-dev libglu1-mesa-dev
       - name: Cache G'MIC sources
         uses: actions/cache@v4
         with:
@@ -51,45 +69,45 @@ jobs:
             gmic_libc.h
             gmic_stdlib_gmic.h
           key: gmic-src-${{ hashFiles('Makefile') }}
-      - name: Build (release)
-        run: make -j4 CONFIG=release
+      - name: Build (release, OpenMP)
+        run: make -j4 CONFIG=release OPENMP=1
       - name: Describe all plug-ins
         run: .github/workflows/describe_plugins.sh GMIC_OFX/Linux-64-release $GMIC_PLUGIN_COUNT
       - name: Build (debug)
-        run: make -j4 CONFIG=debug
+        if: env.BUILD_VARIANTS == 'true'
+        run: make -j4 CONFIG=debug OPENMP=1
       - name: Upload bundle
+        if: env.UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: openfx-gmic-linux-release
           path: GMIC_OFX/Linux-64-release/GMIC.ofx.bundle
 
   macos:
-    name: macOS 15 (Apple clang, MacPorts libraries)
+    name: macOS 15 arm64 (Apple clang, MacPorts libraries)
     runs-on: macos-15
+    defaults:
+      run:
+        shell: bash -eo pipefail {0}
+    env:
+      # Apple clang (the system compiler, pinned to /usr/bin so that a MacPorts clang_select can't
+      # take over clang++) with the MacPorts libraries found through MacPorts' pkg-config. MacPorts
+      # LLVM/clang is not used to build on macOS.
+      MAKE_ARGS: CC=/usr/bin/clang CXX=/usr/bin/clang++ OPENMP=1
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      # the only dependency cache on macOS: setup-macports caches the MacPorts installation
+      # (the G'MIC sources are downloaded on each run)
       - name: Install MacPorts and dependencies
         uses: melusina-org/setup-macports@103eded5f10979e927bffcd6d0b86cbbdb2c3bb3 # v1.1.6
         with:
           parameters: .github/parameters/setup-macports.yaml
-      - name: Cache G'MIC sources
-        uses: actions/cache@v4
-        with:
-          path: |
-            gmic_*.tar.gz
-            gmic_libc.cpp
-            gmic_libc.h
-            gmic_stdlib_gmic.h
-          key: gmic-src-${{ hashFiles('Makefile') }}
-      # Apple clang (the system compiler, pinned to /usr/bin so that a MacPorts clang_select can't
-      # take over clang++) with the MacPorts libraries, found through MacPorts' pkg-config:
-      # MacPorts LLVM/clang is not used to build on macOS.
-      - name: Build (release)
+      - name: Build (release, OpenMP)
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
-          make -j4 CONFIG=release CC=/usr/bin/clang CXX=/usr/bin/clang++
+          make -j4 CONFIG=release $MAKE_ARGS
       - name: Describe all plug-ins
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
@@ -97,17 +115,19 @@ jobs:
             HOST_LDFLAGS=-L/opt/local/lib \
             .github/workflows/describe_plugins.sh GMIC_OFX/Darwin-64-release $GMIC_PLUGIN_COUNT
       - name: Build (debug)
+        if: env.BUILD_VARIANTS == 'true'
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
-          make -j4 CONFIG=debug CC=/usr/bin/clang CXX=/usr/bin/clang++
+          make -j4 CONFIG=debug $MAKE_ARGS
       - name: Upload bundle
+        if: env.UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: openfx-gmic-macos-release
           path: GMIC_OFX/Darwin-64-release/GMIC.ofx.bundle
 
   windows:
-    name: Windows (MSYS2 MinGW64)
+    name: Windows (MSYS2 UCRT64)
     runs-on: windows-2022
     defaults:
       run:
@@ -119,13 +139,13 @@ jobs:
       - name: Set up MSYS2
         uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           update: true
           install: >-
             git make
-            mingw-w64-x86_64-cc mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-fftw mingw-w64-x86_64-zlib mingw-w64-x86_64-curl mingw-w64-x86_64-libpng
-            mingw-w64-x86_64-expat
+            mingw-w64-ucrt-x86_64-cc mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-fftw mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-curl
+            mingw-w64-ucrt-x86_64-libpng mingw-w64-ucrt-x86_64-expat
       - name: Cache G'MIC sources
         uses: actions/cache@v4
         with:
@@ -135,19 +155,28 @@ jobs:
             gmic_libc.h
             gmic_stdlib_gmic.h
           key: gmic-src-${{ hashFiles('Makefile') }}
-      - name: Build (release)
-        run: make -j4 CONFIG=release
+      - name: Build (release, OpenMP)
+        run: |
+          set -eo pipefail
+          make -j4 CONFIG=release OPENMP=1
       - name: Describe all plug-ins
         run: |
-          BUILD_DIR=$(find GMIC_OFX -maxdepth 1 -type d -name 'MINGW64*-release' | head -1)
+          set -eo pipefail
+          BUILD_DIR=$(find GMIC_OFX -maxdepth 1 -type d -name '*-release' | head -1)
           .github/workflows/describe_plugins.sh "$BUILD_DIR" $GMIC_PLUGIN_COUNT
       - name: Build (debug)
-        run: make -j4 CONFIG=debug
-      - name: Collect bundle
+        if: env.BUILD_VARIANTS == 'true'
         run: |
+          set -eo pipefail
+          make -j4 CONFIG=debug OPENMP=1
+      - name: Collect bundle
+        if: env.UPLOAD_ARTIFACTS == 'true'
+        run: |
+          set -eo pipefail
           mkdir -p Bundle
-          cp -R "$(find GMIC_OFX -maxdepth 1 -type d -name 'MINGW64*-release' | head -1)/GMIC.ofx.bundle" Bundle/
+          cp -R "$(find GMIC_OFX -maxdepth 1 -type d -name '*-release' | head -1)/GMIC.ofx.bundle" Bundle/
       - name: Upload bundle
+        if: env.UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: openfx-gmic-windows-release
