@@ -175,7 +175,9 @@ jobs:
       - name: Build (release, OpenMP)
         run: |
           set -eo pipefail
-          make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17
+          # GNU dialect: Makefile.master passes -U__STRICT_ANSI__ on MinGW, which breaks libstdc++
+          # (gcc >= 16 <limits>: no operator""Q) under a strict -std=c++NN
+          make -j4 CONFIG=release OPENMP=1 CXXSTD=gnu++17
       - name: Describe all plug-ins
         run: |
           set -eo pipefail
@@ -185,7 +187,7 @@ jobs:
         if: env.BUILD_VARIANTS == 'true'
         run: |
           set -eo pipefail
-          make -j4 CONFIG=debug OPENMP=1 CXXSTD=c++17
+          make -j4 CONFIG=debug OPENMP=1 CXXSTD=gnu++17
       - name: Collect bundle
         if: env.UPLOAD_ARTIFACTS == 'true'
         run: |
@@ -203,6 +205,6 @@ jobs:
         run: |
           set -eo pipefail
           (cd GMIC_OFX && make clean CONFIG=release)
-          make -j4 CONFIG=release OPENMP=1 CXXSTD=c++20
+          make -j4 CONFIG=release OPENMP=1 CXXSTD=gnu++20
           BUILD_DIR=$(find GMIC_OFX -maxdepth 1 -type d -name '*-release' | head -1)
           .github/workflows/describe_plugins.sh "$BUILD_DIR" $GMIC_PLUGIN_COUNT
