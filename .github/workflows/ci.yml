@@ -4,11 +4,16 @@ name: Continuous Integration
 # system clang and MacPorts libraries, Ubuntu 24.04, Windows MSYS2 UCRT64). Extra variants (debug
 # builds, a C++20 build) run weekly or on demand; the per-PR builds use C++17 (Natron RB-2.6
 # policy: Qt5 builds C++17, Qt6 builds C++20); build artifacts are uploaded only on demand or for pre-release tags.
+#
+# Frugal CI (the NatronGitHub runners are shared by all repos): one run per change. Pushes run CI
+# only on master and tags; feature branches run through their pull request. Draft pull requests
+# don't run CI. Superseded runs are cancelled, except for tags. The weekly run is skipped when
+# master didn't change. Jobs time out.
 
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: '17 3 * * 1' # weekly, Monday 03:17 UTC: also builds the debug variant
+    - cron: '17 3 * * 1' # weekly, Monday 03:17 UTC: also builds the variants (debug, C++20)
   # pushes to master (and tags) only: pull requests are built by the pull_request trigger,
   # so that each PR push is not built twice
   push:
@@ -20,18 +25,19 @@ on:
       - 'Licence_*.txt'
       - '.github/ISSUE_TEMPLATE/**'
   pull_request:
+    types: [ opened, synchronize, reopened, ready_for_review ]
     paths-ignore:
       - COPYING
       - README
       - 'Licence_*.txt'
       - '.github/ISSUE_TEMPLATE/**'
 
-# PRs: one group per PR number (branch names can collide across forks), and a new push cancels the running build. Other events (master, tags,
-# schedule, workflow_dispatch): one group per run, so that no run is cancelled or replaced while
-# pending (a concurrency group keeps only one pending run).
+# One group per event type and PR number (branch names can collide across forks) or ref (master,
+# tags): a new run cancels the superseded one, except for tags. The event type keeps a master push
+# from cancelling the weekly or on-demand run, which also builds the variants.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
   contents: read
@@ -46,9 +52,32 @@ env:
   UPLOAD_ARTIFACTS: ${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && (contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc'))) }}
 
 jobs:
+  # Skip the weekly scheduled run if master didn't change since the previous one
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'schedule' # only the scheduled run needs the history
+        with:
+          fetch-depth: 50
+      - id: check
+        run: |
+          if [ "${{ github.event_name }}" != schedule ] || [ -n "$(git log --since='8 days ago' --format=%h -1)" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"; echo "No commits in the last 8 days: skipping."
+          fi
+
   linux:
     name: Linux (Ubuntu 24.04)
     runs-on: ubuntu-24.04
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash -eo pipefail {0}
@@ -94,6 +123,9 @@ jobs:
   macos:
     name: macOS 15 arm64 (Apple clang, MacPorts libraries)
     runs-on: macos-15
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash -eo pipefail {0}
@@ -146,6 +178,9 @@ jobs:
   windows:
     name: Windows (MSYS2 UCRT64)
     runs-on: windows-2022
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    timeout-minutes: 60
     defaults:
       run:
         shell: msys2 {0}
