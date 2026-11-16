@@ -166,7 +166,6 @@ OfxMessageSuiteV1		*gMessageSuite = 0;
 OfxInteractSuiteV1		*gInteractHost = 0;
 
 // some flags about the host's behaviour
-int gHostSupportsMultipleBitDepths = false;
 int gHostIsNatron = false;
 
 // GlobalData* globalDataP = NULL;
@@ -493,14 +492,12 @@ static OfxStatus getClipPreferences(int pluginIndex, OfxImageEffectHandle effect
 	ofxuClipGetFormat(myData->input[0], bitDepth, isRGBA, true); // get the unmapped clip component
 
 	// get the strings used to label the various bit depths
-	const char *bitDepthStr = bitDepth == 8 ? kOfxBitDepthByte : (bitDepth == 16 ? kOfxBitDepthShort : kOfxBitDepthFloat);
 	const char *componentStr = isRGBA ? kOfxImageComponentRGBA : kOfxImageComponentAlpha;
 
 	// set out output to be the same same as the input, component and bitdepth
 	gPropHost->propSetString(outArgs, "OfxImageClipPropComponents_Output", 0, componentStr);
-	if (gHostSupportsMultipleBitDepths) {
-		gPropHost->propSetString(outArgs, "OfxImageClipPropDepth_Output", 0, bitDepthStr);
-	}
+	// The output depth is not set: the plug-in declares kOfxImageEffectPropSupportsMultipleClipDepths=0,
+	// so the host gives all clips the same depth (and a spec-conformant host refuses the write).
 	int v = 0;
 	GlobalData* globalDataP = &globalData[pluginIndex];
 	gParamHost->paramGetValue(myData->param[PARAM_ANIMSEED], &v);
@@ -1433,13 +1430,10 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 	// set the component types we can handle on our output
 	gPropHost->propSetString(props, kOfxImageEffectPropSupportedComponents, 0, kOfxImageComponentRGBA);
 
-    gPropHost->propSetString(props, kOfxImageEffectPluginRenderThreadSafety, 0, kOfxImageEffectRenderFullySafe); // kOfxImageEffectRenderUnsafe);//kOfxImageEffectRenderInstanceSafe);
+	// clip properties only (thread safety, frame threading, multi-resolution and multiple clip
+	// PARs/depths are effect properties, set in describe())
 	gPropHost->propSetInt(props, kOfxImageEffectPropSupportsTiles, 0, 0);
-	gPropHost->propSetInt(props, kOfxImageEffectPluginPropHostFrameThreading, 0, 0);
-	gPropHost->propSetInt(props, kOfxImageEffectPropSupportsMultiResolution, 0, 0);
 	gPropHost->propSetInt(props, kOfxImageEffectPropTemporalClipAccess, 0, 1);
-	gPropHost->propSetInt(props, kOfxImageEffectPropSupportsMultipleClipPARs, 0, 0);
-	gPropHost->propSetInt(props, kOfxImageEffectPropSupportsMultipleClipDepths, 0, 0);
 
 	// fetch the parameter set from the effect
 	OfxParamSetHandle paramSet;
@@ -1553,10 +1547,7 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 				gPropHost->propSetInt(props, kOfxImageClipPropOptional, 0, 1);
 			}
 			gPropHost->propSetString(props, kOfxImageEffectPropSupportedComponents, 0, kOfxImageComponentRGBA);
-			gPropHost->propSetString(props, kOfxImageEffectPluginRenderThreadSafety, 0, kOfxImageEffectRenderFullySafe); // kOfxImageEffectRenderUnsafe);//kOfxImageEffectRenderInstanceSafe);
 			gPropHost->propSetInt(props, kOfxImageEffectPropSupportsTiles, 0, 0);
-			gPropHost->propSetInt(props, kOfxImageEffectPluginPropHostFrameThreading, 0, 0);
-			gPropHost->propSetInt(props, kOfxImageEffectPropSupportsMultiResolution, 0, 0);
 			gPropHost->propSetInt(props, kOfxImageEffectPropTemporalClipAccess, 0, 1);
 			l++;
 			continue;
@@ -1649,7 +1640,6 @@ static string validateXMLString(std::string const & s)
 static OfxStatus describe(int pluginIndex, OfxImageEffectHandle effect)
 {
 	// record a few host features
-	gPropHost->propGetInt(gHost->host, kOfxImageEffectPropSupportsMultipleClipDepths, 0, &gHostSupportsMultipleBitDepths);
 #ifdef OFX_EXTENSIONS_NATRON
 	gPropHost->propGetInt(gHost->host, kNatronOfxHostIsNatron, 0, &gHostIsNatron);
 #endif
@@ -1665,6 +1655,8 @@ static OfxStatus describe(int pluginIndex, OfxImageEffectHandle effect)
 
 	// say we cannot support multiple pixel depths
 	gPropHost->propSetInt(effectProps, kOfxImageEffectPropSupportsMultipleClipDepths, 0, 0);
+	// nor multiple clip pixel aspect ratios (the default, set explicitly)
+	gPropHost->propSetInt(effectProps, kOfxImageEffectPropSupportsMultipleClipPARs, 0, 0);
 	
 	// set the bit depths the plugin can handle
 	gPropHost->propSetString(effectProps, kOfxImageEffectPropSupportedPixelDepths, 0, kOfxBitDepthFloat);
