@@ -10,14 +10,16 @@
 #                definition replaces the built-in one, also when the command is called by
 #                another one (e.g. rep_ncee from fx_ncee).
 #
-#  Format      : '#@hotfix <command> <checksum>' starts a block, which ends at the next
-#                '#@hotfix' line. <checksum> is the FNV-1a 64-bit hash of the built-in
-#                definition the fix was made from, as G'MIC reads it (comments and blank
-#                lines removed, lines trimmed, each followed by a newline). The plug-in
-#                applies a block only if the built-in definition still has this checksum,
-#                and otherwise prints a warning with the checksum it found (the CI describe
-#                test fails on it): when G'MIC changes the command, review the fix, and drop
-#                it once upstream has fixed the bug.
+#  Format      : '#@hotfix <command> <checksum> [<callee>:<checksum>...]' starts a block,
+#                which ends at the next '#@hotfix' line. <checksum> is the FNV-1a 64-bit
+#                hash of the built-in definition the fix was made from, as G'MIC reads it
+#                (comments and blank lines removed, lines trimmed, each followed by a
+#                newline). The optional callees are built-in commands that the fix relies
+#                on (e.g. one it calls instead of a misspelt one), with their checksums.
+#                The plug-in applies a block only if all these built-in definitions still
+#                have these checksums, and otherwise prints a warning with the checksum it
+#                found (the CI describe test fails on it): when G'MIC changes one of these
+#                commands, review the fix, and drop it once upstream has fixed the bug.
 #
 #                The '#@openfx_gmic_hotfixes' line gives the G'MIC version (GMICVER in the
 #                Makefile) these fixes were written for: the build fails for another version.
@@ -27,8 +29,10 @@
 #@openfx_gmic_hotfixes 4.0.7
 
 #@hotfix denoise_patchpca b80cb9ad2b4df332
-# Smooth [Patch-PCA] (fx_smooth_patchpca) fails on a flat (e.g. black) image: the noise
-# estimate is 0, every eigenvalue is kept, k reaches size(pY) and pY[k] is read out of bounds.
+# Smooth [Patch-PCA] (fx_smooth_patchpca) reads pY[k] out of bounds whenever every eigenvalue
+# passes the threshold, so that k reaches size(pY): on a flat (e.g. black) image, where the
+# noise estimate is 0, but also on smooth regions of natural images at a low strength, e.g.
+# 'sp lena z 150,150,349,349 denoise_patchpca 0.5,5,7,3'.
 # https://github.com/GreycLab/gmic/issues/219 (bug 2), NatronGitHub/openfx-gmic#41.
 # From src/gmic_stdlib.gmic; fix: 'k<size(pY)?copy(...)'.
 denoise_patchpca : check "${1=1.8} && $1>=0 && isint(${2=7},1) && isint(${3=11},1) && isint(${4=5},1)"
@@ -102,7 +106,7 @@ fx_recolorize :
     }
   }
 
-#@hotfix fx_rep_z_render c7fade49ea7684fb
+#@hotfix fx_rep_z_render c7fade49ea7684fb rep_z_render:24ea9b168818d76a
 # Z-Time calls rep_r_render, which does not exist, instead of rep_z_render.
 # https://github.com/GreycLab/gmic-community/issues/296, NatronGitHub/openfx-gmic#53.
 # From include/reptorian.gmic (gmic-community); fix: 'rep_z_render'.
@@ -111,7 +115,7 @@ fx_rep_z_render :
   else rep_z_render $"*"
   fi
 
-#@hotfix fx_ExposureWeightMap a3b06ac24194632a
+#@hotfix fx_ExposureWeightMap a3b06ac24194632a Sub_BlurPyramid:5cbe9f072629234d
 # Exposure Fusion Weight Map fails with Blur Map on: it calls sub_BlurPyramid, which is
 # defined as Sub_BlurPyramid.
 # https://github.com/GreycLab/gmic-community/issues/297, NatronGitHub/openfx-gmic#53.
@@ -197,58 +201,3 @@ local[1] {
  if $6 rep_dupsdaxy 0,2,$1,$2,$3,$4 tai={$!} add / $tai fi
 }
 a c
-
-#@hotfix samj_Courtepointe 567ca51bc132cd23
-# Random Pattern Courtepointe calls fx_array_mirror with 6 arguments, it now takes 7.
-# https://github.com/GreycLab/gmic-community/issues/300, NatronGitHub/openfx-gmic#53.
-# From include/sylvie_alexandre.gmic (gmic-community); fix: 7th argument 0 (as at its other
-# calls). Not fixed: every "Color Curves" choice then calls the interactive x_color_curves,
-# which fails without a display.
-samj_Courtepointe :
-
- Cossin=$1
- Cossin_Deux=$2
- Repetition=$3
- Croix=$4
- Texture=$5
- Courbes_Interactives_Couleurs=$6
-
- rorschach[-1] {$Cossin}%,1
-
- if $Cossin_Deux==1
-  n[-1] 64,192
- fi
-
- n[-1] 0,255
-
- repeat $Repetition
-  fx_array_mirror[-1] 1,0,0,2,0,0,0
- done
-
- if $Croix==1
-  fx_symmetrizoscope[-1] 5,0,1,0
- fi
-
- if {$Texture==1}
-  samj_Texture_Granuleuse[-1] 0.5,20,80,0,0
- fi
-
- if $Courbes_Interactives_Couleurs==0
-  x_color_curves[-1] rgb
- elif $Courbes_Interactives_Couleurs==1
-  x_color_curves[-1] cmy
- elif $Courbes_Interactives_Couleurs==2
-  x_color_curves[-1] cmyk
- elif $Courbes_Interactives_Couleurs==3
-  x_color_curves[-1] hsi
- elif $Courbes_Interactives_Couleurs==4
-  x_color_curves[-1] hsl
- elif $Courbes_Interactives_Couleurs==5
-  x_color_curves[-1] hsv
- elif $Courbes_Interactives_Couleurs==6
-  x_color_curves[-1] lab
- elif $Courbes_Interactives_Couleurs==7
-  x_color_curves[-1] lch
- elif $Courbes_Interactives_Couleurs==8
-  x_color_curves[-1] ycbcr
- fi

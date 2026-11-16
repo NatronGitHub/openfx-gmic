@@ -107,8 +107,9 @@ FILE(GLOB GMIC_SOURCES
 )
 
 # Hot fixes for G'MIC bugs (see gmic_hotfixes.gmic and the top-level Makefile), embedded as a
-# C++11 raw string literal into gmic_hotfixes.h, in the build directory. They are written for one
-# G'MIC version: fail if gmic.h is another one, so that each fix gets reviewed.
+# null-terminated byte array into gmic_hotfixes.h, in the build directory (searched first, before a
+# header left in the sources by a Makefile build). They are written for one G'MIC version: fail if
+# gmic.h is another one, so that each fix gets reviewed.
 SET(GMIC_HOTFIXES ${CMAKE_CURRENT_SOURCE_DIR}/gmic_hotfixes.gmic)
 SET_PROPERTY(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${GMIC_HOTFIXES} ${CMAKE_CURRENT_SOURCE_DIR}/gmic.h)
 FILE(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/gmic.h GMIC_VERSION_LINE REGEX "^#define gmic_version [0-9]+")
@@ -119,11 +120,14 @@ STRING(REPLACE "." "" GMIC_HOTFIXES_VERSION_NUMBER "${GMIC_HOTFIXES_VERSION}")
 IF(NOT "${GMIC_HOTFIXES_VERSION_NUMBER}" STREQUAL "${GMIC_VERSION_NUMBER}")
   MESSAGE(FATAL_ERROR "gmic_hotfixes.gmic is for G'MIC ${GMIC_HOTFIXES_VERSION}, gmic.h is version ${GMIC_VERSION_NUMBER}: review each fix, see the top of gmic_hotfixes.gmic")
 ENDIF()
-FILE(READ ${GMIC_HOTFIXES} GMIC_HOTFIXES_CONTENT)
-STRING(REPLACE "\r" "" GMIC_HOTFIXES_CONTENT "${GMIC_HOTFIXES_CONTENT}")
-FILE(WRITE ${CMAKE_CURRENT_BINARY_DIR}/gmic_hotfixes.h
-  "// Generated from gmic_hotfixes.gmic by CMake: do not edit.\nstatic const char gmic_hotfixes[] = R\"gmic_hotfixes(\n${GMIC_HOTFIXES_CONTENT})gmic_hotfixes\";\n")
-INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR})
+FILE(READ ${GMIC_HOTFIXES} GMIC_HOTFIXES_HEX HEX)
+STRING(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," GMIC_HOTFIXES_BYTES "${GMIC_HOTFIXES_HEX}")
+STRING(REPLACE "0x0d," "" GMIC_HOTFIXES_BYTES "${GMIC_HOTFIXES_BYTES}") # carriage returns
+FILE(WRITE ${CMAKE_CURRENT_BINARY_DIR}/gmic_hotfixes.h.tmp
+  "// Generated from gmic_hotfixes.gmic by CMake: do not edit.\nstatic const unsigned char gmic_hotfixes[] = {\n${GMIC_HOTFIXES_BYTES}\n0x00 };\n")
+# only rewritten when it changes, so that a new configure does not recompile gmic_plugin.cpp
+CONFIGURE_FILE(${CMAKE_CURRENT_BINARY_DIR}/gmic_hotfixes.h.tmp ${CMAKE_CURRENT_BINARY_DIR}/gmic_hotfixes.h COPYONLY)
+INCLUDE_DIRECTORIES(BEFORE ${CMAKE_CURRENT_BINARY_DIR})
 
 FILE(GLOB GMIC_RESOURCES
   "GMIC_OFX/GMIC.png"

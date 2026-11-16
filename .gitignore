@@ -191,3 +191,4 @@ ofxTestLog.txt
 
 *.bak
 gmic_hotfixes.h
+gmic_hotfixes.version
