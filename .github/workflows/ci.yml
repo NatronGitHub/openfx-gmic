@@ -32,10 +32,11 @@ on:
       - 'Licence_*.txt'
       - '.github/ISSUE_TEMPLATE/**'
 
-# One group per PR number (branch names can collide across forks) or per ref (master, tags): a new
-# run cancels the superseded one, except for tags.
+# One group per event type and PR number (branch names can collide across forks) or ref (master,
+# tags): a new run cancels the superseded one, except for tags. The event type keeps a master push
+# from cancelling the weekly or on-demand run, which also builds the variants.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
@@ -60,6 +61,7 @@ jobs:
       run: ${{ steps.check.outputs.run }}
     steps:
       - uses: actions/checkout@v4
+        if: github.event_name == 'schedule' # only the scheduled run needs the history
         with:
           fetch-depth: 50
       - id: check
