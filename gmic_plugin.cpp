@@ -201,7 +201,8 @@ static const int kNofLayerTimeParams = 2 + 1 + 4;
 // - as many results as inputs: each result gets the alpha of the input at the same position;
 // - several inputs and another number of results: only the first result (the active layer's)
 //   gets the first alpha, the others can't be matched to an input.
-// Results of another size (frames, rotation, crop, resize...) stay without alpha, i.e. opaque.
+// Results of another size (frames, rotation, crop, resize...) stay without alpha, and are made
+// opaque (see kOpaqueResizedCommand).
 // The positional case goes from the last result, so that appending (which removes the alpha
 // image) does not shift the alphas still to be appended.
 static const char* const kIgnoreAlphaCommands =
@@ -225,6 +226,16 @@ static const char* const kIgnoreAlphaCommands =
 	"    }\n"
 	"  fi\n"
 	"  if $!>$n rm[$n--1] fi\n";
+
+// _openfx_gmic_opaque_resized w,h: gives an opaque alpha channel to the gray or RGB images whose
+// size is not w,h (the size of the processed main input). Run just before the final resize to the
+// input size, which would hide the size change: a result without alpha from a premultiplied input
+// gets its colours multiplied by the input's alpha (see multiplyByInputAlphaPlanar in
+// RFX_OFX_Utils.h), which only lines up with a result of the input's size. A rotated, framed or
+// cropped result would otherwise be darkened by the misaligned input alpha (issue #66).
+static const char* const kOpaqueResizedCommand =
+	"\n_openfx_gmic_opaque_resized :\n"
+	"  repeat $! { if (w#$>!=$1||h#$>!=$2)&&(s#$>==1||s#$>==3) to_a[$>] fi }\n";
 
 // Hot fixes for bugs in the G'MIC standard library (gmic_hotfixes.gmic, embedded by the build as
 // the null-terminated array gmic_hotfixes[]): corrected command definitions, passed to G'MIC as
@@ -457,8 +468,8 @@ static string ignoreAlphaNote(const EffectData& effectData)
 	return "\n\nIgnore Alpha: the alpha of each input is put back on the gray or RGB result at the same "
 		"position (a result with its own alpha is kept as is). With only Source connected, every result "
 		"gets Source's alpha. With several inputs connected, if the filter returns a different number of "
-		"images than it got, only the first result gets the first input's alpha. Results whose size "
-		"changed (frames, rotation, crop, resize...) don't get an alpha back.";
+		"images than it got, only the first result gets the first input's alpha. Gray or RGB results "
+		"whose size changed (frames, rotation, crop, resize...) are opaque.";
 }
 
 // Filters that process their layers as successive frames of a clip (issue #63). Their time offsets
@@ -674,7 +685,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 	++p;
 	globalDataP->param[p] = Parameter("Ignore Alpha", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
 	globalDataP->param[p].hint = "Run the filter on the RGB channels only, then give the inputs' alpha back to the results. "
-		"Results of another size than the input (frames, rotation, crop, resize...) are opaque.";
+		"Gray or RGB results of another size than the input (frames, rotation, crop, resize...) are opaque.";
 	++p;
 	globalDataP->param[p] = Parameter("Preview/Draft Mode", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
 	if (!hasContent || effectData.command == effectData.preview_command) {
@@ -783,7 +794,7 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, bool preview)
 // The whole command line: the filter's command (main or preview), with the variables G'MIC-Qt
 // defines, the output layer selection, Ignore Alpha, the Resize Mode, verbosity and seed. Sets the
 // custom commands of the options: customCommands (the filter's #@gui lines, the hot fixes for G'MIC
-// bugs, and the Ignore Alpha helpers), which must outlive the G'MIC call.
+// bugs, the Ignore Alpha helpers and _openfx_gmic_opaque_resized), which must outlive the G'MIC call.
 static
 std::string
 fullCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, unsigned int nofImages, bool isPreview, string& customCommands)
@@ -795,6 +806,7 @@ fullCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, unsigned int n
 	// the filter's #@gui lines, and the hot fixes for G'MIC bugs (gmic_hotfixes.gmic), on every run
 	customCommands = pluginGlobalData.pluginContent[globalDataP->pluginIndex] + '\n' + pluginGlobalData.hotfixes;
 #endif
+	customCommands += kOpaqueResizedCommand;
 	string cmd = gmicCommand(sequenceDataP, globalDataP, isPreview);
 
 	// Ignore Alpha: the alpha channels of all the images are split off and stored, the command runs
@@ -857,12 +869,18 @@ fullCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, unsigned int n
 
 	{
 		// Resize Mode: "Downsample 1/N" processes a downsampled input; the result is always resized
-		// to the input size ("Fixed (Inplace)" and "Dynamic" alike)
+		// to the input size ("Fixed (Inplace)" and "Dynamic" alike). Before that, the gray or RGB
+		// results whose size differs from the processed input get an opaque alpha (see
+		// kOpaqueResizedCommand).
 		float ds = PAR_VAL(PARAM_RESIZE);
+		string processedSize = intToString(sequenceDataP->inWorld[0].width) + "," + intToString(sequenceDataP->inWorld[0].height);
 		if (ds >= 2.f) {
 			ds = pow(2.f, ds - 1.f);
-			cmd = " -resize " + intToString(sequenceDataP->inWorld[0].width / (int)ds) + "," + intToString(sequenceDataP->inWorld[0].height / (int)ds) + " " + cmd;
+			const string dsSize = intToString(sequenceDataP->inWorld[0].width / (int)ds) + "," + intToString(sequenceDataP->inWorld[0].height / (int)ds);
+			cmd = " -resize " + dsSize + " " + cmd;
+			processedSize = dsSize;
 		}
+		cmd += " -_openfx_gmic_opaque_resized " + processedSize;
 		cmd += " -resize " + intToString(sequenceDataP->inWorld[0].width) + "," + intToString(sequenceDataP->inWorld[0].height);
 	}
 	int verbosity = (int)PAR_VAL(PARAM_VERBOSITY) - 1;
@@ -1030,7 +1048,6 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 {
 	int err = 0;
 	sequenceDataP->resultHasAlpha = true;
-	sequenceDataP->resultWidth = sequenceDataP->resultHeight = 0;
 
 	MySequenceData* mySequenceDataP = (MySequenceData*)sequenceDataP->customSequenceDataP;
 	mySequenceDataP->options.no_inplace_processing = true; // the input buffers are not overwritten
@@ -1140,8 +1157,6 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 			const float* const src = (const float*)images[idx].data;
 			const unsigned int spectrum = images[idx].spectrum;
 			sequenceDataP->resultHasAlpha = (spectrum == 2 || spectrum >= 4);
-			sequenceDataP->resultWidth = sw;
-			sequenceDataP->resultHeight = sh;
 			// source plane for each output channel, or NULL for opaque alpha
 			const float* plane[4];
 			for (int c = 0; c < 3; ++c) plane[c] = src + (spectrum >= 3 ? splane * c : 0);
