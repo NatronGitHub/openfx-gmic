@@ -72,11 +72,12 @@ gmic_hotfixes_force:
 
 # COMMERCIAL builds only keep the fixes of commands of their standard library (the others fix
 # code under a licence that these builds leave out, see gmic_stdlib_commercial.txt): a block is
-# left out when its command, or one of its callees, is not in gmic_stdlib_community.h.commands.
+# left out when its command, or one of its callees, is not in gmic_stdlib_community.h.commands
+# (in "#@hotfix <command> <original> <fixed> [callee:checksum...]", fields 2 and 5 onwards).
 ifeq ($(LICENSE),COMMERCIAL)
 HOTFIXES_FILTER = awk -v cmds=gmic_stdlib_community.h.commands ' \
   BEGIN { while ((getline c < cmds) > 0) def[c] = 1; keep = 1 } \
-  /^\#@hotfix / { keep = 1; for (i = 2; i <= NF; i++) if (i != 3) { c = $$i; sub(/:.*/, "", c); if (!(c in def)) keep = 0 } \
+  /^\#@hotfix / { keep = 1; for (i = 2; i <= NF; i++) if (i == 2 || i > 4) { c = $$i; sub(/:.*/, "", c); if (!(c in def)) keep = 0 } \
     if (!keep) print "gmic_hotfixes.h: leaving out the fix of " $$2 " (not in the COMMERCIAL standard library)" > "/dev/stderr" } \
   keep { print }'
 else
