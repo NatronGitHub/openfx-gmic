@@ -424,10 +424,10 @@ foreach(_f IN LISTS GMICSOURCES)
     file(SHA256 "${PROJECT_SOURCE_DIR}/${_f}" _stray)
     file(SHA256 "${GMIC_SRC_DIR}/${_f}" _ours)
     if(NOT _stray STREQUAL _ours)
-      message(FATAL_ERROR "${PROJECT_SOURCE_DIR}/${_f} is not the ${_f} of G'MIC ${GMICVER} "
-        "(left by a Makefile build of another version?), and would be included instead of "
-        "${GMIC_SRC_DIR}/${_f}: remove the G'MIC sources from the source directory (make distclean), "
-        "or update them (make sources)")
+      message(FATAL_ERROR "${PROJECT_SOURCE_DIR}/${_f} is not the ${_f} of this build (G'MIC ${GMICVER}, "
+        "${OFX_LICENSE}, FFT=${GMIC_FFT}; left by a Makefile build of another version, LICENSE or FFT?), "
+        "and would be included instead of ${GMIC_SRC_DIR}/${_f}: remove the G'MIC sources from the "
+        "source directory (make distclean), or update them (make sources LICENSE=${OFX_LICENSE} FFT=${GMIC_FFT})")
     endif()
   endif()
 endforeach()
@@ -463,7 +463,7 @@ if(OFX_LICENSE STREQUAL "COMMERCIAL")
   file(MAKE_DIRECTORY "${GMIC_GENERATED_DIR}")
   execute_process(COMMAND "${GMIC_AWK}" -v "cmds=${GMIC_STDLIB_COMMANDS}" [=[
     BEGIN { while ((getline c < cmds) > 0) def[c] = 1; keep = 1 }
-    { sub(/$/, "") }
+    { sub(/\r$/, "") }
     /^#@hotfix / { keep = 1; for (i = 2; i <= NF; i++) if (i == 2 || i > 4) { c = $i; sub(/:.*/, "", c); if (!(c in def)) keep = 0 }
       if (!keep) print "gmic_hotfixes.h: leaving out the fix of " $2 " (not in the COMMERCIAL standard library)" > "/dev/stderr" }
     keep { print }]=] "${GMIC_HOTFIXES}"
