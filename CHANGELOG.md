@@ -8,7 +8,7 @@ Changes in openfx-gmic since Natron 2.5.0 (tag `Natron-2.5.0`). Natron 2.6 polic
 - The filters now come from G'MIC 4.0.7 and its community filters: 1205 plug-ins (was 360). Many filters' names, parameters and results changed with G'MIC itself.
 - The build downloads only the G'MIC 4.0.7 release tarball (sha256-pinned); gmic-community is no longer fetched separately.
 - Natron no longer quits on macOS when a G'MIC error happens inside an OpenMP loop, e.g. Smooth [Patch-PCA] on a flat image (#41, #56).
-- Bugs in G'MIC 4.0.7 filters are patched in the plug-in until G'MIC releases the fixes (reported upstream): Z-Time, Exposure Fusion Weight Map, Non-Convolution Edge Extraction, Colorize [Photographs], Smooth [Patch-PCA] (#58, part of #53); Jpr Line Edges (#71), Gleam, Layer Manipulation, Montage Multi Rows, Halftone Shapes, Heart Tone, Star Tone (gmic-community #301–#305, #77).
+- Bugs in G'MIC 4.0.7 filters are patched in the plug-in until G'MIC releases the fixes (reported upstream): Z-Time, Exposure Fusion Weight Map, Non-Convolution Edge Extraction, Colorize [Photographs], Smooth [Patch-PCA] (#58, part of #53); Jpr Line Edges (#71), Gleam, Layer Manipulation, Montage Multi Rows, Halftone Shapes, Heart Tone, Star Tone (gmic-community #301–#305, #77); Softlight and Contrast FFT on images with alpha, Mc Flou, Beauty Retouch, Smooth Sketch, Perspective Streak (gmic-community #306–#309, #311), Linify, Intarsia (gmic #223, #224). Color Region and Prime Surface, which upstream disabled as broken, are hidden.
 - Smooth [Patch-PCA] no longer returns NaN on flat areas: CImg's eigen fix is applied until G'MIC includes it (#71, #77).
 
 ### Behaviour changes (saved projects may render differently)
