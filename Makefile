@@ -167,10 +167,13 @@ Licence_pocketfft.txt: pocketfft_hdronly.h
 # - cimg-omp-rand.sh: the random numbers of rand, noise and the math parser in OpenMP loops do not
 #   depend on thread scheduling, so that most seeded filters give the same result at each render
 #   (https://github.com/NatronGitHub/openfx-gmic/issues/44)
+# - cimg-ij-boundary.sh: I()/J() read out of bounds with linear or cubic interpolation and periodic
+#   or Neumann boundaries when y or z is outside the image, which crashes "Spiral Distortion" on
+#   small inputs (https://github.com/GreycLab/CImg/issues/498, fix proposed in GreycLab/CImg#499)
 # - cimg-pocketfft.sh: let CImg compute its FFTs with pocketfft (cimg_use_pocketfft), which
 #   COMMERCIAL builds use instead of FFTW (only applied for FFT=pocketfft)
 gmic.h gmic.cpp: patches/gmic-apple-abort.sh
-CIMG_PATCHES = patches/cimg-math-macro-overread.sh patches/cimg-omp-rand.sh
+CIMG_PATCHES = patches/cimg-math-macro-overread.sh patches/cimg-omp-rand.sh patches/cimg-ij-boundary.sh
 ifeq ($(FFT),pocketfft)
 CIMG_PATCHES += patches/cimg-pocketfft.sh
 endif
