@@ -2074,10 +2074,10 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 		} else if (param.paramType == PT_TEXT) {
 			std::string txt = param.text;
 			bool multiline = false;
-			// the defaults of text entries (text(), flags 0 or 1, not a hidden value()) are already
-			// unescaped by the parser, as G'MIC-Qt does: decoding "\n" again would turn the "\\n"
-			// of text("C:\\new") into a newline. Labels (notes) still need it.
-			if (!((param.flags == 0 || param.flags == 1) && param.displayStatus != DS_HIDDEN)) {
+			// as G'MIC-Qt, the parser already unescaped the defaults of text() and value(), and
+			// file()/folder() defaults are taken as they are: decoding "\n" again would turn the
+			// "\\n" of text("C:\\new") into a newline. Only labels (notes) need it.
+			if (param.flags == 4) {
 				strReplace(txt, "\\r", "\r");
 				strReplace(txt, "\\n", "\n");
 			}

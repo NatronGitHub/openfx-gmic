@@ -803,6 +803,10 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, bool preview)
                         }
                         q += s[k];
                     }
+                    // a trailing odd backslash ("C:\temp\") would escape the closing quote and run
+                    // into the next argument: double it, so that it stays literal (G'MIC-Qt has
+                    // this bug)
+                    if (escaped) q += '\\';
                     s.swap(q);
                 }
                 cmd += "\"" + s + "\",";
