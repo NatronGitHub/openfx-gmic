@@ -121,7 +121,7 @@ IF(GMIC_PATCH_SH)
 ELSEIF(APPLE)
   MESSAGE(FATAL_ERROR "sh not found: cannot apply patches/gmic-apple-abort.sh, which macOS builds need")
 ELSE()
-  MESSAGE(WARNING "sh not found: the patches to the G'MIC sources are not applied (patches/gmic-apple-abort.sh only changes Apple code, but without patches/cimg-omp-rand.sh seeded filters are not reproducible with OpenMP)")
+  MESSAGE(WARNING "sh not found: the patches to the G'MIC sources are not applied (patches/gmic-apple-abort.sh only changes Apple code, but without patches/cimg-omp-rand.sh most seeded filters are not reproducible with OpenMP)")
 ENDIF()
 
 # gmic_plugin_call.cpp replaces gmic_libc.cpp

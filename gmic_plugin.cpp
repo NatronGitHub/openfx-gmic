@@ -608,11 +608,12 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 	// Reproducibility (issue #44): -srand seeds G'MIC's process-global random generator, which
 	// concurrent G'MIC runs share (other instances or frames: the effect is instance-safe; runs are
 	// not serialised, by design). Within a run, patches/cimg-omp-rand.sh makes the random numbers
-	// of OpenMP loops independent of thread scheduling, but they depend on the number of threads.
+	// of rand, noise and the math parser in OpenMP loops independent of thread scheduling (they
+	// depend on the number of threads); patchmatch and G'MIC's parallel command still vary.
 	globalDataP->param[p] = Parameter("Global Random Seed", "", PT_INT, 0, 1<<24, 0, 0, 0, 0, "");
-	globalDataP->param[p].hint = "Seed of the random numbers used by the filter. Results are reproducible for a given seed "
-		"and number of threads, except when several renders run at the same time (concurrent renders share G'MIC's "
-		"random generator).";
+	globalDataP->param[p].hint = "Seed of the random numbers used by the filter. For most filters, results are reproducible "
+		"for a given seed and number of OpenMP threads; filters using patch matching or G'MIC's parallel command, "
+		"and concurrent renders, can still vary.";
 	++p;
 	globalDataP->param[p] = Parameter("Animate Random Seed", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
 	globalDataP->param[p].hint = "Add the frame number to the Global Random Seed, so that the random numbers change "

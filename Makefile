@@ -105,8 +105,8 @@ $(GMICSOURCES): $(GMICSRC)
 # - gmic-apple-abort.sh: enable G'MIC's abort support on macOS too, without which an error inside
 #   an OpenMP loop terminates the host (https://github.com/NatronGitHub/openfx-gmic/issues/41,
 #   reported upstream as https://github.com/GreycLab/gmic/issues/219)
-# - cimg-omp-rand.sh: random numbers drawn in OpenMP loops do not depend on thread scheduling, so
-#   that a seeded filter gives the same result at each render
+# - cimg-omp-rand.sh: the random numbers of rand, noise and the math parser in OpenMP loops do not
+#   depend on thread scheduling, so that most seeded filters give the same result at each render
 #   (https://github.com/NatronGitHub/openfx-gmic/issues/44)
 gmic.h gmic.cpp: patches/gmic-apple-abort.sh
 CImg.h: patches/cimg-omp-rand.sh
