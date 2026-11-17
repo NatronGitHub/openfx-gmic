@@ -131,6 +131,7 @@ jobs:
           make -j4 CONFIG=debug OPENMP=1 CXX="g++ -std=c++17"
           cmake --install build --prefix install
           .github/workflows/compare_bundles.sh GMIC_OFX/Linux-64-debug/GMIC.ofx.bundle install/OFX/Plugins/GMIC.ofx.bundle
+          .github/workflows/compare_sources.sh build
       # The Linux bundle is uploaded as is (it needs libfftw3, libcurl, libpng, libgomp): it requires
       # the glibc of Ubuntu 24.04 anyway, where these libraries are standard packages, and bundled
       # copies of libstdc++/libgomp/libcurl could clash with the host's own. Natron's Linux
@@ -205,6 +206,7 @@ jobs:
           make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17 LICENSE=COMMERCIAL
           cmake --install build --prefix install
           .github/workflows/compare_bundles.sh GMIC_OFX/Linux-64-release/GMIC.ofx.bundle install/OFX/Plugins/GMIC.ofx.bundle
+          .github/workflows/compare_sources.sh build
 
   macos:
     name: macOS 15 arm64 (Apple clang, MacPorts libraries)
