@@ -55,6 +55,13 @@
 #define MAX_NOF_PARAMS 256
 #define MAX_NOF_TEXTS 32
 
+// Layer times (issue #63), defined by the G'MIC plug-in for the filters with layer inputs, used by
+// the OFX glue: each layer input (all but Source) has an integer parameter "<clip name> Time
+// Offset" (it is fetched at the render time plus this offset), and the first "Layers from Source"
+// layer inputs are taken from Source instead of their own clip
+#define LAYERS_FROM_SOURCE_PARAM "Layers from Source"
+#define TIME_OFFSET_PARAM_SUFFIX " Time Offset"
+
 #include <string>
 using namespace std;
 
@@ -181,12 +188,10 @@ public:
 	void* customSequenceDataP;
 	void* contextP;
 	bool inputConnected[MAX_NOF_LAYERS];
-	// set by pluginProcess: whether the image copied to outWorld had an alpha channel, and its size
+	// set by pluginProcess: whether the image copied to outWorld had an alpha channel
 	bool resultHasAlpha;
-	int resultWidth, resultHeight;
 	SequenceData() {
 		resultHasAlpha = true;
-		resultWidth = resultHeight = 0;
 		isFlat = false;
 		update = false;
 		for (int i = 0; i < MAX_NOF_PARAMS; i++) 

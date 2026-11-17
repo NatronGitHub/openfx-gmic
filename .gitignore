@@ -192,3 +192,9 @@ ofxTestLog.txt
 *.bak
 gmic_hotfixes.h
 gmic_hotfixes.version
+gmic_stdlib_community.h.commands
+gmic_sources.license
+gmic_stdlib_commercial/
+pocketfft_hdronly.h
+gmic_sources.request
+Licence_pocketfft.txt

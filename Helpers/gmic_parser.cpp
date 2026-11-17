@@ -611,6 +611,7 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 		if (!it->previewOnly && it->preview_command != it->command) mains[it->command] = it->preview_command;
 	}
 	set<string> flagged;
+	set<string> defined; // all the commands defined in content
 	stringstream ss(content);
 	string line, cur, rest;
 	vector<bool> guards; // one per enclosing if: is the current branch a narg($_persistent) branch?
@@ -618,6 +619,7 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 		if (line.empty() || line[0] == '#') continue;
 		string name = commandDefinition(line, rest);
 		if (!name.empty()) {
+			defined.insert(name);
 			cur = mains.count(name) ? name : string();
 			guards.clear();
 		} else {
@@ -650,6 +652,8 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 	// Main commands that need the preview's state in a way the rules above can't detect. A listed
 	// command that no longer is the main command of a filter (e.g. after a G'MIC update) is
 	// reported on stderr, and makes the describe test fail (.github/workflows/describe_plugins.sh).
+	// COMMERCIAL builds (OFX_GMIC_COMMERCIAL) do not report one that is not defined at all: their
+	// standard library leaves out its filter (see gmic_stdlib_commercial.txt).
 	// - fx_rep_bitplane_shuffle (Bit-Plane Shuffler): without _persistent it runs
 	//   "rep_bitplane_shuffle ...,$cli_base", and cli_base is only set by its preview command.
 	static const char* const curated[] = { "fx_rep_bitplane_shuffle" };
@@ -657,12 +661,123 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 		if (mains.count(curated[c])) {
 			flagged.insert(curated[c]);
 		} else if (!mains.empty()) {
+#ifdef OFX_GMIC_COMMERCIAL
+			if (!defined.count(curated[c])) continue;
+#endif
 			fprintf(stderr, "G'MIC: PREVIEW_FALLBACK_UNKNOWN %s: not the main command of a filter, update markPersistentFilters()\n", curated[c]);
 		}
 	}
 	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
 		if (!it->previewOnly && it->preview_command != it->command && flagged.count(it->command)) {
 			it->previewFallback = true;
+		}
+	}
+}
+
+// Does s contain the word "video", "frame" or "frames" (any case)?
+static bool namesFrames(const string& s)
+{
+	static const char* const words[] = { "video", "frame", "frames" };
+	string lc = s;
+	for (size_t i = 0; i < lc.size(); ++i) lc[i] = (char)tolower((unsigned char)lc[i]);
+	for (size_t w = 0; w < sizeof(words) / sizeof(words[0]); ++w) {
+		const size_t n = strlen(words[w]);
+		for (size_t pos = lc.find(words[w]); pos != string::npos; pos = lc.find(words[w], pos + 1)) {
+			if ((pos == 0 || !isalnum((unsigned char)lc[pos - 1])) && (pos + n >= lc.size() || !isalnum((unsigned char)lc[pos + n]))) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+// Does the item test a key of a display window, e.g. "{*,ESC}" or "{{*,ESC}||{*,Q}}"? (The window
+// size, "{*,w}", is lowercase.)
+static bool testsKey(const string& item)
+{
+	for (size_t p = item.find("{*"); p != string::npos; p = item.find("{*", p + 1)) {
+		size_t k = p + 2;
+		while (k < item.size() && isdigit((unsigned char)item[k])) ++k; // window number
+		if (k >= item.size() || item[k] != ',') continue;
+		size_t e = ++k;
+		while (e < item.size() && (isupper((unsigned char)item[e]) || isdigit((unsigned char)item[e]))) ++e;
+		if (e > k && isupper((unsigned char)item[k]) && e < item.size() && item[e] == '}') return true;
+	}
+	return false;
+}
+
+// Filters that make no sense when rendering frame by frame in an OpenFX host (issue #64): batch
+// converters that read or write image sequences on disk on every render, filters that write files,
+// and interactive tools that open a window. Rules on the #@gui definition and on the definition of
+// the main command (not the commands it calls):
+// - a parameter that reads files or folders (file(), filein(), folder()) together with the word
+//   "video" or "frame(s)" in the filter name or a parameter name: Stereo Video, 3D Video Conversion;
+// - the main command writes a file into G'MIC's own folder ("output ...$_path_rc..."): Layers To PNG;
+// - the main command waits for keys in a display window ({*,ESC}...): Diaporama.
+// (The parser already leaves out the Sequences category and the [animated] and [interactive]
+// filters.) Removed after the plug-in identifiers are assigned, so that the others keep theirs.
+// This needs the command definitions in "content": with a gmic_ofx.gmic that only has #@gui lines,
+// only the parameter rule and the curated list below apply.
+static void hideBatchFilters(const string& content, vector<EffectData>& cds, vector<string>* lines, bool checkCurated)
+{
+	set<string> mains;
+	for (vector<EffectData>::const_iterator it = cds.begin(); it != cds.end(); ++it) {
+		mains.insert(it->command);
+	}
+	set<string> hidden;
+	stringstream ss(content);
+	string line, cur, rest;
+	while (getline(ss, line)) {
+		if (line.empty() || line[0] == '#') continue;
+		string name = commandDefinition(line, rest);
+		if (!name.empty()) {
+			cur = mains.count(name) ? name : string();
+		} else {
+			rest = line;
+		}
+		if (cur.empty() || hidden.count(cur)) continue;
+		vector<string> items;
+		gmicItems(rest, items);
+		for (size_t k = 0; k < items.size(); ++k) {
+			const string& it = items[k];
+			if (it[0] == '#') break; // comment
+			const size_t b = (it[0] == '-') ? 1 : 0, e = it.find('[');
+			const string cmd = it.substr(b, e == string::npos ? string::npos : e - b);
+			if ((cmd == "o" || cmd == "output") && k + 1 < items.size() && items[k + 1].find("$_path_rc") != string::npos) {
+				hidden.insert(cur);
+			} else if (testsKey(it)) {
+				hidden.insert(cur);
+			}
+		}
+	}
+	// Main commands hidden whatever the rules say, so that they stay hidden if their definition
+	// changes. A listed command that no longer is the main command of a filter (e.g. after a G'MIC
+	// update) is reported on stderr, and makes the describe test fail
+	// (.github/workflows/describe_plugins.sh).
+	static const char* const curated[] = { "gcd_stereo_vid", "fx_tk_video3D", "samj_diaporama", "samj_Layers_To_PNG" };
+	for (size_t c = 0; c < sizeof(curated) / sizeof(curated[0]); ++c) {
+		if (mains.count(curated[c])) {
+			hidden.insert(curated[c]);
+		} else if (checkCurated && !mains.empty()) {
+#ifdef OFX_GMIC_COMMERCIAL
+			// COMMERCIAL standard libraries leave out some of these filters, or only their #@gui
+			// lines (e.g. fx_tk_video3D, see gmic_stdlib_commercial.txt): the GPL build checks the list
+			continue;
+#endif
+			fprintf(stderr, "G'MIC: HIDDEN_FILTER_UNKNOWN %s: not the main command of a filter, update hideBatchFilters()\n", curated[c]);
+		}
+	}
+	for (size_t i = cds.size(); i-- > 0; ) {
+		const EffectData& cd = cds[i];
+		bool readsFiles = false, frames = namesFrames(cd.name);
+		for (size_t j = 0; j < cd.param.size(); ++j) {
+			const string& t = cd.param[j].paramType;
+			readsFiles = readsFiles || t == "file" || t == "filein" || t == "folder";
+			frames = frames || namesFrames(cd.param[j].name);
+		}
+		if ((readsFiles && frames) || hidden.count(cd.command)) {
+			cds.erase(cds.begin() + i);
+			if (lines && i < lines->size()) lines->erase(lines->begin() + i);
 		}
 	}
 }
@@ -678,7 +793,7 @@ static bool isAboutCategory(const string& cat)
 	return c == "<i>About</i>";
 }
 
-void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<string>* lines)
+void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<string>* lines, bool checkCurated)
 {
 	const string src_prefix_old = src_prefix_old_c;
 	const string src_prefix = src_prefix_c;
@@ -784,6 +899,7 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
         it->uniqueId = id;
         ids.insert(id);
     }
+    hideBatchFilters(content, *cds, lines, checkCurated);
     for (vector<EffectData>::iterator it = cds->begin(); it != cds->end(); ++it) {
         // post-process
         EffectData& cd = *it;

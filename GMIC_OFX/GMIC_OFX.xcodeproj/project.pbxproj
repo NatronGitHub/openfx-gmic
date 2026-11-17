@@ -108,11 +108,9 @@
 		1E31EFEF205EE1470025144C /* RFX_Parameter.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = RFX_Parameter.h; sourceTree = "<group>"; };
 		1E31EFF0205EE1470025144C /* RFX_StringUtils.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = RFX_StringUtils.cpp; sourceTree = "<group>"; };
 		1E31EFF1205EE1470025144C /* RFX_StringUtils.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = RFX_StringUtils.h; sourceTree = "<group>"; };
-		1E31EFFE205EEDAA0025144C /* gmic_stdlib.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = gmic_stdlib.h; sourceTree = "<group>"; };
 		1E31EFFF205EEDAB0025144C /* gmic.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = gmic.h; sourceTree = "<group>"; };
 		1E31F000205EEDAB0025144C /* gmic_plugin_call.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = gmic_plugin_call.cpp; sourceTree = "<group>"; };
 		1E31F001205EEDAB0025144C /* gmic.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = gmic.cpp; sourceTree = "<group>"; };
-		1E31F002205EEDAB0025144C /* gmic_stdlib_gmic.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = gmic_stdlib_gmic.h; sourceTree = "<group>"; };
 		1E31F003205EEDAB0025144C /* CImg.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = CImg.h; sourceTree = "<group>"; };
 		1E31F004205EEDAB0025144C /* gmic_libc.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = gmic_libc.h; sourceTree = "<group>"; };
 		1E31F008205EF1A60025144C /* RFX_FileUtils.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = RFX_FileUtils.cpp; sourceTree = "<group>"; };
@@ -143,8 +141,6 @@
 				1E31F003205EEDAB0025144C /* CImg.h */,
 				1E31F000205EEDAB0025144C /* gmic_plugin_call.cpp */,
 				1E31F004205EEDAB0025144C /* gmic_libc.h */,
-				1E31F002205EEDAB0025144C /* gmic_stdlib_gmic.h */,
-				1E31EFFE205EEDAA0025144C /* gmic_stdlib.h */,
 				1E31F001205EEDAB0025144C /* gmic.cpp */,
 				1E31EFFF205EEDAB0025144C /* gmic.h */,
 			);
@@ -411,6 +407,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/..",
 					"$(OFX_PATH)/include",
 					"$(OFX_PATH)/Examples/include",
 				);
@@ -455,6 +452,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/..",
 					"$(OFX_PATH)/include",
 					"$(OFX_PATH)/Examples/include",
 				);

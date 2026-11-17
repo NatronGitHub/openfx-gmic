@@ -2,8 +2,9 @@ name: Continuous Integration
 
 # Natron CI policy: per PR/push, exactly three full builds plus tests (macOS 15 arm64 with the
 # system clang and MacPorts libraries, Ubuntu 24.04, Windows MSYS2 UCRT64). Extra variants (debug
-# builds, a C++20 build) run nightly or on demand; the per-PR builds use C++17 (Natron RB-2.6
-# policy: Qt5 builds C++17, Qt6 builds C++20); build artifacts are uploaded only on demand or for pre-release tags.
+# builds, a C++20 build, LICENSE=COMMERCIAL builds on Linux) run nightly or on demand; the per-PR
+# builds use C++17 (Natron RB-2.6 policy: Qt5 builds C++17, Qt6 builds C++20); build artifacts
+# are uploaded only on demand or for pre-release tags.
 #
 # The builds use CMake (NatronGitHub/Natron#1181). The Makefile is still what Natron's
 # build-plugins.sh uses on the three systems: the nightly and on-demand runs also build it on each
@@ -54,7 +55,7 @@ permissions:
 
 env:
   # number of plug-ins expected from the pinned G'MIC version: update when upgrading G'MIC
-  GMIC_PLUGIN_COUNT: 1205
+  GMIC_PLUGIN_COUNT: 1201
   # extra variants (debug, C++20) only on the nightly schedule or on demand
   BUILD_VARIANTS: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
   # artifacts only on demand or for pre-release tags (containing "alpha", "beta" or "rc", e.g.
@@ -145,6 +146,49 @@ jobs:
           cmake -S . -B build-cxx20 -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=20 -DGMIC_DOWNLOAD_DIR="$PWD"
           cmake --build build-cxx20 -j4
           .github/workflows/describe_plugins.sh build-cxx20/Plugins $GMIC_PLUGIN_COUNT
+
+  # Natron's COMMERCIAL builds (make LICENSE=COMMERCIAL, see license.mk), nightly or on demand:
+  # pocketfft instead of FFTW (GPL), and a standard library without the community filters under
+  # the GPL or a CeCILL-only licence. The bundle is checked (check_commercial.sh: no FFTW, licence
+  # texts, left-out plug-ins) and described, and FFT-based filters are rendered on a 720x576 image
+  # with an interpreter built from the same sources (fft_smoke.sh).
+  linux-commercial:
+    name: Linux (Ubuntu 24.04), LICENSE=COMMERCIAL
+    runs-on: ubuntu-24.04
+    needs: changes
+    if: >-
+      needs.changes.outputs.run == 'true' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash -eo pipefail {0}
+    env:
+      # number of plug-ins of COMMERCIAL builds: update with gmic_stdlib_commercial.txt or G'MIC
+      GMIC_PLUGIN_COUNT_COMMERCIAL: 812
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config zlib1g-dev libcurl4-openssl-dev libpng-dev libexpat1-dev \
+            libgl-dev libglu1-mesa-dev
+      - name: Cache G'MIC sources
+        uses: actions/cache@v4
+        with:
+          path: gmic_*.tar.gz
+          key: gmic-src-${{ hashFiles('Makefile') }}
+      - name: Build (release, LICENSE=COMMERCIAL)
+        run: make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17 LICENSE=COMMERCIAL
+      - name: Describe and check
+        run: |
+          DESCRIBE_LOG=$PWD/describe-commercial.log \
+            .github/workflows/describe_plugins.sh GMIC_OFX/Linux-64-release $GMIC_PLUGIN_COUNT_COMMERCIAL
+          .github/workflows/check_commercial.sh GMIC_OFX/Linux-64-release describe-commercial.log
+      - name: Render FFT filters (720x576)
+        run: .github/workflows/fft_smoke.sh
 
   macos:
     name: macOS 15 arm64 (Apple clang, MacPorts libraries)
