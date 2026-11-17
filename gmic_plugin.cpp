@@ -191,7 +191,7 @@ string get_gmic_rc_path()
 // "Advanced Options" group (start and end) and its 7 parameters
 static const int kNofExtraParams = 1 + 4 + 1 + 2 + 7;
 
-// Ignore Alpha (see pluginProcess): _openfx_gmic_alpha_split stores the alpha channel of every image
+// Ignore Alpha (see fullCommand): _openfx_gmic_alpha_split stores the alpha channel of every image
 // (an empty image for images without alpha) in the global variable _openfx_gmic_alpha, and
 // _openfx_gmic_alpha_restore gives them back to the gray or RGB results of the same size (a result
 // with its own alpha is kept as is), then frees the stored alphas:
@@ -427,9 +427,11 @@ int pluginSetdown(GlobalData* /*globalDataP*/, ContextData* /*contextDataP*/) { 
 static string ignoreAlphaNote(const EffectData& effectData)
 {
 	if (!effectData.multiLayer) return string();
-	return "\n\nIgnore Alpha: the alpha of each input is put back on the result at the same position. "
-		"If the filter returns a different number of images than it got, only the first result gets the "
-		"first input's alpha. Results whose size changed (frames, rotation, crop, resize...) are opaque.";
+	return "\n\nIgnore Alpha: the alpha of each input is put back on the gray or RGB result at the same "
+		"position (a result with its own alpha is kept as is). With only Source connected, every result "
+		"gets Source's alpha. With several inputs connected, if the filter returns a different number of "
+		"images than it got, only the first result gets the first input's alpha. Results whose size "
+		"changed (frames, rotation, crop, resize...) don't get an alpha back.";
 }
 
 int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
