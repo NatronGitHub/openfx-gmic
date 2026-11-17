@@ -791,9 +791,13 @@ static void hideBatchFilters(const string& content, vector<EffectData>& cds, vec
 	//   Prime Surface (gui_rep_prime_surface) and Reverse Engineer Color Curve (gui_rep_recc, which
 	//   only works through G'MIC-Qt's export button, and fails otherwise) in
 	//   https://github.com/GreycLab/gmic-community/commit/f2ca19866ceba5db89a6a85988ebf1b8a9182fa4,
-	//   Beauty Retouch (fx_tk_retouch, https://github.com/GreycLab/gmic-community/commit/66c9f34c27ec1c81225654ae8e14cca88786f37c).
+	//   Beauty Retouch (fx_tk_retouch, https://github.com/GreycLab/gmic-community/commit/66c9f34c27ec1c81225654ae8e14cca88786f37c),
+	//   Layer Manipulation (gcd_layers, https://github.com/GreycLab/gmic-community/commit/c0d523c8f66a6dea08b35caefcc9cf449c71d5a9),
+	//   Halftone Shapes (iain_halftone_shapes, https://github.com/GreycLab/gmic-community/commit/c122c756b264391fe065f63fa26b46ea610c7dc9)
+	//   and Montage Multi Rows (samj_montage_multi_rows_GUI, https://github.com/GreycLab/gmic-community/commit/6fadf0037dd7507a161a998ae8aaf6066e7756a6).
 	static const char* const curated[] = { "gcd_stereo_vid", "fx_tk_video3D", "samj_diaporama", "samj_Layers_To_PNG",
-		"fx_intarsia", "fx_rep_color_region", "gui_rep_prime_surface", "gui_rep_recc", "fx_tk_retouch" };
+		"fx_intarsia", "fx_rep_color_region", "gui_rep_prime_surface", "gui_rep_recc", "fx_tk_retouch",
+		"gcd_layers", "iain_halftone_shapes", "samj_montage_multi_rows_GUI" };
 	for (size_t c = 0; c < sizeof(curated) / sizeof(curated[0]); ++c) {
 		if (mains.count(curated[c])) {
 			hidden.insert(curated[c]);
