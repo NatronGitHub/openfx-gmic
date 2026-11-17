@@ -137,22 +137,34 @@ FILE(GLOB GMIC_SOURCES
 # COMMERCIAL, which only uses code under the CeCILL-C option of G'MIC's dual licence: pocketfft
 # instead of FFTW (GPL), and the standard library and hot fixes without the community filters under
 # the GPL or a CeCILL-only licence (see gmic_stdlib_commercial.txt). These sources are made by
-# 'make sources LICENSE=COMMERCIAL FFT=pocketfft', which must be run first (MKL: Makefile only).
+# 'make sources LICENSE=COMMERCIAL', which must be run first: it writes gmic_sources.license (the
+# licence on its first line, then FFT=...) once they are all made, and gmic_stdlib_community.h
+# starts with a marker line, checked here.
 SET(OFX_LICENSE "GPL" CACHE STRING "GPL, or COMMERCIAL (no FFTW, no GPL or CeCILL-only filters)")
 SET_PROPERTY(CACHE OFX_LICENSE PROPERTY STRINGS GPL COMMERCIAL)
 IF(NOT OFX_LICENSE MATCHES "^(GPL|COMMERCIAL)$")
   MESSAGE(FATAL_ERROR "OFX_LICENSE must be GPL or COMMERCIAL, not \"${OFX_LICENSE}\"")
 ENDIF()
-SET(_sources_license GPL)
+SET(_sources_license "GPL;FFT=fftw3")
 IF(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/gmic_sources.license)
-  FILE(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/gmic_sources.license _sources_license LIMIT_COUNT 1)
-  SET_PROPERTY(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/gmic_sources.license)
+  FILE(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/gmic_sources.license _sources_license LIMIT_COUNT 2)
+ELSEIF(OFX_LICENSE STREQUAL "COMMERCIAL")
+  SET(_sources_license "none")
 ENDIF()
-IF(NOT _sources_license STREQUAL OFX_LICENSE)
-  MESSAGE(FATAL_ERROR "The G'MIC sources were made for LICENSE=${_sources_license}: run 'make sources LICENSE=${OFX_LICENSE}' first (FFT=pocketfft for COMMERCIAL)")
+SET_PROPERTY(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/gmic_sources.license
+  ${CMAKE_CURRENT_SOURCE_DIR}/gmic_stdlib_community.h)
+LIST(GET _sources_license 0 _sources_licence0)
+IF(NOT _sources_licence0 STREQUAL OFX_LICENSE)
+  MESSAGE(FATAL_ERROR "The G'MIC sources were made for LICENSE=${_sources_licence0}: run 'make sources LICENSE=${OFX_LICENSE}' first")
 ENDIF()
-IF(OFX_LICENSE STREQUAL "COMMERCIAL" AND NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/pocketfft_hdronly.h)
-  MESSAGE(FATAL_ERROR "pocketfft_hdronly.h is missing: run 'make sources LICENSE=COMMERCIAL FFT=pocketfft' first")
+IF(OFX_LICENSE STREQUAL "COMMERCIAL")
+  FILE(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/gmic_stdlib_community.h _stdlib_marker LIMIT_COUNT 1
+    REGEX "^ #  openfx-gmic : COMMERCIAL standard library")
+  LIST(FIND _sources_license "FFT=pocketfft" _fft_index)
+  IF(NOT _stdlib_marker OR _fft_index LESS 0
+     OR NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/pocketfft_hdronly.h OR NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Licence_pocketfft.txt)
+    MESSAGE(FATAL_ERROR "gmic_stdlib_community.h is not the COMMERCIAL standard library, or pocketfft is missing: run 'make sources LICENSE=COMMERCIAL' first")
+  ENDIF()
 ENDIF()
 
 # Hot fixes for G'MIC bugs (see gmic_hotfixes.gmic and the top-level Makefile), embedded as a
@@ -192,8 +204,9 @@ FILE(GLOB GMIC_RESOURCES
   "Licence_CeCILL-C_V1-en.txt"
   "Licence_CeCILL_V2-en.txt"
 )
+LIST(APPEND GMIC_RESOURCES ${CMAKE_CURRENT_SOURCE_DIR}/LGPL-libraries.txt)
 IF(OFX_LICENSE STREQUAL "COMMERCIAL")
-  LIST(APPEND GMIC_RESOURCES ${CMAKE_CURRENT_SOURCE_DIR}/Licence_pocketfft.txt)
+  LIST(APPEND GMIC_RESOURCES ${CMAKE_CURRENT_SOURCE_DIR}/Licence_CeCILL-B_V1-en.txt ${CMAKE_CURRENT_SOURCE_DIR}/Licence_pocketfft.txt)
 ENDIF()
 
 ADD_LIBRARY(GMIC SHARED ${GMIC_SOURCES} ${SUPPORT_SOURCES})
@@ -219,7 +232,7 @@ TARGET_LINK_LIBRARIES(GMIC ${OPENGL_gl_LIBRARY})
 # FFT library (CImg's own FFT fails on image sizes that are not powers of two), as in
 # GMIC_OFX/Makefile: FFTW (GPLv2) for GPL builds, pocketfft (BSD-3-Clause) for COMMERCIAL ones.
 IF(OFX_LICENSE STREQUAL "COMMERCIAL")
-  TARGET_COMPILE_DEFINITIONS(GMIC PRIVATE cimg_use_pocketfft)
+  TARGET_COMPILE_DEFINITIONS(GMIC PRIVATE cimg_use_pocketfft OFX_GMIC_COMMERCIAL)
 ELSE()
   FIND_PACKAGE(PkgConfig REQUIRED)
   PKG_CHECK_MODULES(FFTW3 REQUIRED IMPORTED_TARGET fftw3)

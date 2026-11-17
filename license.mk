@@ -7,12 +7,10 @@
 #
 # FFT: the library that computes G'MIC's Fourier transforms (CImg's own FFT only handles
 # power-of-two image sizes, and fails on others):
-# - fftw3: FFTW (GPL), the default of GPL builds;
-# - mkl: the FFTW3 interface of Intel oneMKL (Intel Simplified Software License), linked
-#   statically, found with pkg-config (MKL_PC, see GMIC_OFX/Makefile): the default of COMMERCIAL
-#   builds on x86-64;
+# - fftw3: FFTW (GPL), for GPL builds;
 # - pocketfft: pocketfft (BSD-3-Clause, header-only, downloaded at a pinned commit), through
-#   patches/cimg-pocketfft.sh: the default of COMMERCIAL builds on other architectures (arm64).
+#   patches/cimg-pocketfft.sh (applied only for FFT=pocketfft), for COMMERCIAL builds. GPL builds
+#   may use it too (FFT=pocketfft), e.g. to test it.
 ifeq ($(LICENSE),)
   LICENSE := GPL
 endif
@@ -21,20 +19,16 @@ ifneq ($(filter-out GPL COMMERCIAL,$(LICENSE)),)
 endif
 ifeq ($(LICENSE),COMMERCIAL)
   ifeq ($(FFT),)
-    ifneq ($(filter x86_64 amd64 AMD64 x64,$(shell uname -m)),)
-      FFT := mkl
-    else
-      FFT := pocketfft
-    endif
+    FFT := pocketfft
   endif
-  ifeq ($(FFT),fftw3)
-    $(error LICENSE=COMMERCIAL cannot use FFT=fftw3 (FFTW is GPL): use FFT=mkl or FFT=pocketfft)
+  ifneq ($(FFT),pocketfft)
+    $(error LICENSE=COMMERCIAL needs FFT=pocketfft, not '$(FFT)' (FFTW is GPL))
   endif
 else
   ifeq ($(FFT),)
     FFT := fftw3
   endif
 endif
-ifneq ($(filter-out fftw3 mkl pocketfft,$(FFT)),)
-  $(error FFT must be fftw3, mkl or pocketfft, not '$(FFT)')
+ifneq ($(filter-out fftw3 pocketfft,$(FFT)),)
+  $(error FFT must be fftw3 or pocketfft, not '$(FFT)')
 endif

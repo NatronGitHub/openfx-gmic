@@ -1,6 +1,6 @@
 SUBDIRS = GMIC_OFX
 
-# LICENSE (GPL or COMMERCIAL) and FFT (fftw3, mkl or pocketfft): see license.mk
+# LICENSE (GPL or COMMERCIAL) and FFT (fftw3 or pocketfft): see license.mk
 include license.mk
 
 # All G'MIC sources come from the release tarball: since G'MIC 3, it includes the C API
@@ -43,12 +43,18 @@ uninstall:
 	  (cd $$i && $(MAKE) $@); \
 	done
 
-sources: $(GMICSOURCES) gmic_stdlib_community.h gmic_hotfixes.h $(if $(filter pocketfft,$(FFT)),pocketfft_hdronly.h)
+# gmic_sources.license records the LICENSE (first line) and FFT of the sources: it is only written
+# once they are all made (CMakeLists.txt reads it), and removed when LICENSE or FFT change.
+sources: $(GMICSOURCES) gmic_stdlib_community.h gmic_hotfixes.h $(if $(filter pocketfft,$(FFT)),pocketfft_hdronly.h Licence_pocketfft.txt)
+	@printf '%s\nFFT=%s\n' '$(LICENSE)' '$(FFT)' | cmp -s - gmic_sources.license || \
+	  { printf '%s\nFFT=%s\n' '$(LICENSE)' '$(FFT)' > gmic_sources.license.tmp && mv gmic_sources.license.tmp gmic_sources.license; }
 
-# The licence of the generated sources (gmic_stdlib_community.h, gmic_hotfixes.h), so that they
-# are made again when LICENSE changes.
-gmic_sources.license: gmic_hotfixes_force
-	@echo '$(LICENSE)' | cmp -s - $@ || echo '$(LICENSE)' > $@
+# The LICENSE and FFT the sources are made for (CImg.h is only patched for pocketfft;
+# gmic_stdlib_community.h and gmic_hotfixes.h depend on LICENSE): they are made again when these
+# change.
+gmic_sources.request: gmic_hotfixes_force
+	@printf '%s %s\n' '$(LICENSE)' '$(FFT)' | cmp -s - $@ || \
+	  { rm -f gmic_sources.license; printf '%s %s\n' '$(LICENSE)' '$(FFT)' > $@; }
 
 # Hot fixes for G'MIC bugs, embedded into the plug-in as a null-terminated byte array (no string
 # literal, which MSVC limits to 16 KB per piece). They are written for one G'MIC version: fail if
@@ -73,7 +79,7 @@ HOTFIXES_FILTER = awk -v cmds=gmic_stdlib_community.h.commands ' \
 else
 HOTFIXES_FILTER = cat
 endif
-gmic_hotfixes.h: gmic_hotfixes.gmic gmic_hotfixes.version gmic_sources.license $(if $(filter COMMERCIAL,$(LICENSE)),gmic_stdlib_community.h)
+gmic_hotfixes.h: gmic_hotfixes.gmic gmic_hotfixes.version gmic_sources.request $(if $(filter COMMERCIAL,$(LICENSE)),gmic_stdlib_community.h)
 	@if ! tr -d '\r' < $< | grep -qxF '#@openfx_gmic_hotfixes $(GMICVER)'; then \
 	  echo "Error: $< is not for G'MIC $(GMICVER) (no '#@openfx_gmic_hotfixes $(GMICVER)' line): review each fix against G'MIC $(GMICVER), see the top of $<"; exit 1; \
 	fi
@@ -118,19 +124,19 @@ $(GMICSRC):
 $(GMICSOURCES): $(GMICSRC)
 	tar -m --strip-components 2 -zxvf $< $(patsubst %,$(GMICSRCDIR)/src/%, $@)
 	@case $@ in gmic.h|gmic.cpp) sh patches/gmic-apple-abort.sh $@ || { rm -f $@; exit 1; };; esac
-	@case $@ in CImg.h) sh patches/cimg-pocketfft.sh $@ || { rm -f $@; exit 1; };; esac
+	@case $@ in CImg.h) for p in $(CIMG_PATCHES); do sh $$p $@ || { rm -f $@; exit 1; }; done;; esac
 
 # G'MIC's standard library with the community filters: from the tarball (GPL builds), or, for
 # COMMERCIAL builds, generated from the G'MIC standard library and the community files whose
 # licence allows it (see gmic_stdlib_commercial.txt), with a G'MIC interpreter built from the
 # tarball (a few minutes). gmic_stdlib_community.h.commands lists the commands it defines.
-gmic_stdlib_community.h: $(GMICSRC) gmic_sources.license $(if $(filter COMMERCIAL,$(LICENSE)),gmic_stdlib_commercial.sh gmic_stdlib_commercial.txt)
+gmic_stdlib_community.h: $(GMICSRC) gmic_sources.request $(if $(filter COMMERCIAL,$(LICENSE)),gmic_stdlib_commercial.sh gmic_stdlib_commercial.txt)
 ifeq ($(LICENSE),COMMERCIAL)
 	CXX="$(CXX)" ZLIB_CFLAGS="`pkg-config --cflags zlib`" ZLIB_LIBS="`pkg-config --libs zlib`" \
 	  sh gmic_stdlib_commercial.sh $(GMICSRC) $(GMICVER) $@
 else
 	rm -f $@.commands
-	tar -m --strip-components 2 -zxvf $< $(GMICSRCDIR)/src/$@
+	tar -m --strip-components 2 -zxf $< -O $(GMICSRCDIR)/src/$@ > $@.tmp && mv $@.tmp $@
 endif
 
 # pocketfft (FFT=pocketfft), C++ header-only version, at a pinned commit of its 'cpp' branch
@@ -142,16 +148,24 @@ pocketfft_hdronly.h:
 	else sum=`shasum -a 256 $@.tmp | cut -d' ' -f1`; fi; \
 	if [ "$$sum" != "$(POCKETFFT_SHA256)" ]; then rm -f $@.tmp; echo "Error: checksum mismatch for $@ (got $$sum)"; exit 1; fi
 	mv $@.tmp $@
+# its licence (BSD-3-Clause, with the copyright notices), from the header's first comment
+Licence_pocketfft.txt: pocketfft_hdronly.h
+	awk 'NR == 1 && $$0 != "/*" { exit 1 } NR > 1 && $$0 == "*/" { done = 1; exit } NR > 1 { print }  END { if (!done) exit 1 }' $< > $@.tmp
+	grep -q 'Redistributions in binary form must reproduce' $@.tmp
+	mv $@.tmp $@
 
 # Local patches to the extracted G'MIC sources (re-extracted when a patch changes):
 # - gmic-apple-abort.sh: enable G'MIC's abort support on macOS too, without which an error inside
 #   an OpenMP loop terminates the host (https://github.com/NatronGitHub/openfx-gmic/issues/41,
 #   reported upstream as https://github.com/GreycLab/gmic/issues/219)
 # - cimg-pocketfft.sh: let CImg compute its FFTs with pocketfft (cimg_use_pocketfft), which
-#   COMMERCIAL builds use instead of FFTW on arm64 (and with FFT=pocketfft)
+#   COMMERCIAL builds use instead of FFTW (FFT=pocketfft; GPL builds keep CImg.h as in the tarball)
 gmic.h gmic.cpp: patches/gmic-apple-abort.sh
-CImg.h: patches/cimg-pocketfft.sh
+ifeq ($(FFT),pocketfft)
+CIMG_PATCHES = patches/cimg-pocketfft.sh
+endif
+CImg.h: gmic_sources.request $(CIMG_PATCHES)
 
 distclean: clean
-	-rm -f $(GMICSRC) $(GMICSOURCES) gmic_stdlib_community.h gmic_stdlib_community.h.commands gmic_hotfixes.h gmic_hotfixes.version gmic_sources.license pocketfft_hdronly.h gmic_libc.cpp gmic_stdlib_gmic.h # the last two: left by older builds
+	-rm -f $(GMICSRC) $(GMICSOURCES) gmic_stdlib_community.h gmic_stdlib_community.h.commands gmic_hotfixes.h gmic_hotfixes.version gmic_sources.license gmic_sources.request pocketfft_hdronly.h Licence_pocketfft.txt gmic_libc.cpp gmic_stdlib_gmic.h # the last two: left by older builds
 	-rm -rf gmic_stdlib_commercial

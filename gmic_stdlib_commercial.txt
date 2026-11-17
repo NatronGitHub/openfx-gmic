@@ -16,7 +16,9 @@ commit 5147ed545971d22c52bb8039554eb33e1cedde6a
 # community <file> <sha256> <licence, from the file header>
 # Files without a licence in their header are under CeCILL-B (BSD-like), see include/COPYING
 # ("The files in this directory are distributed under the CeCILL-B license [...] *unless* another
-# license is explicitely specified in the file header").
+# license is explicitely specified in the file header"), shipped as Licence_CeCILL-B_V1-en.txt.
+# "Same licence as G'MIC" (arto_huotari, sylvie_alexandre) is taken as G'MIC's dual CeCILL-C /
+# CeCILL v2.1 licence (maintainer's decision).
 community andreas_pahlsson d68d0a58282ae5a1baddd7b61959d9e6c66d97cbc7d296e5040a11e452f1528e CeCILL-B (no licence in the header)
 community andy_kelday 006c73b50339488e3adf5448f46d76db5008fa786014abfded2a50c8d3d80306 dual CeCILL-C / CeCILL v2.1
 community arto_huotari e5b793c35b6457dc9c01bc21a2b01cecffe327a8c13e8cb064fa03f05a20bf33 "lisenced under the same Cecill lisence as G'MIC"
@@ -45,7 +47,8 @@ command samj_Test_Liste_Points_TSP writes an SVG drop shadow filter under CC BY-
 command samj_Test_Liste_Points_TSP_Bezier writes an SVG drop shadow filter under CC BY-SA 3.0 (comment in the code)
 
 # filter <command> <reason>: remove the filters that run this command (they would fail on a
-# command only defined in a community file left out).
+# command only defined in a community file left out). gmic_stdlib_commercial.sh fails if a kept
+# filter can still reach such a command, and tells which.
 filter fx_tk_video3D calls fx_frame_round_old (david_tschumperle)
 filter fx_tk_depth_obtain calls fx_frame_round_old (david_tschumperle)
 filter fx_tk_vintage calls fx_frame_round_old (david_tschumperle)
@@ -65,3 +68,24 @@ filter giniart_buzinga calls fx_corvo_painting_5 (david_tschumperle) and simplel
 filter giniart_painting1 calls fx_corvo_painting_5 (david_tschumperle)
 filter giniart_painting2 calls fx_corvo_painting_5 (david_tschumperle) and simplelocalcontrast_p (iain_fergusson)
 filter giniart_sz calls fx_corvo_painting_5 (david_tschumperle) and simplelocalcontrast_p (iain_fergusson)
+filter samj_chalkitup calls ancien_gimp_morpho, which calls negative (david_tschumperle)
+filter samj_CeKoaSa_001 calls ancien_gimp_morpho, which calls negative (david_tschumperle)
+filter samj_CeKoaSa_002 calls ancien_gimp_morpho, which calls negative (david_tschumperle)
+filter samj_CeKoaSa_003 calls ancien_gimp_morpho, which calls negative (david_tschumperle)
+
+# Filters that download data at run time (not part of the plug-in; no licence review was done):
+# G'MIC's input_cached gets these files from https://gmic.eu (stored in G'MIC's cache folder), and
+# 'sp' gets sample images from https://gmic.eu/img:
+#  gmic_cluts.gmz (colour LUTs): 64 Couleurs Max, Apply External CLUT, Apply From CLUT Set, Color
+#    Presets, Customize CLUT, Dodge Sketch, Dorure Gilding, Random Color Transformation, Simulate
+#    Film, Transfer Colors [Multi], Transfer Colors [Patch-Based], Tune HSV Colors
+#  gmic_grain.gmz (film grain): Add Grain
+#  gmic_lightleaks.gmz: Light Leaks
+#  gmic_denoise_cnn.gmz, gmic_scale2x_cnn.gmz (neural network weights): Denoise [CNN], Upscale [CNN2x]
+#  gmic_fonts.gmz (fonts, for text at sizes that are not built in): Equation Plot [Y=f(X)], Quick
+#    Copyright, Visible Watermark, and other filters that draw text
+#  gmic_demos.cimgz: Games & Demos
+#  img/style_*.png (style images): Stylize
+#  sample images: Sample Image, Gmicky - Roddy, Film Grain
+#  all the files above: Download External Data
+# Send Feedback sends the message typed in it to gmic.eu.

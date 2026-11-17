@@ -650,17 +650,20 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 		}
 	}
 	// Main commands that need the preview's state in a way the rules above can't detect. A listed
-	// command that is still defined but no longer is the main command of a filter (e.g. after a
-	// G'MIC update) is reported on stderr, and makes the describe test fail
-	// (.github/workflows/describe_plugins.sh). One that is not defined at all is not reported: its
-	// filter is not in this standard library (e.g. COMMERCIAL builds, see gmic_stdlib_commercial.txt).
+	// command that no longer is the main command of a filter (e.g. after a G'MIC update) is
+	// reported on stderr, and makes the describe test fail (.github/workflows/describe_plugins.sh).
+	// COMMERCIAL builds (OFX_GMIC_COMMERCIAL) do not report one that is not defined at all: their
+	// standard library leaves out its filter (see gmic_stdlib_commercial.txt).
 	// - fx_rep_bitplane_shuffle (Bit-Plane Shuffler): without _persistent it runs
 	//   "rep_bitplane_shuffle ...,$cli_base", and cli_base is only set by its preview command.
 	static const char* const curated[] = { "fx_rep_bitplane_shuffle" };
 	for (size_t c = 0; c < sizeof(curated) / sizeof(curated[0]); ++c) {
 		if (mains.count(curated[c])) {
 			flagged.insert(curated[c]);
-		} else if (!mains.empty() && defined.count(curated[c])) {
+		} else if (!mains.empty()) {
+#ifdef OFX_GMIC_COMMERCIAL
+			if (!defined.count(curated[c])) continue;
+#endif
 			fprintf(stderr, "G'MIC: PREVIEW_FALLBACK_UNKNOWN %s: not the main command of a filter, update markPersistentFilters()\n", curated[c]);
 		}
 	}
