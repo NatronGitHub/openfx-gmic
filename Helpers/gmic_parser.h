@@ -62,6 +62,11 @@ struct EffectParameter {
 	std::string defaultValue;
 	std::string text;
 	std::string paramType;
+	// point(): its _removable argument (-1: removable, initially removed; 1: removable; 0: not
+	// removable). "pointenabled": the checkbox the parser adds after a removable point (see
+	// gmic_parse_single), whose name is the point's with " Enabled".
+	int removable;
+	EffectParameter() : removable(0) {}
 };
 
 struct EffectData {
