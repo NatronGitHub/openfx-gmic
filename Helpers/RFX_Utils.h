@@ -64,17 +64,8 @@
 
 #define	CLR_STRUCT(STRUCT) memset(&STRUCT, 0, sizeof(STRUCT));
 
-#ifndef M_PI
-#define M_PI	3.14159265358979323846f
-#endif
-
-#define clamp(a,mn,mx) ((a)>mx?mx:((a)<mn?mn:(a)))
-#define remap(x, min1, max1, min2, max2) (min2 + (((x-min1)/(max1-min1))*(max2-min2)))
-#define frac(a) (a-floor(a))
-#define step(y,x) ((x>=y)?1.0f:0.0f)
-#define mix(a, b, f) (a * (1.0f - f) + f * b)
-#define fmax(a,b) (((a)>(b))?(a):(b))
-#define fmin(a,b) (((a)<(b))?(a):(b))
+// pi, without relying on the non-standard M_PI
+static const double kRfxPi = 3.14159265358979323846;
 
 using namespace std;
 namespace reduxfx {
