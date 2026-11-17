@@ -127,12 +127,6 @@
 #define PARAM_ANIMSEED (globalDataP->nofParams - 3)
 #define PARAM_VERBOSITY (globalDataP->nofParams - 2)
 
-// Layer time offsets (issue #63), only for the filters with layer inputs: the OFX glue fetches the
-// input "<clip name> Time Offset" frames after the render time, and takes the first "Layers from
-// Source" layer inputs from Source (see pluginSetup)
-#define LAYERS_FROM_SOURCE_PARAM "Layers from Source"
-#define TIME_OFFSET_PARAM_SUFFIX " Time Offset"
-
 #ifdef OFX_PLUGIN
     #include "RFX_OFX_Utils.h"
 #else
@@ -355,12 +349,14 @@ public:
 			gmic_delete_external((float*)lib);
 		}
 		hotfixes = gmicGetHotfixes(stdlib);
+		bool builtinStdlib = false; // the curated lists of the parser are only checked against it
 		string effectContent = loadStringFromFile(get_gmic_rc_path() + "gmic_ofx.gmic");
 		if (effectContent.empty()) {
 			effectContent = loadStringFromFile(get_gmic_rc_path() + "gmic_stdlib.gmic");
 		}
 		if (effectContent.empty()) {
 			effectContent.swap(stdlib);
+			builtinStdlib = true;
 			if (
 				(int)effectContent.find("#@gimp :") < 0 && 
 				(int)effectContent.find("#@gmic_plugin :") < 0 && 
@@ -368,7 +364,7 @@ public:
 				effectContent = "";
 			}
 		} 
-		gmic_parse_multi(effectContent, &pluginData, &pluginContent);
+		gmic_parse_multi(effectContent, &pluginData, &pluginContent, builtinStdlib);
 		// Each plug-in has a fixed table of MAX_NOF_PARAMS parameters: the filter's own parameters,
 		// up to 4 extra layers and the fixed trailing parameters (see pluginSetup). Leave out the
 		// few filters that do not fit (e.g. "Transfer Color [Reduced Colors]" in G'MIC 4.0.7,

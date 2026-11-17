@@ -711,7 +711,7 @@ static bool testsKey(const string& item)
 // filters.) Removed after the plug-in identifiers are assigned, so that the others keep theirs.
 // This needs the command definitions in "content": with a gmic_ofx.gmic that only has #@gui lines,
 // only the parameter rule and the curated list below apply.
-static void hideBatchFilters(const string& content, vector<EffectData>& cds, vector<string>* lines)
+static void hideBatchFilters(const string& content, vector<EffectData>& cds, vector<string>* lines, bool checkCurated)
 {
 	set<string> mains;
 	for (vector<EffectData>::const_iterator it = cds.begin(); it != cds.end(); ++it) {
@@ -751,7 +751,7 @@ static void hideBatchFilters(const string& content, vector<EffectData>& cds, vec
 	for (size_t c = 0; c < sizeof(curated) / sizeof(curated[0]); ++c) {
 		if (mains.count(curated[c])) {
 			hidden.insert(curated[c]);
-		} else if (!mains.empty()) {
+		} else if (checkCurated && !mains.empty()) {
 			fprintf(stderr, "G'MIC: HIDDEN_FILTER_UNKNOWN %s: not the main command of a filter, update hideBatchFilters()\n", curated[c]);
 		}
 	}
@@ -781,7 +781,7 @@ static bool isAboutCategory(const string& cat)
 	return c == "<i>About</i>";
 }
 
-void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<string>* lines)
+void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<string>* lines, bool checkCurated)
 {
 	const string src_prefix_old = src_prefix_old_c;
 	const string src_prefix = src_prefix_c;
@@ -887,7 +887,7 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
         it->uniqueId = id;
         ids.insert(id);
     }
-    hideBatchFilters(content, *cds, lines);
+    hideBatchFilters(content, *cds, lines, checkCurated);
     for (vector<EffectData>::iterator it = cds->begin(); it != cds->end(); ++it) {
         // post-process
         EffectData& cd = *it;

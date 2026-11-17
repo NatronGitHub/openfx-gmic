@@ -185,20 +185,16 @@ struct MyInstanceData {
 	OfxParamHandle seqDataH;
 	// layer times (see layerTimesOf), NULL for plug-ins without them
 	OfxParamHandle layersFromSource;
+	int lastLayersFromSource; // its value at the previous change (see instanceChanged)
 	OfxParamHandle timeOffset[MAX_NOF_LAYERS]; // per input, NULL for Source
 };
 
 // Layer times (issue #63): the plug-in may define, for its layer inputs (all but the first one,
-// Source), an integer parameter "<clip name> Time Offset" and an integer parameter "Layers from
-// Source". Layer input i is fetched at the render time plus its offset; the first "Layers from
-// Source" layer inputs are then taken from Source instead of their own clip, so that a single clip
-// gives a window of frames. Without these parameters, every input is fetched at the render time.
-#ifndef LAYERS_FROM_SOURCE_PARAM
-#define LAYERS_FROM_SOURCE_PARAM "Layers from Source"
-#endif
-#ifndef TIME_OFFSET_PARAM_SUFFIX
-#define TIME_OFFSET_PARAM_SUFFIX " Time Offset"
-#endif
+// Source), the integer parameters LAYERS_FROM_SOURCE_PARAM and "<clip name>"
+// TIME_OFFSET_PARAM_SUFFIX (RFX_Parameter.h). Layer input i is fetched at the render time plus its
+// offset; the first "Layers from Source" layer inputs are then taken from Source instead of their
+// own clip, so that a single clip gives a window of frames. Without these parameters, every input
+// is fetched at the render time.
 
 // does the plug-in have layer times? (the parameters are known after the load action)
 static bool pluginHasLayerTimes(int pluginIndex);
@@ -207,13 +203,8 @@ struct LayerTimes {
 	int nofInputs;
 	bool fromSource[MAX_NOF_LAYERS]; // per input: taken from Source (input 0)
 	int offset[MAX_NOF_LAYERS]; // per input, 0 for Source
-	// the input whose clip input i is fetched from, and the time
+	// the input whose clip input i is fetched from (the time: see inputTime)
 	int clipIndex(int i) const { return fromSource[i] ? 0 : i; }
-	double time(int i, double t) const { return t + offset[i]; }
-	bool varying() const {
-		for (int i = 1; i < nofInputs; ++i) if (offset[i] != 0) return true;
-		return false;
-	}
 };
 
 // Convenience wrapper to get private data 
@@ -321,9 +312,14 @@ static OfxStatus createInstance(int pluginIndex, OfxImageEffectHandle effect)
 	gEffectHost->clipGetHandle(effect, "Output", &myData->output, 0);
 
 	myData->layersFromSource = NULL;
+	myData->lastLayersFromSource = 0;
 	for (int i = 0; i < MAX_NOF_LAYERS; i++) myData->timeOffset[i] = NULL;
 	if (pluginHasLayerTimes(pluginIndex)) {
-		gParamHost->paramGetHandle(paramSet, LAYERS_FROM_SOURCE_PARAM, &myData->layersFromSource, 0);
+		if (gParamHost->paramGetHandle(paramSet, LAYERS_FROM_SOURCE_PARAM, &myData->layersFromSource, 0) != kOfxStatOK) {
+			myData->layersFromSource = NULL;
+		} else {
+			gParamHost->paramGetValue(myData->layersFromSource, &myData->lastLayersFromSource);
+		}
 		l = 0;
 		for (int i = 0; i < globalData[pluginIndex].nofParams && l < MAX_NOF_LAYERS; i++) {
 			if (globalData[pluginIndex].param[i].paramType != PT_LAYER) continue;
@@ -446,6 +442,24 @@ static LayerTimes layerTimesOf(int pluginIndex, const MyInstanceData* myData, Of
 	return lt;
 }
 
+// The time input i is fetched at (getFramesNeeded, getSpatialRoI and render): the render time plus
+// its offset, clamped to the frame range of the clip it comes from (its own clip or Source), e.g.
+// the first frames of a window before the start of Source. With an offset of 0, the render time as
+// before the layer times (the host decides what an input outside its range gives).
+static double inputTime(const MyInstanceData* myData, const LayerTimes& lt, int i, OfxTime t)
+{
+	if (lt.offset[i] == 0) return t;
+	double ft = t + lt.offset[i];
+	OfxImageClipHandle clip = myData->input[lt.clipIndex(i)];
+	OfxPropertySetHandle props = NULL;
+	double range[2] = { 0., 0. };
+	if (clip && gEffectHost->clipGetPropertySet(clip, &props) == kOfxStatOK &&
+		gPropHost->propGetDoubleN(props, kOfxImageEffectPropFrameRange, 2, range) == kOfxStatOK && range[0] <= range[1]) {
+		ft = Maximum(range[0], Minimum(ft, range[1]));
+	}
+	return ft;
+}
+
 
 static
 bool
@@ -538,7 +552,7 @@ OfxStatus getSpatialRoI(int pluginIndex, OfxImageEffectHandle effect, OfxPropert
 		clipName[i] = &globalData[pluginIndex].param[p].paramName;
 		const int c = lt.clipIndex(i);
 		OfxRectD rod;
-		if (myData->input[c] && gEffectHost->clipGetRegionOfDefinition(myData->input[c], lt.time(i, time), &rod) == kOfxStatOK) {
+		if (myData->input[c] && gEffectHost->clipGetRegionOfDefinition(myData->input[c], inputTime(myData, lt, i, time), &rod) == kOfxStatOK) {
 			if (!hasRoI[c]) {
 				roi[c] = rod;
 				hasRoI[c] = true;
@@ -552,7 +566,14 @@ OfxStatus getSpatialRoI(int pluginIndex, OfxImageEffectHandle effect, OfxPropert
 		++i;
 	}
 	for (int c = 0; c < i; ++c) {
-		if (hasRoI[c] && clipName[c]) {
+		if (!clipName[c]) continue;
+		if (lt.fromSource[c]) {
+			// a layer clip not used (its layer comes from Source): an empty region, so that the host
+			// doesn't render it (e.g. Natron skips the inputs with an empty RoI)
+			roi[c].x1 = roi[c].y1 = roi[c].x2 = roi[c].y2 = 0.;
+			hasRoI[c] = true;
+		}
+		if (hasRoI[c]) {
 			const std::string roiName = std::string("OfxImageClipPropRoI_") + *clipName[c];
 			gPropHost->propSetDoubleN(outArgs, roiName.c_str(), 4, &roi[c].x1);
 		}
@@ -580,7 +601,7 @@ OfxStatus getFramesNeeded(int pluginIndex, OfxImageEffectHandle effect, OfxPrope
 		if (globalData[pluginIndex].param[p].paramType != PT_LAYER) continue;
 		clipName[i] = &globalData[pluginIndex].param[p].paramName;
 		std::vector<double>& f = frames[lt.clipIndex(i)];
-		const double t = lt.time(i, time);
+		const double t = inputTime(myData, lt, i, time);
 		if (std::find(f.begin(), f.end(), t) == f.end()) {
 			f.push_back(t);
 		}
@@ -588,7 +609,8 @@ OfxStatus getFramesNeeded(int pluginIndex, OfxImageEffectHandle effect, OfxPrope
 	}
 	for (int c = 0; c < i; ++c) {
 		if (!clipName[c]) continue;
-		// a clip whose frames all come from Source: the render time (the default), it isn't fetched
+		// a clip whose frames all come from Source: the render time (the default; an empty range
+		// can't be given), it isn't fetched and its RoI is empty (getSpatialRoI)
 		if (frames[c].empty()) frames[c].push_back(time);
 		std::sort(frames[c].begin(), frames[c].end());
 		const std::string rangeName = std::string("OfxImageClipPropFrameRange_") + *clipName[c];
@@ -669,8 +691,9 @@ static OfxStatus getClipPreferences(int pluginIndex, OfxImageEffectHandle effect
 	int v = 0;
 	GlobalData* globalDataP = &globalData[pluginIndex];
 	gParamHost->paramGetValue(myData->param[PARAM_ANIMSEED], &v);
-	// layer inputs at other frames than the render time: the output changes with time
-	if (v || layerTimesOf(pluginIndex, myData, 0.).varying()) {
+	// Not set for the layer times: a host keys the images by time when an input varies (inputs
+	// fetched at other frames), and a frame varying output would re-render still inputs every frame.
+	if (v) {
 		gPropHost->propSetInt(outArgs, kOfxImageEffectFrameVarying, 0, 1);
 	}
 
@@ -719,6 +742,33 @@ static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance,
 	const char *changeReason;
 	gPropHost->propGetString(inArgs, kOfxPropChangeReason, 0, &changeReason);
 
+	// Layers from Source raised by the user: give the layers it adds whose offset is still 0 the
+	// previous frames (Layer -k at -k), a frame window instead of copies of the current frame. Not
+	// when it is lowered or changed otherwise (undo, redo, reset, project load, a script): its value is
+	// tracked on every change. Natron reports some internal edits as user edits.
+	{
+		const char* name = NULL;
+		gPropHost->propGetString(inArgs, kOfxPropName, 0, &name);
+		MyInstanceData* d = getMyInstanceData(instance);
+		if (d && d->layersFromSource && name && strcmp(name, LAYERS_FROM_SOURCE_PARAM) == 0) {
+			const int previous = d->lastLayersFromSource;
+			gParamHost->paramGetValue(d->layersFromSource, &d->lastLayersFromSource);
+			if (strcmp(changeReason, kOfxChangeUserEdited) == 0 && d->lastLayersFromSource > previous) {
+				OfxTime time = 0.;
+				gPropHost->propGetDouble(inArgs, kOfxPropTime, 0, &time);
+				const LayerTimes lt = layerTimesOf(pluginIndex, d, time);
+				int k = 0;
+				for (int i = 1; i < lt.nofInputs; i++) {
+					if (!d->timeOffset[i]) continue;
+					++k;
+					if (k > previous && lt.fromSource[i] && lt.offset[i] == 0) {
+						gParamHost->paramSetValue(d->timeOffset[i], -k);
+					}
+				}
+			}
+		}
+	}
+
 	// we are only interested in user edits
 	if (strcmp(changeReason, kOfxChangeUserEdited) != 0) return kOfxStatReplyDefault;
 
@@ -766,22 +816,6 @@ static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance,
 		gParamHost->paramGetHandle(paramSet, objChanged, &param, &props);
 		const char* paramType;
 		gPropHost->propGetString(props, kOfxParamPropType, 0, &paramType);
-
-		// Layers from Source raised: give the layers taken from Source whose offset is still 0 the
-		// previous frames (Layer -k at -k), a frame window instead of copies of the current frame
-		if (myData->layersFromSource && strcmp(objChanged, LAYERS_FROM_SOURCE_PARAM) == 0) {
-			OfxTime time = 0.;
-			gPropHost->propGetDouble(inArgs, kOfxPropTime, 0, &time);
-			const LayerTimes lt = layerTimesOf(pluginIndex, myData, time);
-			int k = 0;
-			for (int i = 1; i < lt.nofInputs; i++) {
-				if (!myData->timeOffset[i]) continue;
-				++k;
-				if (lt.fromSource[i] && lt.offset[i] == 0) {
-					gParamHost->paramSetValue(myData->timeOffset[i], -k);
-				}
-			}
-		}
 
 #ifdef ABOUT_DIALOG
 		if (strcmp(objChanged, "About") == 0) {
@@ -1189,10 +1223,26 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 			// getFramesNeeded). Point parameters stay relative to Source at the render time.
 			const int c = layerTimes.clipIndex(i);
 			const std::string& clipName = (c == 0) ? globalData[pluginIndex].param[0].paramName : globalData[pluginIndex].param[p].paramName;
+			const double inTime = inputTime(myData, layerTimes, i, time);
 			myData->sequenceDataP->inputConnected[i] = false;
-			if (ofxuIsClipConnected(instance, clipName.c_str())) {
+			const bool connected = ofxuIsClipConnected(instance, clipName.c_str());
+			if (connected) {
 				myData->sequenceDataP->inputConnected[i] = true;
-				sourceImg[i] = ofxuGetImage(myData->input[c], layerTimes.time(i, time), srcRowBytes, srcBitDepth, srcIsAlpha, srcRect, srcData);
+				sourceImg[i] = ofxuGetImage(myData->input[c], inTime, srcRowBytes, srcBitDepth, srcIsAlpha, srcRect, srcData);
+			}
+			if (sourceImg[i] == NULL && connected && layerTimes.offset[i] != 0 && !gEffectHost->abort(instance)) {
+				// No image for a layer at another frame (within the clip's frame range): fail rather
+				// than drop it and the following layers (as for an unconnected layer, the stack stops
+				// at the first missing one), or skip it and shift the next frames into its place:
+				// the filters that use frames depend on their order.
+				char msg[512];
+				snprintf(msg, sizeof(msg), "%s: no image from %s at frame %g", globalData[pluginIndex].param[p].paramName.c_str(), clipName.c_str(), inTime);
+				if (gMessageSuiteV2) {
+					gMessageSuiteV2->setPersistentMessage(instance, kOfxMessageError, "", "%s", msg);
+				} else if (gMessageSuite) {
+					gMessageSuite->message(instance, kOfxMessageError, "", "%s", msg);
+				}
+				throw OfxuStatusException(kOfxStatFailed);
 			}
 			if (sourceImg[i] == NULL) {
 				myData->sequenceDataP->inputConnected[i] = false;
@@ -2005,18 +2055,8 @@ static OfxStatus describe(int pluginIndex, OfxImageEffectHandle effect)
 
     gPropHost->propSetString(effectProps, kOfxImageEffectPropClipPreferencesSlaveParam, 0, "Animate Random Seed");
 	if (pluginHasLayerTimes(pluginIndex)) {
-		// layer times: inputs at other frames (getFramesNeeded), and frame varying when an offset
-		// isn't 0 (getClipPreferences)
+		// layer times: inputs at other frames (getFramesNeeded)
 		gPropHost->propSetInt(effectProps, kOfxImageEffectPropTemporalClipAccess, 0, 1);
-		int n = 1;
-		const string suffix = TIME_OFFSET_PARAM_SUFFIX;
-		for (int i = 0; i < globalData[pluginIndex].nofParams; i++) {
-			const reduxfx::Parameter& param = globalData[pluginIndex].param[i];
-			const string& name = param.paramName;
-			if (param.paramType == PT_INT && name.size() > suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0) {
-				gPropHost->propSetString(effectProps, kOfxImageEffectPropClipPreferencesSlaveParam, n++, name.c_str());
-			}
-		}
 	}
 
 	return kOfxStatOK;
