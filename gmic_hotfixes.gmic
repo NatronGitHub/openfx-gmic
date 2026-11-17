@@ -254,6 +254,10 @@ fx_MorphoPaint :
 # 'fx_array_mirror[-1] 1,0,0,2,0,0,0', and the Color Curves choices numbered from 1, so that the
 # default one (0, "RGB") applies no curves; the other choices still need a display. Upstream also
 # changed the parameter to choice(0,"RGB",...), the same as G'MIC 4.0.7's choice("RGB",...).
+# Copied verbatim from upstream, which shifts the Color Curves labels by one: "RGB" (0) applies
+# no curves, "CMY" (1) runs the rgb curves, "CMYK" (2) the cmy ones, and so on up to "YCbCr" (8),
+# which runs the lch ones: the ycbcr curves (9) are unreachable. Every non-zero choice still calls
+# the interactive x_color_curves, and fails without a display.
 samj_Courtepointe :
 
  Cossin=$1
