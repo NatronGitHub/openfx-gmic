@@ -2,7 +2,8 @@ SUBDIRS = GMIC_OFX
 
 # All G'MIC sources come from the release tarball: since G'MIC 3, it includes the C API
 # (gmic_libc.*) and the standard library with the community filters (gmic_stdlib_community.h).
-GMICSOURCES = CImg.h gmic.cpp gmic.h gmic_stdlib_community.h gmic_libc.cpp gmic_libc.h
+# Only gmic_libc.h is used from the C API: gmic_plugin_call.cpp replaces gmic_libc.cpp.
+GMICSOURCES = CImg.h gmic.cpp gmic.h gmic_stdlib_community.h gmic_libc.h
 GMICVER=4.0.7
 GMICSRC=gmic_$(GMICVER).tar.gz
 GMICSRCDIR=gmic-$(GMICVER)
@@ -90,8 +91,18 @@ $(GMICSRC):
 	done; \
 	rm -f $@.tmp; echo "Error: could not download a valid $(GMICSRC)"; exit 1
 
+# tar -m: the extracted files get the current time, not the (older) one from the tarball, so that
+# they are newer than the tarball (not extracted again by every make), and than the objects
+# compiled from older sources (GMIC_OFX/Makefile rebuilds them when the G'MIC headers change).
 $(GMICSOURCES): $(GMICSRC)
-	tar --strip-components 2 -zxvf $< $(patsubst %,$(GMICSRCDIR)/src/%, $@)
+	tar -m --strip-components 2 -zxvf $< $(patsubst %,$(GMICSRCDIR)/src/%, $@)
+	@case $@ in gmic.h|gmic.cpp) sh patches/gmic-apple-abort.sh $@ || { rm -f $@; exit 1; };; esac
+
+# Local patches to the extracted G'MIC sources (re-extracted when a patch changes):
+# - gmic-apple-abort.sh: enable G'MIC's abort support on macOS too, without which an error inside
+#   an OpenMP loop terminates the host (https://github.com/NatronGitHub/openfx-gmic/issues/41,
+#   reported upstream as https://github.com/GreycLab/gmic/issues/219)
+gmic.h gmic.cpp: patches/gmic-apple-abort.sh
 
 distclean: clean
-	-rm $(GMICSRC) $(GMICSOURCES) gmic_hotfixes.h gmic_hotfixes.version
+	-rm -f $(GMICSRC) $(GMICSOURCES) gmic_hotfixes.h gmic_hotfixes.version gmic_libc.cpp gmic_stdlib_gmic.h # the last two: left by older builds
