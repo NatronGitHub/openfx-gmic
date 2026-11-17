@@ -92,9 +92,10 @@ FILE(GLOB SUPPORT_SOURCES
 
 # The G'MIC sources are extracted by the top-level Makefile (make sources), which also patches
 # them (patches/gmic-apple-abort.sh, issue #41, patches/cimg-math-macro-overread.sh,
-# GreycLab/CImg#496, patches/cimg-omp-rand.sh, issue #44, and patches/cimg-ij-boundary.sh,
-# GreycLab/CImg#498). Apply the patches here too, for sources that were extracted otherwise; they
-# do nothing on patched files, and fail if the sources changed.
+# GreycLab/CImg#496, patches/cimg-omp-rand.sh, issue #44, patches/cimg-ij-boundary.sh,
+# GreycLab/CImg#498, and patches/cimg-symmetric-eigen.sh, issue #71). Apply the patches here too,
+# for sources that were extracted otherwise; they do nothing on patched files, and fail if the
+# sources changed.
 FOREACH(_gmic_file gmic.h gmic.cpp CImg.h)
   IF(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${_gmic_file})
     MESSAGE(FATAL_ERROR "${_gmic_file} is missing: run 'make sources' first")
@@ -102,7 +103,7 @@ FOREACH(_gmic_file gmic.h gmic.cpp CImg.h)
 ENDFOREACH()
 FIND_PROGRAM(GMIC_PATCH_SH sh)
 IF(GMIC_PATCH_SH)
-  FOREACH(_gmic_patch gmic-apple-abort.sh:gmic.h gmic-apple-abort.sh:gmic.cpp cimg-math-macro-overread.sh:CImg.h cimg-omp-rand.sh:CImg.h cimg-ij-boundary.sh:CImg.h)
+  FOREACH(_gmic_patch gmic-apple-abort.sh:gmic.h gmic-apple-abort.sh:gmic.cpp cimg-math-macro-overread.sh:CImg.h cimg-omp-rand.sh:CImg.h cimg-ij-boundary.sh:CImg.h cimg-symmetric-eigen.sh:CImg.h)
     STRING(REPLACE ":" ";" _gmic_patch "${_gmic_patch}")
     LIST(GET _gmic_patch 0 _gmic_script)
     LIST(GET _gmic_patch 1 _gmic_file)
@@ -118,11 +119,12 @@ IF(GMIC_PATCH_SH)
     ${CMAKE_CURRENT_SOURCE_DIR}/patches/cimg-omp-rand.sh
     ${CMAKE_CURRENT_SOURCE_DIR}/patches/cimg-math-macro-overread.sh
     ${CMAKE_CURRENT_SOURCE_DIR}/patches/cimg-ij-boundary.sh
+    ${CMAKE_CURRENT_SOURCE_DIR}/patches/cimg-symmetric-eigen.sh
     ${CMAKE_CURRENT_SOURCE_DIR}/gmic.h ${CMAKE_CURRENT_SOURCE_DIR}/gmic.cpp ${CMAKE_CURRENT_SOURCE_DIR}/CImg.h)
 ELSEIF(APPLE)
   MESSAGE(FATAL_ERROR "sh not found: cannot apply patches/gmic-apple-abort.sh, which macOS builds need")
 ELSE()
-  MESSAGE(WARNING "sh not found: the patches to the G'MIC sources are not applied (patches/gmic-apple-abort.sh only changes Apple code, but patches/cimg-math-macro-overread.sh and patches/cimg-ij-boundary.sh fix reads out of bounds, and without patches/cimg-omp-rand.sh most seeded filters are not reproducible with OpenMP)")
+  MESSAGE(WARNING "sh not found: the patches to the G'MIC sources are not applied (patches/gmic-apple-abort.sh only changes Apple code, but patches/cimg-math-macro-overread.sh and patches/cimg-ij-boundary.sh fix reads out of bounds, patches/cimg-symmetric-eigen.sh NaN eigenvectors, and without patches/cimg-omp-rand.sh most seeded filters are not reproducible with OpenMP)")
 ENDIF()
 
 # gmic_plugin_call.cpp replaces gmic_libc.cpp

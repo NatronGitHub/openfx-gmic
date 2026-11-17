@@ -8,7 +8,8 @@ Changes in openfx-gmic since Natron 2.5.0 (tag `Natron-2.5.0`). Natron 2.6 polic
 - The filters now come from G'MIC 4.0.7 and its community filters: 1205 plug-ins (was 360). Many filters' names, parameters and results changed with G'MIC itself.
 - The build downloads only the G'MIC 4.0.7 release tarball (sha256-pinned); gmic-community is no longer fetched separately.
 - Natron no longer quits on macOS when a G'MIC error happens inside an OpenMP loop, e.g. Smooth [Patch-PCA] on a flat image (#41, #56).
-- Bugs in G'MIC 4.0.7 filters are patched in the plug-in until G'MIC releases the fixes (reported upstream): Z-Time, Exposure Fusion Weight Map, Non-Convolution Edge Extraction, Colorize [Photographs], Smooth [Patch-PCA] (#58, part of #53).
+- Bugs in G'MIC 4.0.7 filters are patched in the plug-in until G'MIC releases the fixes (reported upstream): Z-Time, Exposure Fusion Weight Map, Non-Convolution Edge Extraction, Colorize [Photographs], Smooth [Patch-PCA] (#58, part of #53); Jpr Line Edges (#71), Gleam, Layer Manipulation, Montage Multi Rows, Halftone Shapes, Heart Tone, Star Tone (gmic-community #301–#305, #77).
+- Smooth [Patch-PCA] no longer returns NaN on flat areas: CImg's eigen fix is applied until G'MIC includes it (#71, #77).
 
 ### Behaviour changes (saved projects may render differently)
 - **Plug-in version 2.0: Output Layer** (#57). "Output Layer" now counts from the top of the G'MIC image stack (Source = Layer 0, the "Layer -1" input = Layer -1…), as in G'MIC-Qt; before, it counted from the end. Affects filters that return several images (e.g. Channels to Layers now shows R instead of B by default; Fade Layers, Morph Layers, Tiles to Layers show the first result instead of the last) and filters with layer inputs connected. "Merged" and filters with a single result are unchanged. Natron loads nodes saved with version 1.x using 2.0 and lists them in its error log.
@@ -29,7 +30,7 @@ Changes in openfx-gmic since Natron 2.5.0 (tag `Natron-2.5.0`). Natron 2.6 polic
 - Renders where the input and output image bounds differ (e.g. partial render windows) no longer fail with "The image produced by G'MIC has the wrong size" (#40; likely fixes #2, waiting for a retest).
 - Wrong parameters or output for many filters: value(), file defaults, choices, colours with alpha, 8-bit flip, gray+alpha (#7, #17, #20, #39).
 - Point parameter defaults land inside Source when it is smaller than the project or offset (e.g. Solve Maze failed with "Invalid argument", Spiral Distortion was shifted): when the user connects or changes Source, points still at their default (or reset to it) are set within its region of definition; they don't follow later size changes upstream, e.g. an edited Reformat (#73).
-- Crashes: more than 32 output images (#37); a render aborted by the user can no longer overflow the output buffer (#56).
+- Crashes: more than 32 output images (#37); a render aborted by the user can no longer overflow the output buffer (#56); Spiral Distortion on inputs smaller than the project (CImg fix applied until G'MIC includes it, #76).
 
 ### Build
 - Built with C++17 (C++20 for Qt6 builds of Natron) (#33); CI on Linux, macOS (Apple clang, MacPorts) and Windows (MSYS2 UCRT64) (#23, #25, #28, #35, #38).
