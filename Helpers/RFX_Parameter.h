@@ -55,6 +55,11 @@
 #define MAX_NOF_PARAMS 256
 #define MAX_NOF_TEXTS 32
 
+// flags of a boolean parameter that enables the point parameter just before it (a G'MIC removable
+// point, issue #79): it is not passed to G'MIC, the point is passed as nan,nan when it is off, and
+// the OFX glue disables the point (and so its overlay handle) then
+#define PARAM_FLAGS_POINT_ENABLED 2
+
 // Layer times (issue #63), defined by the G'MIC plug-in for the filters with layer inputs, used by
 // the OFX glue: each layer input (all but Source) has an integer parameter "<clip name> Time
 // Offset" (it is fetched at the render time plus this offset), and the first "Layers from Source"
