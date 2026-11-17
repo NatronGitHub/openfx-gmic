@@ -25,9 +25,10 @@ fail() {
   rm -f "$f.patched" "$f.stripped1" "$f.stripped2"
   exit 1
 }
+trap 'rm -f "$f.patched" "$f.stripped1" "$f.stripped2"' INT TERM HUP
 
 # ijawk <mode> <file>: mode 'count' prints the number of unpatched and of patched cases found
-# (each of the four must be found once), 'apply' prints the patched file, and 'strip' prints the
+# once (each of the four must be found once), or "duplicate" if a case is found more than once, 'apply' prints the patched file, and 'strip' prints the
 # file without the lines of the cases (patched or not), to check that nothing else changed. Lines
 # are compared without their leading and trailing blanks; 'apply' keeps the indentation.
 ijawk() {
@@ -58,8 +59,8 @@ ijawk() {
       }
       if (mode == "count") {
         no = nn2 = 0
-        for (k = 1; k <= 4; k++) { if (old[k] == 1) no++; else if (old[k] > 1) no += 10
-                                   if (new[k] == 1) nn2++; else if (new[k] > 1) nn2 += 10 }
+        for (k = 1; k <= 4; k++) { if (old[k] > 1 || new[k] > 1) { print "duplicate"; exit }
+                                   if (old[k] == 1) no++; if (new[k] == 1) nn2++ }
         print no " " nn2; exit
       }
       for (i = 1; i <= NR; i++) {
@@ -89,7 +90,7 @@ if [ "$counts" = "0 4" ]; then
   exit 0
 fi
 # the code to patch must be found exactly
-[ "$counts" = "4 0" ] || fail "expected the four periodic and Neumann cases of linear and cubic interpolation in _mp_IJxyz1(), once each and either all unpatched or all patched (found $counts, as numbers of unpatched and patched cases)"
+[ "$counts" = "4 0" ] || fail "expected the four periodic and Neumann cases of linear and cubic interpolation in _mp_IJxyz1(), once each and either all unpatched or all patched (found: $counts; otherwise the numbers of unpatched and patched cases)"
 
 ijawk apply "$f" > "$f.patched" || fail "awk failed"
 [ "$(ijawk count "$f.patched")" = "0 4" ] || fail "the patch did not apply"

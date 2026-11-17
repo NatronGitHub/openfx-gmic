@@ -93,9 +93,8 @@ FILE(GLOB SUPPORT_SOURCES
 # The G'MIC sources are extracted by the top-level Makefile (make sources), which also patches
 # them (patches/gmic-apple-abort.sh, issue #41, patches/cimg-math-macro-overread.sh,
 # GreycLab/CImg#496, patches/cimg-omp-rand.sh, issue #44, and patches/cimg-ij-boundary.sh,
-# GreycLab/CImg#498). Apply the patches here too, for sources that were extracted otherwise; they do
-# nothing on patched files, and fail if the
-# sources changed.
+# GreycLab/CImg#498). Apply the patches here too, for sources that were extracted otherwise; they
+# do nothing on patched files, and fail if the sources changed.
 FOREACH(_gmic_file gmic.h gmic.cpp CImg.h)
   IF(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${_gmic_file})
     MESSAGE(FATAL_ERROR "${_gmic_file} is missing: run 'make sources' first")
