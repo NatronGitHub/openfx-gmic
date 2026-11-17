@@ -587,6 +587,10 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 			d2 = d1; d3 = d1; d4 = d1;
 			if (paramType == "bool" || paramType == "button") {
 				t = PT_BOOL;
+			} else if (paramType == "pointenabled") {
+				// enables the removable point before it, see PARAM_FLAGS_POINT_ENABLED
+				t = PT_BOOL;
+				flags = PARAM_FLAGS_POINT_ENABLED;
 			} else if (paramType == "choice") {
 				t = PT_SELECT;
 				// "color" and "point": see above
@@ -630,6 +634,12 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		  name, "", t, (float)stringToDouble(minValue), (float)stringToDouble(maxValue), d1, d2, d3, d4, paramText);
 		globalDataP->param[p].flags = flags;
 		if (h) globalDataP->param[p].displayStatus = DS_HIDDEN;
+		if (paramType == "pointenabled") {
+			globalDataP->param[p].hint = (param.removable < 0) ?
+				"Use the point above. Off by default, since G'MIC-Qt starts with this point removed. "
+				"When off, the filter gets nan,nan for the point, as for a point removed in G'MIC-Qt." :
+				"Use the point above. When off, the filter gets nan,nan for the point, as for a point removed in G'MIC-Qt.";
+		}
 		p++;
 	}
 
@@ -756,6 +766,8 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, bool preview)
         // the filter parameters only: they come first, the layers and their times follow
         const int nofFilterParams = (int)effectData.param.size();
         for (int i = 1; i <= nofFilterParams && i < PARAM_COMMAND; i++) {
+            if (PAR_TYPE(i) == PT_BOOL && globalDataP->param[i].flags == PARAM_FLAGS_POINT_ENABLED)
+                continue; // not a G'MIC argument: see the point before it
             if (PAR_TYPE(i) == PT_INT || PAR_TYPE(i) == PT_BOOL || PAR_TYPE(i) == PT_SELECT)
                 cmd += intToString((int)PAR_VAL(i)) + ",";
             else if (PAR_TYPE(i) == PT_FLOAT)
@@ -803,6 +815,12 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, bool preview)
                     cmd += floatToString((255.f * PAR_CH(i, 3))) + ",";
                 }
             } else if (PAR_TYPE(i) == PT_POINT) {
+                // a removable point that is off: removed, as G'MIC-Qt passes it (issue #79)
+                if (i + 1 <= nofFilterParams && i + 1 < PARAM_COMMAND && PAR_TYPE(i + 1) == PT_BOOL &&
+                    globalDataP->param[i + 1].flags == PARAM_FLAGS_POINT_ENABLED && PAR_VAL(i + 1) == 0) {
+                    cmd += "nan,nan,";
+                    continue;
+                }
                 cmd +=
                 floatToString(PAR_CH(i, 0)) + "," +
                 floatToString(PAR_CH(i, 1)) + ",";
