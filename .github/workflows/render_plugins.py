@@ -42,17 +42,11 @@ SKIP = {
                                           "'This filter does nothing on host!'",
 }
 # Plug-ins that fail with their default parameters in G'MIC itself (not in the plug-in), checked
-# with G'MIC 4.0.7. Listed with the G'MIC error; a plug-in that renders again is reported (XPASS).
+# with G'MIC 4.0.7 and the hot fixes of gmic_hotfixes.gmic (which fix Gleam, MorphologyPainting,
+# LayerManipulation, MontageMultiRows and HalftoneShapes). Listed with the G'MIC error; a plug-in
+# that renders again is reported (XPASS).
 EXPECTED_FAIL = {
-    'eu.gmic.Gleam': "softlight: 'Select image(s) with 1 or 3 channels' on an RGBA image (not reported upstream)",
-    'eu.gmic.MorphologyPainting': "'Unknown command fx_morpho' (renamed fx_morphological): "
-                                  "https://github.com/GreycLab/gmic-community/issues/299",
-    'eu.gmic.LayerManipulation': "gcd_layers: 'name: Number of arguments (4) cannot be higher than the number of "
-                                 "images in the selection (1)', with any number of layers (not reported upstream)",
-    'eu.gmic.MontageMultiRows': "samj_montage_row: 'Invalid selection [,-1,-2]', with 4 or 5 layers "
-                                "(not reported upstream)",
-    # only on the small test input: they render at 720x576
-    'eu.gmic.HalftoneShapes': "'Unknown command [-1]x0' on the 160x120 test input",
+    # only on the small test input: it renders at 720x576
     'eu.gmic.SolveMaze': "minimal_path: 'Invalid argument' on the 160x120 test input",
 }
 # Slow plug-ins (minutes on a CI runner): their own timeout (seconds); not in the pr subset
