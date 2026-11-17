@@ -18,8 +18,9 @@
 #   the plug-in is stripped, and a manifest listing the DLLs is embedded into it with mt.exe from
 #   the Windows SDK, as in Natron's tools/jenkins/build-Windows-installer.sh: hosts load the
 #   plug-in with LoadLibrary(path), which does not search the plug-in's directory for its
-#   dependencies; the manifest makes the loader look for them there. An import that is neither a
-#   System32 DLL nor in $MINGW_PREFIX/bin is an error.
+#   dependencies; the manifest makes the loader look for them there. An import found in
+#   $MINGW_PREFIX/bin is bundled, also if System32 has a DLL with the same name; one that is in
+#   neither is an error.
 # Linux: nothing to do (see ci.yml).
 #
 # Limitations of the resulting bundles:
@@ -179,9 +180,13 @@ MINGW*|MSYS*)
 
     # closure of the imports (objdump -p, not recursive) over the plug-in and the DLLs copied from
     # $PREFIX/bin, the system DLLs being leaves (the recursion of ntldd -R into C:\Windows reports
-    # DLLs that some system DLLs import optionally as "not found"). A DLL that is in System32 is
-    # loaded from there, before the plug-in's manifest or PATH are searched; the API sets (api-ms-*,
-    # ext-ms-*) are resolved by the loader. Anything else is an error: it wouldn't load.
+    # DLLs that some system DLLs import optionally as "not found"). An import that is in
+    # $PREFIX/bin is bundled, even if System32 has a DLL with the same name: the manifest redirects
+    # the loader to the bundled DLLs before it searches System32, and the build machine's System32
+    # may hold third-party DLLs (e.g. zlib1.dll or libcrypto-3-x64.dll, installed by some software)
+    # that the user's machine doesn't have, or in another version. Only an import that is not in
+    # $PREFIX/bin but in System32 is a system DLL; the API sets (api-ms-*, ext-ms-*) are resolved
+    # by the loader. Anything else is an error: it wouldn't load.
     # On a second run, the DLLs already copied are copied again.
     todo=( "$BIN" )
     : > "$TMPD/scanned"
@@ -191,16 +196,20 @@ MINGW*|MSYS*)
         imports=$(objdump -p "$f") || { echo "Error: objdump failed on $f"; exit 1; }
         for dll in $(printf '%s\n' "$imports" | awk '/DLL Name:/ {print $3}' | tr -d '\r' | lower | sort -u); do
             case "$dll" in api-ms-*|ext-ms-*) continue ;; esac
-            [ -n "$(actual "$dll" "$TMPD/system")" ] && continue
             grep -qxF "$dll" "$TMPD/scanned" && continue
             name=$(actual "$dll" "$TMPD/prefix")
+            system=$(actual "$dll" "$TMPD/system")
             if [ -z "$name" ]; then
+                [ -n "$system" ] && continue
                 echo "Error: $(basename "$f") imports $dll, which is neither in $SYSDIR nor in $PREFIX/bin"
                 status=1
                 continue
             fi
             echo "$dll" >> "$TMPD/scanned"
             echo "* $name (imported by $(basename "$f"))"
+            if [ -n "$system" ]; then
+                echo "  Note: $SYSDIR/$system has the same name: the copy from $PREFIX/bin is bundled"
+            fi
             cp "$PREFIX/bin/$name" "$BINDIR/"
             todo+=( "$BINDIR/$name" )
         done
