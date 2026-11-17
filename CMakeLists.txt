@@ -50,23 +50,19 @@ if(NOT _multi_config AND NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Debug, Release or RelWithDebInfo" FORCE)
 endif()
 
-# C++ standard (OFX_CXX_STANDARD, see openfx/cmake/OpenFX.cmake): C++17 by default (Natron RB-2.6
-# Qt5 builds), C++20 for Qt6 builds (RB-2.7). Strict -std=c++NN, as the Makefile's CXXSTD and the
-# CI builds.
-if(NOT DEFINED CMAKE_CXX_EXTENSIONS)
-  set(CMAKE_CXX_EXTENSIONS OFF)
-endif()
+# C++ standard: OFX_CXX_STANDARD (openfx/cmake/OpenFX.cmake; default: CMAKE_CXX_STANDARD, or 17):
+# C++17 for Natron RB-2.6 (Qt5) builds, C++20 for Qt6 builds (RB-2.7). add_ofx_plugin compiles
+# with strict -std=c++NN (no GNU extensions), as the Makefile's CXXSTD and the CI builds do.
 
 # ========================== openfx ==========================
 
 # openfx's cmake/OpenFX.cmake: add_ofx_plugin (which links the OFX C API, openfx::Api: the plug-in
 # doesn't use the Support library), ofx_plugin_resources, ofx_target_openmp, ofx_deploy_bundle, and
-# the OFX_CXX_STANDARD, OFX_USE_OPENMP, OFX_DEPLOY_BUNDLES and PLUGIN_INSTALLDIR options.
+# the OFX_CXX_STANDARD, OFX_USE_OPENMP, OFX_DEPLOY_BUNDLES and PLUGIN_INSTALLDIR options. The
+# bundle is installed into ${CMAKE_INSTALL_PREFIX}/${PLUGIN_INSTALLDIR}, by default
+# <prefix>/OFX/Plugins (e.g. /usr/OFX/Plugins with the prefix /usr).
 # EXCLUDE_FROM_ALL: openfx's libraries are not built.
 add_subdirectory(openfx EXCLUDE_FROM_ALL)
-
-# The bundle is installed into ${CMAKE_INSTALL_PREFIX}/${PLUGIN_INSTALLDIR}, by default
-# <prefix>/OFX/Plugins (e.g. /usr/OFX/Plugins with the prefix /usr).
 
 # ========================== G'MIC sources ==========================
 #
@@ -220,27 +216,41 @@ foreach(_f IN LISTS GMICSOURCES)
 endforeach()
 
 # Local patches to the extracted G'MIC sources, the same as the Makefile's (see patches/): each
-# <script>:<file> runs "sh patches/<script> <file>" on the fresh copy, and fails if the source
-# doesn't contain the expected code (e.g. after a GMICVER bump). Adding a patch is one line here
-# (and one in the Makefile's extraction rule).
+# <script>:<file>:<where> runs "sh patches/<script> <file>" on the fresh copy, and fails if the
+# source doesn't contain the expected code (e.g. after a GMICVER bump). <where> is the platforms
+# whose compiled code the patch changes: ALL, or a CMake condition variable such as APPLE.
+# Adding a patch is one line here, and two in the Makefile (the case of the extraction rule, and
+# the dependency of the patched file on the script).
+# The patches need a POSIX sh (Linux, macOS, MSYS2; with MSVC, e.g. Git for Windows' sh.exe in the
+# PATH, or -DGMIC_PATCH_SH=<path>). Without one, only the patches that don't change this platform's
+# code are skipped (with a warning); a patch for ALL platforms (e.g. a CImg.h fix) makes sh
+# required everywhere.
 set(GMIC_PATCHES
-  gmic-apple-abort.sh:gmic.h   # abort support on macOS (#41)
-  gmic-apple-abort.sh:gmic.cpp
+  gmic-apple-abort.sh:gmic.h:APPLE   # abort support on macOS (#41)
+  gmic-apple-abort.sh:gmic.cpp:APPLE
 )
 find_program(GMIC_PATCH_SH sh)
-if(NOT GMIC_PATCH_SH)
-  message(FATAL_ERROR "sh not found: it is needed to apply the patches to the G'MIC sources (patches/)")
-endif()
 foreach(_patch IN LISTS GMIC_PATCHES)
   string(REPLACE ":" ";" _patch "${_patch}")
   list(GET _patch 0 _script)
   list(GET _patch 1 _file)
+  list(GET _patch 2 _where)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/patches/${_script}")
+  if(NOT GMIC_PATCH_SH)
+    if(_where STREQUAL "ALL" OR ${_where})
+      message(FATAL_ERROR "sh not found: it is needed to apply patches/${_script} to ${_file}, which "
+        "changes the code compiled on this platform: put a POSIX sh in the PATH, or configure with "
+        "-DGMIC_PATCH_SH=<path to sh>")
+    endif()
+    message(WARNING "sh not found: patches/${_script} is not applied to ${_file} (it only changes "
+      "${_where} code)")
+    continue()
+  endif()
   execute_process(COMMAND "${GMIC_PATCH_SH}" "${PROJECT_SOURCE_DIR}/patches/${_script}" "${_file}"
     WORKING_DIRECTORY "${_gmic_extracted}" RESULT_VARIABLE _r)
   if(NOT _r EQUAL 0)
     message(FATAL_ERROR "patches/${_script} failed on ${_file} of G'MIC ${GMICVER}")
   endif()
-  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/patches/${_script}")
 endforeach()
 
 foreach(_f IN LISTS GMICSOURCES)

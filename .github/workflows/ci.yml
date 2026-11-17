@@ -6,8 +6,10 @@ name: Continuous Integration
 # policy: Qt5 builds C++17, Qt6 builds C++20); build artifacts are uploaded only on demand or for pre-release tags.
 #
 # The builds use CMake (NatronGitHub/Natron#1181). The Makefile is still what Natron's
-# build-plugins.sh uses: the nightly Linux debug variant is built with it instead of CMake (no
-# extra build), and its bundle is compared with the CMake one (compare_bundles.sh).
+# build-plugins.sh uses on the three systems: the nightly and on-demand runs also build it on each
+# (Linux: the debug variant, instead of a CMake debug build; macOS and Windows: a release build),
+# and compare its bundle with the installed CMake one (compare_bundles.sh). The per-PR runs only
+# build with CMake.
 #
 # Frugal CI (the NatronGitHub runners are shared by all repos): one run per change. Pushes run CI
 # only on master and tags; feature branches run through their pull request. Draft pull requests
@@ -186,10 +188,19 @@ jobs:
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
           cmake -S . -B build-debug $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Debug -DOFX_CXX_STANDARD=17
           cmake --build build-debug -j4
+      # the Makefile, as Natron's build-plugins.sh builds it; its release build also runs
+      # osxDeploy.sh, so it is compared with the installed (deployed) CMake bundle
+      - name: Build with the Makefile (release), compare with CMake
+        if: env.BUILD_VARIANTS == 'true'
+        run: |
+          export PATH=/opt/local/bin:/opt/local/sbin:$PATH
+          make -j4 CONFIG=release CC=/usr/bin/clang CXX=/usr/bin/clang++ OPENMP=1 CXXSTD=c++17
+          .github/workflows/compare_bundles.sh GMIC_OFX/Darwin-64-release/GMIC.ofx.bundle install/OFX/Plugins/GMIC.ofx.bundle
       # self-contained artifact (on a copy, the install directory is left as is): the install
       # step's osxDeploy.sh (OFX_DEPLOY_BUNDLES) already copied the MacPorts dylibs into
-      # Contents/Libraries; bundle_libs.sh copies any that's missing, removes the rpaths into /opt/local, signs the bundle ad hoc, and
-      # fails if a dependency is neither a system library nor bundled. The artifact requires the
+      # Contents/Libraries; bundle_libs.sh copies any that's missing, removes the rpaths into
+      # /opt/local, signs the bundle ad hoc, and fails if a dependency is neither a system library
+      # nor bundled. The artifact requires the
       # runner's macOS version or newer, and must be unquarantined after download
       # (xattr -dr com.apple.quarantine GMIC.ofx.bundle); see the header of bundle_libs.sh.
       - name: Bundle libraries
@@ -237,7 +248,7 @@ jobs:
           msystem: UCRT64
           update: true
           install: >-
-            git
+            git make
             mingw-w64-ucrt-x86_64-cc mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-fftw mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-curl
@@ -262,6 +273,17 @@ jobs:
           set -eo pipefail
           cmake -S . -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DOFX_CXX_STANDARD=17
           cmake --build build-debug -j4
+      # the Makefile, as Natron's build-plugins.sh builds it, compared with the installed CMake
+      # bundle
+      - name: Build with the Makefile (release), compare with CMake
+        if: env.BUILD_VARIANTS == 'true'
+        run: |
+          set -eo pipefail
+          make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17
+          cmake --install build --prefix install
+          .github/workflows/compare_bundles.sh \
+            "$(find GMIC_OFX -maxdepth 1 -type d -name '*-release' | head -1)/GMIC.ofx.bundle" \
+            install/OFX/Plugins/GMIC.ofx.bundle
       # self-contained artifact: the UCRT64 DLLs that GMIC.ofx imports (recursively, objdump -p) are
       # copied next to it, and a manifest listing them is embedded with the Windows SDK's mt.exe.
       # The describe test then runs a statically linked host with a PATH without /ucrt64/bin, so
