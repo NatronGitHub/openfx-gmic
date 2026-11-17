@@ -24,7 +24,7 @@ $(OBJECTPATH)/gmic.o: $(GMIC_HEADERS) $(SRCDIR)/gmic_stdlib_community.h
 $(OBJECTPATH)/gmic_plugin_call.o: $(GMIC_HEADERS) $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h
 $(OBJECTPATH)/gmic_plugin.o: $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h
 
-# we need zlib to decompress the G'MIC standard library, and FFTW3 for many effects that use the FFT (the CImg builtin FFT only works with power-of-two dimensions)
+# we need zlib to decompress the G'MIC standard library, and (except with LICENSE=COMMERCIAL) FFTW3 for the effects that use the FFT
 CXXFLAGS += \
 -DOFX_EXTENSIONS_NATRON \
 -DOFX_EXTENSIONS_NUKE \
@@ -42,10 +42,13 @@ CXXFLAGS += \
 # G'MIC >= 3 compiles CImg in its own namespace (gmic_library, with CImg renamed gmic_image), so
 # it cannot clash with the cimg_library of other plug-ins (e.g. openfx-misc) loaded in the same host.
 
-# FFTW (license: GPLv2), necessary to get Fourier transform on
-# images with dimensions that are not power-of-two
+# FFTW (license: GPLv2), faster Fourier transforms, multithreaded, for any image dimensions.
+# LICENSE=COMMERCIAL (Natron's NATRON_LICENSE, as in openfx-arena) builds without it: G'MIC then
+# uses the FFT built into CImg, which only handles power-of-two image dimensions.
+ifneq ($(LICENSE),COMMERCIAL)
 FFTW3_CXXFLAGS =`pkg-config --cflags fftw3` -Dcimg_use_fftw3
 FFTW3_LINKFLAGS =`pkg-config --libs fftw3` -lfftw3_threads
+endif
 
 # Zlib, necessary to uncompress the glic stdlib
 ZLIB_CXXFLAGS=`pkg-config --cflags zlib` -Dcimg_use_zlib
