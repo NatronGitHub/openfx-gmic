@@ -611,6 +611,7 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 		if (!it->previewOnly && it->preview_command != it->command) mains[it->command] = it->preview_command;
 	}
 	set<string> flagged;
+	set<string> defined; // all the commands defined in content
 	stringstream ss(content);
 	string line, cur, rest;
 	vector<bool> guards; // one per enclosing if: is the current branch a narg($_persistent) branch?
@@ -618,6 +619,7 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 		if (line.empty() || line[0] == '#') continue;
 		string name = commandDefinition(line, rest);
 		if (!name.empty()) {
+			defined.insert(name);
 			cur = mains.count(name) ? name : string();
 			guards.clear();
 		} else {
@@ -650,6 +652,8 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 	// Main commands that need the preview's state in a way the rules above can't detect. A listed
 	// command that no longer is the main command of a filter (e.g. after a G'MIC update) is
 	// reported on stderr, and makes the describe test fail (.github/workflows/describe_plugins.sh).
+	// COMMERCIAL builds (OFX_GMIC_COMMERCIAL) do not report one that is not defined at all: their
+	// standard library leaves out its filter (see gmic_stdlib_commercial.txt).
 	// - fx_rep_bitplane_shuffle (Bit-Plane Shuffler): without _persistent it runs
 	//   "rep_bitplane_shuffle ...,$cli_base", and cli_base is only set by its preview command.
 	static const char* const curated[] = { "fx_rep_bitplane_shuffle" };
@@ -657,6 +661,9 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 		if (mains.count(curated[c])) {
 			flagged.insert(curated[c]);
 		} else if (!mains.empty()) {
+#ifdef OFX_GMIC_COMMERCIAL
+			if (!defined.count(curated[c])) continue;
+#endif
 			fprintf(stderr, "G'MIC: PREVIEW_FALLBACK_UNKNOWN %s: not the main command of a filter, update markPersistentFilters()\n", curated[c]);
 		}
 	}
@@ -752,6 +759,11 @@ static void hideBatchFilters(const string& content, vector<EffectData>& cds, vec
 		if (mains.count(curated[c])) {
 			hidden.insert(curated[c]);
 		} else if (checkCurated && !mains.empty()) {
+#ifdef OFX_GMIC_COMMERCIAL
+			// COMMERCIAL standard libraries leave out some of these filters, or only their #@gui
+			// lines (e.g. fx_tk_video3D, see gmic_stdlib_commercial.txt): the GPL build checks the list
+			continue;
+#endif
 			fprintf(stderr, "G'MIC: HIDDEN_FILTER_UNKNOWN %s: not the main command of a filter, update hideBatchFilters()\n", curated[c]);
 		}
 	}

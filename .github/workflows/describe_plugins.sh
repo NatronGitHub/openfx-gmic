@@ -41,6 +41,8 @@ cd "$WORK"
 status=0
 HOME="$WORK/home" OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
     ./describe_plugins "$MIN_PLUGINS" 2> describe.log || status=$?
+# $DESCRIBE_LOG (an absolute path): keep a copy of the log (PLUGIN <id> lines, ...)
+if [ -n "${DESCRIBE_LOG:-}" ]; then cp describe.log "$DESCRIBE_LOG"; fi
 if grep -E "DUPLICATE_PARAM|DUPLICATE_CLIP" describe.log; then
     echo "FAIL: duplicate param/clip definitions (see above)"
     status=1

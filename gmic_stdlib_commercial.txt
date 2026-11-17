@@ -1,0 +1,91 @@
+# Filters and commands of Natron's COMMERCIAL builds (make LICENSE=COMMERCIAL), read by
+# gmic_stdlib_commercial.sh.
+#
+# G'MIC's gmic_stdlib_community.h embeds G'MIC's standard library (src/gmic_stdlib.gmic, dual
+# CeCILL-C / CeCILL v2.1) and the community filters (include/*.gmic in GreycLab/gmic-community,
+# each under its own licence). COMMERCIAL builds use the CeCILL-C option, so their standard
+# library is generated from src/gmic_stdlib.gmic and only the community files listed below, whose
+# licence allows it, the way G'MIC builds its update file ('parse_gui update'). Then the filters
+# and commands listed below are removed.
+#
+# gmic-community commit: the last one before G'MIC 4.0.7's update file was generated (2026/10/28);
+# with all its include/*.gmic files (but template.gmic), 'parse_gui update' gives the same filters
+# and code as the gmic_stdlib_community.h of the G'MIC 4.0.7 tarball. Update it with GMICVER.
+commit 5147ed545971d22c52bb8039554eb33e1cedde6a
+
+# community <file> <sha256> <licence, from the file header>
+# Files without a licence in their header are under CeCILL-B (BSD-like), see include/COPYING
+# ("The files in this directory are distributed under the CeCILL-B license [...] *unless* another
+# license is explicitely specified in the file header"), shipped as Licence_CeCILL-B_V1-en.txt.
+# "Same licence as G'MIC" (arto_huotari, sylvie_alexandre) is taken as G'MIC's dual CeCILL-C /
+# CeCILL v2.1 licence (maintainer's decision).
+community andreas_pahlsson d68d0a58282ae5a1baddd7b61959d9e6c66d97cbc7d296e5040a11e452f1528e CeCILL-B (no licence in the header)
+community andy_kelday 006c73b50339488e3adf5448f46d76db5008fa786014abfded2a50c8d3d80306 dual CeCILL-C / CeCILL v2.1
+community arto_huotari e5b793c35b6457dc9c01bc21a2b01cecffe327a8c13e8cb064fa03f05a20bf33 "lisenced under the same Cecill lisence as G'MIC"
+community gentlemanbeggar c44ea6b5522f226ea4e6dab6c02f59e318b6a7609e3f2970a452188fd4ed3157 CeCILL-B (no licence in the header)
+community giniart 3e2329734d1b41a76d63b9df2517296078963eb93e862a34cab3b22155a6daac CeCILL-B (no licence in the header)
+community jerome_boulanger 5d5ddbdc66b2d6da3eeb3c68fb6fb870dcf6f22849a07487f4a23cd849295c83 dual CeCILL-C / CeCILL v2.1
+community jerome_ferrari bc16e63e3e1bef68a76da52489390dbeaf8867b1b4773cd5dd1c50a3c2c57b96 CeCILL-B (no licence in the header)
+community marcos_capelini 89f205a5ec41174388bc5f8d15d5ecfad8a641ab5964a4fea3970b26e3aa4c4d CeCILL-B (no licence in the header)
+community photocomix aae69fcec7696c204dcef3b9a5d8a23516ed04a68456456f7fc4d89011f44f9b CeCILL-B (no licence in the header)
+community stanislav_paskalev 5d08b87167153aa5120f63b4157340cdffb2f0425c2c8287b80fc4fdb4962a49 public domain
+community sylvie_alexandre 1cd2df5e6413e3076e1b0be4c300d87feb5e6504a022392bea83cc8f798c2878 "La licence des filtres est la même que celle de G'MIC"
+community tom_keil d31ec1e24c462b9e3bbf5d71a8834cc2302f38f7548aa5e78a926444a02544d9 CeCILL-B (no licence in the header)
+
+# Community files left out:
+#  CeCILL v2.0 or v2.1 only (no CeCILL-C option): afre, claude_lion (header: CeCILL v2.1, text:
+#  "either the CeCILL or the CeCILL-C license"), david_tschumperle, garry_osgood, james_prichard,
+#  joan_rake, karsten_rodenacker, kristian_jarventaus, llm_assisted, martin_souphead,
+#  mathew_callaghan, mccap, prawnsushi, reptorian, reptorian_b64_repository, template.
+#  Creative Commons BY-NC-SA 3.0 NZ (non-commercial): iain_fergusson.
+#  GPL v3: zarir_madon (Dream Smoothing Enhanced, Dream Smoothing Enhanced V2).
+
+# command <name> <reason>: remove the definition of the command and the filters that run it.
+command samj_SVG_Symetries_A writes an SVG drop shadow filter under CC BY-SA 3.0 (comment in the code)
+command samj_GUI_Test_Liste_Points_TSP calls samj_Test_Liste_Points_TSP{,_Bezier} (SVG TSP)
+command samj_Test_Liste_Points_TSP writes an SVG drop shadow filter under CC BY-SA 3.0 (comment in the code)
+command samj_Test_Liste_Points_TSP_Bezier writes an SVG drop shadow filter under CC BY-SA 3.0 (comment in the code)
+
+# filter <command> <reason>: remove the filters that run this command (they would fail on a
+# command only defined in a community file left out). gmic_stdlib_commercial.sh fails if a kept
+# filter can still reach such a command, and tells which.
+filter fx_tk_video3D calls fx_frame_round_old (david_tschumperle)
+filter fx_tk_depth_obtain calls fx_frame_round_old (david_tschumperle)
+filter fx_tk_vintage calls fx_frame_round_old (david_tschumperle)
+filter fx_tk_dof calls local_similarity_mask (iain_fergusson)
+filter fx_tk_metallic calls fx_apply_curve (david_tschumperle)
+filter fx_zonesystem calls fx_apply_curve (david_tschumperle)
+filter fx_OldSquiggly calls fx_apply_curve (david_tschumperle)
+filter fx_MorphoPaint calls fx_apply_curve (david_tschumperle)
+filter fx_fix_HDR_black calls fx_apply_curve (david_tschumperle)
+filter fx_SimpleNoiseCanvas calls fx_apply_curve (david_tschumperle)
+filter fx_metallicstencils calls fx_lylejk_stencil (david_tschumperle)
+filter samj_CeKoaSa_009 calls simplelocalcontrast_p (iain_fergusson)
+filter samj_CeKoaSa_010 calls transfer_colors (david_tschumperle)
+filter samj_Relief_A calls simplelocalcontrast_p (iain_fergusson)
+filter samj_test_Dither_Color calls negative (david_tschumperle)
+filter giniart_buzinga calls fx_corvo_painting_5 (david_tschumperle) and simplelocalcontrast_p (iain_fergusson)
+filter giniart_painting1 calls fx_corvo_painting_5 (david_tschumperle)
+filter giniart_painting2 calls fx_corvo_painting_5 (david_tschumperle) and simplelocalcontrast_p (iain_fergusson)
+filter giniart_sz calls fx_corvo_painting_5 (david_tschumperle) and simplelocalcontrast_p (iain_fergusson)
+filter samj_chalkitup calls ancien_gimp_morpho, which calls negative (david_tschumperle)
+filter samj_CeKoaSa_001 calls ancien_gimp_morpho, which calls negative (david_tschumperle)
+filter samj_CeKoaSa_002 calls ancien_gimp_morpho, which calls negative (david_tschumperle)
+filter samj_CeKoaSa_003 calls ancien_gimp_morpho, which calls negative (david_tschumperle)
+
+# Filters that download data at run time (not part of the plug-in; no licence review was done):
+# G'MIC's input_cached gets these files from https://gmic.eu (stored in G'MIC's cache folder), and
+# 'sp' gets sample images from https://gmic.eu/img:
+#  gmic_cluts.gmz (colour LUTs): 64 Couleurs Max, Apply External CLUT, Apply From CLUT Set, Color
+#    Presets, Customize CLUT, Dodge Sketch, Dorure Gilding, Random Color Transformation, Simulate
+#    Film, Transfer Colors [Multi], Transfer Colors [Patch-Based], Tune HSV Colors
+#  gmic_grain.gmz (film grain): Add Grain
+#  gmic_lightleaks.gmz: Light Leaks
+#  gmic_denoise_cnn.gmz, gmic_scale2x_cnn.gmz (neural network weights): Denoise [CNN], Upscale [CNN2x]
+#  gmic_fonts.gmz (fonts, for text at sizes that are not built in): Equation Plot [Y=f(X)], Quick
+#    Copyright, Visible Watermark, and other filters that draw text
+#  gmic_demos.cimgz: Games & Demos
+#  img/style_*.png (style images): Stylize
+#  sample images: Sample Image, Gmicky - Roddy, Film Grain
+#  all the files above: Download External Data
+# Send Feedback sends the message typed in it to gmic.eu.
