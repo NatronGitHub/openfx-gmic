@@ -35,3 +35,4 @@ Changes in openfx-gmic since Natron 2.5.0 (tag `Natron-2.5.0`). Natron 2.6 polic
 ### Build
 - Built with C++17 (C++20 for Qt6 builds of Natron) (#33); CI on Linux, macOS (Apple clang, MacPorts) and Windows (MSYS2 UCRT64) (#23, #25, #28, #35, #38).
 - CI artifacts are self-contained (bundled libraries) (#62).
+- CMake builds the same bundle as the Makefile, also for COMMERCIAL builds (`-DOFX_LICENSE=COMMERCIAL`), with openfx's `cmake/OpenFX.cmake`; CI builds with CMake, and compares the Makefile's bundles nightly (#61, Natron#1181).
