@@ -1701,6 +1701,9 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 		}
 		gPropHost->propSetString(props, kOfxParamPropScriptName, 0, param.paramName.c_str());
 		gPropHost->propSetString(props, kOfxPropLabel, 0, param.displayName.c_str());
+		if (!param.hint.empty()) {
+			gPropHost->propSetString(props, kOfxParamPropHint, 0, param.hint.c_str());
+		}
 
 		if (group != "" && param.paramType != PT_TOPIC_START) 
 			gPropHost->propSetString(props, kOfxParamPropParent, 0, group.c_str());
