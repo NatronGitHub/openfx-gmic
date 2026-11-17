@@ -1127,9 +1127,9 @@ static void premultiplyPlanar(float* data, int width, int height, float maxValue
 // premultiplication handling, G'MIC got the premultiplied colours, i.e. the input composited over
 // black, and the result looked composited over black too. To keep that look, the colours are
 // multiplied by the main input's alpha and the output alpha stays opaque. The result is resized to
-// the input's size at the end of the G'MIC command: only results that had the processed input's
-// size come here without alpha, the others get an opaque alpha before that resize, since the input
-// alpha wouldn't line up with them (see kOpaqueResizedCommand in gmic_plugin.cpp). out is the
+// the input's size at the end of the G'MIC command: only gray or RGB results that had the processed
+// input's size come here without alpha, the others get an opaque alpha before that resize, since
+// the input alpha wouldn't line up with them (see kOpaqueResizedCommand in gmic_plugin.cpp). out is the
 // output buffer, in the main input's buffer, both in pixel coordinates with rows top-down.
 static void multiplyByInputAlphaPlanar(const World& out, const World& in, float maxValue)
 {

@@ -468,8 +468,8 @@ static string ignoreAlphaNote(const EffectData& effectData)
 	return "\n\nIgnore Alpha: the alpha of each input is put back on the gray or RGB result at the same "
 		"position (a result with its own alpha is kept as is). With only Source connected, every result "
 		"gets Source's alpha. With several inputs connected, if the filter returns a different number of "
-		"images than it got, only the first result gets the first input's alpha. Results whose size "
-		"changed (frames, rotation, crop, resize...) are opaque.";
+		"images than it got, only the first result gets the first input's alpha. Gray or RGB results "
+		"whose size changed (frames, rotation, crop, resize...) are opaque.";
 }
 
 // Filters that process their layers as successive frames of a clip (issue #63). Their time offsets
@@ -685,7 +685,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 	++p;
 	globalDataP->param[p] = Parameter("Ignore Alpha", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
 	globalDataP->param[p].hint = "Run the filter on the RGB channels only, then give the inputs' alpha back to the results. "
-		"Results of another size than the input (frames, rotation, crop, resize...) are opaque.";
+		"Gray or RGB results of another size than the input (frames, rotation, crop, resize...) are opaque.";
 	++p;
 	globalDataP->param[p] = Parameter("Preview/Draft Mode", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
 	if (!hasContent || effectData.command == effectData.preview_command) {
@@ -794,7 +794,7 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, bool preview)
 // The whole command line: the filter's command (main or preview), with the variables G'MIC-Qt
 // defines, the output layer selection, Ignore Alpha, the Resize Mode, verbosity and seed. Sets the
 // custom commands of the options: customCommands (the filter's #@gui lines, the hot fixes for G'MIC
-// bugs, and the Ignore Alpha helpers), which must outlive the G'MIC call.
+// bugs, the Ignore Alpha helpers and _openfx_gmic_opaque_resized), which must outlive the G'MIC call.
 static
 std::string
 fullCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, unsigned int nofImages, bool isPreview, string& customCommands)
