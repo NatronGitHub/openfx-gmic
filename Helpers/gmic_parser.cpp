@@ -611,6 +611,7 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 		if (!it->previewOnly && it->preview_command != it->command) mains[it->command] = it->preview_command;
 	}
 	set<string> flagged;
+	set<string> defined; // all the commands defined in content
 	stringstream ss(content);
 	string line, cur, rest;
 	vector<bool> guards; // one per enclosing if: is the current branch a narg($_persistent) branch?
@@ -618,6 +619,7 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 		if (line.empty() || line[0] == '#') continue;
 		string name = commandDefinition(line, rest);
 		if (!name.empty()) {
+			defined.insert(name);
 			cur = mains.count(name) ? name : string();
 			guards.clear();
 		} else {
@@ -648,15 +650,17 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 		}
 	}
 	// Main commands that need the preview's state in a way the rules above can't detect. A listed
-	// command that no longer is the main command of a filter (e.g. after a G'MIC update) is
-	// reported on stderr, and makes the describe test fail (.github/workflows/describe_plugins.sh).
+	// command that is still defined but no longer is the main command of a filter (e.g. after a
+	// G'MIC update) is reported on stderr, and makes the describe test fail
+	// (.github/workflows/describe_plugins.sh). One that is not defined at all is not reported: its
+	// filter is not in this standard library (e.g. COMMERCIAL builds, see gmic_stdlib_commercial.txt).
 	// - fx_rep_bitplane_shuffle (Bit-Plane Shuffler): without _persistent it runs
 	//   "rep_bitplane_shuffle ...,$cli_base", and cli_base is only set by its preview command.
 	static const char* const curated[] = { "fx_rep_bitplane_shuffle" };
 	for (size_t c = 0; c < sizeof(curated) / sizeof(curated[0]); ++c) {
 		if (mains.count(curated[c])) {
 			flagged.insert(curated[c]);
-		} else if (!mains.empty()) {
+		} else if (!mains.empty() && defined.count(curated[c])) {
 			fprintf(stderr, "G'MIC: PREVIEW_FALLBACK_UNKNOWN %s: not the main command of a filter, update markPersistentFilters()\n", curated[c]);
 		}
 	}

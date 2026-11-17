@@ -133,6 +133,28 @@ FILE(GLOB GMIC_SOURCES
   "Helpers/*h"
 )
 
+# Licence of the build, as make LICENSE= (Natron's NATRON_LICENSE, see license.mk): GPL, or
+# COMMERCIAL, which only uses code under the CeCILL-C option of G'MIC's dual licence: pocketfft
+# instead of FFTW (GPL), and the standard library and hot fixes without the community filters under
+# the GPL or a CeCILL-only licence (see gmic_stdlib_commercial.txt). These sources are made by
+# 'make sources LICENSE=COMMERCIAL FFT=pocketfft', which must be run first (MKL: Makefile only).
+SET(OFX_LICENSE "GPL" CACHE STRING "GPL, or COMMERCIAL (no FFTW, no GPL or CeCILL-only filters)")
+SET_PROPERTY(CACHE OFX_LICENSE PROPERTY STRINGS GPL COMMERCIAL)
+IF(NOT OFX_LICENSE MATCHES "^(GPL|COMMERCIAL)$")
+  MESSAGE(FATAL_ERROR "OFX_LICENSE must be GPL or COMMERCIAL, not \"${OFX_LICENSE}\"")
+ENDIF()
+SET(_sources_license GPL)
+IF(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/gmic_sources.license)
+  FILE(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/gmic_sources.license _sources_license LIMIT_COUNT 1)
+  SET_PROPERTY(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/gmic_sources.license)
+ENDIF()
+IF(NOT _sources_license STREQUAL OFX_LICENSE)
+  MESSAGE(FATAL_ERROR "The G'MIC sources were made for LICENSE=${_sources_license}: run 'make sources LICENSE=${OFX_LICENSE}' first (FFT=pocketfft for COMMERCIAL)")
+ENDIF()
+IF(OFX_LICENSE STREQUAL "COMMERCIAL" AND NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/pocketfft_hdronly.h)
+  MESSAGE(FATAL_ERROR "pocketfft_hdronly.h is missing: run 'make sources LICENSE=COMMERCIAL FFT=pocketfft' first")
+ENDIF()
+
 # Hot fixes for G'MIC bugs (see gmic_hotfixes.gmic and the top-level Makefile), embedded as a
 # null-terminated byte array into gmic_hotfixes.h, in the build directory (searched first, before a
 # header left in the sources by a Makefile build). They are written for one G'MIC version: fail if
@@ -147,11 +169,17 @@ STRING(REPLACE "." "" GMIC_HOTFIXES_VERSION_NUMBER "${GMIC_HOTFIXES_VERSION}")
 IF(NOT "${GMIC_HOTFIXES_VERSION_NUMBER}" STREQUAL "${GMIC_VERSION_NUMBER}")
   MESSAGE(FATAL_ERROR "gmic_hotfixes.gmic is for G'MIC ${GMIC_HOTFIXES_VERSION}, gmic.h is version ${GMIC_VERSION_NUMBER}: review each fix, see the top of gmic_hotfixes.gmic")
 ENDIF()
+IF(OFX_LICENSE STREQUAL "COMMERCIAL")
+  # without the fixes of commands that COMMERCIAL builds leave out: made by the Makefile
+  SET_PROPERTY(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/gmic_hotfixes.h)
+  CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/gmic_hotfixes.h ${CMAKE_CURRENT_BINARY_DIR}/gmic_hotfixes.h.tmp COPYONLY)
+ELSE()
 FILE(READ ${GMIC_HOTFIXES} GMIC_HOTFIXES_HEX HEX)
 STRING(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," GMIC_HOTFIXES_BYTES "${GMIC_HOTFIXES_HEX}")
 STRING(REPLACE "0x0d," "" GMIC_HOTFIXES_BYTES "${GMIC_HOTFIXES_BYTES}") # carriage returns
 FILE(WRITE ${CMAKE_CURRENT_BINARY_DIR}/gmic_hotfixes.h.tmp
   "// Generated from gmic_hotfixes.gmic by CMake: do not edit.\nstatic const unsigned char gmic_hotfixes[] = {\n${GMIC_HOTFIXES_BYTES}\n0x00 };\n")
+ENDIF()
 # only rewritten when it changes, so that a new configure does not recompile gmic_plugin.cpp
 CONFIGURE_FILE(${CMAKE_CURRENT_BINARY_DIR}/gmic_hotfixes.h.tmp ${CMAKE_CURRENT_BINARY_DIR}/gmic_hotfixes.h COPYONLY)
 INCLUDE_DIRECTORIES(BEFORE ${CMAKE_CURRENT_BINARY_DIR})
@@ -164,6 +192,9 @@ FILE(GLOB GMIC_RESOURCES
   "Licence_CeCILL-C_V1-en.txt"
   "Licence_CeCILL_V2-en.txt"
 )
+IF(OFX_LICENSE STREQUAL "COMMERCIAL")
+  LIST(APPEND GMIC_RESOURCES ${CMAKE_CURRENT_SOURCE_DIR}/Licence_pocketfft.txt)
+ENDIF()
 
 ADD_LIBRARY(GMIC SHARED ${GMIC_SOURCES} ${SUPPORT_SOURCES})
 SET_TARGET_PROPERTIES(GMIC PROPERTIES PREFIX "")
@@ -185,15 +216,11 @@ TARGET_COMPILE_DEFINITIONS(GMIC PRIVATE OFX_EXTENSIONS_NUKE OFX_EXTENSIONS_NATRO
 #TARGET_LINK_LIBRARIES(GMIC Support ${OPENGL_gl_LIBRARY})
 TARGET_LINK_LIBRARIES(GMIC ${OPENGL_gl_LIBRARY})
 
-# FFTW (GPLv2), as in GMIC_OFX/Makefile: OFX_LICENSE=COMMERCIAL (make LICENSE=COMMERCIAL, Natron's
-# NATRON_LICENSE) builds without it, and G'MIC then uses the FFT built into CImg, which only
-# handles power-of-two image dimensions.
-SET(OFX_LICENSE "GPL" CACHE STRING "GPL, or COMMERCIAL to build without FFTW (GPL)")
-SET_PROPERTY(CACHE OFX_LICENSE PROPERTY STRINGS GPL COMMERCIAL)
-IF(NOT OFX_LICENSE MATCHES "^(GPL|COMMERCIAL)$")
-  MESSAGE(FATAL_ERROR "OFX_LICENSE must be GPL or COMMERCIAL, not \"${OFX_LICENSE}\"")
-ENDIF()
-IF(OFX_LICENSE STREQUAL "GPL")
+# FFT library (CImg's own FFT fails on image sizes that are not powers of two), as in
+# GMIC_OFX/Makefile: FFTW (GPLv2) for GPL builds, pocketfft (BSD-3-Clause) for COMMERCIAL ones.
+IF(OFX_LICENSE STREQUAL "COMMERCIAL")
+  TARGET_COMPILE_DEFINITIONS(GMIC PRIVATE cimg_use_pocketfft)
+ELSE()
   FIND_PACKAGE(PkgConfig REQUIRED)
   PKG_CHECK_MODULES(FFTW3 REQUIRED IMPORTED_TARGET fftw3)
   FIND_LIBRARY(FFTW3_THREADS_LIBRARY fftw3_threads HINTS ${FFTW3_LIBRARY_DIRS})
