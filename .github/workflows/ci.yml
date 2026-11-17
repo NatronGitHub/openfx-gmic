@@ -2,8 +2,9 @@ name: Continuous Integration
 
 # Natron CI policy: per PR/push, exactly three full builds plus tests (macOS 15 arm64 with the
 # system clang and MacPorts libraries, Ubuntu 24.04, Windows MSYS2 UCRT64). Extra variants (debug
-# builds, a C++20 build) run nightly or on demand; the per-PR builds use C++17 (Natron RB-2.6
-# policy: Qt5 builds C++17, Qt6 builds C++20); build artifacts are uploaded only on demand or for pre-release tags.
+# builds, a C++20 build, a LICENSE=COMMERCIAL build on Linux) run nightly or on demand; the per-PR
+# builds use C++17 (Natron RB-2.6 policy: Qt5 builds C++17, Qt6 builds C++20); build artifacts
+# are uploaded only on demand or for pre-release tags.
 #
 # Frugal CI (the NatronGitHub runners are shared by all repos): one run per change. Pushes run CI
 # only on master and tags; feature branches run through their pull request. Draft pull requests
@@ -45,7 +46,7 @@ permissions:
 env:
   # number of plug-ins expected from the pinned G'MIC version: update when upgrading G'MIC
   GMIC_PLUGIN_COUNT: 1205
-  # extra variants (debug, C++20) only on the nightly schedule or on demand
+  # extra variants (debug, C++20, LICENSE=COMMERCIAL) only on the nightly schedule or on demand
   BUILD_VARIANTS: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
   # artifacts only on demand or for pre-release tags (containing "alpha", "beta" or "rc", e.g.
   # Natron-2.6.0-rc1; contains() is case-insensitive)
@@ -119,6 +120,17 @@ jobs:
           (cd GMIC_OFX && make clean CONFIG=release)
           make -j4 CONFIG=release OPENMP=1 CXXSTD=c++20
           .github/workflows/describe_plugins.sh GMIC_OFX/Linux-64-release $GMIC_PLUGIN_COUNT
+      # Natron's COMMERCIAL builds must not link FFTW (GPLv2)
+      - name: Build and check (release, LICENSE=COMMERCIAL, without FFTW)
+        if: env.BUILD_VARIANTS == 'true'
+        run: |
+          (cd GMIC_OFX && make clean CONFIG=release)
+          make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17 LICENSE=COMMERCIAL
+          ofx=GMIC_OFX/Linux-64-release/GMIC.ofx.bundle/Contents/Linux-x86-64/GMIC.ofx
+          readelf -d "$ofx" | grep NEEDED
+          if readelf -d "$ofx" | grep -i fftw || nm -D --undefined-only "$ofx" | grep -i fftw; then
+            echo "Error: the LICENSE=COMMERCIAL build uses FFTW"; exit 1
+          fi
 
   macos:
     name: macOS 15 arm64 (Apple clang, MacPorts libraries)
