@@ -213,3 +213,92 @@ local[1] {
  if $6 rep_dupsdaxy 0,2,$1,$2,$3,$4 tai={$!} add / $tai fi
 }
 a c
+
+#@hotfix fx_MorphoPaint 90ca886311780569 cb7c0f7cfa095868 fx_morphological:004391401d71bbbe
+# Morphology Painting fails ("Unknown command '+fx_morpho[0]'"): fx_morpho no longer exists
+# (it was already missing in G'MIC 2.8.4). The fix calls fx_morphological, whose arguments are
+# action, kernel, size, custom kernel, negative, transparency, channels and value action.
+# https://github.com/GreycLab/gmic-community/issues/299, NatronGitHub/openfx-gmic#53.
+# From include/arto_huotari.gmic (gmic-community), as fixed upstream in bd6199e:
+# '+fx_morphological[0] $1,$3,$2,0,0,0,0,0'.
+fx_MorphoPaint :
+  to_rgb[0]
+  +fx_morphological[0] $1,$3,$2,0,0,0,0,0 # Morpho as nro 1
+  +fx_apply_curve[1] $4,50,$5,200,$6,-1,128,-1,128,-1,128,255,1,3,0,0,0 # Curved morpho as nro 2
+  fx_spread[1] $7,$7,0,0 # Spread Morpho nro 1
+  fx_blur_gaussian[2] $8,0,0,1,0,0,0 # Blur Morpho+Spread nro 1
+  fx_segment_watershed[1] $9,$10,0,0 # Segment Morpho+Spread+Blur nro 1
+  +fx_painting[0] $11,$12,1.5,$13,1,0 # Paint from original nro 0
+  rm[0] # Remove original from stack
+  rv[0,2] # Reverse images to logical order (Important if output to Gimp)
+  rv[1,2]
+  if $14
+    if $19==0 MorphoStrength={0} elif $19==1 MorphoStrength={$20} fi  # Set layer value to zero if enabled
+    *[2] {$MorphoStrength/3} # Morphology
+    if $15==0 StrokeStrength={0} elif $15==1 StrokeStrength={$16} fi  # Set layer value to zero if enabled
+    *[0] {$StrokeStrength/3} # Paint stroke
+    if $17==0 SegmentStrength={0} elif $17==1 SegmentStrength={$18} fi # Set layer value to zero if enabled
+    *[1] {$SegmentStrength/3} # Segments
+    +[1] [2] # Combine images
+    +[1] [0]
+    if $21 n[1] 0,255 fi # Conditional normalize to get the image to correct range
+    rm[0,2] # Remove extra images
+  fi
+
+#@hotfix samj_Courtepointe 567ca51bc132cd23 50f5acb59e5cf698 fx_array_mirror:8beab7f0353a4ae1
+# Random Pattern Courtepointe fails: it calls fx_array_mirror with 6 arguments, which now takes 7
+# ("Undefined argument '$7'"), and its Color Curves choices call the interactive x_color_curves
+# ("No display available" in a plug-in).
+# https://github.com/GreycLab/gmic-community/issues/300, NatronGitHub/openfx-gmic#53.
+# From include/sylvie_alexandre.gmic (gmic-community), as fixed upstream in 02618ee:
+# 'fx_array_mirror[-1] 1,0,0,2,0,0,0', and the Color Curves choices numbered from 1, so that the
+# default one (0, "RGB") applies no curves; the other choices still need a display. Upstream also
+# changed the parameter to choice(0,"RGB",...), the same as G'MIC 4.0.7's choice("RGB",...).
+samj_Courtepointe :
+
+ Cossin=$1
+ Cossin_Deux=$2
+ Repetition=$3
+ Croix=$4
+ Texture=$5
+ Courbes_Interactives_Couleurs=$6
+
+ rorschach[-1] {$Cossin}%,1
+
+ if $Cossin_Deux==1
+  n[-1] 64,192
+ fi
+
+ n[-1] 0,255
+
+ repeat $Repetition
+  fx_array_mirror[-1] 1,0,0,2,0,0,0
+ done
+
+ if $Croix==1
+  fx_symmetrizoscope[-1] 5,0,1,0
+ fi
+
+ if {$Texture==1}
+  samj_Texture_Granuleuse[-1] 0.5,20,80,0,0
+ fi
+
+ if $Courbes_Interactives_Couleurs==1
+  x_color_curves[-1] rgb
+ elif $Courbes_Interactives_Couleurs==2
+  x_color_curves[-1] cmy
+ elif $Courbes_Interactives_Couleurs==3
+  x_color_curves[-1] cmyk
+ elif $Courbes_Interactives_Couleurs==4
+  x_color_curves[-1] hsi
+ elif $Courbes_Interactives_Couleurs==5
+  x_color_curves[-1] hsl
+ elif $Courbes_Interactives_Couleurs==6
+  x_color_curves[-1] hsv
+ elif $Courbes_Interactives_Couleurs==7
+  x_color_curves[-1] lab
+ elif $Courbes_Interactives_Couleurs==8
+  x_color_curves[-1] lch
+ elif $Courbes_Interactives_Couleurs==9
+  x_color_curves[-1] ycbcr
+ fi
