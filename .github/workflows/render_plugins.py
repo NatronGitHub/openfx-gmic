@@ -39,7 +39,6 @@ import zlib
 # Plug-ins that can't render in a headless host, or that fail by design outside G'MIC-Qt
 SKIP = {
     'eu.gmic.ToutInteractif': 'needs a display (x_paint)',
-    'eu.gmic.DiaporamaSlideshow': 'needs a display (samj_full_screen_display: resize to the screen size, 0x0 here)',
     'eu.gmic.GamesDemos': 'needs a display (interactive demos, e.g. x_pacman)',
     'eu.gmic.SamjSelectionHermiteSpline': 'needs a display (x_spline)',
     'eu.gmic.Comicbook': "needs a display ('This filter requires the X11 or GDI32 graphic library')",
