@@ -96,13 +96,20 @@ $(GMICSRC):
 # compiled from older sources (GMIC_OFX/Makefile rebuilds them when the G'MIC headers change).
 $(GMICSOURCES): $(GMICSRC)
 	tar -m --strip-components 2 -zxvf $< $(patsubst %,$(GMICSRCDIR)/src/%, $@)
-	@case $@ in gmic.h|gmic.cpp) sh patches/gmic-apple-abort.sh $@ || { rm -f $@; exit 1; };; esac
+	@case $@ in \
+	  gmic.h|gmic.cpp) sh patches/gmic-apple-abort.sh $@ || { rm -f $@; exit 1; };; \
+	  CImg.h) sh patches/cimg-omp-rand.sh $@ || { rm -f $@; exit 1; };; \
+	esac
 
 # Local patches to the extracted G'MIC sources (re-extracted when a patch changes):
 # - gmic-apple-abort.sh: enable G'MIC's abort support on macOS too, without which an error inside
 #   an OpenMP loop terminates the host (https://github.com/NatronGitHub/openfx-gmic/issues/41,
 #   reported upstream as https://github.com/GreycLab/gmic/issues/219)
+# - cimg-omp-rand.sh: random numbers drawn in OpenMP loops do not depend on thread scheduling, so
+#   that a seeded filter gives the same result at each render
+#   (https://github.com/NatronGitHub/openfx-gmic/issues/44)
 gmic.h gmic.cpp: patches/gmic-apple-abort.sh
+CImg.h: patches/cimg-omp-rand.sh
 
 distclean: clean
 	-rm -f $(GMICSRC) $(GMICSOURCES) gmic_hotfixes.h gmic_hotfixes.version gmic_libc.cpp gmic_stdlib_gmic.h # the last two: left by older builds

@@ -93,30 +93,35 @@ FILE(GLOB SUPPORT_SOURCES
 #TARGET_COMPILE_DEFINITIONS(Support PRIVATE OFX_SUPPORTS_OPENGLRENDER OFX_EXTENSIONS_TUTTLE OFX_EXTENSIONS_NUKE OFX_EXTENSIONS_NATRON OFX_EXTENSIONS_VEGAS NOMINMAX)
 
 # The G'MIC sources are extracted by the top-level Makefile (make sources), which also patches
-# them (patches/gmic-apple-abort.sh, issue #41). Apply the patch here too, for sources that were
-# extracted otherwise; it does nothing on patched files, and fails if the sources changed.
-FOREACH(_gmic_file gmic.h gmic.cpp)
+# them (patches/gmic-apple-abort.sh, issue #41, and patches/cimg-omp-rand.sh, issue #44). Apply
+# the patches here too, for sources that were extracted otherwise; they do nothing on patched
+# files, and fail if the sources changed.
+FOREACH(_gmic_file gmic.h gmic.cpp CImg.h)
   IF(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${_gmic_file})
     MESSAGE(FATAL_ERROR "${_gmic_file} is missing: run 'make sources' first")
   ENDIF()
 ENDFOREACH()
 FIND_PROGRAM(GMIC_PATCH_SH sh)
 IF(GMIC_PATCH_SH)
-  FOREACH(_gmic_file gmic.h gmic.cpp)
-    EXECUTE_PROCESS(COMMAND ${GMIC_PATCH_SH} patches/gmic-apple-abort.sh ${_gmic_file}
+  FOREACH(_gmic_patch gmic-apple-abort.sh:gmic.h gmic-apple-abort.sh:gmic.cpp cimg-omp-rand.sh:CImg.h)
+    STRING(REPLACE ":" ";" _gmic_patch "${_gmic_patch}")
+    LIST(GET _gmic_patch 0 _gmic_script)
+    LIST(GET _gmic_patch 1 _gmic_file)
+    EXECUTE_PROCESS(COMMAND ${GMIC_PATCH_SH} patches/${_gmic_script} ${_gmic_file}
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
       RESULT_VARIABLE _gmic_patch_result)
     IF(NOT _gmic_patch_result EQUAL 0)
-      MESSAGE(FATAL_ERROR "patches/gmic-apple-abort.sh failed on ${_gmic_file}")
+      MESSAGE(FATAL_ERROR "patches/${_gmic_script} failed on ${_gmic_file}")
     ENDIF()
   ENDFOREACH()
   SET_PROPERTY(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/patches/gmic-apple-abort.sh
-    ${CMAKE_CURRENT_SOURCE_DIR}/gmic.h ${CMAKE_CURRENT_SOURCE_DIR}/gmic.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/patches/cimg-omp-rand.sh
+    ${CMAKE_CURRENT_SOURCE_DIR}/gmic.h ${CMAKE_CURRENT_SOURCE_DIR}/gmic.cpp ${CMAKE_CURRENT_SOURCE_DIR}/CImg.h)
 ELSEIF(APPLE)
   MESSAGE(FATAL_ERROR "sh not found: cannot apply patches/gmic-apple-abort.sh, which macOS builds need")
 ELSE()
-  MESSAGE(WARNING "sh not found: patches/gmic-apple-abort.sh not applied (it only changes Apple code)")
+  MESSAGE(WARNING "sh not found: the patches to the G'MIC sources are not applied (patches/gmic-apple-abort.sh only changes Apple code, but without patches/cimg-omp-rand.sh seeded filters are not reproducible with OpenMP)")
 ENDIF()
 
 # gmic_plugin_call.cpp replaces gmic_libc.cpp
