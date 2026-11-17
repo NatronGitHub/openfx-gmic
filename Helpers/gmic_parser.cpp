@@ -603,12 +603,21 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 		return;
 	}
     // plug-in identifiers must be unique: G'MIC 4 has several filters with the same name in
-    // different folders (e.g. the "About" page of each Testing author, "Color Harmonies").
-    // The first one keeps its identifier, the others get a numbered suffix.
+    // different folders (in 4.0.7: the "About" page of each Testing author, giving About and
+    // About2..About5, and "Color Harmonies", giving ColorHarmonies2). The first one in stdlib
+    // order keeps its identifier, the others get the first free numbered suffix. These generated
+    // identifiers are saved in projects: they depend on the stdlib order, so they may designate
+    // another filter after a G'MIC update (a known limitation, kept for compatibility with
+    // existing projects). A suffixed identifier never takes the identifier of a real filter
+    // (e.g. a filter named "Foo 2", whatever its position): those are reserved first.
+    set<string> realIds;
+    for (vector<EffectData>::const_iterator it = cds->begin(); it != cds->end(); ++it) {
+        realIds.insert(it->uniqueId);
+    }
     set<string> ids;
     for (vector<EffectData>::iterator it = cds->begin(); it != cds->end(); ++it) {
         string id = it->uniqueId;
-        for (int n = 2; ids.count(id); ++n) {
+        for (int n = 2; ids.count(id) || (id != it->uniqueId && realIds.count(id)); ++n) {
             id = it->uniqueId + intToString(n);
         }
         it->uniqueId = id;

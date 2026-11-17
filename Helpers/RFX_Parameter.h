@@ -219,6 +219,8 @@ public:
 	string pluginFilename;
 	string buttonName;
 	float scale;
+	// always false: read only by the (unmaintained) AE glue, RFX_AE_Utils.h. The plug-in never
+	// processes in place (the "Fixed (Inplace)" Resize Mode behaves like "Dynamic").
 	bool inplaceProcessing;
 	int pluginIndex;
 	bool headlessMode;

@@ -364,47 +364,6 @@ static void getAllParamData(int pluginIndex, const OfxRectI& dstRect, double par
 }
 
 
-#if 0
-static void setParamData(int pluginIndex, const OfxRectI& dstRect, double par, MyInstanceData* myData, const OfxPointD& renderScale)
-{
-	for (int i = 0; i < globalData[pluginIndex].nofParams; i++) {
-		if (globalData[pluginIndex].param[i].paramType == PT_FLOAT) {
-			double v = (double)(myData->sequenceDataP->floatValue[i][0]);
-			gParamHost->paramSetValue(myData->param[i], v);
-		} else if (globalData[pluginIndex].param[i].paramType == PT_INT) {
-			int v = (int)myData->sequenceDataP->floatValue[i][0];
-			gParamHost->paramSetValue(myData->param[i], v);
-		} else if (globalData[pluginIndex].param[i].paramType == PT_COLOR) {
-			double myR = (double)myData->sequenceDataP->floatValue[i][0];
-			double myG = (double)myData->sequenceDataP->floatValue[i][1];
-			double myB = (double)myData->sequenceDataP->floatValue[i][2];
-			double myA = (double)myData->sequenceDataP->floatValue[i][3];
-			gParamHost->paramSetValue(myData->param[i], myR, myG, myB, myA);
-		} else if (globalData[pluginIndex].param[i].paramType == PT_POINT) {
-			// point parameter is in % (percent) in gmic: no need to scale
-			double myX = (dstRect.x1 + (double)myData->sequenceDataP->floatValue[i][0] / 100. * (dstRect.x2 - dstRect.x1)) * par / renderScale.x;
-			double myY = (dstRect.y1 + (1. - (double)myData->sequenceDataP->floatValue[i][1] / 100.) * (dstRect.y2 - dstRect.y1)) / renderScale.y;
-			gParamHost->paramSetValue(myData->param[i], myX, myY);
-		} else if (globalData[pluginIndex].param[i].paramType == PT_ANGLE) {
-			double v;
-			if (globalData[pluginIndex].param[i].flags > 0)
-				v = (double)180.f * myData->sequenceDataP->floatValue[i][0] / -M_PI;
-			else
-				v = (double)myData->sequenceDataP->floatValue[i][0];
-			gParamHost->paramSetValue(myData->param[i], v);
-		} else if (globalData[pluginIndex].param[i].paramType == PT_SELECT) {
-			int v = (int)myData->sequenceDataP->floatValue[i][0];
-			gParamHost->paramSetValue(myData->param[i], v);
-		} else if (globalData[pluginIndex].param[i].paramType == PT_BOOL) {
-			int v = (int)myData->sequenceDataP->floatValue[i][0];
-			gParamHost->paramSetValue(myData->param[i], v);
-		} else if (globalData[pluginIndex].param[i].paramType == PT_TEXT) {
-			const string& s = myData->sequenceDataP->textValue[i];
-			gParamHost->paramSetValue(myData->param[i], s.c_str());
-		}
-	}
-}
-#endif
 
 static
 bool
@@ -496,14 +455,6 @@ OfxStatus getSpatialRoI(int pluginIndex, OfxImageEffectHandle effect, OfxPropert
 		++i;
 	}
 	return kOfxStatOK;
-	// // get the RoI the effect is interested in from inArgs
-	// OfxRectD roi;
-	// gPropHost->propGetDoubleN(inArgs, kOfxImageEffectPropRegionOfInterest, 4, &roi.x1);
-
-	// // the input needed is the same as the output, so set that on the source clip
-	// gPropHost->propSetDoubleN(outArgs, "OfxImageClipPropRoI_Source", 4, &roi.x1);
-
-	// return kOfxStatOK;
 }
 
 // Tells the host how many frames we can fill, only called in the general context.
@@ -798,24 +749,6 @@ void convert_RGBA32P_to_RGBA32(ConvertData& data, const int startLine, const int
 	}
 }
 
-#if 0
-static
-void convert_RGBA32_to_RGBA32(ConvertData& data, const int startLine, const int endLine)
-{
-	for (int y = startLine; y < endLine; y++) {
-		float* in_pix = (float*)((char*)data.srcData + ((ptrdiff_t)(data.height-1-y) * data.srcRowBytes));
-#ifdef IMG_FLIP_Y
-		float* out_pix = (float*)((char*)data.dstData + ((ptrdiff_t)(data.height-1-y) * data.dstRowBytes));
-#else
-		float* out_pix = (float*)((char*)data.dstData + ((ptrdiff_t)y * data.dstRowBytes));
-#endif
-		for (int x = 0; x < data.width; x++) {
-			*out_pix++ = *in_pix++ * data.scale;
-		}
-	}
-}
-#endif
-
 static
 void convert_RGBA32P_to_RGBA8(ConvertData& data, const int startLine, const int endLine)
 {
@@ -1034,14 +967,12 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 	ContextData contextData;
 	setContextData(contextData, instance, inArgs, outArgs, pluginIndex);
 
-	// get the render window and the time from the inArgs
+	// get the time from the inArgs (the render window is not used: tiles are not supported, and
+	// the whole output image is rendered)
 	OfxTime time;
-	OfxRectI renderWindow;
 	OfxStatus status = kOfxStatOK;
 
 	gPropHost->propGetDouble(inArgs, kOfxPropTime, 0, &time);
-	double time_step = 1.f;
-	gPropHost->propGetIntN(inArgs, kOfxImageEffectPropRenderWindow, 4, &renderWindow.x1);
 
 	// retrieve any instance data associated with this effect
 	MyInstanceData *myData = getMyInstanceData(instance);
@@ -1074,8 +1005,6 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 
 		OfxPointD renderScale = {1., 1.};
 		gPropHost->propGetDoubleN(inArgs, kOfxImageEffectPropRenderScale, 2, &renderScale.x);
-		OfxRectI renderWindow;
-		gPropHost->propGetIntN(inArgs, kOfxImageEffectPropRenderWindow, 4, &renderWindow.x1);
 
 		myData->sequenceDataP->time = time;
 		myData->sequenceDataP->downsample_x = (float)renderScale.x;
@@ -1635,7 +1564,6 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 	// clip properties only (thread safety, frame threading, multi-resolution and multiple clip
 	// PARs/depths are effect properties, set in describe())
 	gPropHost->propSetInt(props, kOfxImageEffectPropSupportsTiles, 0, 0);
-	gPropHost->propSetInt(props, kOfxImageEffectPropTemporalClipAccess, 0, 1);
 
 	// fetch the parameter set from the effect
 	OfxParamSetHandle paramSet;
@@ -1750,7 +1678,6 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 			}
 			gPropHost->propSetString(props, kOfxImageEffectPropSupportedComponents, 0, kOfxImageComponentRGBA);
 			gPropHost->propSetInt(props, kOfxImageEffectPropSupportsTiles, 0, 0);
-			gPropHost->propSetInt(props, kOfxImageEffectPropTemporalClipAccess, 0, 1);
 			l++;
 			continue;
 		} else if (param.paramType == PT_TOPIC_START) {	
@@ -1884,7 +1811,6 @@ static OfxStatus describe(int pluginIndex, OfxImageEffectHandle effect)
 	gPropHost->propSetInt(effectProps, kOfxImageEffectPropSupportsTiles, 0, 0);
 	gPropHost->propSetInt(effectProps, kOfxImageEffectPluginPropHostFrameThreading, 0, 0);
 	gPropHost->propSetInt(effectProps, kOfxImageEffectPropSupportsMultiResolution, 0, 0);
-	gPropHost->propSetInt(effectProps, kOfxImageEffectPropTemporalClipAccess, 0, 1);
 
 	const char *path = NULL;
 	gPropHost->propGetString(effectProps, kOfxPluginPropFilePath, 0, &path);

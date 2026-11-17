@@ -413,9 +413,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 #else
 	effectData = pluginGlobalData.pluginData[globalDataP->pluginIndex];
 	bool hasContent = true;
-#endif	
-	
-	globalDataP->inplaceProcessing = false;
+#endif
 
 #ifdef AE_PLUGIN
 	globalDataP->param[0] = Parameter("Input", "", PT_LAYER);
@@ -455,19 +453,19 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 			strSplit(defaultValue, '|', r); // drops empty fields: pad below
 			if (r.size() == 1) { r.push_back(r[0]); r.push_back(r[0]); } // gray: color(V)
 			while (r.size() < 3) r.push_back("0");
-			d1 = (float)atof(r[0].c_str()) / 255.f;
-			d2 = (float)atof(r[1].c_str()) / 255.f;
-			d3 = (float)atof(r[2].c_str()) / 255.f;
+			d1 = (float)stringToDouble(r[0]) / 255.f;
+			d2 = (float)stringToDouble(r[1]) / 255.f;
+			d3 = (float)stringToDouble(r[2]) / 255.f;
 			// color(R,_G,_B,_A): only pass alpha to G'MIC if the filter declares it
 			flags = (r.size() > 3 && !r[3].empty()) ? 4 : 3;
-			d4 = (flags == 4) ? (float)atof(r[3].c_str()) / 255.f : 1.f;
+			d4 = (flags == 4) ? (float)stringToDouble(r[3]) / 255.f : 1.f;
 		} else if (paramType == "point") {
 			vector<string> r;
 			t = PT_POINT;
 			strSplit(defaultValue, '|', r); // drops empty fields: pad below
 			while (r.size() < 2) r.push_back("50");
-			d1 = (float)atof(r[0].c_str());
-			d2 = (float)atof(r[1].c_str());
+			d1 = (float)stringToDouble(r[0]);
+			d2 = (float)stringToDouble(r[1]);
 #ifdef OFX_PLUGIN
 			// erase any occurence of " (%)" in the string, because the displayed parameter will be in pixels
 			size_t start_pos = name.find(" (%)");
@@ -476,7 +474,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 			}
 #endif
 		} else {
-			d1 = (float)atof(defaultValue.c_str());
+			d1 = (float)stringToDouble(defaultValue);
 			d2 = d1; d3 = d1; d4 = d1;
 			if (paramType == "bool" || paramType == "button") {
 				t = PT_BOOL;
@@ -519,7 +517,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		// the parser stores in defaultValue (it used to be passed as an empty string)
 		const std::string& paramText = (paramType == "value") ? defaultValue : text;
 		globalDataP->param[p] = Parameter(
-		  name, "", t, (float)atof(minValue.c_str()), (float)atof(maxValue.c_str()), d1, d2, d3, d4, paramText);
+		  name, "", t, (float)stringToDouble(minValue), (float)stringToDouble(maxValue), d1, d2, d3, d4, paramText);
 		globalDataP->param[p].flags = flags;
 		if (h) globalDataP->param[p].displayStatus = DS_HIDDEN;
 		p++;
@@ -547,6 +545,10 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 	++p;
 	globalDataP->param[p] = Parameter("Output Layer", "", PT_SELECT, 0, 10, 1, 0, 0, 0, "Merged|Layer 0|Layer -1|Layer -2|Layer -3|Layer -4|Layer -5|Layer -6|Layer -7|Layer -8|Layer -9|");
 	++p;
+	// "Fixed (Inplace)" (index 0) behaves like "Dynamic": the result is always resized to the input
+	// size. Its special path (a per-plug-in in-place flag, set from one instance by a parameter
+	// change callback that the OFX glue never called, and skipping the output copy) was removed.
+	// The entry is kept so that saved projects keep their option indices and labels.
 	globalDataP->param[p] = Parameter("Resize Mode", "", PT_SELECT, 0, 5, 1, 0, 0, 0, "Fixed (Inplace)|Dynamic|Downsample 1/2|Downsample 1/4|Downsample 1/8|Downsample 1/16");
 	++p;
 	globalDataP->param[p] = Parameter("Ignore Alpha", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
@@ -635,12 +637,10 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP)
     return cmd;
 }
 
-int pluginParamChange(int index, SequenceData* sequenceDataP, GlobalData* globalDataP, ContextData* /*contextDataP*/)
+// parameter change callback of the host glue (only the AE glue calls it): nothing to do, see
+// "Resize Mode" in pluginSetup
+int pluginParamChange(int /*index*/, SequenceData* /*sequenceDataP*/, GlobalData* /*globalDataP*/, ContextData* /*contextDataP*/)
 {
-	if (index == PARAM_RESIZE) {
-		globalDataP->inplaceProcessing = PAR_VAL(index) < 1.f;
-	} else {
-	}
 	return 0;
 }
 
@@ -784,24 +784,12 @@ static int gmicCallAbortable(OfxImageEffectHandle instance, const char* cmd, uns
 
 int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextData* contextDataP)
 {
-	/*
-	float* fi = (float*)sequenceDataP->inWorld[0].data;
-	float* fo = (float*)sequenceDataP->outWorld.data;
-	for (int x = 0; x < sequenceDataP->outWorld.width * sequenceDataP->outWorld.height * 4; x++)
-	{
-		*fo = *fi * 2.f;//(float)(rand() % 100) / 100.f;
-		fi++;
-		fo++;
-	}
-	return 0;
-	*/
-
 	int err = 0;
 	sequenceDataP->resultHasAlpha = true;
 	sequenceDataP->resultWidth = sequenceDataP->resultHeight = 0;
 
 	MySequenceData* mySequenceDataP = (MySequenceData*)sequenceDataP->customSequenceDataP;
-	mySequenceDataP->options.no_inplace_processing = !globalDataP->inplaceProcessing;
+	mySequenceDataP->options.no_inplace_processing = true; // the input buffers are not overwritten
 	// custom commands, set in options.custom_commands below (it must stay valid until gmic_plugin_call() returns)
 #ifdef AE_PLUGIN
 	string customCommands = ((MyGlobalData*)globalDataP->customGlobalDataP)->effectContent;
@@ -864,14 +852,16 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	}
 	mySequenceDataP->options.custom_commands = customCommands.c_str();
 	
-	if (!globalDataP->inplaceProcessing) {
+	{
+		// Resize Mode: "Downsample 1/N" processes a downsampled input; the result is always resized
+		// to the input size ("Fixed (Inplace)" and "Dynamic" alike)
 		float ds = PAR_VAL(PARAM_RESIZE);
 		if (ds >= 2.f) {
 			ds = pow(2.f, ds - 1.f);
 			cmd = " -resize " + intToString(sequenceDataP->inWorld[0].width / (int)ds) + "," + intToString(sequenceDataP->inWorld[0].height / (int)ds) + " " + cmd;
 		}
 		cmd += " -resize " + intToString(sequenceDataP->inWorld[0].width) + "," + intToString(sequenceDataP->inWorld[0].height);
- 	}
+	}
 	int verbosity = (int)PAR_VAL(PARAM_VERBOSITY) - 1;
 	int seed = (int)PAR_VAL(PARAM_SRAND);
 	bool animated_seed = (int)PAR_VAL(PARAM_ANIMSEED);
@@ -903,60 +893,58 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		// not reported as a failure there.
 		err = PF_Err_INTERNAL_STRUCT_DAMAGED;
 	} else if (result == 0) {
-		if (!globalDataP->inplaceProcessing) {
-			int idx = (int)PAR_VAL(PARAM_OUTPUT);
-			if (idx > 0) {
-				idx = nofImages - idx;
-				if (idx < 0) idx = 0;
-			}
+		int idx = (int)PAR_VAL(PARAM_OUTPUT);
+		if (idx > 0) {
+			idx = nofImages - idx;
+			if (idx < 0) idx = 0;
+		}
 
-			if (nofImages == 0 || (unsigned)idx >= nofImages || images[idx].spectrum == 0 || !images[idx].data) {
-				result = -1;
-				errmsg = "The image produced by G'MIC is empty.";
-			} else {
-				// Planar output R,G,B,A from 1 (G), 2 (GA), 3 (RGB) or 4+ (RGBA) channels. The G'MIC
-				// result is anchored at the first input's rectangle, the output has its own rectangle
-				// (both in pixels, rows top-down in the planar buffers): copy the overlap, clear the rest.
-				const World& out = sequenceDataP->outWorld;
-				const int dw = out.width, dh = out.height;
-				const int sw = (int)images[idx].width, sh = (int)images[idx].height;
-				// G'MIC anchors images at their top-left corner: a result of another size than the first
-				// input keeps the input's left and top edges (pixel y goes up)
-				const int sx1 = sequenceDataP->inWorld[0].origin_x;
-				const int sy1 = sequenceDataP->inWorld[0].origin_y + sequenceDataP->inWorld[0].height - sh;
-				const int dx1 = out.origin_x, dy1 = out.origin_y;
-				const size_t dplane = (size_t)dw * (size_t)dh, splane = (size_t)sw * (size_t)sh;
-				float* const dst = (float*)out.data;
-				const float* const src = (const float*)images[idx].data;
-				const unsigned int spectrum = images[idx].spectrum;
-				sequenceDataP->resultHasAlpha = (spectrum == 2 || spectrum >= 4);
-				sequenceDataP->resultWidth = sw;
-				sequenceDataP->resultHeight = sh;
-				// source plane for each output channel, or NULL for opaque alpha
-				const float* plane[4];
-				for (int c = 0; c < 3; ++c) plane[c] = src + (spectrum >= 3 ? splane * c : 0);
-				plane[3] = (spectrum == 2) ? src + splane : (spectrum >= 4 ? src + splane * 3 : NULL);
-				const bool same = (sw == dw && sh == dh && sx1 == dx1 && sy1 == dy1);
-				if (!same) {
-					memset(dst, 0, dplane * 4 * sizeof(float));
+		if (nofImages == 0 || (unsigned)idx >= nofImages || images[idx].spectrum == 0 || !images[idx].data) {
+			result = -1;
+			errmsg = "The image produced by G'MIC is empty.";
+		} else {
+			// Planar output R,G,B,A from 1 (G), 2 (GA), 3 (RGB) or 4+ (RGBA) channels. The G'MIC
+			// result is anchored at the first input's rectangle, the output has its own rectangle
+			// (both in pixels, rows top-down in the planar buffers): copy the overlap, clear the rest.
+			const World& out = sequenceDataP->outWorld;
+			const int dw = out.width, dh = out.height;
+			const int sw = (int)images[idx].width, sh = (int)images[idx].height;
+			// G'MIC anchors images at their top-left corner: a result of another size than the first
+			// input keeps the input's left and top edges (pixel y goes up)
+			const int sx1 = sequenceDataP->inWorld[0].origin_x;
+			const int sy1 = sequenceDataP->inWorld[0].origin_y + sequenceDataP->inWorld[0].height - sh;
+			const int dx1 = out.origin_x, dy1 = out.origin_y;
+			const size_t dplane = (size_t)dw * (size_t)dh, splane = (size_t)sw * (size_t)sh;
+			float* const dst = (float*)out.data;
+			const float* const src = (const float*)images[idx].data;
+			const unsigned int spectrum = images[idx].spectrum;
+			sequenceDataP->resultHasAlpha = (spectrum == 2 || spectrum >= 4);
+			sequenceDataP->resultWidth = sw;
+			sequenceDataP->resultHeight = sh;
+			// source plane for each output channel, or NULL for opaque alpha
+			const float* plane[4];
+			for (int c = 0; c < 3; ++c) plane[c] = src + (spectrum >= 3 ? splane * c : 0);
+			plane[3] = (spectrum == 2) ? src + splane : (spectrum >= 4 ? src + splane * 3 : NULL);
+			const bool same = (sw == dw && sh == dh && sx1 == dx1 && sy1 == dy1);
+			if (!same) {
+				memset(dst, 0, dplane * 4 * sizeof(float));
+			}
+			// overlap, in pixel coordinates (y up)
+			const int x1 = std::max(sx1, dx1), x2 = std::min(sx1 + sw, dx1 + dw);
+			const int y1 = std::max(sy1, dy1), y2 = std::min(sy1 + sh, dy1 + dh);
+			for (int c = 0; c < 4; ++c) {
+				if (same) {
+					if (plane[c]) memcpy(dst + dplane * c, plane[c], dplane * sizeof(float));
+					else std::fill(dst + dplane * c, dst + dplane * (c + 1), 255.f);
+					continue;
 				}
-				// overlap, in pixel coordinates (y up)
-				const int x1 = std::max(sx1, dx1), x2 = std::min(sx1 + sw, dx1 + dw);
-				const int y1 = std::max(sy1, dy1), y2 = std::min(sy1 + sh, dy1 + dh);
-				for (int c = 0; c < 4; ++c) {
-					if (same) {
-						if (plane[c]) memcpy(dst + dplane * c, plane[c], dplane * sizeof(float));
-						else std::fill(dst + dplane * c, dst + dplane * (c + 1), 255.f);
-						continue;
-					}
-					for (int y = y1; y < y2; ++y) {
-						float* drow = dst + dplane * c + (size_t)(dh - 1 - (y - dy1)) * dw + (x1 - dx1);
-						if (plane[c]) {
-							const float* srow = plane[c] + (size_t)(sh - 1 - (y - sy1)) * sw + (x1 - sx1);
-							memcpy(drow, srow, (size_t)std::max(0, x2 - x1) * sizeof(float));
-						} else {
-							std::fill(drow, drow + std::max(0, x2 - x1), 255.f);
-						}
+				for (int y = y1; y < y2; ++y) {
+					float* drow = dst + dplane * c + (size_t)(dh - 1 - (y - dy1)) * dw + (x1 - dx1);
+					if (plane[c]) {
+						const float* srow = plane[c] + (size_t)(sh - 1 - (y - sy1)) * sw + (x1 - sx1);
+						memcpy(drow, srow, (size_t)std::max(0, x2 - x1) * sizeof(float));
+					} else {
+						std::fill(drow, drow + std::max(0, x2 - x1), 255.f);
 					}
 				}
 			}
