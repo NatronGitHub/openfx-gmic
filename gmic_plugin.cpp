@@ -188,8 +188,10 @@ string get_gmic_rc_path()
 }
 
 // parameters added by pluginSetup besides the filter's own: Input, 4 layers, Command, the
-// "Advanced Options" group (start and end) and its 7 parameters
+// "Advanced Options" group (start and end) and its 7 parameters; for the filters with layer inputs,
+// also the "Layer Times" group (start and end), Layers from Source and the 4 time offsets
 static const int kNofExtraParams = 1 + 4 + 1 + 2 + 7;
+static const int kNofLayerTimeParams = 2 + 1 + 4;
 
 // Ignore Alpha (see fullCommand): _openfx_gmic_alpha_split stores the alpha channel of every image
 // (an empty image for images without alpha) in the global variable _openfx_gmic_alpha, and
@@ -268,29 +270,44 @@ static void gmicGetDefinitions(const string& content, std::map<string, string>& 
 	}
 }
 
+// FNV-1a 64-bit hash of a definition, as 16 hexadecimal digits
+static string gmicChecksum(const string& def)
+{
+	unsigned long long h = 14695981039346656037ULL;
+	for (size_t j = 0; j < def.size(); ++j) {
+		h = (h ^ (unsigned char)def[j]) * 1099511628211ULL;
+	}
+	char s[17];
+	snprintf(s, sizeof(s), "%016llx", h);
+	return s;
+}
+
 // The hot fixes that apply to the G'MIC standard library stdlib. Each block of gmic_hotfixes.gmic
-// starts with '#@hotfix <command> <checksum> [<callee>:<checksum>...]': the FNV-1a 64-bit hashes of
-// the built-in definitions of the command it fixes and of the commands the fix relies on. A block
-// is used only if all of them are unchanged, otherwise the fix must be reviewed.
+// starts with '#@hotfix <command> <original> <fixed> [<callee>:<checksum>...]': the FNV-1a 64-bit
+// hashes of the built-in definition the fix was made from, of the fixed definition (the block's
+// own), and of the built-in definitions of the commands the fix relies on. A block is applied if
+// the built-in command is the original one and the callees are unchanged, skipped silently if the
+// built-in command already is the fixed one (fixed upstream), and otherwise skipped with a warning.
 static string gmicGetHotfixes(const string& stdlib)
 {
 	static const string marker = "#@hotfix ";
 	vector<vector<std::pair<string, string> > > checks; // per block: (command, checksum)
-	vector<string> texts;
+	vector<string> fixed, texts; // per block: checksum of the fixed definition, block text
 	std::istringstream ss(string((const char*)gmic_hotfixes));
 	string line;
 	while (getline(ss, line)) {
 		if (line.compare(0, marker.size(), marker) == 0) {
 			std::istringstream ls(line.substr(marker.size()));
 			vector<std::pair<string, string> > check;
-			string name, checksum, callee;
-			ls >> name >> checksum;
+			string name, checksum, fixedChecksum, callee;
+			ls >> name >> checksum >> fixedChecksum;
 			check.push_back(std::make_pair(name, checksum));
 			while (ls >> callee) {
 				const string::size_type colon = callee.find(':');
 				check.push_back(std::make_pair(callee.substr(0, colon), colon == string::npos ? string() : callee.substr(colon + 1)));
 			}
 			checks.push_back(check);
+			fixed.push_back(fixedChecksum);
 			texts.push_back(string());
 		}
 		if (!texts.empty()) {
@@ -306,22 +323,30 @@ static string gmicGetHotfixes(const string& stdlib)
 	gmicGetDefinitions(stdlib, defs);
 	string hotfixes;
 	for (size_t i = 0; i < checks.size(); ++i) {
+		const string& command = checks[i][0].first;
+		std::map<string, string> own;
+		own[command];
+		gmicGetDefinitions(texts[i], own);
+		const string ownChecksum = gmicChecksum(own[command]);
+		if (own[command].empty() || ownChecksum != fixed[i]) {
+			fprintf(stderr, "openfx-gmic: Warning: hot fix for the G'MIC command '%s' not applied: the fixed definition has checksum %s, but its '#@hotfix' line says '%s', update it in gmic_hotfixes.gmic\n",
+			        command.c_str(), ownChecksum.c_str(), fixed[i].c_str());
+			continue;
+		}
+		if (!defs[command].empty() && gmicChecksum(defs[command]) == ownChecksum) {
+			continue; // already fixed in the built-in G'MIC (then the callees do not matter)
+		}
 		bool ok = true;
 		for (size_t k = 0; k < checks[i].size(); ++k) {
 			const string& name = checks[i][k].first;
 			const string& expected = checks[i][k].second;
 			const string& def = defs[name];
-			unsigned long long h = 14695981039346656037ULL;
-			for (size_t j = 0; j < def.size(); ++j) {
-				h = (h ^ (unsigned char)def[j]) * 1099511628211ULL;
-			}
-			char found[17];
-			snprintf(found, sizeof(found), "%016llx", h);
+			const string found = gmicChecksum(def);
 			// a callee given without a checksum only has to exist
 			if (def.empty() || ((k == 0 || !expected.empty()) && expected != found)) {
 				ok = false;
 				fprintf(stderr, "openfx-gmic: Warning: hot fix for the G'MIC command '%s' not applied: the built-in definition of '%s' %s (checksum %s, the fix is for %s), review it in gmic_hotfixes.gmic\n",
-				        checks[i][0].first.c_str(), name.c_str(), def.empty() ? "is missing" : "changed", found, expected.c_str());
+				        command.c_str(), name.c_str(), def.empty() ? "is missing" : "changed", found.c_str(), expected.c_str());
 			}
 		}
 		if (ok) {
@@ -347,12 +372,14 @@ public:
 			gmic_delete_external((float*)lib);
 		}
 		hotfixes = gmicGetHotfixes(stdlib);
+		bool builtinStdlib = false; // the curated lists of the parser are only checked against it
 		string effectContent = loadStringFromFile(get_gmic_rc_path() + "gmic_ofx.gmic");
 		if (effectContent.empty()) {
 			effectContent = loadStringFromFile(get_gmic_rc_path() + "gmic_stdlib.gmic");
 		}
 		if (effectContent.empty()) {
 			effectContent.swap(stdlib);
+			builtinStdlib = true;
 			if (
 				(int)effectContent.find("#@gimp :") < 0 && 
 				(int)effectContent.find("#@gmic_plugin :") < 0 && 
@@ -360,13 +387,13 @@ public:
 				effectContent = "";
 			}
 		} 
-		gmic_parse_multi(effectContent, &pluginData, &pluginContent);
+		gmic_parse_multi(effectContent, &pluginData, &pluginContent, builtinStdlib);
 		// Each plug-in has a fixed table of MAX_NOF_PARAMS parameters: the filter's own parameters,
 		// up to 4 extra layers and the fixed trailing parameters (see pluginSetup). Leave out the
 		// few filters that do not fit (e.g. "Transfer Color [Reduced Colors]" in G'MIC 4.0.7,
 		// with several hundred parameters) instead of overflowing the table.
 		for (size_t i = 0; i < pluginData.size(); ) {
-			if ((int)pluginData[i].param.size() + kNofExtraParams > MAX_NOF_PARAMS) {
+			if ((int)pluginData[i].param.size() + kNofExtraParams + (pluginData[i].multiLayer ? kNofLayerTimeParams : 0) > MAX_NOF_PARAMS) {
 				pluginData.erase(pluginData.begin() + i);
 				pluginContent.erase(pluginContent.begin() + i);
 			} else {
@@ -434,6 +461,29 @@ static string ignoreAlphaNote(const EffectData& effectData)
 		"changed (frames, rotation, crop, resize...) don't get an alpha back.";
 }
 
+// Filters that process their layers as successive frames of a clip (issue #63). Their time offsets
+// default to 0 like the other filters' (saved projects don't store parameters that didn't exist,
+// and these connected the earlier frames through TimeOffset nodes): their help says how to get the
+// earlier frames, and their "Layer Times" group is open.
+static bool isTemporalFilter(const EffectData& effectData)
+{
+	static const char* const commands[] = { "fx_fade_layers", "fx_morph_layers", "fx_rep_z_render",
+		"fx_align_layers", "fx_blend_median", "fx_blend_average_all" };
+	for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); ++i) {
+		if (effectData.command == commands[i]) return true;
+	}
+	return false;
+}
+
+static string layerTimesNote(const EffectData& effectData)
+{
+	if (!effectData.multiLayer || !isTemporalFilter(effectData)) return string();
+	return "\n\nLayer Times: this filter treats its layers as frames. To process the previous frames of "
+		"Source, set Layers from Source to the number of frames (Layer -1, Layer -2... then come from "
+		"Source at the frames given by their time offsets, -1, -2... by default), or connect other "
+		"clips to the layer inputs and set their time offsets.";
+}
+
 int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 {
 	globalDataP->scale = 255.f;
@@ -478,7 +528,10 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		std::string name = param.name;
 		// a filter parameter must not reuse the name of a parameter added below (none does in
 		// G'MIC 4.0.7, but a clash would make the host reject the duplicate parameter)
-		static const char* const reservedNames[] = { "Layer -1", "Layer -2", "Layer -3", "Layer -4", "Command",
+		static const char* const reservedNames[] = { "Layer -1", "Layer -2", "Layer -3", "Layer -4",
+			"Layer Times", LAYERS_FROM_SOURCE_PARAM, "Layer -1" TIME_OFFSET_PARAM_SUFFIX,
+			"Layer -2" TIME_OFFSET_PARAM_SUFFIX, "Layer -3" TIME_OFFSET_PARAM_SUFFIX,
+			"Layer -4" TIME_OFFSET_PARAM_SUFFIX, "Command",
 			"Advanced Options", "Output Layer", "Resize Mode", "Ignore Alpha", "Preview/Draft Mode",
 			"Global Random Seed", "Animate Random Seed", "Log Verbosity" };
 		for (size_t r = 0; r < sizeof(reservedNames) / sizeof(reservedNames[0]); ++r) {
@@ -579,7 +632,30 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		++p;
 		globalDataP->param[p] = Parameter("Layer -4", "", PT_LAYER);
 		++p;
-	}	
+		// Layer times (issue #63). Placed before Command, so that the PARAM_* indices of the
+		// trailing parameters don't change. The defaults (no layer from Source, offsets 0) give the
+		// behaviour of the plug-ins without these parameters, also for the saved projects, which
+		// don't store them. Not animated: the frames needed are given to the host for a render time.
+		// Integer parameters with flags 1 are not animated (see describeInContext).
+		globalDataP->param[p] = Parameter("Layer Times", "", PT_TOPIC_START);
+		globalDataP->param[p].flags = isTemporalFilter(effectData) ? 0 : 1; // closed, except for the filters that use frames
+		++p;
+		globalDataP->param[p] = Parameter(LAYERS_FROM_SOURCE_PARAM, "", PT_INT, 0, 4, 0, 0, 0, 0, "");
+		globalDataP->param[p].flags = 1;
+		globalDataP->param[p].hint = "Number of layer inputs taken from Source instead of their own input: "
+			"Layer -1 to Layer -N are then Source at the render time plus their time offset, e.g. the "
+			"previous frames with offsets -1, -2... (set when N is raised, for offsets still at 0). 0: off.";
+		++p;
+		for (int k = 1; k <= 4; ++k) {
+			globalDataP->param[p] = Parameter("Layer -" + intToString(k) + TIME_OFFSET_PARAM_SUFFIX, "", PT_INT, -1000, 1000, 0, 0, 0, 0, "");
+			globalDataP->param[p].flags = 1;
+			globalDataP->param[p].hint = "Frame offset of Layer -" + intToString(k) + ": its image is fetched at "
+				"the render time plus this offset (-1: the previous frame). Source is always at the render time.";
+			++p;
+		}
+		globalDataP->param[p] = Parameter("Layer Times", "", PT_TOPIC_END);
+		++p;
+	}
 	globalDataP->param[p] = Parameter("Command", "", PT_TEXT, 0, 0, 0, 0, 0, 0, "-blur 2");
 	if (hasContent) {
 		globalDataP->param[p].displayStatus = DS_HIDDEN;
@@ -635,7 +711,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 	strReplace(d, "<", "(");
 	strReplace(d, ">", ")");
 //	strReplace(d, "\n", "\\n");
-	globalDataP->pluginInfo.description = d + ignoreAlphaNote(effectData) + "\n" + PLUGIN_DESCRIPTION;
+	globalDataP->pluginInfo.description = d + ignoreAlphaNote(effectData) + layerTimesNote(effectData) + "\n" + PLUGIN_DESCRIPTION;
 
 	return 0;
 }
@@ -663,7 +739,9 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, bool preview)
         cmd = PAR_TXT(PARAM_COMMAND);
     } else {
         cmd = "-" + strTrim(cmd, " \t\r\n") + " ";
-        for (int i = 1; i < PARAM_COMMAND; i++) { // filter parameters only
+        // the filter parameters only: they come first, the layers and their times follow
+        const int nofFilterParams = (int)effectData.param.size();
+        for (int i = 1; i <= nofFilterParams && i < PARAM_COMMAND; i++) {
             if (PAR_TYPE(i) == PT_INT || PAR_TYPE(i) == PT_BOOL || PAR_TYPE(i) == PT_SELECT)
                 cmd += intToString((int)PAR_VAL(i)) + ",";
             else if (PAR_TYPE(i) == PT_FLOAT)
@@ -995,6 +1073,12 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	bool preview = hasContent && (effectData.previewOnly || PAR_VAL(PARAM_PREVIEW) > 0);
 	// the custom commands, set in the options by fullCommand(): must stay valid until the G'MIC calls return
 	string customCommands;
+	// customCommands goes out of scope: reset the pointer on return, also when G'MIC throws
+	struct ResetCustomCommands {
+		gmic_interface_options& options;
+		explicit ResetCustomCommands(gmic_interface_options& o) : options(o) {}
+		~ResetCustomCommands() { options.custom_commands = NULL; }
+	} resetCustomCommands(mySequenceDataP->options);
 	string cmd = fullCommand(sequenceDataP, globalDataP, nofImages, preview, customCommands);
 	bool aborted = false;
 #ifdef OFX_PLUGIN
@@ -1019,7 +1103,6 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 			errmsg += " (with the preview command: " + string(mySequenceDataP->options.error_message_buffer) + ")";
 		}
 	}
-	mySequenceDataP->options.custom_commands = NULL; // customCommands goes out of scope
 
 	// Only the host tells whether the render was aborted: G'MIC's 'quit' command also sets its
 	// abort flag, and then G'MIC's result (the images at that point) is used as usual.
@@ -1146,7 +1229,7 @@ void getPluginInfo(int pluginIndex, PluginInfo& pluginInfo)
 	d = strToAscii(d);
 	strReplace(d, "<", "(");
 	strReplace(d, ">", ")");
-	pluginInfo.description = d + ignoreAlphaNote(pluginGlobalData.pluginData[pluginIndex]) + "\n\n" + PLUGIN_DESCRIPTION;
+	pluginInfo.description = d + ignoreAlphaNote(pluginGlobalData.pluginData[pluginIndex]) + layerTimesNote(pluginGlobalData.pluginData[pluginIndex]) + "\n\n" + PLUGIN_DESCRIPTION;
 	pluginInfo.major_version = MAJOR_VERSION;
 	pluginInfo.minor_version = MINOR_VERSION;
 }

@@ -42,10 +42,13 @@ uninstall:
 sources: $(GMICSOURCES) gmic_hotfixes.h
 
 # Hot fixes for G'MIC bugs, embedded into the plug-in as a null-terminated byte array (no string
-# literal, which MSVC limits to 16 KB per piece). They are written for one G'MIC version: fail if
-# GMICVER changed, so that each fix gets reviewed (see the top of gmic_hotfixes.gmic). The
-# gmic_hotfixes.version stamp holds GMICVER, so that 'make GMICVER=...' also redoes the check.
-# Carriage returns (Windows checkouts) are removed.
+# literal, which MSVC limits to 16 KB per piece). They were last reviewed for one G'MIC version:
+# warn if GMICVER is another one, as a reminder to drop the fixes that upstream has made. This is
+# not an error: the plug-in checks each fix against the built-in G'MIC definitions, applies it
+# only where the bug is still there, and warns (failing the CI describe test) where the code
+# changed otherwise (see the top of gmic_hotfixes.gmic). The gmic_hotfixes.version stamp holds
+# GMICVER, so that 'make GMICVER=...' also redoes the check. Carriage returns (Windows checkouts)
+# are removed.
 gmic_hotfixes.version: gmic_hotfixes_force
 	@echo '$(GMICVER)' | cmp -s - $@ || echo '$(GMICVER)' > $@
 
@@ -54,7 +57,7 @@ gmic_hotfixes_force:
 
 gmic_hotfixes.h: gmic_hotfixes.gmic gmic_hotfixes.version
 	@if ! tr -d '\r' < $< | grep -qxF '#@openfx_gmic_hotfixes $(GMICVER)'; then \
-	  echo "Error: $< is not for G'MIC $(GMICVER) (no '#@openfx_gmic_hotfixes $(GMICVER)' line): review each fix against G'MIC $(GMICVER), see the top of $<"; exit 1; \
+	  echo "Warning: $< was reviewed for another G'MIC version than $(GMICVER) (no '#@openfx_gmic_hotfixes $(GMICVER)' line): drop the fixes that G'MIC $(GMICVER) has, and run the describe test, see the top of $<"; \
 	fi
 	{ echo '// Generated from $< by the Makefile: do not edit.'; \
 	  echo 'static const unsigned char gmic_hotfixes[] = {'; \
@@ -98,18 +101,20 @@ $(GMICSOURCES): $(GMICSRC)
 	tar -m --strip-components 2 -zxvf $< $(patsubst %,$(GMICSRCDIR)/src/%, $@)
 	@case $@ in \
 	  gmic.h|gmic.cpp) sh patches/gmic-apple-abort.sh $@ || { rm -f $@; exit 1; };; \
-	  CImg.h) sh patches/cimg-omp-rand.sh $@ || { rm -f $@; exit 1; };; \
+	  CImg.h) sh patches/cimg-math-macro-overread.sh $@ && sh patches/cimg-omp-rand.sh $@ || { rm -f $@; exit 1; };; \
 	esac
 
 # Local patches to the extracted G'MIC sources (re-extracted when a patch changes):
 # - gmic-apple-abort.sh: enable G'MIC's abort support on macOS too, without which an error inside
 #   an OpenMP loop terminates the host (https://github.com/NatronGitHub/openfx-gmic/issues/41,
 #   reported upstream as https://github.com/GreycLab/gmic/issues/219)
+# - cimg-math-macro-overread.sh: the math parser reads past the end of a macro body ending with an
+#   argument name (https://github.com/GreycLab/CImg/issues/496, fixed after G'MIC 4.0.7)
 # - cimg-omp-rand.sh: the random numbers of rand, noise and the math parser in OpenMP loops do not
 #   depend on thread scheduling, so that most seeded filters give the same result at each render
 #   (https://github.com/NatronGitHub/openfx-gmic/issues/44)
 gmic.h gmic.cpp: patches/gmic-apple-abort.sh
-CImg.h: patches/cimg-omp-rand.sh
+CImg.h: patches/cimg-math-macro-overread.sh patches/cimg-omp-rand.sh
 
 distclean: clean
 	-rm -f $(GMICSRC) $(GMICSOURCES) gmic_hotfixes.h gmic_hotfixes.version gmic_libc.cpp gmic_stdlib_gmic.h # the last two: left by older builds
