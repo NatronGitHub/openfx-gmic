@@ -13,7 +13,7 @@
 # Only the line after the two lines of context below is changed. The script fails if the source
 # does not contain the expected code (e.g. after a GMICVER bump): then check whether upstream
 # fixed it, and update or remove this patch. Running it again on a patched file does nothing, and
-# so does running it on a CImg.h that already has the fix. Only POSIX sh, awk and grep are used,
+# so does running it on a CImg.h that already has the fix. Only POSIX sh, awk and wc are used,
 # for Linux, macOS and MSYS2.
 set -e
 f="$1"
@@ -60,6 +60,8 @@ awk -v c1="$context1" -v c2="$context2" -v l="$line_old" '
     print; p1 = p2; p2 = t }' "$f" > "$f.patched" || fail "awk failed"
 [ "$(occurrences "$f.patched" "$line_old")" = 0 ] && [ "$(occurrences "$f.patched" "$line_new")" = 1 ] || fail "the patch did not apply"
 [ "$(wc -l < "$f.patched")" -eq "$(wc -l < "$f")" ] || fail "the patch changed the number of lines"
-[ "$(diff "$f" "$f.patched" | grep -c '^[<>]')" = 2 ] || fail "the patch changed other lines"
+# number of lines that differ (no diff: MSYS2 does not install it by default)
+changed=$(awk 'NR == FNR { a[FNR] = $0; next } $0 != a[FNR] { n++ } END { print n + 0 }' "$f" "$f.patched")
+[ "$changed" = 1 ] || fail "the patch changed $changed lines, not 1"
 mv "$f.patched" "$f"
 echo "$f: patched for a read past the end of math parser macros (GreycLab/CImg#496)"
