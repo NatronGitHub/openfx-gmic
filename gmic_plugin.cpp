@@ -135,6 +135,7 @@
 
 #include "gmic_parser.h"
 #include "gmic_libc.h"
+#include "gmic_plugin_call.h"
 #include <cmath>
 
 #include "RFX_FileUtils.h"
@@ -145,6 +146,15 @@ using namespace reduxfx;
 #include <sstream>
 #include <cstdlib>
 #include <cassert>
+#include <chrono>
+#include <condition_variable>
+#include <exception>
+#include <mutex>
+#include <system_error>
+#include <thread>
+#ifndef _WIN32
+#include <pthread.h>
+#endif
 #ifdef DEBUG
 #include <iostream>
 #endif
@@ -516,6 +526,144 @@ int pluginParamChange(int index, SequenceData* sequenceDataP, GlobalData* global
 	return 0;
 }
 
+#ifdef OFX_PLUGIN
+// Render abort (issue #46): G'MIC polls a flag (p_is_abort), in its interpreter and in CImg's
+// OpenMP loops. The host's abort() must be called from the render thread (Natron reads
+// thread-local render state), and G'MIC only returns when it is done. So run G'MIC in a worker
+// thread, and poll abort() from the render thread while it runs: when the host aborts the render,
+// set G'MIC's flag, and G'MIC stops at its next check.
+struct GmicCallData
+{
+	const char* cmd;
+	unsigned int* nofImages;
+	gmic_interface_image* images;
+	gmic_interface_options* options;
+	int result;
+	std::exception_ptr exception; // an exception from G'MIC, rethrown in the render thread
+	std::mutex mutex;
+	std::condition_variable cond;
+	bool done;
+};
+
+static void gmicCallRun(GmicCallData* d)
+{
+	int result = -1;
+	try {
+		result = gmic_plugin_call(d->cmd, d->nofImages, d->images, MAX_NOF_LAYERS, d->options);
+	} catch (...) {
+		d->exception = std::current_exception();
+	}
+	std::lock_guard<std::mutex> lock(d->mutex);
+	d->result = result;
+	d->done = true;
+	d->cond.notify_one();
+}
+
+#ifndef _WIN32
+static void* gmicCallThread(void* arg)
+{
+	gmicCallRun((GmicCallData*)arg);
+	return NULL;
+}
+#endif
+
+// gmic_plugin_call(), aborted when the host aborts the render: then *aborted is set to true, and
+// the result must be discarded.
+static int gmicCallAbortable(OfxImageEffectHandle instance, const char* cmd, unsigned int* nofImages, gmic_interface_image* images, gmic_interface_options* options, bool* aborted)
+{
+	*aborted = false;
+	if (!gEffectHost || !gEffectHost->abort) {
+		return gmic_plugin_call(cmd, nofImages, images, MAX_NOF_LAYERS, options);
+	}
+	if (gEffectHost->abort(instance)) {
+		*aborted = true;
+		return -1;
+	}
+	// G'MIC's abort flag. It is a plain bool, read by G'MIC's threads while the render thread sets
+	// it: that is upstream's design (the API takes a bool*, polled in G'MIC's loops), and gmic-qt
+	// shares its flag across threads the same way. Note that CImg's OpenMP loops find the flag
+	// through gmic::current_is_abort(), which looks up the interpreter by thread: a thread that is
+	// not an interpreter's (e.g. an OpenMP worker evaluating the math abort()) gets a static flag
+	// shared by the whole process, which stays set (upstream behavior, not patched here).
+	bool isAbort = false;
+	GmicCallData d;
+	d.cmd = cmd;
+	d.nofImages = nofImages;
+	d.images = images;
+	d.options = options;
+	d.result = -1;
+	d.done = false;
+	options->p_is_abort = &isAbort;
+
+	bool started = false;
+#ifndef _WIN32
+	// a large stack, like G'MIC's own threads (the default size of a secondary thread is 512 KiB
+	// on macOS, and the interpreter recurses)
+	pthread_t thread;
+	pthread_attr_t attr;
+	if (pthread_attr_init(&attr) == 0) {
+		pthread_attr_setstacksize(&attr, (size_t)8 * 1024 * 1024);
+		started = (pthread_create(&thread, &attr, gmicCallThread, &d) == 0);
+		pthread_attr_destroy(&attr);
+	}
+#else
+	std::thread thread;
+	try {
+		thread = std::thread(gmicCallRun, &d);
+		started = true;
+	} catch (const std::system_error&) {
+	}
+#endif
+	if (!started) {
+		// no thread: run G'MIC here, without abort
+		options->p_is_abort = NULL;
+		return gmic_plugin_call(cmd, nofImages, images, MAX_NOF_LAYERS, options);
+	}
+
+	// the worker uses d, isAbort and the images: always join it before returning
+	try {
+		std::unique_lock<std::mutex> lock(d.mutex);
+		while (!d.cond.wait_for(lock, std::chrono::milliseconds(50), [&d] { return d.done; })) {
+			lock.unlock();
+			if (!*aborted && gEffectHost->abort(instance)) {
+				*aborted = true;
+			}
+			if (*aborted) {
+				// set it on every poll: G'MIC resets the flag when its interpreter starts
+				isAbort = true;
+			}
+			lock.lock();
+		}
+	} catch (...) {
+		// waiting failed (e.g. std::system_error from the mutex): stop G'MIC, wait for it, and fail
+		isAbort = true;
+#ifndef _WIN32
+		pthread_join(thread, NULL);
+#else
+		thread.join();
+#endif
+		options->p_is_abort = NULL;
+		throw;
+	}
+#ifndef _WIN32
+	pthread_join(thread, NULL);
+#else
+	thread.join();
+#endif
+	options->p_is_abort = NULL;
+	if (!*aborted && gEffectHost->abort(instance)) {
+		*aborted = true;
+	}
+	if (*aborted) {
+		return -1;
+	}
+	if (d.exception) {
+		std::rethrow_exception(d.exception);
+	}
+	return d.result;
+}
+#endif
+
 int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextData* contextDataP)
 {
 	/*
@@ -580,7 +728,7 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		cmd += " -gui_merge_layers";
 	}
 
-	// gmic_call() copies every resulting image into images[], which has MAX_NOF_LAYERS entries:
+	// images[] has MAX_NOF_LAYERS entries (gmic_plugin_call() fails with more results):
 	// keep at most that many (the last ones, since the Output Layer is counted from the end).
 	// Some filters return more by default, e.g. Fade Layers, Morph Layers, Tiles to Layers.
 	cmd += " -if {$!>" + intToString(MAX_NOF_LAYERS) + "} -keep[-" + intToString(MAX_NOF_LAYERS) + "--1] -fi";
@@ -618,10 +766,23 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	// not really needed as the effects should work independently of GIMP
 //	cmd = "_input_mode=1 _output_mode=0 _verbosity_mode=0 _preview_mode=0 _preview_size=0 " + cmd;
 
-	int result = gmic_call(cmd.c_str(), &nofImages, &images[0], &(((MySequenceData*)(sequenceDataP->customSequenceDataP))->options));
-	string errmsg = string(((MySequenceData*)(sequenceDataP->customSequenceDataP))->options.error_message_buffer);
+	bool aborted = false;
+#ifdef OFX_PLUGIN
+	int result = gmicCallAbortable(contextDataP->instance, cmd.c_str(), &nofImages, &images[0], &mySequenceDataP->options, &aborted);
+#else
+	int result = gmic_plugin_call(cmd.c_str(), &nofImages, &images[0], MAX_NOF_LAYERS, &mySequenceDataP->options);
+#endif
+	string errmsg = string(mySequenceDataP->options.error_message_buffer);
 
-	if (result == 0) {
+	// Only the host tells whether the render was aborted: G'MIC's 'quit' command also sets its
+	// abort flag, and then G'MIC's result (the images at that point) is used as usual.
+	if (aborted) {
+		// The host aborted the render: the result is incomplete, and there is no error to report.
+		// Fail the render (kOfxStatFailed), so that no host uses or caches the output buffer.
+		// Natron checks whether the render was aborted before looking at the status, so this is
+		// not reported as a failure there.
+		err = PF_Err_INTERNAL_STRUCT_DAMAGED;
+	} else if (result == 0) {
 		if (!globalDataP->inplaceProcessing) {
 			int idx = (int)PAR_VAL(PARAM_OUTPUT);
 			if (idx > 0) {
@@ -681,7 +842,7 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 			}
 		}
 	}
-	if (result != 0) {
+	if (result != 0 && !aborted) {
 #ifdef OFX_PLUGIN
 		if (gMessageSuiteV2) {
 			// persistent message on the node (cleared by the next successful render), instead of a
@@ -702,7 +863,7 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		err = PF_Err_INTERNAL_STRUCT_DAMAGED;
 	}
 #ifdef OFX_PLUGIN
-	else if (gMessageSuiteV2) {
+	else if (!aborted && gMessageSuiteV2) {
 		gMessageSuiteV2->clearPersistentMessage(contextDataP->instance);
 	}
 #endif

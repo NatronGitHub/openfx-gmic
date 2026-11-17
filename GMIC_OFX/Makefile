@@ -1,5 +1,5 @@
 PLUGINNAME = GMIC
-PLUGINSOURCES = gmic.cpp gmic_libc.cpp gmic_plugin.cpp gmic_parser.cpp RFX_FileUtils.cpp RFX_StringUtils.cpp
+PLUGINSOURCES = gmic.cpp gmic_plugin.cpp gmic_plugin_call.cpp gmic_parser.cpp RFX_FileUtils.cpp RFX_StringUtils.cpp
 PLUGINOBJECTS = $(PLUGINSOURCES:.cpp=.o)
 
 SRCDIR = ..
@@ -7,6 +7,14 @@ PATHTOROOT = $(SRCDIR)/openfx/Examples
 include $(PATHTOROOT)/Makefile.master
 
 RESOURCES = GMIC.png
+
+# Makefile.master's rule only depends on the .cpp: rebuild the objects when the G'MIC headers
+# change, e.g. re-extracted with a new GMICVER or a changed patch (patches/), so that no object
+# keeps inline CImg code compiled from the old headers.
+GMIC_HEADERS = $(SRCDIR)/gmic.h $(SRCDIR)/CImg.h
+$(OBJECTPATH)/gmic.o: $(GMIC_HEADERS) $(SRCDIR)/gmic_stdlib_community.h
+$(OBJECTPATH)/gmic_plugin_call.o: $(GMIC_HEADERS) $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h
+$(OBJECTPATH)/gmic_plugin.o: $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h
 
 # we need zlib to decompress the G'MIC standard library, and FFTW3 for many effects that use the FFT (the CImg builtin FFT only works with power-of-two dimensions)
 CXXFLAGS += \
