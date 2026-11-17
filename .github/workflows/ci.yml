@@ -8,7 +8,8 @@ name: Continuous Integration
 #
 # The builds use CMake (NatronGitHub/Natron#1181). The Makefile is still what Natron's
 # build-plugins.sh uses on the three systems: the nightly and on-demand runs also build it on each
-# (Linux: the debug variant, instead of a CMake debug build; macOS and Windows: a release build),
+# (Linux: the debug variant, instead of a CMake debug build, and the COMMERCIAL release build;
+# macOS and Windows: a release build),
 # and compare its bundle with the installed CMake one (compare_bundles.sh). The per-PR runs only
 # build with CMake.
 #
@@ -147,11 +148,13 @@ jobs:
           cmake --build build-cxx20 -j4
           .github/workflows/describe_plugins.sh build-cxx20/Plugins $GMIC_PLUGIN_COUNT
 
-  # Natron's COMMERCIAL builds (make LICENSE=COMMERCIAL, see license.mk), nightly or on demand:
-  # pocketfft instead of FFTW (GPL), and a standard library without the community filters under
-  # the GPL or a CeCILL-only licence. The bundle is checked (check_commercial.sh: no FFTW, licence
-  # texts, left-out plug-ins) and described, and FFT-based filters are rendered on a 720x576 image
-  # with an interpreter built from the same sources (fft_smoke.sh).
+  # Natron's COMMERCIAL builds (-DOFX_LICENSE=COMMERCIAL, make LICENSE=COMMERCIAL, see license.mk),
+  # nightly or on demand: pocketfft instead of FFTW (GPL), and a standard library without the
+  # community filters under the GPL or a CeCILL-only licence. The bundle is checked
+  # (check_commercial.sh: no FFTW, licence texts, left-out plug-ins), described and rendered (the pr
+  # subset, with the FFT filters), and FFT-based filters are rendered on a 720x576 image with an
+  # interpreter built from the same sources (fft_smoke.sh). The Makefile's COMMERCIAL build is
+  # compared with the installed CMake one (compare_bundles.sh).
   linux-commercial:
     name: Linux (Ubuntu 24.04), LICENSE=COMMERCIAL
     runs-on: ubuntu-24.04
@@ -159,7 +162,7 @@ jobs:
     if: >-
       needs.changes.outputs.run == 'true' &&
       (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-    timeout-minutes: 60
+    timeout-minutes: 90
     defaults:
       run:
         shell: bash -eo pipefail {0}
@@ -173,22 +176,35 @@ jobs:
       - name: Install packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config zlib1g-dev libcurl4-openssl-dev libpng-dev libexpat1-dev \
-            libgl-dev libglu1-mesa-dev
+          sudo apt-get install -y cmake ninja-build pkg-config zlib1g-dev libcurl4-openssl-dev libpng-dev \
+            libexpat1-dev libgl-dev libglu1-mesa-dev
       - name: Cache G'MIC sources
         uses: actions/cache@v4
         with:
           path: gmic_*.tar.gz
           key: gmic-src-${{ hashFiles('Makefile') }}
-      - name: Build (release, LICENSE=COMMERCIAL)
-        run: make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17 LICENSE=COMMERCIAL
+      - name: Build (release, OpenMP, OFX_LICENSE=COMMERCIAL)
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
+            -DOFX_LICENSE=COMMERCIAL -DGMIC_BUILD_TESTS=ON
+          cmake --build build -j4
       - name: Describe and check
         run: |
-          DESCRIBE_LOG=$PWD/describe-commercial.log \
-            .github/workflows/describe_plugins.sh GMIC_OFX/Linux-64-release $GMIC_PLUGIN_COUNT_COMMERCIAL
-          .github/workflows/check_commercial.sh GMIC_OFX/Linux-64-release describe-commercial.log
+          DESCRIBE_LOG=$PWD/describe-commercial.log PLUGIN_LIST=plugins.txt \
+            .github/workflows/describe_plugins.sh build/Plugins $GMIC_PLUGIN_COUNT_COMMERCIAL
+          .github/workflows/check_commercial.sh build/Plugins describe-commercial.log
+      - name: Render plug-ins (subset)
+        run: |
+          python3 .github/workflows/render_plugins.py --host "$(cat build/hostDemo-path.txt)" \
+            --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
+            --subset pr --jobs 2
       - name: Render FFT filters (720x576)
-        run: .github/workflows/fft_smoke.sh
+        run: .github/workflows/fft_smoke.sh build/gmic
+      - name: Build with the Makefile (release, LICENSE=COMMERCIAL), compare with CMake
+        run: |
+          make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17 LICENSE=COMMERCIAL
+          cmake --install build --prefix install
+          .github/workflows/compare_bundles.sh GMIC_OFX/Linux-64-release/GMIC.ofx.bundle install/OFX/Plugins/GMIC.ofx.bundle
 
   macos:
     name: macOS 15 arm64 (Apple clang, MacPorts libraries)
