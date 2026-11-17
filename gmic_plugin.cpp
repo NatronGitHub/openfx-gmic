@@ -422,6 +422,16 @@ void* unflattenCustomSequenceData(void* /*customSequenceDataP*/, int /*flatSize*
 
 int pluginSetdown(GlobalData* /*globalDataP*/, ContextData* /*contextDataP*/) { return 0; }
 
+// Help note on Ignore Alpha for the filters with layer inputs, whose results can't always be
+// matched to an input (see kIgnoreAlphaCommands). The parameter's hint covers the general case.
+static string ignoreAlphaNote(const EffectData& effectData)
+{
+	if (!effectData.multiLayer) return string();
+	return "\n\nIgnore Alpha: the alpha of each input is put back on the result at the same position. "
+		"If the filter returns a different number of images than it got, only the first result gets the "
+		"first input's alpha. Results whose size changed (frames, rotation, crop, resize...) are opaque.";
+}
+
 int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 {
 	globalDataP->scale = 255.f;
@@ -613,7 +623,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 	strReplace(d, "<", "(");
 	strReplace(d, ">", ")");
 //	strReplace(d, "\n", "\\n");
-	globalDataP->pluginInfo.description = d + "\n" + PLUGIN_DESCRIPTION;
+	globalDataP->pluginInfo.description = d + ignoreAlphaNote(effectData) + "\n" + PLUGIN_DESCRIPTION;
 
 	return 0;
 }
@@ -1124,7 +1134,7 @@ void getPluginInfo(int pluginIndex, PluginInfo& pluginInfo)
 	d = strToAscii(d);
 	strReplace(d, "<", "(");
 	strReplace(d, ">", ")");
-	pluginInfo.description = d + "\n\n" + PLUGIN_DESCRIPTION;
+	pluginInfo.description = d + ignoreAlphaNote(pluginGlobalData.pluginData[pluginIndex]) + "\n\n" + PLUGIN_DESCRIPTION;
 	pluginInfo.major_version = MAJOR_VERSION;
 	pluginInfo.minor_version = MINOR_VERSION;
 }
