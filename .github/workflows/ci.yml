@@ -45,7 +45,7 @@ permissions:
 
 env:
   # number of plug-ins expected from the pinned G'MIC version: update when upgrading G'MIC
-  GMIC_PLUGIN_COUNT: 1201
+  GMIC_PLUGIN_COUNT: 1193
   # extra variants (debug, C++20) only on the nightly schedule or on demand
   BUILD_VARIANTS: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
   # artifacts only on demand or for pre-release tags (containing "alpha", "beta" or "rc", e.g.
@@ -139,7 +139,7 @@ jobs:
         shell: bash -eo pipefail {0}
     env:
       # number of plug-ins of COMMERCIAL builds: update with gmic_stdlib_commercial.txt or G'MIC
-      GMIC_PLUGIN_COUNT_COMMERCIAL: 812
+      GMIC_PLUGIN_COUNT_COMMERCIAL: 808
     steps:
       - uses: actions/checkout@v4
         with:
