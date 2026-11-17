@@ -51,50 +51,28 @@ SKIP = {
     'eu.gmic.GenerateRandomPortrait': 'downloads its image from thispersondoesnotexist.com (fails on CI runners)',
     'eu.gmic.ImportData': "imports a file chosen by the user (none by default: Unknown filename)",
     'eu.gmic.SaveNoisePrint': 'two passes on 2 input images, the first one saves a noise print file',
-    'eu.gmic.ReverseEngineerColorCurve': "export-only (G'MIC-Qt's Export button): fails on purpose with "
-                                         "'This filter does nothing on host!'",
     'eu.gmic.ReverseEngineerGradientMap': "export-only (G'MIC-Qt's Export button): fails on purpose with "
                                           "'This filter does nothing on host!'",
 }
 # Plug-ins that fail with their default parameters, checked with G'MIC 4.0.7 and the hot fixes of
-# gmic_hotfixes.gmic (which fix Gleam, MorphologyPainting, LayerManipulation, MontageMultiRows and
-# HalftoneShapes): in G'MIC itself (also with the gmic command line), or in the plug-in
-# ("plug-in:"). Each entry is (the error that the plug-in's log must contain, the reason). An
-# expected failure only counts if the render exits with an error status and its log contains that
-# error: a crash, a timeout, a missing output or another error is a failure. A listed plug-in that
-# renders is a failure too (XPASS), so that the list never goes stale: remove it from the list.
+# gmic_hotfixes.gmic: in G'MIC itself (also with the gmic command line), in the plug-in
+# ("plug-in:"), or because of this test ("test:", e.g. every layer input is connected). Each entry
+# is (the error that the plug-in's log must contain, the reason). An expected failure only counts
+# if the render exits with an error status and its log contains that error: a crash, a timeout, a
+# missing output or another error is a failure. A listed plug-in that renders is a failure too
+# (XPASS), so that the list never goes stale: remove it from the list.
 EXPECTED_FAIL = {
-    'eu.gmic.Softlight': ("softlight: Select image(s) with 1 or 3 channels",
-                          "afre_softlight rejects RGBA images"),
-    'eu.gmic.ContrastFFT': ("softlight: Select image(s) with 1 or 3 channels",
-                            "afre_contrastfft calls afre_softlight, which rejects RGBA images"),
-    'eu.gmic.McFlou': ("Command 'remove_opacity': Image [0] is not a G,GA,RGB or RGBA image (6 channels)",
-                       "mc_flou doubles the channels of an RGBA image"),
-    'eu.gmic.BeautyRetouch': ("Command 'to_colormode': Image [1] is not a G,GA,RGB or RGBA image (7 channels)",
-                              "compose_softlight, called by fx_tk_retouch"),
-    'eu.gmic.Linify': ("Command 'resize': Invalid argument '0,0,1,3,2'", "linify"),
-    'eu.gmic.ColorRegion': ("Unknown command or filename ',1,1,>begin( const color_distance_thre",
-                            "rep_color_region builds a math expression that G'MIC 4 takes for a command"),
-    'eu.gmic.PrimeSurface': ("Operator 'vector[ind]=': Invalid vector write at index",
-                             "rep_primelist writes one past the end of its vector"),
-    'eu.gmic.SmoothSketch': ("Command 'check': Expression 'inrange($opacity,0,1)' is false",
-                             "fx_SmoothSketch blends with the Coloring Style ($11) as opacity, instead of $12"),
-    'eu.gmic.Intarsia': ("File 'left\"', format does not take any input options",
-                         "fx_intarsia: ${arg0\\ $5,...} is cut at the space"),
-    'eu.gmic.KaleidoPatterns': ("defines 14 values for only 13 variables",
-                                "plug-in: text(0,0xFFFFFFFF) gets the default '0,0xFFFFFFFF' (one argument too many)"),
-    'eu.gmic.SketchyEllipses': ("defines 19 values for only 18 variables",
-                                "plug-in: text(0,0xFFFFFFFF) gets the default '0,0xFFFFFFFF' (one argument too many)"),
     # point defaults outside the input: hostDemo connects Source at createInstance, and the
     # defaults stay relative to the project (720x576), not to the 160x120 Source (#78)
-    'eu.gmic.PerspectiveStreak': ("(3.7999999999999998>=-1&&3.7999999999999998<=1)=0",
-                                  "plug-in: point default outside the input (225%,-140%)"),
     'eu.gmic.KaleidoscopeReptorianPolar': ("Invalid Number - Variable 3",
                                            "plug-in: point default outside the input"),
     'eu.gmic.SolveMaze': ("Command 'minimal_path': Invalid argument '22.5%,-356%,0,427.5%,76%,0'",
                           "plug-in: point defaults outside the input"),
-    'eu.gmic.FourierPictureWatermark': ("Invalid selection [1] (not in range -1...0)",
-                                        "plug-in: needs a second image (the watermark), but has no layer input"),
+    # filters for 1 or 2 layers, which get the 4 extra layers that this test connects
+    'eu.gmic.Softlight': ("softlight: Select 1-2 images",
+                          "test: afre_softlight takes 1 or 2 images, and gets the 5 connected layers"),
+    'eu.gmic.DOFManipulation': ("This option is available for single layer only",
+                                "test: its default input mode needs a single layer, and gets the 5 connected layers"),
 }
 # Slow plug-ins (minutes on a CI runner): their own timeout (seconds); not in the pr subset
 TIMEOUT = {
