@@ -39,7 +39,27 @@ uninstall:
 	  (cd $$i && $(MAKE) $@); \
 	done
 
-sources: $(GMICSOURCES)
+sources: $(GMICSOURCES) gmic_hotfixes.h
+
+# Hot fixes for G'MIC bugs, embedded into the plug-in as a null-terminated byte array (no string
+# literal, which MSVC limits to 16 KB per piece). They are written for one G'MIC version: fail if
+# GMICVER changed, so that each fix gets reviewed (see the top of gmic_hotfixes.gmic). The
+# gmic_hotfixes.version stamp holds GMICVER, so that 'make GMICVER=...' also redoes the check.
+# Carriage returns (Windows checkouts) are removed.
+gmic_hotfixes.version: gmic_hotfixes_force
+	@echo '$(GMICVER)' | cmp -s - $@ || echo '$(GMICVER)' > $@
+
+.PHONY: gmic_hotfixes_force
+gmic_hotfixes_force:
+
+gmic_hotfixes.h: gmic_hotfixes.gmic gmic_hotfixes.version
+	@if ! tr -d '\r' < $< | grep -qxF '#@openfx_gmic_hotfixes $(GMICVER)'; then \
+	  echo "Error: $< is not for G'MIC $(GMICVER) (no '#@openfx_gmic_hotfixes $(GMICVER)' line): review each fix against G'MIC $(GMICVER), see the top of $<"; exit 1; \
+	fi
+	{ echo '// Generated from $< by the Makefile: do not edit.'; \
+	  echo 'static const unsigned char gmic_hotfixes[] = {'; \
+	  tr -d '\r' < $< | od -An -v -tx1 | sed -e 's/ *\([0-9a-f][0-9a-f]\)/0x\1,/g'; \
+	  echo '0x00 };'; } > $@.tmp && mv $@.tmp $@
 
 # gmic.eu may refuse downloads (HTTP 403 seen in 2026): try each mirror in turn, use curl -f so
 # that an HTTP error page is never saved as the tarball, and verify the checksum.
@@ -85,4 +105,4 @@ $(GMICSOURCES): $(GMICSRC)
 gmic.h gmic.cpp: patches/gmic-apple-abort.sh
 
 distclean: clean
-	-rm -f $(GMICSRC) $(GMICSOURCES) gmic_libc.cpp gmic_stdlib_gmic.h # the last two: left by older builds
+	-rm -f $(GMICSRC) $(GMICSOURCES) gmic_hotfixes.h gmic_hotfixes.version gmic_libc.cpp gmic_stdlib_gmic.h # the last two: left by older builds

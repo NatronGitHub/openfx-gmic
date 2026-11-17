@@ -45,6 +45,11 @@ if grep -E "DUPLICATE_PARAM|DUPLICATE_CLIP" describe.log; then
     echo "FAIL: duplicate param/clip definitions (see above)"
     status=1
 fi
+# the plug-in skips a hot fix whose built-in G'MIC definition changed (see gmic_hotfixes.gmic)
+if grep "openfx-gmic: Warning: hot fix" describe.log; then
+    echo "FAIL: hot fixes not applied, review them in gmic_hotfixes.gmic (see above)"
+    status=1
+fi
 if [ $status != 0 ]; then
     echo "--- last lines of the host log:"
     tail -n 30 describe.log
