@@ -68,7 +68,7 @@
 // - why doesn't "mineral mosaic" show the note after the separator?
 //
 // version, name and description for the plugin
-#define	MAJOR_VERSION		1
+#define	MAJOR_VERSION		2
 #define	MINOR_VERSION		0
 #define	BUILD_VERSION		0
 
