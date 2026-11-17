@@ -162,6 +162,7 @@ static
 void processParam(const string& s, EffectParameter& cp)
 {
 	string r = s;
+	cp.removable = 0;
 	cp.minValue = "";
 	cp.maxValue = "";
 	cp.defaultValue = "";
@@ -250,8 +251,11 @@ void processParam(const string& s, EffectParameter& cp)
 		// Add X,Y parameters (as a moveable point over the preview)
 		p1 = (int)pval.find(",");
 		p2 = (int)pval.find(",", p1 + 1);
-		if (p2 != (int)std::string::npos) { // ignore everything except the default value
+		if (p2 != (int)std::string::npos) { // ignore everything except the default value and removable
 			cp.defaultValue = pval.substr(0, p2);
+			const int p3 = (int)pval.find(",", p2 + 1);
+			const string removable = strTrim(pval.substr(p2 + 1, p3 < 0 ? string::npos : (size_t)(p3 - p2 - 1)), " \t");
+			cp.removable = (removable == "-1") ? -1 : (removable == "1") ? 1 : 0;
 		} else {
 			cp.defaultValue = pval;
 		}
@@ -521,6 +525,31 @@ string gmic_parse_single(const string& content, EffectData& cd)
 				}
 			}
 		}
+	}
+	// A removable point (point(x,y,-1) or point(x,y,1)) can be removed in G'MIC-Qt, which then
+	// passes nan,nan for it (a -1 point starts removed): give it a checkbox right after it, whose
+	// name is the point's (without " (%)", as the plug-in shows it) with " Enabled". It is not a
+	// G'MIC argument: the plug-in passes nan,nan for the point when it is off (issue #79).
+	for (int i = (int)cd.param.size() - 1; i >= 0; i--) {
+		if (cd.param[i].paramType != "point" || cd.param[i].removable == 0) continue;
+		EffectParameter e;
+		string base = cd.param[i].name;
+		const size_t pc = base.find(" (%)");
+		if (pc != string::npos) base.erase(pc, 4);
+		base = strTrim(base, " \t") + " Enabled";
+		e.name = base;
+		for (int cnt = 2; ; cnt++) {
+			bool clash = false;
+			for (int j = 0; j < (int)cd.param.size() && !clash; j++) clash = (cd.param[j].name == e.name);
+			if (!clash) break;
+			e.name = base + "_" + intToString(cnt);
+		}
+		e.paramType = "pointenabled";
+		e.defaultValue = (cd.param[i].removable < 0) ? "0" : "1";
+		e.minValue = "0";
+		e.maxValue = "1";
+		e.removable = cd.param[i].removable;
+		cd.param.insert(cd.param.begin() + i + 1, e);
 	}
 	cd.multiLayer = usesSeveralLayers(content);
 	// a hidden value() parameter holding a placeholder string (e.g. Shear's "place_string_here")

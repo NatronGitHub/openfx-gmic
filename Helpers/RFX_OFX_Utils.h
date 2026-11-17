@@ -417,6 +417,24 @@ static void pointsMoveToSource(int pluginIndex, OfxImageEffectHandle instance, M
 	if (editing) gParamHost->paramEditEnd(paramSet);
 }
 
+// A removable point (issue #79) is enabled, with its overlay handle, only when its checkbox (the
+// boolean parameter after it, see PARAM_FLAGS_POINT_ENABLED) is on. onlyParam >= 0: only for that
+// checkbox.
+static void pointsUpdateEnabled(int pluginIndex, MyInstanceData* myData, int onlyParam)
+{
+	for (int i = 1; i < globalData[pluginIndex].nofParams; i++) {
+		const reduxfx::Parameter& param = globalData[pluginIndex].param[i];
+		if (param.paramType != PT_BOOL || param.flags != PARAM_FLAGS_POINT_ENABLED || (onlyParam >= 0 && i != onlyParam)) continue;
+		if (globalData[pluginIndex].param[i - 1].paramType != PT_POINT || !myData->param[i] || !myData->param[i - 1]) continue;
+		int on = 1;
+		if (gParamHost->paramGetValue(myData->param[i], &on) != kOfxStatOK) continue;
+		OfxPropertySetHandle props;
+		if (gParamHost->paramGetPropertySet(myData->param[i - 1], &props) == kOfxStatOK) {
+			gPropHost->propSetInt(props, kOfxParamPropEnabled, 0, on ? 1 : 0);
+		}
+	}
+}
+
 // instance construction
 static OfxStatus createInstance(int pluginIndex, OfxImageEffectHandle effect)
 {
@@ -503,7 +521,8 @@ static OfxStatus createInstance(int pluginIndex, OfxImageEffectHandle effect)
 			l++;
 		}
 	}
-	
+	pointsUpdateEnabled(pluginIndex, myData, -1);
+
 	// set my private instance data
 	gPropHost->propSetPointer(effectProps, kOfxPropInstanceData, 0, (void*)myData);
 
@@ -935,6 +954,22 @@ static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance,
 					if (k > previous && lt.fromSource[i] && lt.offset[i] == 0) {
 						gParamHost->paramSetValue(d->timeOffset[i], -k);
 					}
+				}
+			}
+		}
+	}
+
+	// a removable point's checkbox, changed in any way (user edit, undo, a script...)
+	{
+		const char* name = NULL;
+		gPropHost->propGetString(inArgs, kOfxPropName, 0, &name);
+		MyInstanceData* d = getMyInstanceData(instance);
+		if (d && name) {
+			for (int i = 1; i < globalData[pluginIndex].nofParams; i++) {
+				const reduxfx::Parameter& param = globalData[pluginIndex].param[i];
+				if (param.paramType == PT_BOOL && param.flags == PARAM_FLAGS_POINT_ENABLED && param.paramName == name) {
+					pointsUpdateEnabled(pluginIndex, d, i);
+					break;
 				}
 			}
 		}
