@@ -49,6 +49,7 @@ SKIP = {
     'eu.gmic.CImgNLMeans': "runs the external executable 'use_nlmeans'",
     'eu.gmic.CImgSkeleton': "runs the external executable 'use_skeleton'",
     'eu.gmic.GenerateRandomPortrait': 'downloads its image from thispersondoesnotexist.com (fails on CI runners)',
+    'eu.gmic.UpscaleCNN2x': "downloads its network file gmic_scale2x_cnn.gmz (failed on the Windows CI runner)",
     'eu.gmic.ImportData': "imports a file chosen by the user (none by default: Unknown filename)",
     'eu.gmic.SaveNoisePrint': 'two passes on 2 input images, the first one saves a noise print file',
     'eu.gmic.ReverseEngineerGradientMap': "export-only (G'MIC-Qt's Export button): fails on purpose with "
