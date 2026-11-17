@@ -127,6 +127,8 @@ extern int pluginSetdown(GlobalData* globalDataP, ContextData* contextDataP);
 extern int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextData* contextDataP);
 // kOfxActionPurgeCaches: free what the plug-in keeps for the instance
 extern int pluginPurgeCaches(SequenceData* sequenceDataP);
+// the Output Layer parameter changed (any reason), to that option index
+extern int pluginOutputLayerChanged(SequenceData* sequenceDataP, int outputLayer);
 
 extern int getNofPlugins();
 extern void getPluginInfo(int pluginIndex, PluginInfo& pluginInfo);
@@ -961,6 +963,20 @@ static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance,
 						gParamHost->paramSetValue(d->timeOffset[i], -k);
 					}
 				}
+			}
+		}
+	}
+
+	// Output Layer changed in any way: no longer Frame, the results kept for it can go
+	{
+		const char* name = NULL;
+		gPropHost->propGetString(inArgs, kOfxPropName, 0, &name);
+		MyInstanceData* d = getMyInstanceData(instance);
+		GlobalData* globalDataP = &globalData[pluginIndex];
+		if (d && name && strcmp(name, "Output Layer") == 0 && d->param[PARAM_OUTPUT]) {
+			int v = 0;
+			if (gParamHost->paramGetValue(d->param[PARAM_OUTPUT], &v) == kOfxStatOK) {
+				pluginOutputLayerChanged(d->sequenceDataP, v);
 			}
 		}
 	}
