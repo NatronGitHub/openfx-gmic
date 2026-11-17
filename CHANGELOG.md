@@ -28,6 +28,7 @@ Changes in openfx-gmic since Natron 2.5.0 (tag `Natron-2.5.0`). Natron 2.6 polic
 ### Fixes
 - Renders where the input and output image bounds differ (e.g. partial render windows) no longer fail with "The image produced by G'MIC has the wrong size" (#40; likely fixes #2, waiting for a retest).
 - Wrong parameters or output for many filters: value(), file defaults, choices, colours with alpha, 8-bit flip, gray+alpha (#7, #17, #20, #39).
+- Point parameter defaults land inside Source when it is smaller than the project or offset (e.g. Solve Maze failed with "Invalid argument", Spiral Distortion was shifted): when the user connects or changes Source, points still at their default (or reset to it) are set within its region of definition; they don't follow later size changes upstream, e.g. an edited Reformat (#73).
 - Crashes: more than 32 output images (#37); a render aborted by the user can no longer overflow the output buffer (#56).
 
 ### Build
