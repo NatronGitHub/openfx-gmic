@@ -1128,9 +1128,9 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
         // post-process
         EffectData& cd = *it;
         if (cd.category == "About") {
-            cd.category = "GMIC";
+            cd.category = "G'MIC";
         } else {
-            cd.category = "GMIC/" + cd.category;
+            cd.category = "G'MIC/" + cd.category;
             cd.name = "G'MIC " + cd.name;
         }
         strReplace(cd.name, "[", "");

@@ -721,7 +721,7 @@ static
 OfxStatus getSpatialRoI(int pluginIndex, OfxImageEffectHandle effect, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
     if (renderScaleRefused(inArgs)) {
-		// GMIC does not support render scale
+		// G'MIC does not support render scale
         return kOfxStatFailed;
     }
 	// G'MIC processes whole images: ask for the full region of definition of every input, not just
