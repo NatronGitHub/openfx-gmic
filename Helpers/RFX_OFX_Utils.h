@@ -344,7 +344,7 @@ static void getAllParamData(int pluginIndex, const OfxRectI& dstRect, double par
 			double v;
 			gParamHost->paramGetValueAtTime(myData->param[i], t, &v);
 			if (globalData[pluginIndex].param[i].flags > 0)
-				myData->sequenceDataP->floatValue[i][0] = -(float)kRfxPi * (float)v / 180.0f;
+				myData->sequenceDataP->floatValue[i][0] = -kRfxPi * (float)v / 180.0f;
 			else
 				myData->sequenceDataP->floatValue[i][0] = (float)v;
 		} else if (globalData[pluginIndex].param[i].paramType == PT_SELECT) {
