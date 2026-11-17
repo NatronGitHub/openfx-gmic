@@ -607,15 +607,23 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 }
 
 static
-std::string
-gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP)
+const EffectData&
+effectDataOf(GlobalData* globalDataP)
 {
 #ifdef AE_PLUGIN
-    MyGlobalData* myGlobalDataP = (MyGlobalData*)globalDataP->customGlobalDataP;
-    string cmd = PAR_VAL(PARAM_PREVIEW) > 0 ? myGlobalDataP->effectData.preview_command:myGlobalDataP->effectData.command;
+    return ((MyGlobalData*)globalDataP->customGlobalDataP)->effectData;
 #else
-    string cmd = PAR_VAL(PARAM_PREVIEW) > 0 ? pluginGlobalData.pluginData[globalDataP->pluginIndex].preview_command:pluginGlobalData.pluginData[globalDataP->pluginIndex].command;
+    return pluginGlobalData.pluginData[globalDataP->pluginIndex];
 #endif
+}
+
+// the filter's command line, with its main or preview command
+static
+std::string
+gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, bool preview)
+{
+    const EffectData& effectData = effectDataOf(globalDataP);
+    string cmd = preview ? effectData.preview_command : effectData.command;
 
     if (cmd == "") {
         cmd = PAR_TXT(PARAM_COMMAND);
@@ -658,6 +666,105 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP)
     strReplace(cmd, "\n", " ");
 
     return cmd;
+}
+
+// The whole command line: the filter's command (main or preview), with the variables G'MIC-Qt
+// defines, the output layer selection, Ignore Alpha, the Resize Mode, verbosity and seed. Sets the
+// custom commands of the options: customCommands (the filter's #@gui lines, the hot fixes for G'MIC
+// bugs, and the Ignore Alpha command), which must outlive the G'MIC call.
+static
+std::string
+fullCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, unsigned int nofImages, bool isPreview, string& customCommands)
+{
+	MySequenceData* mySequenceDataP = (MySequenceData*)sequenceDataP->customSequenceDataP;
+#ifdef AE_PLUGIN
+	customCommands = ((MyGlobalData*)globalDataP->customGlobalDataP)->effectContent;
+#else
+	// the filter's #@gui lines, and the hot fixes for G'MIC bugs (gmic_hotfixes.gmic), on every run
+	customCommands = pluginGlobalData.pluginContent[globalDataP->pluginIndex] + '\n' + pluginGlobalData.hotfixes;
+#endif
+	string cmd = gmicCommand(sequenceDataP, globalDataP, isPreview);
+
+	if (PAR_VAL(PARAM_OUTPUT) == 0.f) {
+		// G'MIC >= 2.9 renamed gimp_merge_layers to gui_merge_layers ("Unknown command" otherwise)
+		cmd += " -gui_merge_layers";
+	}
+
+	// images[] has MAX_NOF_LAYERS entries (gmic_plugin_call() fails with more results):
+	// keep at most that many (the last ones, since the Output Layer is counted from the end).
+	// Some filters return more by default, e.g. Fade Layers, Morph Layers, Tiles to Layers.
+	cmd += " -if {$!>" + intToString(MAX_NOF_LAYERS) + "} -keep[-" + intToString(MAX_NOF_LAYERS) + "--1] -fi";
+
+	// Ignore Alpha: apply_channels takes the command as a quoted string, which it un-escapes
+	// again, so quoting the command (whose text arguments are already escaped) breaks any text
+	// containing a quote or backslash. Define it as a custom command and apply that instead.
+	if (PAR_VAL(PARAM_NOALPHA) > 0.f) {
+		strReplace(cmd, "\n", " ");
+		strReplace(cmd, "\r", " ");
+		customCommands += "\n_openfx_gmic_cmd :\n  " + cmd + "\n";
+		cmd = "-apply_channels \"_openfx_gmic_cmd\",rgb";
+	}
+	mySequenceDataP->options.custom_commands = customCommands.c_str();
+	
+	// Variables that G'MIC-Qt defines for the filters (GmicProcessor.cpp, FilterThread.cpp), with
+	// the whole image as the preview area. Its size is the largest input size, as G'MIC-Qt's
+	// LayersExtentProxy::getExtent() (all the inputs have the size of the first one if the Resize
+	// Mode downsamples them).
+	// - _preview_x0/y0/x1/y1, defined by G'MIC-Qt for the preview and when applying the filter:
+	//   e.g. the preview command of Array [Random] [Jumble by Px], which its main command calls,
+	//   crops to it.
+	// - _preview_width/height and _preview_area_width/height only for a preview run: main
+	//   commands use them to detect a preview (Speech Bubble draws its guides). For a preview,
+	//   gui_preview_wh now returns the image size instead of 400x400 for small images.
+	// - _host (G'MIC-Qt's host short name) only for a preview run: the stdlib compares it with
+	//   "cli" or "paintdotnet", but Array [Random] [Jumble by Px]'s preview tests
+	//   '$_host'!='$cli' (always true when _host is defined), so main runs keep it undefined.
+	// _persistent is not defined: filters whose main command needs it are rendered with the
+	// preview command (see pluginProcess).
+	int extentW = 0, extentH = 0;
+	const float dsMode = PAR_VAL(PARAM_RESIZE);
+	if (dsMode >= 2.f) {
+		const int ds = (int)pow(2.f, dsMode - 1.f);
+		extentW = sequenceDataP->inWorld[0].width / ds;
+		extentH = sequenceDataP->inWorld[0].height / ds;
+	} else {
+		for (unsigned int i = 0; i < nofImages; ++i) {
+			extentW = std::max(extentW, sequenceDataP->inWorld[i].width);
+			extentH = std::max(extentH, sequenceDataP->inWorld[i].height);
+		}
+	}
+	const string W = intToString(extentW), H = intToString(extentH);
+	string env = "_preview_x0=0 _preview_y0=0 _preview_x1=" + intToString(extentW - 1) + " _preview_y1=" + intToString(extentH - 1) + " ";
+	if (isPreview) {
+		env += "_host=ofx _preview_width=" + W + " _preview_height=" + H +
+			" _preview_area_width=" + W + " _preview_area_height=" + H + " ";
+	}
+	cmd = env + cmd;
+
+	{
+		// Resize Mode: "Downsample 1/N" processes a downsampled input; the result is always resized
+		// to the input size ("Fixed (Inplace)" and "Dynamic" alike)
+		float ds = PAR_VAL(PARAM_RESIZE);
+		if (ds >= 2.f) {
+			ds = pow(2.f, ds - 1.f);
+			cmd = " -resize " + intToString(sequenceDataP->inWorld[0].width / (int)ds) + "," + intToString(sequenceDataP->inWorld[0].height / (int)ds) + " " + cmd;
+		}
+		cmd += " -resize " + intToString(sequenceDataP->inWorld[0].width) + "," + intToString(sequenceDataP->inWorld[0].height);
+	}
+	int verbosity = (int)PAR_VAL(PARAM_VERBOSITY) - 1;
+	int seed = (int)PAR_VAL(PARAM_SRAND);
+	bool animated_seed = (int)PAR_VAL(PARAM_ANIMSEED);
+	if (animated_seed) {
+		seed += (int)sequenceDataP->time;
+	}
+
+	cmd = "-v " + intToString(verbosity) + " -srand " + intToString(seed) + " " + cmd;
+	// cmd += " -display";
+	// set some variables that are defined globally for the GIMP plugin
+	// not really needed as the effects should work independently of GIMP
+//	cmd = "_input_mode=1 _output_mode=0 _verbosity_mode=0 _preview_mode=0 _preview_size=0 " + cmd;
+
+	return cmd;
 }
 
 // parameter change callback of the host glue (only the AE glue calls it): nothing to do, see
@@ -813,13 +920,6 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 
 	MySequenceData* mySequenceDataP = (MySequenceData*)sequenceDataP->customSequenceDataP;
 	mySequenceDataP->options.no_inplace_processing = true; // the input buffers are not overwritten
-	// custom commands, set in options.custom_commands below (it must stay valid until gmic_plugin_call() returns)
-#ifdef AE_PLUGIN
-	string customCommands = ((MyGlobalData*)globalDataP->customGlobalDataP)->effectContent;
-#else
-	// the filter's #@gui lines, and the hot fixes for G'MIC bugs (gmic_hotfixes.gmic)
-	string customCommands = pluginGlobalData.pluginContent[globalDataP->pluginIndex] + '\n' + pluginGlobalData.hotfixes;
-#endif
 
 	gmic_interface_image images[MAX_NOF_LAYERS];
 	unsigned int nofImages = 0;
@@ -852,58 +952,20 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		strncpy(images[i].name, string("input" + intToString(i)).c_str(), sizeof(images[i].name));
 	}
 
-	string cmd = gmicCommand(sequenceDataP, globalDataP);
-
-	if (PAR_VAL(PARAM_OUTPUT) == 0.f) {
-		// G'MIC >= 2.9 renamed gimp_merge_layers to gui_merge_layers ("Unknown command" otherwise)
-		cmd += " -gui_merge_layers";
-	}
-
-	// images[] has MAX_NOF_LAYERS entries (gmic_plugin_call() fails with more results):
-	// keep at most that many (the last ones, since the Output Layer is counted from the end).
-	// Some filters return more by default, e.g. Fade Layers, Morph Layers, Tiles to Layers.
-	cmd += " -if {$!>" + intToString(MAX_NOF_LAYERS) + "} -keep[-" + intToString(MAX_NOF_LAYERS) + "--1] -fi";
-
-	// Ignore Alpha: apply_channels takes the command as a quoted string, which it un-escapes
-	// again, so quoting the command (whose text arguments are already escaped) breaks any text
-	// containing a quote or backslash. Define it as a custom command and apply that instead.
-	if (PAR_VAL(PARAM_NOALPHA) > 0.f) {
-		strReplace(cmd, "\n", " ");
-		strReplace(cmd, "\r", " ");
-		customCommands += "\n_openfx_gmic_cmd :\n  " + cmd + "\n";
-		cmd = "-apply_channels \"_openfx_gmic_cmd\",rgb";
-	}
-	mySequenceDataP->options.custom_commands = customCommands.c_str();
+	// G'MIC-Qt runs the preview command first, and some main commands need its state: render
+	// these with the preview command when their main command fails (EffectData::previewFallback)
+	const EffectData& effectData = effectDataOf(globalDataP);
+	const bool hasContent = !effectData.command.empty();
+	bool preview = hasContent && (effectData.previewOnly || PAR_VAL(PARAM_PREVIEW) > 0);
+	// the custom commands, set in the options by fullCommand(): must stay valid until the G'MIC calls return
+	string customCommands;
 	// customCommands goes out of scope: reset the pointer on return, also when G'MIC throws
 	struct ResetCustomCommands {
 		gmic_interface_options& options;
 		explicit ResetCustomCommands(gmic_interface_options& o) : options(o) {}
 		~ResetCustomCommands() { options.custom_commands = NULL; }
 	} resetCustomCommands(mySequenceDataP->options);
-	
-	{
-		// Resize Mode: "Downsample 1/N" processes a downsampled input; the result is always resized
-		// to the input size ("Fixed (Inplace)" and "Dynamic" alike)
-		float ds = PAR_VAL(PARAM_RESIZE);
-		if (ds >= 2.f) {
-			ds = pow(2.f, ds - 1.f);
-			cmd = " -resize " + intToString(sequenceDataP->inWorld[0].width / (int)ds) + "," + intToString(sequenceDataP->inWorld[0].height / (int)ds) + " " + cmd;
-		}
-		cmd += " -resize " + intToString(sequenceDataP->inWorld[0].width) + "," + intToString(sequenceDataP->inWorld[0].height);
-	}
-	int verbosity = (int)PAR_VAL(PARAM_VERBOSITY) - 1;
-	int seed = (int)PAR_VAL(PARAM_SRAND);
-	bool animated_seed = (int)PAR_VAL(PARAM_ANIMSEED);
-	if (animated_seed) {
-		seed += (int)sequenceDataP->time;
-	}
-
-	cmd = "-v " + intToString(verbosity) + " -srand " + intToString(seed) + " " + cmd;
-	// cmd += " -display";
-	// set some variables that are defined globally for the GIMP plugin
-	// not really needed as the effects should work independently of GIMP
-//	cmd = "_input_mode=1 _output_mode=0 _verbosity_mode=0 _preview_mode=0 _preview_size=0 " + cmd;
-
+	string cmd = fullCommand(sequenceDataP, globalDataP, nofImages, preview, customCommands);
 	bool aborted = false;
 #ifdef OFX_PLUGIN
 	int result = gmicCallAbortable(contextDataP->instance, cmd.c_str(), &nofImages, &images[0], &mySequenceDataP->options, &aborted);
@@ -911,6 +973,22 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	int result = gmic_plugin_call(cmd.c_str(), &nofImages, &images[0], MAX_NOF_LAYERS, &mySequenceDataP->options);
 #endif
 	string errmsg = string(mySequenceDataP->options.error_message_buffer);
+	// The retry needs unchanged inputs: gmic_plugin_call() works on copies (no_inplace_processing)
+	// and leaves images[] unchanged on an error. Not after an abort.
+	if (result != 0 && !aborted && !preview && effectData.previewFallback && mySequenceDataP->options.no_inplace_processing) {
+		fprintf(stderr, "G'MIC: %s: the main command failed (%s), rendering with the preview command\n",
+				effectData.name.c_str(), errmsg.c_str());
+		preview = true;
+		cmd = fullCommand(sequenceDataP, globalDataP, nofImages, preview, customCommands);
+#ifdef OFX_PLUGIN
+		result = gmicCallAbortable(contextDataP->instance, cmd.c_str(), &nofImages, &images[0], &mySequenceDataP->options, &aborted);
+#else
+		result = gmic_plugin_call(cmd.c_str(), &nofImages, &images[0], MAX_NOF_LAYERS, &mySequenceDataP->options);
+#endif
+		if (result != 0 && !aborted) {
+			errmsg += " (with the preview command: " + string(mySequenceDataP->options.error_message_buffer) + ")";
+		}
+	}
 
 	// Only the host tells whether the render was aborted: G'MIC's 'quit' command also sets its
 	// abort flag, and then G'MIC's result (the images at that point) is used as usual.
