@@ -1258,7 +1258,7 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 		// the G'MIC result has straight colours, converted here before the conversion to the output depth
 		if (customOutputData) {
 			const SequenceData* sd = myData->sequenceDataP;
-			if (firstSrcPremultiplied && !globalData[pluginIndex].inplaceProcessing && !sd->resultHasAlpha &&
+			if (firstSrcPremultiplied && !sd->resultHasAlpha &&
 				sd->resultWidth == sd->inWorld[0].width && sd->resultHeight == sd->inWorld[0].height) {
 				// no alpha in the result: keep the look of the input composited over black (see
 				// multiplyByInputAlphaPlanar)

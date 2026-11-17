@@ -874,6 +874,11 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		cmd = "-apply_channels \"_openfx_gmic_cmd\",rgb";
 	}
 	mySequenceDataP->options.custom_commands = customCommands.c_str();
+	// customCommands goes out of scope: reset the pointer on return, also when G'MIC throws
+	struct ResetCustomCommands {
+		gmic_interface_options& options;
+		~ResetCustomCommands() { options.custom_commands = NULL; }
+	} resetCustomCommands = { mySequenceDataP->options };
 	
 	{
 		// Resize Mode: "Downsample 1/N" processes a downsampled input; the result is always resized
@@ -904,7 +909,6 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 #else
 	int result = gmic_plugin_call(cmd.c_str(), &nofImages, &images[0], MAX_NOF_LAYERS, &mySequenceDataP->options);
 #endif
-	mySequenceDataP->options.custom_commands = NULL; // customCommands goes out of scope
 	string errmsg = string(mySequenceDataP->options.error_message_buffer);
 
 	// Only the host tells whether the render was aborted: G'MIC's 'quit' command also sets its
