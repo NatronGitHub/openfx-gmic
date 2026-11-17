@@ -978,7 +978,7 @@ mul 255
 # relative to the blob's previous position, a hidden value(-1,-1,-1,-1) that only G'MIC-Qt's status
 # feedback (the 'u' of the preview) fills in: while it is -1, the radius is always P + [10,0]. So
 # with the plug-in (no status feedback), or 'gmic' with explicit arguments, the Radius points are
-# ignored. NatronGitHub/openfx-gmic#79.
+# ignored. https://github.com/GreycLab/gmic/issues/222, NatronGitHub/openfx-gmic#79.
 # From src/gmic_stdlib.gmic; fix: without a previous position, use the radius point unless it is
 # at its default (50,50), so that G'MIC-Qt's first run is unchanged.
 fx_colorful_blobs :
