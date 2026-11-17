@@ -783,11 +783,17 @@ static void hideBatchFilters(const string& content, vector<EffectData>& cds, vec
 	// changes. A listed command that no longer is the main command of a filter (e.g. after a G'MIC
 	// update) is reported on stderr, and makes the describe test fail
 	// (.github/workflows/describe_plugins.sh).
-	// Also hidden: filters that upstream commented out as broken after G'MIC 4.0.7, Color Region
-	// (fx_rep_color_region, https://github.com/GreycLab/gmic-community/commit/77cda83fb7424c2928ed0e6c9349497a3140c406)
-	// and Prime Surface (gui_rep_prime_surface, https://github.com/GreycLab/gmic-community/commit/f2ca19866ceba5db89a6a85988ebf1b8a9182fa4).
+	// Also hidden:
+	// - Intarsia (fx_intarsia) writes an HTML page and PNG images into its Output Directory ($1,
+	//   by default empty, so the root folder) on every render, which the rule above misses.
+	// - Filters that upstream commented out as broken after G'MIC 4.0.7: Color Region
+	//   (fx_rep_color_region, https://github.com/GreycLab/gmic-community/commit/77cda83fb7424c2928ed0e6c9349497a3140c406),
+	//   Prime Surface (gui_rep_prime_surface) and Reverse Engineer Color Curve (gui_rep_recc, which
+	//   only works through G'MIC-Qt's export button, and fails otherwise) in
+	//   https://github.com/GreycLab/gmic-community/commit/f2ca19866ceba5db89a6a85988ebf1b8a9182fa4,
+	//   Beauty Retouch (fx_tk_retouch, https://github.com/GreycLab/gmic-community/commit/66c9f34c27ec1c81225654ae8e14cca88786f37c).
 	static const char* const curated[] = { "gcd_stereo_vid", "fx_tk_video3D", "samj_diaporama", "samj_Layers_To_PNG",
-		"fx_rep_color_region", "gui_rep_prime_surface" };
+		"fx_intarsia", "fx_rep_color_region", "gui_rep_prime_surface", "gui_rep_recc", "fx_tk_retouch" };
 	for (size_t c = 0; c < sizeof(curated) / sizeof(curated[0]); ++c) {
 		if (mains.count(curated[c])) {
 			hidden.insert(curated[c]);
