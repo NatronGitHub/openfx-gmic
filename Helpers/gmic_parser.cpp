@@ -158,6 +158,84 @@ static bool isPlaceholder(const string& v)
 	return false;
 }
 
+// G'MIC-Qt's unquoted(): the text between enclosing double quotes (surrounding blanks allowed),
+// else the trimmed text
+static string textUnquoted(const string& s)
+{
+	const string t = strTrim(s, " \t\r\n\v\f");
+	if (t.size() >= 2 && t[0] == '"' && t[t.size() - 1] == '"') return t.substr(1, t.size() - 2);
+	return t;
+}
+
+static void appendUtf8(string& d, unsigned int c)
+{
+	if (c <= 0x7f) {
+		d += (char)c;
+	} else if (c <= 0x7ff) {
+		d += (char)((c >> 6) | 0xc0);
+		d += (char)((c & 0x3f) | 0x80);
+	} else if (c <= 0xffff) {
+		d += (char)((c >> 12) | 0xe0);
+		d += (char)(((c >> 6) & 0x3f) | 0x80);
+		d += (char)((c & 0x3f) | 0x80);
+	} else {
+		d += (char)((c >> 18) | 0xf0);
+		d += (char)(((c >> 12) & 0x3f) | 0x80);
+		d += (char)(((c >> 6) & 0x3f) | 0x80);
+		d += (char)((c & 0x3f) | 0x80);
+	}
+}
+
+// G'MIC-Qt's unescaped(), i.e. cimg::strunescape: \n \t \\ \" etc., octal \ooo, hex \xHH,
+// \uHHHH and \UHHHHHHHH (as UTF-8); any other "\c" gives "c"
+static string textUnescaped(const string& s)
+{
+	string d;
+	for (size_t i = 0; i < s.size(); ) {
+		if (s[i] != '\\') {
+			d += s[i++];
+			continue;
+		}
+		if (++i >= s.size()) break;
+		const char c = s[i];
+		const char* const esc = "abefnrtv\\'\"?";
+		const char* const val = "\a\b\x1b\f\n\r\t\v\\'\"?";
+		const char* e = strchr(esc, c);
+		if (e) {
+			d += val[e - esc];
+			++i;
+		} else if (c >= '0' && c <= '7') {
+			unsigned int v = 0;
+			for (int n = 0; n < 3 && i < s.size() && s[i] >= '0' && s[i] <= '7'; ++n) v = (v << 3) | (unsigned int)(s[i++] - '0');
+			d += (char)v;
+		} else if (c == 'x') {
+			unsigned int v = 0;
+			int n = 0;
+			++i;
+			while (n < 2 && i < s.size() && isxdigit((unsigned char)s[i])) {
+				const char h = (char)tolower((unsigned char)s[i++]);
+				v = (v << 4) | (unsigned int)(h <= '9' ? h - '0' : h - 'a' + 10);
+				++n;
+			}
+			if (n) d += (char)v;
+			else if (i < s.size()) d += s[i++];
+		} else if (c == 'u' || c == 'U') {
+			const size_t n = (c == 'u') ? 4 : 8;
+			bool ok = true;
+			for (size_t k = 1; ok && k <= n; ++k) ok = i + k < s.size() && isxdigit((unsigned char)s[i + k]);
+			if (ok) {
+				appendUtf8(d, (unsigned int)strtoul(s.substr(i + 1, n).c_str(), NULL, 16));
+				i += n + 1;
+			} else {
+				d += s[i++];
+			}
+		} else {
+			d += s[i++];
+		}
+	}
+	return d;
+}
+
 static
 void processParam(const string& s, EffectParameter& cp)
 {
@@ -188,6 +266,7 @@ void processParam(const string& s, EffectParameter& cp)
 	cp.paramType = strLowercase(cp.paramType);
 	string pval = strTrim(r.substr(p1 + 1));
 	pval = pval.substr(0, pval.size() - 1);
+	const string rawVal = pval; // text(): without the true/false replacement below
 	strLowercase(pval);
 	strReplace(pval, "true", "1");
 	strReplace(pval, "false", "0");
@@ -264,10 +343,8 @@ void processParam(const string& s, EffectParameter& cp)
 		// 'value(value)'
 		// Add a pre-defined value parameter (not displayed). It is passed as a quoted string, so
 		// strip quotes from a quoted value ('value("-1")'), or they would be passed literally.
-		cp.defaultValue = strTrim(pval);
-		if (cp.defaultValue.size() >= 2 && cp.defaultValue[0] == '"' && cp.defaultValue[cp.defaultValue.size() - 1] == '"') {
-			cp.defaultValue = cp.defaultValue.substr(1, cp.defaultValue.size() - 2);
-		}
+		// As G'MIC-Qt (ConstParameter::initFromText): unquoted then unescaped, like text().
+		cp.defaultValue = textUnescaped(textUnquoted(rawVal));
 	} else if (cp.paramType == "file" || cp.paramType == "filein" || cp.paramType == "fileout") {
 		// 'file[_in,_out](_default_filename)'
 		// Add a filename parameter (as a filechooser).
@@ -321,15 +398,22 @@ void processParam(const string& s, EffectParameter& cp)
 	} else if (cp.paramType == "text") { // || cp.paramType == "flags") {
 		// 'text(_is_multiline={ 0 | 1 },_default text)'
 		// Add a single or multi-line text parameter (as a text entry).
-		p1 = (int)pval.find(",");
-		p2 = (int)pval.find("\"");
-		if (p1 >= 0 && p1 < p2) {
-			cp.maxValue = pval.substr(0, p1);
-			pval = pval.substr(p1 + 1);
-		} else {
-			cp.maxValue = "0";
+		// As G'MIC-Qt (TextParameter::initFromText): a leading "0," or "1," (regex "^\s*(0|1)\s*,")
+		// is the multi-line flag, also before an unquoted default (e.g. "text(0,0xFFFFFFFF)" in
+		// Kaleido Patterns: the default is "0xFFFFFFFF"); the rest is unquoted (one pair of
+		// enclosing double quotes, else trimmed) then unescaped as cimg::strunescape does.
+		// maxValue holds the flag.
+		string v = rawVal;
+		size_t b = v.find_first_not_of(" \t\r\n");
+		cp.maxValue = "0";
+		if (b != string::npos && (v[b] == '0' || v[b] == '1')) {
+			size_t c = v.find_first_not_of(" \t\r\n", b + 1);
+			if (c != string::npos && v[c] == ',') {
+				cp.maxValue = v.substr(b, 1);
+				v = v.substr(c + 1);
+			}
 		}
-		cp.text = strTrim(pval, "\"");
+		cp.text = textUnescaped(textUnquoted(v));
 		cp.defaultValue = cp.text;
 	} else if (cp.paramType == "separator") {
 		// 'separator()'
@@ -378,8 +462,14 @@ static bool usesSeveralLayers(const string& content)
 	for (size_t i = 0; i < lc.size(); ++i) {
 		lc[i] = (char)tolower((unsigned char)lc[i]);
 	}
+	// also a note asking for two images, or a choice/note naming another input: "requires 2 images
+	// as input" (Save Noise Print), "Two input images" (Fast Median Stack), "at least 2 layer"
+	// (Tiled Form), "another image" (Softlight), "Other Layer (Image)" (Page Curl); not the
+	// plural "other images" ("may work on other images as well")
 	static const char* const refs[] = { "top layer", "bottom layer", "upper layer", "lower layer",
-	                                    "top-layer", "bottom-layer", "upper-layer", "lower-layer" };
+	                                    "top-layer", "bottom-layer", "upper-layer", "lower-layer",
+	                                    "2 images", "two images", "2 input images", "two input images",
+	                                    "2 layer", "another image", "another layer", "other layer" };
 	for (size_t i = 0; i < sizeof(refs) / sizeof(refs[0]); ++i) {
 		size_t pos = lc.find(refs[i]);
 		while (pos != string::npos) {
@@ -703,6 +793,110 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 	}
 }
 
+// Filters that need a second input although their #@gui text doesn't say so (see usesSeveralLayers),
+// from the start of the definition of the main command, before its first command that is not a
+// test (after "skip ..." or "check ..." and "var=..." assignments):
+// - a test "if $!<2", "if $!<=1" or "if $!!=2" followed by "return" or "error" (with one image
+//   it does nothing or fails): Blur by Color, Depth Map Reconstruction, Lenticular Print,
+//   Stereoscopic Image Alignment, DOF Manipulation (individual mask modes);
+// - "repeat" over the pairs of images ($!/2): Plasma Transition;
+// - a first command that is not "+..." (nor "(...)", an image given by its values) selecting
+//   image 1 ("cmd[1]", "cmd[0,1]") or reading it in an unquoted argument ("{1,w}", "#1"): Fourier
+//   Picture Watermark ("rs[0] {1,w*$1},{1,h*$1}", the watermark is the second image).
+// This needs the command definitions in "content".
+static bool selectsImage1(const string& cmd)
+{
+	const size_t b = cmd.find('[');
+	if (b == string::npos || cmd[cmd.size() - 1] != ']') return false;
+	const string sel = "," + cmd.substr(b + 1, cmd.size() - b - 2) + ",";
+	return sel.find(",1,") != string::npos;
+}
+
+static bool readsImage1(const string& arg)
+{
+	if (arg.empty() || arg[0] == '"') return false;
+	if (arg.find("{1,") != string::npos) return true;
+	for (size_t p = arg.find("#1"); p != string::npos; p = arg.find("#1", p + 1)) {
+		if (p + 2 >= arg.size() || !isxdigit((unsigned char)arg[p + 2])) return true; // not "#1F"
+	}
+	return false;
+}
+
+// Does the condition (blanks removed) contain the test t, not followed by a digit ("$!<2", not "$!<20")?
+static bool testsImageCount(const string& cond, const char* t)
+{
+	const size_t n = strlen(t);
+	for (size_t p = cond.find(t); p != string::npos; p = cond.find(t, p + 1)) {
+		if (p + n >= cond.size() || !isdigit((unsigned char)cond[p + n])) return true;
+	}
+	return false;
+}
+
+// "var=value", "var:=expr", "a,b=..." (and "var+=..." etc.)
+static bool isAssignment(const string& item)
+{
+	size_t i = 0;
+	while (i < item.size() && (isalnum((unsigned char)item[i]) || item[i] == '_' || item[i] == ',')) ++i;
+	if (i == 0 || i >= item.size()) return false;
+	if (item[i] == '=') return true;
+	return i + 1 < item.size() && item[i + 1] == '=' && strchr(":+-*/%&|^<>.", item[i]) != NULL;
+}
+
+static bool needsSeveralImages(const vector<string>& items)
+{
+	for (size_t k = 0; k < items.size(); ++k) {
+		const string& a = items[k];
+		if (a[0] == '#') return false; // comment
+		if (a == "skip" || a == "check") {
+			++k; // and its argument
+		} else if (a == "if" || a == "elif") {
+			if (k + 1 >= items.size()) return false;
+			string cond = items[++k];
+			strReplace(cond, " ", "");
+			const bool fewImages = testsImageCount(cond, "$!<2") || testsImageCount(cond, "$!<=1") || testsImageCount(cond, "$!!=2");
+			if (fewImages && k + 1 < items.size() && (items[k + 1] == "return" || items[k + 1].compare(0, 5, "error") == 0)) {
+				return true;
+			}
+		} else if (a == "else" || a == "fi" || a == "return" || a.compare(0, 5, "error") == 0) {
+			if (a.compare(0, 5, "error") == 0 && k + 1 < items.size() && items[k + 1][0] == '"') ++k; // its message
+		} else if (isAssignment(a)) {
+			// "var=value", "a,b:=expr"...
+		} else if (a == "repeat") {
+			return k + 1 < items.size() && items[k + 1].find("$!/2") != string::npos;
+		} else {
+			// the first command
+			return a[0] != '+' && a[0] != '(' && (selectsImage1(a) || (k + 1 < items.size() && readsImage1(items[k + 1])));
+		}
+	}
+	return false;
+}
+
+static void markMultiInputFilters(const string& content, vector<EffectData>& cds)
+{
+	set<string> mains;
+	for (vector<EffectData>::const_iterator it = cds.begin(); it != cds.end(); ++it) {
+		if (!it->multiLayer) mains.insert(it->command);
+	}
+	map<string, vector<string> > starts; // main command -> the first items of its definition
+	stringstream ss(content);
+	string line, cur, rest;
+	while (getline(ss, line)) {
+		if (line.empty() || line[0] == '#') continue;
+		string name = commandDefinition(line, rest);
+		if (!name.empty()) {
+			cur = (mains.count(name) && !starts.count(name)) ? name : string();
+		} else {
+			rest = line;
+		}
+		if (cur.empty() || starts[cur].size() >= 64) continue;
+		gmicItems(rest, starts[cur]);
+	}
+	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
+		map<string, vector<string> >::const_iterator s = starts.find(it->command);
+		if (s != starts.end() && needsSeveralImages(s->second)) it->multiLayer = true;
+	}
+}
+
 // Does s contain the word "video", "frame" or "frames" (any case)?
 static bool namesFrames(const string& s)
 {
@@ -783,7 +977,21 @@ static void hideBatchFilters(const string& content, vector<EffectData>& cds, vec
 	// changes. A listed command that no longer is the main command of a filter (e.g. after a G'MIC
 	// update) is reported on stderr, and makes the describe test fail
 	// (.github/workflows/describe_plugins.sh).
-	static const char* const curated[] = { "gcd_stereo_vid", "fx_tk_video3D", "samj_diaporama", "samj_Layers_To_PNG" };
+	// Also hidden:
+	// - Intarsia (fx_intarsia) writes an HTML page and PNG images into its Output Directory ($1,
+	//   by default empty, so the root folder) on every render, which the rule above misses.
+	// - Filters that upstream commented out as broken after G'MIC 4.0.7: Color Region
+	//   (fx_rep_color_region, https://github.com/GreycLab/gmic-community/commit/77cda83fb7424c2928ed0e6c9349497a3140c406),
+	//   Prime Surface (gui_rep_prime_surface) and Reverse Engineer Color Curve (gui_rep_recc, which
+	//   only works through G'MIC-Qt's export button, and fails otherwise) in
+	//   https://github.com/GreycLab/gmic-community/commit/f2ca19866ceba5db89a6a85988ebf1b8a9182fa4,
+	//   Beauty Retouch (fx_tk_retouch, https://github.com/GreycLab/gmic-community/commit/66c9f34c27ec1c81225654ae8e14cca88786f37c),
+	//   Layer Manipulation (gcd_layers, https://github.com/GreycLab/gmic-community/commit/c0d523c8f66a6dea08b35caefcc9cf449c71d5a9),
+	//   Halftone Shapes (iain_halftone_shapes, https://github.com/GreycLab/gmic-community/commit/c122c756b264391fe065f63fa26b46ea610c7dc9)
+	//   and Montage Multi Rows (samj_montage_multi_rows_GUI, https://github.com/GreycLab/gmic-community/commit/6fadf0037dd7507a161a998ae8aaf6066e7756a6).
+	static const char* const curated[] = { "gcd_stereo_vid", "fx_tk_video3D", "samj_diaporama", "samj_Layers_To_PNG",
+		"fx_intarsia", "fx_rep_color_region", "gui_rep_prime_surface", "gui_rep_recc", "fx_tk_retouch",
+		"gcd_layers", "iain_halftone_shapes", "samj_montage_multi_rows_GUI" };
 	for (size_t c = 0; c < sizeof(curated) / sizeof(curated[0]); ++c) {
 		if (mains.count(curated[c])) {
 			hidden.insert(curated[c]);
@@ -907,6 +1115,7 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 		return;
 	}
 	markPersistentFilters(content, *cds);
+	markMultiInputFilters(content, *cds);
     // plug-in identifiers must be unique: G'MIC 4 has several filters with the same name in
     // different folders (in 4.0.7: the "About" page of each Testing author, giving About and
     // About2..About5, and "Color Harmonies", giving ColorHarmonies2). The first one in stdlib
@@ -933,9 +1142,9 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
         // post-process
         EffectData& cd = *it;
         if (cd.category == "About") {
-            cd.category = "GMIC";
+            cd.category = "G'MIC";
         } else {
-            cd.category = "GMIC/" + cd.category;
+            cd.category = "G'MIC/" + cd.category;
             cd.name = "G'MIC " + cd.name;
         }
         strReplace(cd.name, "[", "");

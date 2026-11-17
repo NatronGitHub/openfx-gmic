@@ -75,8 +75,8 @@
 #define PLUGIN_DESCRIPTION	"Wrapper for the G'MIC framework (http://gmic.eu) written by Tobias Fleischer (http://www.reduxfx.com) and Frederic Devernay.";
 
 #ifdef OFX_PLUGIN
-#define PLUGIN_NAME	        "GMIC"
-#define PLUGIN_CATEGORY		"GMIC"
+#define PLUGIN_NAME	        "G'MIC"
+#define PLUGIN_CATEGORY		"G'MIC"
 #define PLUGIN_UNIQUEID		"GMIC"
 #else
 // AE plugin needs these with spaces to replace them with proper effect names in the gmic_ae_tool
@@ -618,6 +618,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 				flags = 4;
 			} else if (paramType == "text") {
 				t = PT_TEXT;
+				flags = (maxValue == "1") ? 1 : 0; // text(1,...): multi-line (the parser stores the flag in maxValue)
 			} else if (paramType == "separator") {
 				t = PT_SEPARATOR;
 			} else if (paramType == "input") {
@@ -758,6 +759,8 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, bool preview)
 
     if (cmd == "") {
         cmd = PAR_TXT(PARAM_COMMAND);
+        strReplace(cmd, "\r", " ");
+        strReplace(cmd, "\n", " ");
     } else {
         cmd = "-" + strTrim(cmd, " \t\r\n") + " ";
         // the filter parameters only: they come first, the layers and their times follow
@@ -775,10 +778,37 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, bool preview)
                     continue;
                 }
                 string s = PAR_TXT(i);
-                // G'MIC un-escapes \ and \" inside "...": escape backslashes first (e.g. Windows paths),
-                // then double quotes (or a text containing one, e.g. G'MIC code, ends the argument early)
-                strReplace(s, "\\", "\\\\");
-                strReplace(s, "\"", "\\\"");
+                const int f = globalDataP->param[i].flags;
+                if (f == 2 || f == 3 || f == 5) {
+                    // file or folder: G'MIC un-escapes \ and \" inside "...", so escape backslashes
+                    // (Windows paths, which G'MIC-Qt gets with '/' from Qt) then double quotes
+                    strReplace(s, "\\", "\\\\");
+                    strReplace(s, "\"", "\\\"");
+                } else {
+                    // text and value: as G'MIC-Qt (quotedString()), only escape the double quotes
+                    // that are not escaped yet (or a text containing one, e.g. G'MIC code, ends the
+                    // argument early), and keep the backslashes and newlines for G'MIC to decode:
+                    // "\251" is a ©, and a "#" comment in multi-line G'MIC code ends at its line
+                    strReplace(s, "\r\n", "\n");
+                    strReplace(s, "\r", "\n");
+                    string q;
+                    bool escaped = false;
+                    for (size_t k = 0; k < s.size(); ++k) {
+                        if (escaped) {
+                            escaped = false;
+                        } else if (s[k] == '\\') {
+                            escaped = true;
+                        } else if (s[k] == '"') {
+                            q += '\\';
+                        }
+                        q += s[k];
+                    }
+                    // a trailing odd backslash ("C:\temp\") would escape the closing quote and run
+                    // into the next argument: double it, so that it stays literal (G'MIC-Qt has
+                    // this bug)
+                    if (escaped) q += '\\';
+                    s.swap(q);
+                }
                 cmd += "\"" + s + "\",";
             } else if (PAR_TYPE(i) == PT_COLOR) {
                 cmd +=
@@ -802,9 +832,7 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, bool preview)
         }
         cmd = cmd.substr(0, cmd.size() - 1);
     }
-
-    strReplace(cmd, "\r", " ");
-    strReplace(cmd, "\n", " ");
+    // (the newlines of text parameters are kept: see above)
 
     return cmd;
 }
