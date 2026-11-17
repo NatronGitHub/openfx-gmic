@@ -62,7 +62,24 @@ endif()
 # bundle is installed into ${CMAKE_INSTALL_PREFIX}/${PLUGIN_INSTALLDIR}, by default
 # <prefix>/OFX/Plugins (e.g. /usr/OFX/Plugins with the prefix /usr).
 # EXCLUDE_FROM_ALL: openfx's libraries are not built.
+#
+# GMIC_BUILD_TESTS (default OFF): also build openfx's hostDemo (HostSupport/examples), the host
+# that .github/workflows/render_plugins.py renders the plug-ins with; its path is written to
+# ${CMAKE_BINARY_DIR}/hostDemo-path.txt. Off, openfx's HostSupport isn't even configured.
+option(GMIC_BUILD_TESTS "Build openfx's hostDemo, for the render test (render_plugins.py)" OFF)
+if(GMIC_BUILD_TESTS)
+  set(OFX_BUILD_HOSTSUPPORT ON)
+  set(BUILD_EXAMPLE_HOSTS ON)
+  if(APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
+    # openfx builds universal binaries by default: only the plug-in's architecture is needed
+    set(CMAKE_OSX_ARCHITECTURES "${CMAKE_SYSTEM_PROCESSOR}")
+  endif()
+endif()
 add_subdirectory(openfx EXCLUDE_FROM_ALL)
+if(GMIC_BUILD_TESTS)
+  add_custom_target(gmic_test_host ALL DEPENDS hostDemo)
+  file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/hostDemo-path.txt" CONTENT "$<TARGET_FILE:hostDemo>\n")
+endif()
 
 # ========================== G'MIC sources ==========================
 #

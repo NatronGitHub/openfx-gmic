@@ -11,6 +11,10 @@ name: Continuous Integration
 # and compare its bundle with the installed CMake one (compare_bundles.sh). The per-PR runs only
 # build with CMake.
 #
+# Render test (render_plugins.py, with openfx's hostDemo: GMIC_BUILD_TESTS=ON): per PR, a
+# representative subset of the plug-ins (the FFT and multi-layer filters, every 30th plug-in) on
+# the three systems; nightly and on demand, all the plug-ins on Linux.
+#
 # Frugal CI (the NatronGitHub runners are shared by all repos): one run per change. Pushes run CI
 # only on master and tags; feature branches run through their pull request. Draft pull requests
 # don't run CI. Superseded runs are cancelled, except for tags. The nightly run is skipped when
@@ -83,7 +87,8 @@ jobs:
     runs-on: ubuntu-24.04
     needs: changes
     if: needs.changes.outputs.run == 'true'
-    timeout-minutes: 45
+    # the nightly and on-demand runs render all the plug-ins
+    timeout-minutes: 90
     defaults:
       run:
         shell: bash -eo pipefail {0}
@@ -105,10 +110,17 @@ jobs:
           key: gmic-src-${{ hashFiles('Makefile') }}
       - name: Build (release, OpenMP)
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
+            -DGMIC_BUILD_TESTS=ON
           cmake --build build -j4
       - name: Describe all plug-ins
-        run: .github/workflows/describe_plugins.sh build/Plugins $GMIC_PLUGIN_COUNT
+        run: PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh build/Plugins $GMIC_PLUGIN_COUNT
+      # all the plug-ins on the nightly and on-demand runs, a subset per PR
+      - name: Render plug-ins
+        run: |
+          python3 .github/workflows/render_plugins.py --host "$(cat build/hostDemo-path.txt)" \
+            --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
+            --subset "$([ "$BUILD_VARIANTS" = true ] && echo all || echo pr)" --jobs 2
       # the debug variant is built with the Makefile, as Natron's build-plugins.sh does (the
       # standard in CXX), and its bundle is compared with the installed CMake one
       - name: Build with the Makefile (debug), compare with CMake
@@ -172,7 +184,8 @@ jobs:
       - name: Build and install (release, OpenMP)
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
-          cmake -S . -B build $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DOFX_DEPLOY_BUNDLES=ON
+          cmake -S . -B build $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DOFX_DEPLOY_BUNDLES=ON \
+            -DGMIC_BUILD_TESTS=ON
           cmake --build build -j4
           cmake --install build --prefix install
           codesign --verify --strict install/OFX/Plugins/GMIC.ofx.bundle
@@ -180,8 +193,13 @@ jobs:
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
           CXX="/usr/bin/clang++ -I/opt/local/include" \
-            HOST_LDFLAGS=-L/opt/local/lib \
+            HOST_LDFLAGS=-L/opt/local/lib PLUGIN_LIST=plugins.txt \
             .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
+      - name: Render plug-ins (subset)
+        run: |
+          python3 .github/workflows/render_plugins.py --host "$(cat build/hostDemo-path.txt)" \
+            --plugins install/OFX/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
+            --subset pr --jobs 2
       - name: Build (debug)
         if: env.BUILD_VARIANTS == 'true'
         run: |
@@ -252,7 +270,7 @@ jobs:
             mingw-w64-ucrt-x86_64-cc mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-fftw mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-curl
-            mingw-w64-ucrt-x86_64-libpng mingw-w64-ucrt-x86_64-expat
+            mingw-w64-ucrt-x86_64-libpng mingw-w64-ucrt-x86_64-expat mingw-w64-ucrt-x86_64-python
       - name: Cache G'MIC sources
         uses: actions/cache@v4
         with:
@@ -261,12 +279,19 @@ jobs:
       - name: Build (release, OpenMP)
         run: |
           set -eo pipefail
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$(cygpath -m "$PWD")"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$(cygpath -m "$PWD")" \
+            -DGMIC_BUILD_TESTS=ON
           cmake --build build -j4
       - name: Describe all plug-ins
         run: |
           set -eo pipefail
-          .github/workflows/describe_plugins.sh build/Plugins $GMIC_PLUGIN_COUNT
+          PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh build/Plugins $GMIC_PLUGIN_COUNT
+      - name: Render plug-ins (subset)
+        run: |
+          set -eo pipefail
+          python3 .github/workflows/render_plugins.py --host "$(cat build/hostDemo-path.txt)" \
+            --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
+            --subset pr --jobs 2
       - name: Build (debug)
         if: env.BUILD_VARIANTS == 'true'
         run: |
