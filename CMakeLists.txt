@@ -97,20 +97,24 @@ endif()
 #
 # GMIC_BUILD_TESTS (default OFF): also build openfx's hostDemo (HostSupport/examples), the host
 # that .github/workflows/render_plugins.py renders the plug-ins with; its path is written to
-# ${CMAKE_BINARY_DIR}/hostDemo-path.txt. Off, openfx's HostSupport isn't even configured.
+# ${CMAKE_BINARY_DIR}/hostDemo-path.txt, or, with a multi-config generator (Visual Studio, Xcode,
+# Ninja Multi-Config), to hostDemo-path-<config>.txt for each configuration (render_plugins.py
+# --host <build dir> [--config <config>] reads it). Off, openfx's HostSupport isn't even
+# configured. (As a subproject, openfx builds for CMAKE_OSX_ARCHITECTURES as given, the default
+# being the build machine's architecture, like the plug-in.)
 option(GMIC_BUILD_TESTS "Build openfx's hostDemo, for the render test (render_plugins.py)" OFF)
 if(GMIC_BUILD_TESTS)
   set(OFX_BUILD_HOSTSUPPORT ON)
   set(BUILD_EXAMPLE_HOSTS ON)
-  if(APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
-    # openfx builds universal binaries by default: only the plug-in's architecture is needed
-    set(CMAKE_OSX_ARCHITECTURES "${CMAKE_SYSTEM_PROCESSOR}")
-  endif()
 endif()
 add_subdirectory(openfx EXCLUDE_FROM_ALL)
 if(GMIC_BUILD_TESTS)
   add_custom_target(gmic_test_host ALL DEPENDS hostDemo)
-  file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/hostDemo-path.txt" CONTENT "$<TARGET_FILE:hostDemo>\n")
+  if(_multi_config)
+    file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/hostDemo-path-$<CONFIG>.txt" CONTENT "$<TARGET_FILE:hostDemo>\n")
+  else()
+    file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/hostDemo-path.txt" CONTENT "$<TARGET_FILE:hostDemo>\n")
+  endif()
 endif()
 
 # ========================== G'MIC sources ==========================
@@ -240,85 +244,121 @@ else()
 endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_gmic_tarball}")
 
-# Extract GMICSOURCES afresh at each configure (it takes a fraction of a second) into
-# GMIC_EXTRACT_DIR, where they may be patched, then copy them into GMIC_SRC_DIR, which is
-# what the build uses. The copy only writes files that changed, so that a new configure doesn't
-# recompile anything.
+# The G'MIC sources of the build (GMICSOURCES, and for GPL builds the standard library with the
+# community filters, gmic_stdlib_community.h; COMMERCIAL builds generate it, below), extracted
+# into GMIC_EXTRACT_DIR, patched there, then copied into GMIC_SRC_DIR, which is what the build
+# uses. The copy only writes files that changed, so that a new extraction doesn't recompile
+# anything. Patching takes tens of seconds (awk on CImg.h), so it is only redone when its inputs
+# change: a stamp in GMIC_SRC_DIR keys the result on the tarball's sha256, the extracted files and
+# each patch script (name, file and sha256).
 set(GMIC_EXTRACT_DIR "${CMAKE_BINARY_DIR}/gmic-extract")
 set(GMIC_SRC_DIR "${CMAKE_BINARY_DIR}/gmic")
-file(REMOVE_RECURSE "${GMIC_EXTRACT_DIR}")
-# GPL builds also take the standard library with the community filters (gmic_stdlib_community.h)
-# from the tarball; COMMERCIAL builds generate it (below).
 set(_gmic_extract ${GMICSOURCES})
 if(OFX_LICENSE STREQUAL "GPL")
   list(APPEND _gmic_extract gmic_stdlib_community.h)
 endif()
-set(_patterns "")
-foreach(_f IN LISTS _gmic_extract)
-  list(APPEND _patterns "${GMICSRCDIR}/src/${_f}")
-endforeach()
-file(MAKE_DIRECTORY "${GMIC_EXTRACT_DIR}")
-execute_process(COMMAND "${CMAKE_COMMAND}" -E tar xzf "${_gmic_tarball}" ${_patterns}
-  WORKING_DIRECTORY "${GMIC_EXTRACT_DIR}" RESULT_VARIABLE _r)
-if(NOT _r EQUAL 0)
-  message(FATAL_ERROR "Could not extract the G'MIC sources from ${_gmic_tarball}")
-endif()
-set(_gmic_extracted "${GMIC_EXTRACT_DIR}/${GMICSRCDIR}/src")
-foreach(_f IN LISTS _gmic_extract)
-  if(NOT EXISTS "${_gmic_extracted}/${_f}")
-    message(FATAL_ERROR "${GMICSRC} has no ${GMICSRCDIR}/src/${_f}")
-  endif()
-endforeach()
 
-# Local patches to the extracted G'MIC sources, the same as the Makefile's (see patches/): each
-# <script>:<file>:<where> runs "sh patches/<script> <file>" on the fresh copy, and fails if the
-# source doesn't contain the expected code (e.g. after a GMICVER bump). <where> is the platforms
-# whose compiled code the patch changes: ALL, or a CMake condition variable such as APPLE.
-# Adding a patch is one line here, and one in the Makefile (CIMG_PATCHES for CImg.h; for gmic.h or
-# gmic.cpp, the case of the extraction rule and the dependency of the patched file on the script).
+# Local patches to the extracted G'MIC sources, read from the Makefile, so that both builds apply
+# the same scripts in the same order (see patches/): GMIC_PATCHES on gmic.h and gmic.cpp,
+# CIMG_PATCHES on CImg.h, then CIMG_PATCHES_POCKETFFT with FFT=pocketfft. Each runs as
+# "sh patches/<script> <file>" on the fresh copy, and fails if the source doesn't contain the
+# expected code (e.g. after a GMICVER bump).
 # The patches need a POSIX sh (Linux, macOS, MSYS2; with MSVC, e.g. Git for Windows' sh.exe in the
 # PATH, or -DGMIC_PATCH_SH=<path>). Without one, only the patches that don't change this platform's
-# code are skipped (with a warning); a patch for ALL platforms (e.g. a CImg.h fix) makes sh
-# required everywhere.
-set(GMIC_PATCHES
-  gmic-apple-abort.sh:gmic.h:APPLE   # abort support on macOS (#41)
-  gmic-apple-abort.sh:gmic.cpp:APPLE
-  cimg-math-macro-overread.sh:CImg.h:ALL # macro bodies read out of bounds (GreycLab/CImg#496)
-  cimg-omp-rand.sh:CImg.h:ALL        # random numbers independent of thread scheduling (#44)
-  cimg-ij-boundary.sh:CImg.h:ALL     # I()/J() out of bounds (GreycLab/CImg#498)
-  cimg-symmetric-eigen.sh:CImg.h:ALL # NaN eigenvectors of symmetric matrices (#71)
-)
+# code are skipped (with a warning): those listed in _gmic_patch_platform (<script>:<CMake
+# condition variable>); any other patch (e.g. a CImg.h fix) makes sh required everywhere.
+set(_gmic_patch_platform gmic-apple-abort.sh:APPLE) # abort support, only compiled on macOS (#41)
+gmic_makefile_var(GMIC_PATCHES _mk_gmic_patches)
+gmic_makefile_var(CIMG_PATCHES _mk_cimg_patches)
+gmic_makefile_var(CIMG_PATCHES_POCKETFFT _mk_cimg_patches_pocketfft)
+if(NOT _mk_gmic_patches OR NOT _mk_cimg_patches OR NOT _mk_cimg_patches_pocketfft)
+  message(FATAL_ERROR "Could not read GMIC_PATCHES, CIMG_PATCHES and CIMG_PATCHES_POCKETFFT from ${GMIC_MAKEFILE}")
+endif()
+set(_patches "")
+set(_gmic_patch_lists "_mk_gmic_patches:gmic.h" "_mk_gmic_patches:gmic.cpp" "_mk_cimg_patches:CImg.h")
 if(GMIC_FFT STREQUAL "pocketfft")
-  list(APPEND GMIC_PATCHES cimg-pocketfft.sh:CImg.h:ALL) # cimg_use_pocketfft
+  list(APPEND _gmic_patch_lists "_mk_cimg_patches_pocketfft:CImg.h")
 endif()
 find_program(GMIC_PATCH_SH sh)
-foreach(_patch IN LISTS GMIC_PATCHES)
-  string(REPLACE ":" ";" _patch "${_patch}")
-  list(GET _patch 0 _script)
-  list(GET _patch 1 _file)
-  list(GET _patch 2 _where)
-  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/patches/${_script}")
-  if(NOT GMIC_PATCH_SH)
-    if(_where STREQUAL "ALL" OR ${_where})
-      message(FATAL_ERROR "sh not found: it is needed to apply patches/${_script} to ${_file}, which "
-        "changes the code compiled on this platform: put a POSIX sh in the PATH, or configure with "
-        "-DGMIC_PATCH_SH=<path to sh>")
+set(_gmic_patch_key "${GMICVER} ${GMICSRC_SHA256} ${_gmic_extract} sh=${GMIC_PATCH_SH}")
+foreach(_entry IN LISTS _gmic_patch_lists)
+  string(REPLACE ":" ";" _entry "${_entry}")
+  list(GET _entry 0 _var)
+  list(GET _entry 1 _file)
+  separate_arguments(_scripts UNIX_COMMAND "${${_var}}")
+  foreach(_script IN LISTS _scripts)
+    if(NOT _script MATCHES "^patches/[A-Za-z0-9_.-]+\\.sh$" OR NOT EXISTS "${PROJECT_SOURCE_DIR}/${_script}")
+      message(FATAL_ERROR "${GMIC_MAKEFILE}: ${_var} lists '${_script}', not an existing patches/<name>.sh")
     endif()
-    message(WARNING "sh not found: patches/${_script} is not applied to ${_file} (it only changes "
-      "${_where} code)")
-    continue()
-  endif()
-  execute_process(COMMAND "${GMIC_PATCH_SH}" "${PROJECT_SOURCE_DIR}/patches/${_script}" "${_file}"
-    WORKING_DIRECTORY "${_gmic_extracted}" RESULT_VARIABLE _r)
-  if(NOT _r EQUAL 0)
-    message(FATAL_ERROR "patches/${_script} failed on ${_file} of G'MIC ${GMICVER}")
-  endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/${_script}")
+    file(SHA256 "${PROJECT_SOURCE_DIR}/${_script}" _sum)
+    list(APPEND _patches "${_script}:${_file}")
+    string(APPEND _gmic_patch_key " ${_script}:${_file}:${_sum}")
+  endforeach()
 endforeach()
 
-foreach(_f IN LISTS _gmic_extract)
-  configure_file("${_gmic_extracted}/${_f}" "${GMIC_SRC_DIR}/${_f}" COPYONLY)
-endforeach()
-file(REMOVE_RECURSE "${GMIC_EXTRACT_DIR}")
+set(_stamp "${GMIC_SRC_DIR}/sources.stamp")
+set(_old_key "")
+if(EXISTS "${_stamp}")
+  file(READ "${_stamp}" _old_key)
+  foreach(_f IN LISTS _gmic_extract)
+    if(NOT EXISTS "${GMIC_SRC_DIR}/${_f}")
+      set(_old_key "")
+    endif()
+  endforeach()
+endif()
+if(NOT _old_key STREQUAL _gmic_patch_key)
+  file(REMOVE "${_stamp}")
+  file(REMOVE_RECURSE "${GMIC_EXTRACT_DIR}")
+  set(_patterns "")
+  foreach(_f IN LISTS _gmic_extract)
+    list(APPEND _patterns "${GMICSRCDIR}/src/${_f}")
+  endforeach()
+  file(MAKE_DIRECTORY "${GMIC_EXTRACT_DIR}")
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E tar xzf "${_gmic_tarball}" ${_patterns}
+    WORKING_DIRECTORY "${GMIC_EXTRACT_DIR}" RESULT_VARIABLE _r)
+  if(NOT _r EQUAL 0)
+    message(FATAL_ERROR "Could not extract the G'MIC sources from ${_gmic_tarball}")
+  endif()
+  set(_gmic_extracted "${GMIC_EXTRACT_DIR}/${GMICSRCDIR}/src")
+  foreach(_f IN LISTS _gmic_extract)
+    if(NOT EXISTS "${_gmic_extracted}/${_f}")
+      message(FATAL_ERROR "${GMICSRC} has no ${GMICSRCDIR}/src/${_f}")
+    endif()
+  endforeach()
+  foreach(_patch IN LISTS _patches)
+    string(REPLACE ":" ";" _patch "${_patch}")
+    list(GET _patch 0 _script)
+    list(GET _patch 1 _file)
+    if(NOT GMIC_PATCH_SH)
+      get_filename_component(_name "${_script}" NAME)
+      set(_where "ALL")
+      foreach(_p IN LISTS _gmic_patch_platform)
+        if(_p MATCHES "^${_name}:(.*)$")
+          set(_where "${CMAKE_MATCH_1}")
+        endif()
+      endforeach()
+      if(_where STREQUAL "ALL" OR ${_where})
+        message(FATAL_ERROR "sh not found: it is needed to apply ${_script} to ${_file}, which "
+          "changes the code compiled on this platform: put a POSIX sh in the PATH, or configure with "
+          "-DGMIC_PATCH_SH=<path to sh>")
+      endif()
+      message(WARNING "sh not found: ${_script} is not applied to ${_file} (it only changes "
+        "${_where} code)")
+      continue()
+    endif()
+    execute_process(COMMAND "${GMIC_PATCH_SH}" "${PROJECT_SOURCE_DIR}/${_script}" "${_file}"
+      WORKING_DIRECTORY "${_gmic_extracted}" RESULT_VARIABLE _r)
+    if(NOT _r EQUAL 0)
+      message(FATAL_ERROR "${_script} failed on ${_file} of G'MIC ${GMICVER}")
+    endif()
+  endforeach()
+  foreach(_f IN LISTS _gmic_extract)
+    configure_file("${_gmic_extracted}/${_f}" "${GMIC_SRC_DIR}/${_f}" COPYONLY)
+  endforeach()
+  file(REMOVE_RECURSE "${GMIC_EXTRACT_DIR}")
+  file(WRITE "${_stamp}" "${_gmic_patch_key}")
+endif()
 
 # pocketfft (FFT=pocketfft): pocketfft_hdronly.h, at the Makefile's POCKETFFTCOMMIT and checked
 # against its POCKETFFT_SHA256, into GMIC_SRC_DIR (next to CImg.h, which includes it), and its
@@ -521,6 +561,15 @@ endif()
 if(GMIC_FFT STREQUAL "pocketfft")
   list(APPEND GMIC_RESOURCES "${GMIC_GENERATED_DIR}/Licence_pocketfft.txt")
 endif()
+# Switching OFX_LICENSE or FFT in the same build directory changes the resources: the build-tree
+# bundle's Resources are removed then (copied again by the build), so that it keeps no licence of
+# the other configuration, as the Makefile's BUILD_KEY does. An install prefix that already has the
+# bundle keeps them: install into a fresh prefix after such a switch.
+set(_resources_key "OFX_LICENSE=${OFX_LICENSE} FFT=${GMIC_FFT}")
+if(DEFINED GMIC_RESOURCES_KEY AND NOT GMIC_RESOURCES_KEY STREQUAL _resources_key)
+  file(REMOVE_RECURSE "${OFX_PLUGIN_BUILD_DIR}/GMIC.ofx.bundle/Contents/Resources")
+endif()
+set(GMIC_RESOURCES_KEY "${_resources_key}" CACHE INTERNAL "OFX_LICENSE and FFT of the bundle's resources")
 ofx_plugin_resources(GMIC ${GMIC_RESOURCES})
 source_group("G'MIC" FILES ${GMIC_EXTRACTED_SOURCES})
 
