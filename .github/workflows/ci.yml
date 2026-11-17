@@ -120,7 +120,7 @@ jobs:
       # all the plug-ins on the nightly and on-demand runs, a subset per PR
       - name: Render plug-ins
         run: |
-          python3 .github/workflows/render_plugins.py --host "$(cat build/hostDemo-path.txt)" \
+          python3 .github/workflows/render_plugins.py --host build \
             --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset "$([ "$BUILD_VARIANTS" = true ] && echo all || echo pr)" --jobs 2
       # the debug variant is built with the Makefile, as Natron's build-plugins.sh does (the
@@ -177,7 +177,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build pkg-config zlib1g-dev libcurl4-openssl-dev libpng-dev \
-            libexpat1-dev libgl-dev libglu1-mesa-dev
+            libexpat1-dev libgl-dev
       - name: Cache G'MIC sources
         uses: actions/cache@v4
         with:
@@ -195,7 +195,7 @@ jobs:
           .github/workflows/check_commercial.sh build/Plugins describe-commercial.log
       - name: Render plug-ins (subset)
         run: |
-          python3 .github/workflows/render_plugins.py --host "$(cat build/hostDemo-path.txt)" \
+          python3 .github/workflows/render_plugins.py --host build \
             --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset pr --jobs 2
       - name: Render FFT filters (720x576)
@@ -257,7 +257,7 @@ jobs:
             .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
       - name: Render plug-ins (subset)
         run: |
-          python3 .github/workflows/render_plugins.py --host "$(cat build/hostDemo-path.txt)" \
+          python3 .github/workflows/render_plugins.py --host build \
             --plugins install/OFX/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset pr --jobs 2
       - name: Build (debug)
@@ -349,7 +349,7 @@ jobs:
       - name: Render plug-ins (subset)
         run: |
           set -eo pipefail
-          python3 .github/workflows/render_plugins.py --host "$(cat build/hostDemo-path.txt)" \
+          python3 .github/workflows/render_plugins.py --host build \
             --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset pr --jobs 2
       - name: Build (debug)

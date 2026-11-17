@@ -41,6 +41,10 @@ DerivedData/*
 [Rr]elease/
 x64/
 build/
+build-*/
+install*/
+plugins*.txt
+describe*.log
 [Bb]in/
 [Oo]bj/
 
