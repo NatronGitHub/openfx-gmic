@@ -180,7 +180,12 @@ public:
 	void* customSequenceDataP;
 	void* contextP;
 	bool inputConnected[MAX_NOF_LAYERS];
+	// set by pluginProcess: whether the image copied to outWorld had an alpha channel, and its size
+	bool resultHasAlpha;
+	int resultWidth, resultHeight;
 	SequenceData() {
+		resultHasAlpha = true;
+		resultWidth = resultHeight = 0;
 		isFlat = false;
 		update = false;
 		for (int i = 0; i < MAX_NOF_PARAMS; i++) 
