@@ -158,8 +158,13 @@ FILE(WRITE ${CMAKE_CURRENT_BINARY_DIR}/gmic_hotfixes.h.tmp
 CONFIGURE_FILE(${CMAKE_CURRENT_BINARY_DIR}/gmic_hotfixes.h.tmp ${CMAKE_CURRENT_BINARY_DIR}/gmic_hotfixes.h COPYONLY)
 INCLUDE_DIRECTORIES(BEFORE ${CMAKE_CURRENT_BINARY_DIR})
 
+# the licences of the plug-in and G'MIC (COPYING: dual CeCILL-C / CeCILL v2; COMMERCIAL builds use
+# CeCILL-C), installed in Contents/Resources with the icon
 FILE(GLOB GMIC_RESOURCES
   "GMIC_OFX/GMIC.png"
+  "COPYING"
+  "Licence_CeCILL-C_V1-en.txt"
+  "Licence_CeCILL_V2-en.txt"
 )
 
 ADD_LIBRARY(GMIC SHARED ${GMIC_SOURCES} ${SUPPORT_SOURCES})
