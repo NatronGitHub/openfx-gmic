@@ -58,7 +58,7 @@
 // flags of a boolean parameter that enables the point parameter just before it (a G'MIC removable
 // point, issue #79): it is not passed to G'MIC, the point is passed as nan,nan when it is off, and
 // the OFX glue disables the point (and so its overlay handle) then
-#define PARAM_FLAGS_POINT_ENABLED 2
+#define PARAM_FLAGS_POINT_ENABLED 0x100 // distinct from the PT_TEXT flags (1, 2, 5...)
 
 // Layer times (issue #63), defined by the G'MIC plug-in for the filters with layer inputs, used by
 // the OFX glue: each layer input (all but Source) has an integer parameter "<clip name> Time
