@@ -749,6 +749,8 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, bool preview)
 
     if (cmd == "") {
         cmd = PAR_TXT(PARAM_COMMAND);
+        strReplace(cmd, "\r", " ");
+        strReplace(cmd, "\n", " ");
     } else {
         cmd = "-" + strTrim(cmd, " \t\r\n") + " ";
         // the filter parameters only: they come first, the layers and their times follow
@@ -764,10 +766,33 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, bool preview)
                     continue;
                 }
                 string s = PAR_TXT(i);
-                // G'MIC un-escapes \ and \" inside "...": escape backslashes first (e.g. Windows paths),
-                // then double quotes (or a text containing one, e.g. G'MIC code, ends the argument early)
-                strReplace(s, "\\", "\\\\");
-                strReplace(s, "\"", "\\\"");
+                const int f = globalDataP->param[i].flags;
+                if (f == 2 || f == 3 || f == 5) {
+                    // file or folder: G'MIC un-escapes \ and \" inside "...", so escape backslashes
+                    // (Windows paths, which G'MIC-Qt gets with '/' from Qt) then double quotes
+                    strReplace(s, "\\", "\\\\");
+                    strReplace(s, "\"", "\\\"");
+                } else {
+                    // text and value: as G'MIC-Qt (quotedString()), only escape the double quotes
+                    // that are not escaped yet (or a text containing one, e.g. G'MIC code, ends the
+                    // argument early), and keep the backslashes and newlines for G'MIC to decode:
+                    // "\251" is a ©, and a "#" comment in multi-line G'MIC code ends at its line
+                    strReplace(s, "\r\n", "\n");
+                    strReplace(s, "\r", "\n");
+                    string q;
+                    bool escaped = false;
+                    for (size_t k = 0; k < s.size(); ++k) {
+                        if (escaped) {
+                            escaped = false;
+                        } else if (s[k] == '\\') {
+                            escaped = true;
+                        } else if (s[k] == '"') {
+                            q += '\\';
+                        }
+                        q += s[k];
+                    }
+                    s.swap(q);
+                }
                 cmd += "\"" + s + "\",";
             } else if (PAR_TYPE(i) == PT_COLOR) {
                 cmd +=
@@ -785,9 +810,7 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, bool preview)
         }
         cmd = cmd.substr(0, cmd.size() - 1);
     }
-
-    strReplace(cmd, "\r", " ");
-    strReplace(cmd, "\n", " ");
+    // (the newlines of text parameters are kept: see above)
 
     return cmd;
 }

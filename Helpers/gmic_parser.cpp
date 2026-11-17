@@ -767,13 +767,15 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 }
 
 // Filters that need a second input although their #@gui text doesn't say so (see usesSeveralLayers),
-// from the first command of the definition of the main command (after "skip ..."), before it
-// can have created an image:
-// - "if $!<2" or "if $!<=1" (it returns or fails with one image): Blur by Color, Depth Map
-//   Reconstruction, Lenticular Print, Stereoscopic Image Alignment;
-// - a command that is not "+..." (nor a "var=..." assignment) selecting image 1 ("cmd[1]",
-//   "cmd[0,1]") or reading it in an unquoted argument ("{1,w}", "#1"): Fourier Picture Watermark
-//   ("rs[0] {1,w*$1},{1,h*$1}", the watermark is the second image).
+// from the start of the definition of the main command, before its first command that is not a
+// test (after "skip ..." or "check ..." and "var=..." assignments):
+// - a test "if $!<2", "if $!<=1" or "if $!!=2" followed by "return" or "error" (with one image
+//   it does nothing or fails): Blur by Color, Depth Map Reconstruction, Lenticular Print,
+//   Stereoscopic Image Alignment, DOF Manipulation (individual mask modes);
+// - "repeat" over the pairs of images ($!/2): Plasma Transition;
+// - a first command that is not "+..." (nor "(...)", an image given by its values) selecting
+//   image 1 ("cmd[1]", "cmd[0,1]") or reading it in an unquoted argument ("{1,w}", "#1"): Fourier
+//   Picture Watermark ("rs[0] {1,w*$1},{1,h*$1}", the watermark is the second image).
 // This needs the command definitions in "content".
 static bool selectsImage1(const string& cmd)
 {
@@ -788,7 +790,56 @@ static bool readsImage1(const string& arg)
 	if (arg.empty() || arg[0] == '"') return false;
 	if (arg.find("{1,") != string::npos) return true;
 	for (size_t p = arg.find("#1"); p != string::npos; p = arg.find("#1", p + 1)) {
-		if (p + 2 >= arg.size() || !isdigit((unsigned char)arg[p + 2])) return true;
+		if (p + 2 >= arg.size() || !isxdigit((unsigned char)arg[p + 2])) return true; // not "#1F"
+	}
+	return false;
+}
+
+// Does the condition (blanks removed) contain the test t, not followed by a digit ("$!<2", not "$!<20")?
+static bool testsImageCount(const string& cond, const char* t)
+{
+	const size_t n = strlen(t);
+	for (size_t p = cond.find(t); p != string::npos; p = cond.find(t, p + 1)) {
+		if (p + n >= cond.size() || !isdigit((unsigned char)cond[p + n])) return true;
+	}
+	return false;
+}
+
+// "var=value", "var:=expr", "a,b=..." (and "var+=..." etc.)
+static bool isAssignment(const string& item)
+{
+	size_t i = 0;
+	while (i < item.size() && (isalnum((unsigned char)item[i]) || item[i] == '_' || item[i] == ',')) ++i;
+	if (i == 0 || i >= item.size()) return false;
+	if (item[i] == '=') return true;
+	return i + 1 < item.size() && item[i + 1] == '=' && strchr(":+-*/%&|^<>.", item[i]) != NULL;
+}
+
+static bool needsSeveralImages(const vector<string>& items)
+{
+	for (size_t k = 0; k < items.size(); ++k) {
+		const string& a = items[k];
+		if (a[0] == '#') return false; // comment
+		if (a == "skip" || a == "check") {
+			++k; // and its argument
+		} else if (a == "if" || a == "elif") {
+			if (k + 1 >= items.size()) return false;
+			string cond = items[++k];
+			strReplace(cond, " ", "");
+			const bool fewImages = testsImageCount(cond, "$!<2") || testsImageCount(cond, "$!<=1") || testsImageCount(cond, "$!!=2");
+			if (fewImages && k + 1 < items.size() && (items[k + 1] == "return" || items[k + 1].compare(0, 5, "error") == 0)) {
+				return true;
+			}
+		} else if (a == "else" || a == "fi" || a == "return" || a.compare(0, 5, "error") == 0) {
+			if (a.compare(0, 5, "error") == 0 && k + 1 < items.size() && items[k + 1][0] == '"') ++k; // its message
+		} else if (isAssignment(a)) {
+			// "var=value", "a,b:=expr"...
+		} else if (a == "repeat") {
+			return k + 1 < items.size() && items[k + 1].find("$!/2") != string::npos;
+		} else {
+			// the first command
+			return a[0] != '+' && a[0] != '(' && (selectsImage1(a) || (k + 1 < items.size() && readsImage1(items[k + 1])));
+		}
 	}
 	return false;
 }
@@ -799,37 +850,23 @@ static void markMultiInputFilters(const string& content, vector<EffectData>& cds
 	for (vector<EffectData>::const_iterator it = cds.begin(); it != cds.end(); ++it) {
 		if (!it->multiLayer) mains.insert(it->command);
 	}
-	set<string> flagged;
+	map<string, vector<string> > starts; // main command -> the first items of its definition
 	stringstream ss(content);
 	string line, cur, rest;
-	vector<string> items; // the first items of the current definition
 	while (getline(ss, line)) {
 		if (line.empty() || line[0] == '#') continue;
 		string name = commandDefinition(line, rest);
 		if (!name.empty()) {
-			cur = mains.count(name) ? name : string();
-			items.clear();
+			cur = (mains.count(name) && !starts.count(name)) ? name : string();
 		} else {
 			rest = line;
 		}
-		if (cur.empty() || items.size() >= 4) continue;
-		gmicItems(rest, items);
-		size_t k = 0;
-		if (k < items.size() && items[k] == "skip") k += 2;
-		if (k + 1 >= items.size()) continue; // wait for more items
-		const string& a = items[k];
-		string cond = items[k + 1];
-		strReplace(cond, " ", "");
-		if (a == "if" && (cond.compare(0, 4, "$!<2") == 0 || cond.compare(0, 5, "$!<=1") == 0)) {
-			flagged.insert(cur);
-		} else if (a[0] != '+' && a[0] != '(' && a[0] != '#' && a.find('=') == string::npos &&
-		           (selectsImage1(a) || readsImage1(items[k + 1]))) {
-			flagged.insert(cur);
-		}
-		items.resize(4); // decided: skip the rest of this definition
+		if (cur.empty() || starts[cur].size() >= 64) continue;
+		gmicItems(rest, starts[cur]);
 	}
 	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
-		if (flagged.count(it->command)) it->multiLayer = true;
+		map<string, vector<string> >::const_iterator s = starts.find(it->command);
+		if (s != starts.end() && needsSeveralImages(s->second)) it->multiLayer = true;
 	}
 }
 
