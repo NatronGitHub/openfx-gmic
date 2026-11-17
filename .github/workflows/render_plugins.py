@@ -35,17 +35,45 @@ import zlib
 SKIP = {
     'eu.gmic.ToutInteractif': 'needs a display (x_paint)',
     'eu.gmic.DiaporamaSlideshow': 'needs a display (samj_full_screen_display: resize to the screen size, 0x0 here)',
+    'eu.gmic.GamesDemos': 'needs a display (interactive demos, e.g. x_pacman)',
+    'eu.gmic.SamjSelectionHermiteSpline': 'needs a display (x_spline)',
+    'eu.gmic.Comicbook': "needs a display ('This filter requires the X11 or GDI32 graphic library')",
+    'eu.gmic.Lineart': "needs a display ('This filter requires the X11 or GDI32 graphic library')",
     'eu.gmic.PinkTestOperatorBianca': "runs the external executable 'pink.asf'",
+    'eu.gmic.PinkOperator': "runs Pink's external executables (pink)",
+    'eu.gmic.PinkOperatorBinary': "runs Pink's external executables (pink)",
+    'eu.gmic.CImgNLMeans': "runs the external executable 'use_nlmeans'",
+    'eu.gmic.CImgSkeleton': "runs the external executable 'use_skeleton'",
+    'eu.gmic.ImportData': "imports a file chosen by the user (none by default: Unknown filename)",
+    'eu.gmic.SaveNoisePrint': 'two passes on 2 input images, the first one saves a noise print file',
     'eu.gmic.ReverseEngineerColorCurve': "export-only (G'MIC-Qt's Export button): fails on purpose with "
                                          "'This filter does nothing on host!'",
     'eu.gmic.ReverseEngineerGradientMap': "export-only (G'MIC-Qt's Export button): fails on purpose with "
                                           "'This filter does nothing on host!'",
 }
-# Plug-ins that fail with their default parameters in G'MIC itself (not in the plug-in), checked
-# with G'MIC 4.0.7 and the hot fixes of gmic_hotfixes.gmic (which fix Gleam, MorphologyPainting,
-# LayerManipulation, MontageMultiRows and HalftoneShapes). Listed with the G'MIC error; a plug-in
-# that renders again is reported (XPASS).
+# Plug-ins that fail with their default parameters, checked with G'MIC 4.0.7 and the hot fixes of
+# gmic_hotfixes.gmic (which fix Gleam, MorphologyPainting, LayerManipulation, MontageMultiRows and
+# HalftoneShapes): in G'MIC itself (the G'MIC error, also with the gmic command line), or in the
+# plug-in ("plug-in:"). A plug-in that renders again is reported (XPASS).
 EXPECTED_FAIL = {
+    'eu.gmic.Softlight': "afre_softlight: 'Select image(s) with 1 or 3 channels' on an RGBA image",
+    'eu.gmic.ContrastFFT': "afre_softlight: 'Select image(s) with 1 or 3 channels' on an RGBA image",
+    'eu.gmic.McFlou': "mc_flou: remove_opacity: 'Image [0] is not a G,GA,RGB or RGBA image (6 channels)' on RGBA",
+    'eu.gmic.BeautyRetouch': "compose_softlight: to_colormode: 'Image [1] is not a G,GA,RGB or RGBA image "
+                             "(7 channels)'",
+    'eu.gmic.Linify': "linify: resize: 'Invalid argument '0,0,1,3,2''",
+    'eu.gmic.ColorRegion': "rep_color_region: 'Invalid vector write at index [4]'",
+    'eu.gmic.PrimeSurface': "rep_primelist: 'Invalid vector write at index [<n>]'",
+    'eu.gmic.SmoothSketch': "fx_SmoothSketch blends with the Coloring Style ($11) as opacity, instead of $12",
+    'eu.gmic.Intarsia': "fx_intarsia: ${arg0\\ $5,...} is cut at the space: 'File 'left\"', format does not "
+                        "take any input options'",
+    'eu.gmic.KaleidoPatterns': "plug-in: text(0,0xFFFFFFFF) gets the default '0,0xFFFFFFFF' (one argument too many)",
+    'eu.gmic.SketchyEllipses': "plug-in: text(0,0xFFFFFFFF) gets the default '0,0xFFFFFFFF' (one argument too many)",
+    'eu.gmic.PerspectiveStreak': "plug-in: the point default is the project's center, outside the 160x120 "
+                                 "input (225%,-140%)",
+    'eu.gmic.KaleidoscopeReptorianPolar': "plug-in: the point default is the project's center, outside the "
+                                          "160x120 input: 'Invalid Number - Variable 3'",
+    'eu.gmic.FourierPictureWatermark': "plug-in: needs a second image (the watermark), but has no layer input",
     # only on the small test input: it renders at 720x576
     'eu.gmic.SolveMaze': "minimal_path: 'Invalid argument' on the 160x120 test input",
 }
