@@ -188,8 +188,10 @@ string get_gmic_rc_path()
 }
 
 // parameters added by pluginSetup besides the filter's own: Input, 4 layers, Command, the
-// "Advanced Options" group (start and end) and its 7 parameters
+// "Advanced Options" group (start and end) and its 7 parameters; for the filters with layer inputs,
+// also the "Layer Times" group (start and end), Layers from Source and the 4 time offsets
 static const int kNofExtraParams = 1 + 4 + 1 + 2 + 7;
+static const int kNofLayerTimeParams = 2 + 1 + 4;
 
 // Ignore Alpha (see fullCommand): _openfx_gmic_alpha_split stores the alpha channel of every image
 // (an empty image for images without alpha) in the global variable _openfx_gmic_alpha, and
@@ -370,12 +372,14 @@ public:
 			gmic_delete_external((float*)lib);
 		}
 		hotfixes = gmicGetHotfixes(stdlib);
+		bool builtinStdlib = false; // the curated lists of the parser are only checked against it
 		string effectContent = loadStringFromFile(get_gmic_rc_path() + "gmic_ofx.gmic");
 		if (effectContent.empty()) {
 			effectContent = loadStringFromFile(get_gmic_rc_path() + "gmic_stdlib.gmic");
 		}
 		if (effectContent.empty()) {
 			effectContent.swap(stdlib);
+			builtinStdlib = true;
 			if (
 				(int)effectContent.find("#@gimp :") < 0 && 
 				(int)effectContent.find("#@gmic_plugin :") < 0 && 
@@ -383,13 +387,13 @@ public:
 				effectContent = "";
 			}
 		} 
-		gmic_parse_multi(effectContent, &pluginData, &pluginContent);
+		gmic_parse_multi(effectContent, &pluginData, &pluginContent, builtinStdlib);
 		// Each plug-in has a fixed table of MAX_NOF_PARAMS parameters: the filter's own parameters,
 		// up to 4 extra layers and the fixed trailing parameters (see pluginSetup). Leave out the
 		// few filters that do not fit (e.g. "Transfer Color [Reduced Colors]" in G'MIC 4.0.7,
 		// with several hundred parameters) instead of overflowing the table.
 		for (size_t i = 0; i < pluginData.size(); ) {
-			if ((int)pluginData[i].param.size() + kNofExtraParams > MAX_NOF_PARAMS) {
+			if ((int)pluginData[i].param.size() + kNofExtraParams + (pluginData[i].multiLayer ? kNofLayerTimeParams : 0) > MAX_NOF_PARAMS) {
 				pluginData.erase(pluginData.begin() + i);
 				pluginContent.erase(pluginContent.begin() + i);
 			} else {
@@ -457,6 +461,29 @@ static string ignoreAlphaNote(const EffectData& effectData)
 		"changed (frames, rotation, crop, resize...) don't get an alpha back.";
 }
 
+// Filters that process their layers as successive frames of a clip (issue #63). Their time offsets
+// default to 0 like the other filters' (saved projects don't store parameters that didn't exist,
+// and these connected the earlier frames through TimeOffset nodes): their help says how to get the
+// earlier frames, and their "Layer Times" group is open.
+static bool isTemporalFilter(const EffectData& effectData)
+{
+	static const char* const commands[] = { "fx_fade_layers", "fx_morph_layers", "fx_rep_z_render",
+		"fx_align_layers", "fx_blend_median", "fx_blend_average_all" };
+	for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); ++i) {
+		if (effectData.command == commands[i]) return true;
+	}
+	return false;
+}
+
+static string layerTimesNote(const EffectData& effectData)
+{
+	if (!effectData.multiLayer || !isTemporalFilter(effectData)) return string();
+	return "\n\nLayer Times: this filter treats its layers as frames. To process the previous frames of "
+		"Source, set Layers from Source to the number of frames (Layer -1, Layer -2... then come from "
+		"Source at the frames given by their time offsets, -1, -2... by default), or connect other "
+		"clips to the layer inputs and set their time offsets.";
+}
+
 int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 {
 	globalDataP->scale = 255.f;
@@ -501,7 +528,10 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		std::string name = param.name;
 		// a filter parameter must not reuse the name of a parameter added below (none does in
 		// G'MIC 4.0.7, but a clash would make the host reject the duplicate parameter)
-		static const char* const reservedNames[] = { "Layer -1", "Layer -2", "Layer -3", "Layer -4", "Command",
+		static const char* const reservedNames[] = { "Layer -1", "Layer -2", "Layer -3", "Layer -4",
+			"Layer Times", LAYERS_FROM_SOURCE_PARAM, "Layer -1" TIME_OFFSET_PARAM_SUFFIX,
+			"Layer -2" TIME_OFFSET_PARAM_SUFFIX, "Layer -3" TIME_OFFSET_PARAM_SUFFIX,
+			"Layer -4" TIME_OFFSET_PARAM_SUFFIX, "Command",
 			"Advanced Options", "Output Layer", "Resize Mode", "Ignore Alpha", "Preview/Draft Mode",
 			"Global Random Seed", "Animate Random Seed", "Log Verbosity" };
 		for (size_t r = 0; r < sizeof(reservedNames) / sizeof(reservedNames[0]); ++r) {
@@ -602,7 +632,30 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		++p;
 		globalDataP->param[p] = Parameter("Layer -4", "", PT_LAYER);
 		++p;
-	}	
+		// Layer times (issue #63). Placed before Command, so that the PARAM_* indices of the
+		// trailing parameters don't change. The defaults (no layer from Source, offsets 0) give the
+		// behaviour of the plug-ins without these parameters, also for the saved projects, which
+		// don't store them. Not animated: the frames needed are given to the host for a render time.
+		// Integer parameters with flags 1 are not animated (see describeInContext).
+		globalDataP->param[p] = Parameter("Layer Times", "", PT_TOPIC_START);
+		globalDataP->param[p].flags = isTemporalFilter(effectData) ? 0 : 1; // closed, except for the filters that use frames
+		++p;
+		globalDataP->param[p] = Parameter(LAYERS_FROM_SOURCE_PARAM, "", PT_INT, 0, 4, 0, 0, 0, 0, "");
+		globalDataP->param[p].flags = 1;
+		globalDataP->param[p].hint = "Number of layer inputs taken from Source instead of their own input: "
+			"Layer -1 to Layer -N are then Source at the render time plus their time offset, e.g. the "
+			"previous frames with offsets -1, -2... (set when N is raised, for offsets still at 0). 0: off.";
+		++p;
+		for (int k = 1; k <= 4; ++k) {
+			globalDataP->param[p] = Parameter("Layer -" + intToString(k) + TIME_OFFSET_PARAM_SUFFIX, "", PT_INT, -1000, 1000, 0, 0, 0, 0, "");
+			globalDataP->param[p].flags = 1;
+			globalDataP->param[p].hint = "Frame offset of Layer -" + intToString(k) + ": its image is fetched at "
+				"the render time plus this offset (-1: the previous frame). Source is always at the render time.";
+			++p;
+		}
+		globalDataP->param[p] = Parameter("Layer Times", "", PT_TOPIC_END);
+		++p;
+	}
 	globalDataP->param[p] = Parameter("Command", "", PT_TEXT, 0, 0, 0, 0, 0, 0, "-blur 2");
 	if (hasContent) {
 		globalDataP->param[p].displayStatus = DS_HIDDEN;
@@ -648,7 +701,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 	strReplace(d, "<", "(");
 	strReplace(d, ">", ")");
 //	strReplace(d, "\n", "\\n");
-	globalDataP->pluginInfo.description = d + ignoreAlphaNote(effectData) + "\n" + PLUGIN_DESCRIPTION;
+	globalDataP->pluginInfo.description = d + ignoreAlphaNote(effectData) + layerTimesNote(effectData) + "\n" + PLUGIN_DESCRIPTION;
 
 	return 0;
 }
@@ -676,7 +729,9 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, bool preview)
         cmd = PAR_TXT(PARAM_COMMAND);
     } else {
         cmd = "-" + strTrim(cmd, " \t\r\n") + " ";
-        for (int i = 1; i < PARAM_COMMAND; i++) { // filter parameters only
+        // the filter parameters only: they come first, the layers and their times follow
+        const int nofFilterParams = (int)effectData.param.size();
+        for (int i = 1; i <= nofFilterParams && i < PARAM_COMMAND; i++) {
             if (PAR_TYPE(i) == PT_INT || PAR_TYPE(i) == PT_BOOL || PAR_TYPE(i) == PT_SELECT)
                 cmd += intToString((int)PAR_VAL(i)) + ",";
             else if (PAR_TYPE(i) == PT_FLOAT)
@@ -1164,7 +1219,7 @@ void getPluginInfo(int pluginIndex, PluginInfo& pluginInfo)
 	d = strToAscii(d);
 	strReplace(d, "<", "(");
 	strReplace(d, ">", ")");
-	pluginInfo.description = d + ignoreAlphaNote(pluginGlobalData.pluginData[pluginIndex]) + "\n\n" + PLUGIN_DESCRIPTION;
+	pluginInfo.description = d + ignoreAlphaNote(pluginGlobalData.pluginData[pluginIndex]) + layerTimesNote(pluginGlobalData.pluginData[pluginIndex]) + "\n\n" + PLUGIN_DESCRIPTION;
 	pluginInfo.major_version = MAJOR_VERSION;
 	pluginInfo.minor_version = MINOR_VERSION;
 }
