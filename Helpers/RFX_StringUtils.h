@@ -76,6 +76,9 @@ std::string intToString(const int i);
 
 std::string floatToString(const float i);
 
+// parse a number written with '.' as the decimal separator, whatever the locale (0 if none)
+double stringToDouble(const std::string& s);
+
 // hex string/buffer conversion
 
 std::string bufferToHexString(const unsigned char* buf, const unsigned int length);

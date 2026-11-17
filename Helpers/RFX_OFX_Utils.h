@@ -101,7 +101,6 @@ using namespace reduxfx;
 #define PF_Err_INTERNAL_STRUCT_DAMAGED 512
 #define A_long long
 
-#define kSupportsRenderScale 1
 
 struct ContextData
 {
@@ -313,7 +312,10 @@ static OfxStatus destroyInstance(int /*pluginIndex*/, OfxImageEffectHandle effec
 	return kOfxStatOK;
 }
 
-static void getAllParamData(int pluginIndex, const OfxRectI& dstRect, MyInstanceData* myData, OfxTime t, const OfxPointD& renderScale)
+// dstRect is in pixels; point parameters are in canonical coordinates: pixel x = canonical x *
+// renderScale.x / par, pixel y = canonical y * renderScale.y (par: the pixel aspect ratio of the
+// image dstRect belongs to)
+static void getAllParamData(int pluginIndex, const OfxRectI& dstRect, double par, MyInstanceData* myData, OfxTime t, const OfxPointD& renderScale)
 {
 	for (int i = 0; i < globalData[pluginIndex].nofParams; i++) {
 		if (globalData[pluginIndex].param[i].paramType == PT_FLOAT) {
@@ -336,7 +338,7 @@ static void getAllParamData(int pluginIndex, const OfxRectI& dstRect, MyInstance
 			double myX, myY;
 			gParamHost->paramGetValueAtTime(myData->param[i], t, &myX, &myY);
 			// percent of the image, from its top-left corner (G'MIC's y goes down)
-			myData->sequenceDataP->floatValue[i][0] = (float)((myX * renderScale.x - dstRect.x1) * 100. / (dstRect.x2 - dstRect.x1));
+			myData->sequenceDataP->floatValue[i][0] = (float)((myX * renderScale.x / par - dstRect.x1) * 100. / (dstRect.x2 - dstRect.x1));
 			myData->sequenceDataP->floatValue[i][1] = 100.f - (float)((myY * renderScale.y - dstRect.y1) * 100. / (dstRect.y2 - dstRect.y1));
 		} else if (globalData[pluginIndex].param[i].paramType == PT_ANGLE) {
 			double v;
@@ -362,49 +364,7 @@ static void getAllParamData(int pluginIndex, const OfxRectI& dstRect, MyInstance
 }
 
 
-#if 0
-static void setParamData(int pluginIndex, const OfxRectI& dstRect, MyInstanceData* myData, const OfxPointD& renderScale)
-{
-	for (int i = 0; i < globalData[pluginIndex].nofParams; i++) {
-		if (globalData[pluginIndex].param[i].paramType == PT_FLOAT) {
-			double v = (double)(myData->sequenceDataP->floatValue[i][0]);
-			gParamHost->paramSetValue(myData->param[i], v);
-		} else if (globalData[pluginIndex].param[i].paramType == PT_INT) {
-			int v = (int)myData->sequenceDataP->floatValue[i][0];
-			gParamHost->paramSetValue(myData->param[i], v);
-		} else if (globalData[pluginIndex].param[i].paramType == PT_COLOR) {
-			double myR = (double)myData->sequenceDataP->floatValue[i][0];
-			double myG = (double)myData->sequenceDataP->floatValue[i][1];
-			double myB = (double)myData->sequenceDataP->floatValue[i][2];
-			double myA = (double)myData->sequenceDataP->floatValue[i][3];
-			gParamHost->paramSetValue(myData->param[i], myR, myG, myB, myA);
-		} else if (globalData[pluginIndex].param[i].paramType == PT_POINT) {
-			// point parameter is in % (percent) in gmic: no need to scale
-			double myX = (dstRect.x1 + (double)myData->sequenceDataP->floatValue[i][0] / 100. * (dstRect.x2 - dstRect.x1)) / renderScale.x;
-			double myY = (dstRect.y1 + (1. - (double)myData->sequenceDataP->floatValue[i][1] / 100.) * (dstRect.y2 - dstRect.y1)) / renderScale.y;
-			gParamHost->paramSetValue(myData->param[i], myX, myY);
-		} else if (globalData[pluginIndex].param[i].paramType == PT_ANGLE) {
-			double v;
-			if (globalData[pluginIndex].param[i].flags > 0)
-				v = (double)180.f * myData->sequenceDataP->floatValue[i][0] / -M_PI;
-			else
-				v = (double)myData->sequenceDataP->floatValue[i][0];
-			gParamHost->paramSetValue(myData->param[i], v);
-		} else if (globalData[pluginIndex].param[i].paramType == PT_SELECT) {
-			int v = (int)myData->sequenceDataP->floatValue[i][0];
-			gParamHost->paramSetValue(myData->param[i], v);
-		} else if (globalData[pluginIndex].param[i].paramType == PT_BOOL) {
-			int v = (int)myData->sequenceDataP->floatValue[i][0];
-			gParamHost->paramSetValue(myData->param[i], v);
-		} else if (globalData[pluginIndex].param[i].paramType == PT_TEXT) {
-			const string& s = myData->sequenceDataP->textValue[i];
-			gParamHost->paramSetValue(myData->param[i], s.c_str());
-		}
-	}
-}
-#endif
 
-#if kSupportsRenderScale != 1
 static
 bool
 renderScaleIsOne(OfxPropertySetHandle inArgs)
@@ -416,17 +376,45 @@ renderScaleIsOne(OfxPropertySetHandle inArgs)
     }
     return true;
 }
+
+// Render scale (issue #49). G'MIC parameters carry no unit, so pixel-sized ones (radii, sizes,
+// amplitudes in pixels) can't be scaled with the render scale, and a zoomed-out viewer or a proxy
+// render doesn't match the full-resolution render. On Natron, the actions fail for render scales other
+// than 1: Natron then marks the effect as not supporting render scale (OfxEffectInstance tries the
+// region of definition at scale 0.5) and renders it at full resolution, then downscales the result
+// (renderFullScaleThenDownscale in EffectInstance::renderRoI). Other hosts (Resolve, Nuke, Vegas) don't
+// fall back to full resolution, and the render would fail: there, render scales are accepted as
+// before, with unscaled pixel-sized parameters. Natron is recognized by kNatronOfxHostIsNatron, not by
+// kOfxPropName, which Natron can set to another host's name for compatibility.
+static
+bool
+hostRendersFullScaleWithoutRenderScale()
+{
+    int isNatron = 0;
+#ifdef OFX_EXTENSIONS_NATRON
+    if (gHost && gPropHost) {
+        gPropHost->propGetInt(gHost->host, kNatronOfxHostIsNatron, 0, &isNatron);
+    }
 #endif
+    return isNatron != 0;
+}
+
+// the same rule for every action that has a render scale (region of definition, regions of interest,
+// isIdentity, render): true if the action must fail
+static
+bool
+renderScaleRefused(OfxPropertySetHandle inArgs)
+{
+    return hostRendersFullScaleWithoutRenderScale() && !renderScaleIsOne(inArgs);
+}
 
 // tells the host what region we are capable of filling
 static
 OfxStatus getSpatialRoD(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
-#if kSupportsRenderScale != 1
-    if (!renderScaleIsOne(inArgs)) {
+    if (renderScaleRefused(inArgs)) {
         return kOfxStatFailed;
     }
-#endif
 	// retrieve any instance data associated with this effect
 	MyInstanceData *myData = getMyInstanceData(effect);
 
@@ -446,12 +434,10 @@ OfxStatus getSpatialRoD(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPro
 static
 OfxStatus getSpatialRoI(int pluginIndex, OfxImageEffectHandle effect, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
-#if kSupportsRenderScale != 1
-    if (!renderScaleIsOne(inArgs)) {
+    if (renderScaleRefused(inArgs)) {
 		// GMIC does not support render scale
         return kOfxStatFailed;
     }
-#endif
 	// G'MIC processes whole images: ask for the full region of definition of every input, not just
 	// the part under the render window (the default), which gave a cropped input when the viewer
 	// shows part of the image (issue #2)
@@ -469,14 +455,6 @@ OfxStatus getSpatialRoI(int pluginIndex, OfxImageEffectHandle effect, OfxPropert
 		++i;
 	}
 	return kOfxStatOK;
-	// // get the RoI the effect is interested in from inArgs
-	// OfxRectD roi;
-	// gPropHost->propGetDoubleN(inArgs, kOfxImageEffectPropRegionOfInterest, 4, &roi.x1);
-
-	// // the input needed is the same as the output, so set that on the source clip
-	// gPropHost->propSetDoubleN(outArgs, "OfxImageClipPropRoI_Source", 4, &roi.x1);
-
-	// return kOfxStatOK;
 }
 
 // Tells the host how many frames we can fill, only called in the general context.
@@ -498,7 +476,33 @@ OfxStatus getTemporalDomain(int /*pluginIndex*/, OfxImageEffectHandle effect, Of
 	return kOfxStatOK;
 }
 
-// Set our clip preferences 
+// true if a clip or image property set is flagged premultiplied
+static bool propsArePremultiplied(OfxPropertySetHandle props)
+{
+	const char* premult = NULL;
+	if (props) {
+		gPropHost->propGetString(props, kOfxImageEffectPropPreMultiplication, 0, &premult);
+	}
+	return premult && strcmp(premult, kOfxImagePreMultiplied) == 0;
+}
+
+// Premultiplication (issue #43). G'MIC filters work on straight (unpremultiplied) colours: premultiplied
+// inputs are unpremultiplied before G'MIC. The output is declared premultiplied (and the result is
+// premultiplied back) only if the main input is premultiplied. Otherwise it is declared
+// unpremultiplied: the result has straight colours, and for an input flagged opaque whose alpha isn't 1
+// (e.g. a Read with "Output Premult" set to Opaque) multiplying by that alpha would darken the image;
+// declaring the output opaque would be wrong as soon as the result has an alpha other than 1, which
+// the plug-in can't know before rendering.
+static bool mainInputIsPremultiplied(MyInstanceData* myData)
+{
+	OfxPropertySetHandle props = NULL;
+	if (!myData || !myData->input[0] || gEffectHost->clipGetPropertySet(myData->input[0], &props) != kOfxStatOK) {
+		return false;
+	}
+	return propsArePremultiplied(props);
+}
+
+// Set our clip preferences
 static OfxStatus getClipPreferences(int pluginIndex, OfxImageEffectHandle effect, OfxPropertySetHandle /*inArgs*/, OfxPropertySetHandle outArgs)
 {
 	// retrieve any instance data associated with this effect
@@ -516,6 +520,7 @@ static OfxStatus getClipPreferences(int pluginIndex, OfxImageEffectHandle effect
 
 	// set out output to be the same same as the input, component and bitdepth
 	gPropHost->propSetString(outArgs, "OfxImageClipPropComponents_Output", 0, componentStr);
+	gPropHost->propSetString(outArgs, kOfxImageEffectPropPreMultiplication, 0, mainInputIsPremultiplied(myData) ? kOfxImagePreMultiplied : kOfxImageUnPreMultiplied);
 	// The output depth is not set: the plug-in declares kOfxImageEffectPropSupportsMultipleClipDepths=0,
 	// so the host gives all clips the same depth (and a spec-conformant host refuses the write).
 	int v = 0;
@@ -531,11 +536,9 @@ static OfxStatus getClipPreferences(int pluginIndex, OfxImageEffectHandle effect
 // are the settings of the effect performing an identity operation
 static OfxStatus isIdentity(int /*pluginIndex*/, OfxImageEffectHandle /*effect*/, OfxPropertySetHandle inArgs, OfxPropertySetHandle /*outArgs*/)
 {
-#if kSupportsRenderScale != 1
-    if (!renderScaleIsOne(inArgs)) {
+    if (renderScaleRefused(inArgs)) {
         return kOfxStatFailed;
     }
-#endif
 	return kOfxStatReplyDefault;
 }
 
@@ -746,24 +749,6 @@ void convert_RGBA32P_to_RGBA32(ConvertData& data, const int startLine, const int
 	}
 }
 
-#if 0
-static
-void convert_RGBA32_to_RGBA32(ConvertData& data, const int startLine, const int endLine)
-{
-	for (int y = startLine; y < endLine; y++) {
-		float* in_pix = (float*)((char*)data.srcData + ((ptrdiff_t)(data.height-1-y) * data.srcRowBytes));
-#ifdef IMG_FLIP_Y
-		float* out_pix = (float*)((char*)data.dstData + ((ptrdiff_t)(data.height-1-y) * data.dstRowBytes));
-#else
-		float* out_pix = (float*)((char*)data.dstData + ((ptrdiff_t)y * data.dstRowBytes));
-#endif
-		for (int x = 0; x < data.width; x++) {
-			*out_pix++ = *in_pix++ * data.scale;
-		}
-	}
-}
-#endif
-
 static
 void convert_RGBA32P_to_RGBA8(ConvertData& data, const int startLine, const int endLine)
 {
@@ -892,25 +877,102 @@ void convert_RGBA32_to_RGBA8P(ConvertData& data, const int startLine, const int 
 }
 #endif
 
+#if !defined(CONVERT_INT_TO_FLOAT) || !defined(PLANAR_BUFFER)
+#error "the premultiplication handling in render() expects float planar buffers (CONVERT_INT_TO_FLOAT and PLANAR_BUFFER)"
+#endif
+
+// The buffers below are float planar RGBA (RRR... GGG... BBB... AAA...), with values up to maxValue.
+
+// alpha at or below this fraction of maxValue is treated as transparent when unpremultiplying
+#define kUnpremultiplyMinAlpha 1e-5f
+
+// Unpremultiply, in place. Pixels with an alpha at or below kUnpremultiplyMinAlpha * maxValue (or NaN)
+// keep their colour: dividing by a tiny alpha would give huge values that a filter (e.g. a blur) would
+// spread over their neighbours. Premultiplying back multiplies them by that alpha, so a premultiplied
+// pixel with alpha 0 and colour > 0 (additive, e.g. a glow) loses its colour in the round trip.
+static void unpremultiplyPlanar(float* data, int width, int height, float maxValue)
+{
+	if (!data || width <= 0 || height <= 0) return;
+	const size_t n = (size_t)width * (size_t)height;
+	float* r = data;
+	float* g = data + n;
+	float* b = data + 2 * n;
+	const float* a = data + 3 * n;
+	const float minAlpha = kUnpremultiplyMinAlpha * maxValue;
+	for (size_t k = 0; k < n; ++k) {
+		if (!(a[k] > minAlpha)) continue;
+		const float f = maxValue / a[k];
+		r[k] *= f;
+		g[k] *= f;
+		b[k] *= f;
+	}
+}
+
+// Premultiply, in place. The factor alpha / maxValue is clamped to [0,1] (NaN gives 0), so that a
+// G'MIC alpha below 0 or above maxValue can't produce colours outside [0, alpha].
+static void premultiplyPlanar(float* data, int width, int height, float maxValue)
+{
+	if (!data || width <= 0 || height <= 0) return;
+	const size_t n = (size_t)width * (size_t)height;
+	float* r = data;
+	float* g = data + n;
+	float* b = data + 2 * n;
+	const float* a = data + 3 * n;
+	for (size_t k = 0; k < n; ++k) {
+		float f = a[k] / maxValue;
+		if (!(f > 0.f)) f = 0.f; // also NaN
+		else if (f > 1.f) f = 1.f;
+		r[k] *= f;
+		g[k] *= f;
+		b[k] *= f;
+	}
+}
+
+// A result without alpha (1 or 3 channels) from a premultiplied main input: with straight colours it
+// would be opaque everywhere, with hard bright edges where the input was transparent. Before the
+// premultiplication handling, G'MIC got the premultiplied colours, i.e. the input composited over
+// black, and the result looked composited over black too. To keep that look, the colours are
+// multiplied by the main input's alpha and the output alpha stays opaque. Only done when the result
+// has the main input's size (G'MIC anchors it at the input's rectangle): out is the output buffer,
+// in the main input's buffer, both in pixel coordinates with rows top-down.
+static void multiplyByInputAlphaPlanar(const World& out, const World& in, float maxValue)
+{
+	if (!out.data || !in.data) return;
+	const int x1 = std::max(out.origin_x, in.origin_x), x2 = std::min(out.origin_x + out.width, in.origin_x + in.width);
+	const int y1 = std::max(out.origin_y, in.origin_y), y2 = std::min(out.origin_y + out.height, in.origin_y + in.height);
+	const size_t dplane = (size_t)out.width * (size_t)out.height, splane = (size_t)in.width * (size_t)in.height;
+	float* const dst = (float*)out.data;
+	const float* const srcA = (const float*)in.data + 3 * splane;
+	for (int y = y1; y < y2; ++y) {
+		const size_t drow = (size_t)(out.height - 1 - (y - out.origin_y)) * out.width;
+		const size_t srow = (size_t)(in.height - 1 - (y - in.origin_y)) * in.width;
+		for (int x = x1; x < x2; ++x) {
+			float f = srcA[srow + (x - in.origin_x)] / maxValue;
+			if (!(f > 0.f)) f = 0.f;
+			else if (f > 1.f) f = 1.f;
+			const size_t k = drow + (x - out.origin_x);
+			dst[k] *= f;
+			dst[dplane + k] *= f;
+			dst[2 * dplane + k] *= f;
+		}
+	}
+}
+
 // the process code that the host sees
 static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPropertySetHandle inArgs, OfxPropertySetHandle outArgs)
 {
-#if kSupportsRenderScale != 1
-    if (!renderScaleIsOne(inArgs)) {
+    if (renderScaleRefused(inArgs)) {
         return kOfxStatFailed;
     }
-#endif
 	ContextData contextData;
 	setContextData(contextData, instance, inArgs, outArgs, pluginIndex);
 
-	// get the render window and the time from the inArgs
+	// get the time from the inArgs (the render window is not used: tiles are not supported, and
+	// the whole output image is rendered)
 	OfxTime time;
-	OfxRectI renderWindow;
 	OfxStatus status = kOfxStatOK;
 
 	gPropHost->propGetDouble(inArgs, kOfxPropTime, 0, &time);
-	double time_step = 1.f;
-	gPropHost->propGetIntN(inArgs, kOfxImageEffectPropRenderWindow, 4, &renderWindow.x1);
 
 	// retrieve any instance data associated with this effect
 	MyInstanceData *myData = getMyInstanceData(instance);
@@ -943,8 +1005,6 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 
 		OfxPointD renderScale = {1., 1.};
 		gPropHost->propGetDoubleN(inArgs, kOfxImageEffectPropRenderScale, 2, &renderScale.x);
-		OfxRectI renderWindow;
-		gPropHost->propGetIntN(inArgs, kOfxImageEffectPropRenderWindow, 4, &renderWindow.x1);
 
 		myData->sequenceDataP->time = time;
 		myData->sequenceDataP->downsample_x = (float)renderScale.x;
@@ -953,6 +1013,9 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 		// get the input image(s); the parameters are fetched afterwards, since point parameters are
 		// relative to the first input's rectangle (the image G'MIC processes), not the output's
 		OfxRectI firstSrcRect = dstRect;
+		double firstSrcPAR = 1.;
+		bool firstSrcPremultiplied = false;
+		gPropHost->propGetDouble(outputImg, kOfxImagePropPixelAspectRatio, 0, &firstSrcPAR);
 		int i = 0;
 		for (int p = 0; p < globalData[pluginIndex].nofParams; p++) {
 			if (globalData[pluginIndex].param[p].paramType != PT_LAYER) continue;
@@ -979,7 +1042,10 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 				}
 			}
 
-			if (i == 0 && srcRect.x2 > srcRect.x1 && srcRect.y2 > srcRect.y1) firstSrcRect = srcRect; // not an empty rectangle (point conversion divides by its size)
+			if (i == 0 && srcRect.x2 > srcRect.x1 && srcRect.y2 > srcRect.y1) {
+				firstSrcRect = srcRect; // not an empty rectangle (point conversion divides by its size)
+				gPropHost->propGetDouble(sourceImg[i], kOfxImagePropPixelAspectRatio, 0, &firstSrcPAR);
+			}
 			myData->sequenceDataP->inWorld[i].origin_x = srcRect.x1;
 			myData->sequenceDataP->inWorld[i].origin_y = srcRect.y1;
 			myData->sequenceDataP->inWorld[i].width = (srcRect.x2 - srcRect.x1);
@@ -1127,10 +1193,17 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 			customInputData[i] = true;
 
 #endif
+			// G'MIC works on straight colours: unpremultiply premultiplied inputs (the converted buffer
+			// is float planar for both 8-bit and float images, so this also covers 8-bit inputs)
+			if (propsArePremultiplied(sourceImg[i]) && customInputData[i] && myData->sequenceDataP->inWorld[i].bitDepth == 32) {
+				if (i == 0) firstSrcPremultiplied = true;
+				unpremultiplyPlanar((float*)myData->sequenceDataP->inWorld[i].data, myData->sequenceDataP->inWorld[i].width, myData->sequenceDataP->inWorld[i].height, scale);
+			}
 			i++;
 		}
 
-		getAllParamData(pluginIndex, firstSrcRect, myData, time, renderScale);
+		if (!(firstSrcPAR > 0.)) firstSrcPAR = 1.;
+		getAllParamData(pluginIndex, firstSrcRect, firstSrcPAR, myData, time, renderScale);
 
 		myData->sequenceDataP->outWorld.pixelFormat = PF_RGBA;
 		myData->sequenceDataP->outWorld.origin_x = dstRect.x1;
@@ -1180,6 +1253,22 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 		// buffer holds no valid image: fail the render instead of converting garbage
 		if (pluginProcess(myData->sequenceDataP, &globalData[pluginIndex], &contextData) != 0) {
 			throw OfxuStatusException(kOfxStatFailed);
+		}
+
+		// the G'MIC result has straight colours, converted here before the conversion to the output depth
+		if (customOutputData) {
+			const SequenceData* sd = myData->sequenceDataP;
+			if (firstSrcPremultiplied && !globalData[pluginIndex].inplaceProcessing && !sd->resultHasAlpha &&
+				sd->resultWidth == sd->inWorld[0].width && sd->resultHeight == sd->inWorld[0].height) {
+				// no alpha in the result: keep the look of the input composited over black (see
+				// multiplyByInputAlphaPlanar)
+				multiplyByInputAlphaPlanar(sd->outWorld, sd->inWorld[0], scale);
+			}
+			// premultiply if the output image is premultiplied: the host's value, normally the one
+			// declared in getClipPreferences
+			if (propsArePremultiplied(outputImg)) {
+				premultiplyPlanar((float*)sd->outWorld.data, sd->outWorld.width, sd->outWorld.height, scale);
+			}
 		}
 
 #if defined(CONVERT_INT_TO_FLOAT)
@@ -1475,7 +1564,6 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 	// clip properties only (thread safety, frame threading, multi-resolution and multiple clip
 	// PARs/depths are effect properties, set in describe())
 	gPropHost->propSetInt(props, kOfxImageEffectPropSupportsTiles, 0, 0);
-	gPropHost->propSetInt(props, kOfxImageEffectPropTemporalClipAccess, 0, 1);
 
 	// fetch the parameter set from the effect
 	OfxParamSetHandle paramSet;
@@ -1590,7 +1678,6 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 			}
 			gPropHost->propSetString(props, kOfxImageEffectPropSupportedComponents, 0, kOfxImageComponentRGBA);
 			gPropHost->propSetInt(props, kOfxImageEffectPropSupportsTiles, 0, 0);
-			gPropHost->propSetInt(props, kOfxImageEffectPropTemporalClipAccess, 0, 1);
 			l++;
 			continue;
 		} else if (param.paramType == PT_TOPIC_START) {	
@@ -1727,7 +1814,6 @@ static OfxStatus describe(int pluginIndex, OfxImageEffectHandle effect)
 	gPropHost->propSetInt(effectProps, kOfxImageEffectPropSupportsTiles, 0, 0);
 	gPropHost->propSetInt(effectProps, kOfxImageEffectPluginPropHostFrameThreading, 0, 0);
 	gPropHost->propSetInt(effectProps, kOfxImageEffectPropSupportsMultiResolution, 0, 0);
-	gPropHost->propSetInt(effectProps, kOfxImageEffectPropTemporalClipAccess, 0, 1);
 
 	const char *path = NULL;
 	gPropHost->propGetString(effectProps, kOfxPluginPropFilePath, 0, &path);

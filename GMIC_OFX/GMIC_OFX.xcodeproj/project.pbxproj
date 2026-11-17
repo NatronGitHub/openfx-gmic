@@ -35,7 +35,7 @@
 		1E31EFE8205EE1170025144C /* gmic_plugin.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1E31EFE4205EE1170025144C /* gmic_plugin.cpp */; };
 		1E31EFF2205EE1470025144C /* gmic_parser.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1E31EFE9205EE1460025144C /* gmic_parser.cpp */; };
 		1E31EFF3205EE1470025144C /* RFX_StringUtils.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1E31EFF0205EE1470025144C /* RFX_StringUtils.cpp */; };
-		1E31F005205EEDAB0025144C /* gmic_libc.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1E31F000205EEDAB0025144C /* gmic_libc.cpp */; };
+		1E31F005205EEDAB0025144C /* gmic_plugin_call.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1E31F000205EEDAB0025144C /* gmic_plugin_call.cpp */; };
 		1E31F006205EEDAB0025144C /* gmic.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1E31F001205EEDAB0025144C /* gmic.cpp */; };
 		1E31F007205EEEC90025144C /* GMIC.png in CopyFiles */ = {isa = PBXBuildFile; fileRef = 1E31EFB1205EA3340025144C /* GMIC.png */; };
 		1E31F009205EF1A60025144C /* RFX_FileUtils.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1E31F008205EF1A60025144C /* RFX_FileUtils.cpp */; };
@@ -110,7 +110,7 @@
 		1E31EFF1205EE1470025144C /* RFX_StringUtils.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = RFX_StringUtils.h; sourceTree = "<group>"; };
 		1E31EFFE205EEDAA0025144C /* gmic_stdlib.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = gmic_stdlib.h; sourceTree = "<group>"; };
 		1E31EFFF205EEDAB0025144C /* gmic.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = gmic.h; sourceTree = "<group>"; };
-		1E31F000205EEDAB0025144C /* gmic_libc.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = gmic_libc.cpp; sourceTree = "<group>"; };
+		1E31F000205EEDAB0025144C /* gmic_plugin_call.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = gmic_plugin_call.cpp; sourceTree = "<group>"; };
 		1E31F001205EEDAB0025144C /* gmic.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = gmic.cpp; sourceTree = "<group>"; };
 		1E31F002205EEDAB0025144C /* gmic_stdlib_gmic.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = gmic_stdlib_gmic.h; sourceTree = "<group>"; };
 		1E31F003205EEDAB0025144C /* CImg.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = CImg.h; sourceTree = "<group>"; };
@@ -141,7 +141,7 @@
 			isa = PBXGroup;
 			children = (
 				1E31F003205EEDAB0025144C /* CImg.h */,
-				1E31F000205EEDAB0025144C /* gmic_libc.cpp */,
+				1E31F000205EEDAB0025144C /* gmic_plugin_call.cpp */,
 				1E31F004205EEDAB0025144C /* gmic_libc.h */,
 				1E31F002205EEDAB0025144C /* gmic_stdlib_gmic.h */,
 				1E31EFFE205EEDAA0025144C /* gmic_stdlib.h */,
@@ -333,7 +333,7 @@
 				1E31EFF3205EE1470025144C /* RFX_StringUtils.cpp in Sources */,
 				1E31EFF2205EE1470025144C /* gmic_parser.cpp in Sources */,
 				1E31F006205EEDAB0025144C /* gmic.cpp in Sources */,
-				1E31F005205EEDAB0025144C /* gmic_libc.cpp in Sources */,
+				1E31F005205EEDAB0025144C /* gmic_plugin_call.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
