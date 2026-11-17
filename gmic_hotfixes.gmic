@@ -1161,3 +1161,164 @@ elif $py>1 py=1
 fi
 rep_pstrk $px,$py,$3%,$4%,$5%,$6,$7,$8,255
 if $7 * 255 fi
+
+#@hotfix linify ee9862d9ad15b2b6 85c920355db5734d
+# Linify fails with Preview Progression on (the default) when no display is available ("Command
+# 'resize': Invalid argument '0,0,1,3,2'"): the progress is drawn into a window that could not
+# be opened. The fix only draws it when the window is visible.
+# https://github.com/GreycLab/gmic/issues/223.
+# From src/gmic_stdlib.gmic; fix: 'dbg={narg("$_debug")&&{*}}' and 'if ($dbg,'.
+linify : check "${1=40}>=0 && $1<=100 && ${2=2}>=0 && ${3=40%}>0 && ${4=10}>=0 && isint(${5=24},1) && isbool(${6=0})"
+  e[^-1] "Apply linify effect to image$?, with density $1, spreading $2, resolution $3, line opacity $4,
+          line precision $5 and "${"arg0 $6,subtractive,additive"}" mode."
+  foreach {
+    remove_opacity nm={n}
+    100%,100%,1,{s},$6?0:255
+    if {0,w>h} rs[0] {ispercentage($3)?max(1,$3*w):min(w,$3)}
+    else rs[0] ,{ispercentage($3)?max(1,$3*h):min(h,$3)}
+    fi
+    n[0] 0,100
+    if narg($_debug)" && "!{*,w} w[] ${-fitscreen[]\ {1,[w,h]}} fi
+    dbg={narg("$_debug")&&{*}}
+    eval "
+      is_in(ind,P) = (P[0]>=0 && P[0]<w#ind && P[1]>=0 && P[1]<h#ind);
+      const add = $6;
+      const density = add?100 - $1:$1;
+      const spreading = max(0.1,$2);
+      const opacity = $4;
+      const precision = $5;
+      const om2add = 1 - 2*add;
+
+      fact = [ w/w#0, h/h#0,1,1 ];
+      nb_lines = 0;
+      ref0 = add?iM#0:im#0;
+      do (
+        S = stats(#0);
+        P0 = add?[ S[8],S[9],0,S[11] ]:[ S[4],S[5],0,S[7] ]; # coords of min or max intensity
+        ref = S[add];
+        best_ang = best_avg = add?0:inf;
+        repeat (precision,k,
+          ang = u(360)*pi/180;
+          dP = [ cos(ang), sin(ang),0,0 ];
+          dP/=max(abs(dP));
+          N = avg = 0;
+          P = P0; while (is_in(#0,P), avg+=i(#0,P); ++N; P+=dP);
+          P = P0; while (is_in(#0,P), avg+=i(#0,P); ++N; P-=dP);
+          avg/=N;
+          if (add?(avg>best_avg):(avg<best_avg), best_avg = avg; best_ang = ang);
+        );
+        dP = [ cos(best_ang), sin(best_ang),0,0 ];
+        dP/=max(abs(dP));
+        P = P0; while (is_in(#0,P), i(#0,P)+=om2add*spreading; P+=dP);
+        P = P0; while (is_in(#0,P), i(#0,P)+=om2add*spreading; P-=dP);
+        P = P0*fact; while (is_in(#1,P), i(#1,P)-=om2add*opacity*spreading; P+=dP);
+        P = P0*fact; while (is_in(#1,P), i(#1,P)-=om2add*opacity*spreading; P-=dP);
+        if (!(nb_lines%250),
+          progress = density==ref0?100:round(100*(ref - ref0)/(density - ref0));
+          run('progress ',v2s(progress));
+          if ($dbg,
+            run('+c[1] 0,255 r. {*,w},{*,h},1,3,2 to. ',v2s(progress),'%,1%,1%,5%,1 w. -1,-1,0 rm.')
+          );
+        );
+        ++nb_lines;
+        breakpoint();
+      _(while), add?(ref>density):(ref<density))"
+    k. c 0,255 => $nm
+  }
+
+#@hotfix fx_intarsia 142d6e4e5824c8d0 f2c3bffd2bbfb2e0
+# Intarsia fails with the default parameters ("Command 'input': File 'left"', format does not
+# take any input options"): '${arg0\ $5,\"Top left\",...}' is cut at the first space.
+# https://github.com/GreycLab/gmic/issues/224.
+# From src/gmic_stdlib.gmic, with the lines continued by '\' joined as in the built-in
+# definition (the checksums are of that form); fix: 'starting=${"arg0 $5,\"Top left\",...""}',
+# the form of linify's '${"arg0 $6,subtractive,additive"}'.
+fx_intarsia :
+  to_rgb
+  +foreach {
+    nm=${gui_layer_name.}
+
+    # Constrain image for size and number of colors, and index it with colormap.
+    if max(w,h)>$3 rs $3,$3 fi
+    +colormap 0
+    if w>$4 rm. +colormap $4,1 fi
+    round[1] index[0] [1]
+
+    # Output header and title.
+    0 => $nm ('{b}') f. "x?i:i>=97 && i<=122?i - 32:i" image_basename={t} rm[-2,-1]
+    ('"<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\"\n\"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\">\n<html xmlns=\"http://www.w3.org/1999/xhtml\" xml:lang=\"en\" lang=\"en\">\n<head></head><body bgcolor=\"#FFFDFF\"><center><font size=\"-1\">\n<h2>"$image_basename" ("{0,w}x{0,h}")</h2>\n<table cellpadding=\"8\"><tr><td>\n<table cellpadding=\"4\">\n"')
+
+    # Render image of colors.
+    0 => "$2" image_name={b} rm.
+    nb_cols={1,w}
+    repeat $nb_cols {
+      color={1,I($>)}
+      R,G,B=$color
+      ('${dec2hex\ {$R*65536+$G*256+$B}}') -. {'0'} r. 6,1,1,1,0,0,1,0 +. {'0'}
+      f. i>=_'a'" && "i<=_'z'?i+_'A'-_'a':i
+      hcolor={t} rm.
+      48,32,1,4 fc. $color,255 frame. xy,1,0,0,0,255 o. "$1/"${image_name}_$>.png rm.
+      ('"<tr><td><b>Color "$>"</b></td><td><img src=\""${image_name}_$>.png"\" ></td><td>#"$hcolor"</td></tr>\n"')
+    }
+    ('"</table>\n</td><td>"')
+
+    # Render result and overview images.
+    starting=${"arg0 $5,\"Top left\",\"Top right\",\"Bottom left\",\"Bottom right\""}
+    label=${arg0\ $6,Row,Column}
+    if $6 dir0="T &#8594; B" dir1="B &#8594; T" else dir0="L &#8594; R" dir1="R &#8594; L" fi
+    dir:=arg0(2*$5+$6,0,0,1,0,0,1,1,1)
+
+    +map[0] [1]
+    +fx_intarsia_preview. ${1-7},63 drgba.
+    rs.. 200,200,1,2
+    to_rgba[-2,-1] frame[-2,-1] xy,1,0,0,0,255 frame[-2,-1] y,20,0,0,0,0
+    t.. "Result",0,0,16,1,0,0,0,255
+    t. "Ordering overview",0,0,16,1,0,0,0,255
+    frame[-2,-1] xy,20,0,0,0,0
+
+    o.. "$1/"${image_name}_A.png
+    o. "$1/"${image_name}_B.png
+    rm[-2,-1]
+
+    ('"<table><tr><td><img src=\""${image_name}_A.png"\" ></td></tr><tr><td>""<img src=\""${image_name}_B.png"\" ></td></tr></table></td></tr></table>\n"')
+    if $7 ('"<p><b>Additional comments:</b><br/><textarea cols=\"80\" rows=\"10\"
+             placeholder=\"Enter comments here...\"></textarea></p>\n"') fi
+    ('"<p><b>Starting point:</b> "$starting"          <b>Orientation:</b> "$label" by "$label"</p>\n"')
+    rm[1]
+
+    # Output geometry.
+    ('"<table cellspacing=\"0\" cellpadding=\"4\" border=\"1\">\n"')
+
+    _fx_intarsia[0] $5,$6,0
+    +l[0] {
+      s y
+      foreach {
+        if $>%2 mirror. x fi
+        im:=im compress_rle 0,0 rows 6,100%
+        ('"<tr><td valign=\"top\"><b>"$label" "{1+$>}"</b></td><td valign=\"top\">"${dir$dir}"</td><td>\n"')
+        i=0 n=0 do
+          val={0,i[$i]} i+=1
+          if $val>=0 occ=1
+          else
+            occ:=-$val
+            val={0,i[$i]}
+            if $val<0 val=0 else i+=1 fi
+          fi
+          val+=$im
+          ('"color:<b>"$val"</b> "$occ')
+          if {0,$i<h} ('", "') fi
+          n+=1
+          if !($n%8) ('"<br/>\n"') fi
+        while $i<h#0
+        ('"</td></tr>\n"')
+        rm[0] a x
+        dir:=!$dir
+      }
+      a x
+    }
+    rm[0]
+
+    ('"</table>\n</font></center>\n</body>"')
+    a x ot "$1/$2"
+    rm
+  }
