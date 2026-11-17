@@ -268,29 +268,44 @@ static void gmicGetDefinitions(const string& content, std::map<string, string>& 
 	}
 }
 
+// FNV-1a 64-bit hash of a definition, as 16 hexadecimal digits
+static string gmicChecksum(const string& def)
+{
+	unsigned long long h = 14695981039346656037ULL;
+	for (size_t j = 0; j < def.size(); ++j) {
+		h = (h ^ (unsigned char)def[j]) * 1099511628211ULL;
+	}
+	char s[17];
+	snprintf(s, sizeof(s), "%016llx", h);
+	return s;
+}
+
 // The hot fixes that apply to the G'MIC standard library stdlib. Each block of gmic_hotfixes.gmic
-// starts with '#@hotfix <command> <checksum> [<callee>:<checksum>...]': the FNV-1a 64-bit hashes of
-// the built-in definitions of the command it fixes and of the commands the fix relies on. A block
-// is used only if all of them are unchanged, otherwise the fix must be reviewed.
+// starts with '#@hotfix <command> <original> <fixed> [<callee>:<checksum>...]': the FNV-1a 64-bit
+// hashes of the built-in definition the fix was made from, of the fixed definition (the block's
+// own), and of the built-in definitions of the commands the fix relies on. A block is applied if
+// the built-in command is the original one and the callees are unchanged, skipped silently if the
+// built-in command already is the fixed one (fixed upstream), and otherwise skipped with a warning.
 static string gmicGetHotfixes(const string& stdlib)
 {
 	static const string marker = "#@hotfix ";
 	vector<vector<std::pair<string, string> > > checks; // per block: (command, checksum)
-	vector<string> texts;
+	vector<string> fixed, texts; // per block: checksum of the fixed definition, block text
 	std::istringstream ss(string((const char*)gmic_hotfixes));
 	string line;
 	while (getline(ss, line)) {
 		if (line.compare(0, marker.size(), marker) == 0) {
 			std::istringstream ls(line.substr(marker.size()));
 			vector<std::pair<string, string> > check;
-			string name, checksum, callee;
-			ls >> name >> checksum;
+			string name, checksum, fixedChecksum, callee;
+			ls >> name >> checksum >> fixedChecksum;
 			check.push_back(std::make_pair(name, checksum));
 			while (ls >> callee) {
 				const string::size_type colon = callee.find(':');
 				check.push_back(std::make_pair(callee.substr(0, colon), colon == string::npos ? string() : callee.substr(colon + 1)));
 			}
 			checks.push_back(check);
+			fixed.push_back(fixedChecksum);
 			texts.push_back(string());
 		}
 		if (!texts.empty()) {
@@ -306,22 +321,30 @@ static string gmicGetHotfixes(const string& stdlib)
 	gmicGetDefinitions(stdlib, defs);
 	string hotfixes;
 	for (size_t i = 0; i < checks.size(); ++i) {
+		const string& command = checks[i][0].first;
+		std::map<string, string> own;
+		own[command];
+		gmicGetDefinitions(texts[i], own);
+		const string ownChecksum = gmicChecksum(own[command]);
+		if (own[command].empty() || ownChecksum != fixed[i]) {
+			fprintf(stderr, "openfx-gmic: Warning: hot fix for the G'MIC command '%s' not applied: the fixed definition has checksum %s, but its '#@hotfix' line says '%s', update it in gmic_hotfixes.gmic\n",
+			        command.c_str(), ownChecksum.c_str(), fixed[i].c_str());
+			continue;
+		}
+		if (!defs[command].empty() && gmicChecksum(defs[command]) == ownChecksum) {
+			continue; // already fixed in the built-in G'MIC (then the callees do not matter)
+		}
 		bool ok = true;
 		for (size_t k = 0; k < checks[i].size(); ++k) {
 			const string& name = checks[i][k].first;
 			const string& expected = checks[i][k].second;
 			const string& def = defs[name];
-			unsigned long long h = 14695981039346656037ULL;
-			for (size_t j = 0; j < def.size(); ++j) {
-				h = (h ^ (unsigned char)def[j]) * 1099511628211ULL;
-			}
-			char found[17];
-			snprintf(found, sizeof(found), "%016llx", h);
+			const string found = gmicChecksum(def);
 			// a callee given without a checksum only has to exist
 			if (def.empty() || ((k == 0 || !expected.empty()) && expected != found)) {
 				ok = false;
 				fprintf(stderr, "openfx-gmic: Warning: hot fix for the G'MIC command '%s' not applied: the built-in definition of '%s' %s (checksum %s, the fix is for %s), review it in gmic_hotfixes.gmic\n",
-				        checks[i][0].first.c_str(), name.c_str(), def.empty() ? "is missing" : "changed", found, expected.c_str());
+				        command.c_str(), name.c_str(), def.empty() ? "is missing" : "changed", found.c_str(), expected.c_str());
 			}
 		}
 		if (ok) {
@@ -985,6 +1008,12 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	bool preview = hasContent && (effectData.previewOnly || PAR_VAL(PARAM_PREVIEW) > 0);
 	// the custom commands, set in the options by fullCommand(): must stay valid until the G'MIC calls return
 	string customCommands;
+	// customCommands goes out of scope: reset the pointer on return, also when G'MIC throws
+	struct ResetCustomCommands {
+		gmic_interface_options& options;
+		explicit ResetCustomCommands(gmic_interface_options& o) : options(o) {}
+		~ResetCustomCommands() { options.custom_commands = NULL; }
+	} resetCustomCommands(mySequenceDataP->options);
 	string cmd = fullCommand(sequenceDataP, globalDataP, nofImages, preview, customCommands);
 	bool aborted = false;
 #ifdef OFX_PLUGIN
@@ -1009,7 +1038,6 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 			errmsg += " (with the preview command: " + string(mySequenceDataP->options.error_message_buffer) + ")";
 		}
 	}
-	mySequenceDataP->options.custom_commands = NULL; // customCommands goes out of scope
 
 	// Only the host tells whether the render was aborted: G'MIC's 'quit' command also sets its
 	// abort flag, and then G'MIC's result (the images at that point) is used as usual.
