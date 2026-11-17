@@ -68,7 +68,7 @@
 // - why doesn't "mineral mosaic" show the note after the separator?
 //
 // version, name and description for the plugin
-#define	MAJOR_VERSION		1
+#define	MAJOR_VERSION		2
 #define	MINOR_VERSION		0
 #define	BUILD_VERSION		0
 
@@ -190,6 +190,39 @@ string get_gmic_rc_path()
 // parameters added by pluginSetup besides the filter's own: Input, 4 layers, Command, the
 // "Advanced Options" group (start and end) and its 7 parameters
 static const int kNofExtraParams = 1 + 4 + 1 + 2 + 7;
+
+// Ignore Alpha (see fullCommand): _openfx_gmic_alpha_split stores the alpha channel of every image
+// (an empty image for images without alpha) in the global variable _openfx_gmic_alpha, and
+// _openfx_gmic_alpha_restore gives them back to the gray or RGB results of the same size (a result
+// with its own alpha is kept as is), then frees the stored alphas:
+// - a single input: every such result gets a copy of its alpha (e.g. Channels to Layers);
+// - as many results as inputs: each result gets the alpha of the input at the same position;
+// - several inputs and another number of results: only the first result (the active layer's)
+//   gets the first alpha, the others can't be matched to an input.
+// Results of another size (frames, rotation, crop, resize...) stay without alpha, i.e. opaque.
+// The positional case goes from the last result, so that appending (which removes the alpha
+// image) does not shift the alphas still to be appended.
+static const char* const kIgnoreAlphaCommands =
+	"\n_openfx_gmic_alpha_split :\n"
+	"  n=$!\n"
+	"  repeat $n {\n"
+	"    if s#$>==2 +channels[$>] 1 channels[$>] 0\n"
+	"    elif s#$>>=4 +channels[$>] 3 channels[$>] 0,2\n"
+	"    else i 0 fi\n"
+	"  }\n"
+	"  store[$n--1] _openfx_gmic_alpha\n"
+	"_openfx_gmic_alpha_restore :\n"
+	"  n=$! i $_openfx_gmic_alpha _openfx_gmic_alpha=\n"
+	"  if $!-$n==1\n"
+	"    repeat $n { if w#$>==w#$n&&h#$>==h#$n&&d#$>==d#$n&&(s#$>==1||s#$>==3) a[$>] [$n],c fi }\n"
+	"  else\n"
+	"    m={$!-$n==$n?$n:min($n,1)}\n"
+	"    repeat $m {\n"
+	"      k={$m-1-$>} a={$n+$k}\n"
+	"      if w#$k==w#$a&&h#$k==h#$a&&d#$k==d#$a&&(s#$k==1||s#$k==3) a[$k,$a] c fi\n"
+	"    }\n"
+	"  fi\n"
+	"  if $!>$n rm[$n--1] fi\n";
 
 // Hot fixes for bugs in the G'MIC standard library (gmic_hotfixes.gmic, embedded by the build as
 // the null-terminated array gmic_hotfixes[]): corrected command definitions, passed to G'MIC as
@@ -412,6 +445,18 @@ void* unflattenCustomSequenceData(void* /*customSequenceDataP*/, int /*flatSize*
 
 int pluginSetdown(GlobalData* /*globalDataP*/, ContextData* /*contextDataP*/) { return 0; }
 
+// Help note on Ignore Alpha for the filters with layer inputs, whose results can't always be
+// matched to an input (see kIgnoreAlphaCommands). The parameter's hint covers the general case.
+static string ignoreAlphaNote(const EffectData& effectData)
+{
+	if (!effectData.multiLayer) return string();
+	return "\n\nIgnore Alpha: the alpha of each input is put back on the gray or RGB result at the same "
+		"position (a result with its own alpha is kept as is). With only Source connected, every result "
+		"gets Source's alpha. With several inputs connected, if the filter returns a different number of "
+		"images than it got, only the first result gets the first input's alpha. Results whose size "
+		"changed (frames, rotation, crop, resize...) don't get an alpha back.";
+}
+
 int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 {
 	globalDataP->scale = 255.f;
@@ -575,6 +620,8 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 	globalDataP->param[p] = Parameter("Resize Mode", "", PT_SELECT, 0, 5, 1, 0, 0, 0, "Fixed (Inplace)|Dynamic|Downsample 1/2|Downsample 1/4|Downsample 1/8|Downsample 1/16");
 	++p;
 	globalDataP->param[p] = Parameter("Ignore Alpha", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
+	globalDataP->param[p].hint = "Run the filter on the RGB channels only, then give the inputs' alpha back to the results. "
+		"Results of another size than the input (frames, rotation, crop, resize...) are opaque.";
 	++p;
 	globalDataP->param[p] = Parameter("Preview/Draft Mode", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
 	if (!hasContent || effectData.command == effectData.preview_command) {
@@ -601,7 +648,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 	strReplace(d, "<", "(");
 	strReplace(d, ">", ")");
 //	strReplace(d, "\n", "\\n");
-	globalDataP->pluginInfo.description = d + "\n" + PLUGIN_DESCRIPTION;
+	globalDataP->pluginInfo.description = d + ignoreAlphaNote(effectData) + "\n" + PLUGIN_DESCRIPTION;
 
 	return 0;
 }
@@ -671,7 +718,7 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, bool preview)
 // The whole command line: the filter's command (main or preview), with the variables G'MIC-Qt
 // defines, the output layer selection, Ignore Alpha, the Resize Mode, verbosity and seed. Sets the
 // custom commands of the options: customCommands (the filter's #@gui lines, the hot fixes for G'MIC
-// bugs, and the Ignore Alpha command), which must outlive the G'MIC call.
+// bugs, and the Ignore Alpha helpers), which must outlive the G'MIC call.
 static
 std::string
 fullCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, unsigned int nofImages, bool isPreview, string& customCommands)
@@ -685,25 +732,27 @@ fullCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, unsigned int n
 #endif
 	string cmd = gmicCommand(sequenceDataP, globalDataP, isPreview);
 
+	// Ignore Alpha: the alpha channels of all the images are split off and stored, the command runs
+	// on all the RGB images at once (multi-input filters see every layer, extra results are kept),
+	// then the results of the same size get the alpha back (see kIgnoreAlphaCommands: results of
+	// another size are opaque). The command stays at the top level, as with Ignore Alpha off and in
+	// G'MIC-Qt: inside a custom command, $1, $*, $#... in text parameters would be substituted, and
+	// apply_channels processed the images one by one, keeping a single result for each.
+	if (PAR_VAL(PARAM_NOALPHA) > 0.f) {
+		customCommands += kIgnoreAlphaCommands;
+		cmd = "-_openfx_gmic_alpha_split " + cmd + " -_openfx_gmic_alpha_restore";
+	}
+
 	if (PAR_VAL(PARAM_OUTPUT) == 0.f) {
 		// G'MIC >= 2.9 renamed gimp_merge_layers to gui_merge_layers ("Unknown command" otherwise)
 		cmd += " -gui_merge_layers";
 	}
 
 	// images[] has MAX_NOF_LAYERS entries (gmic_plugin_call() fails with more results):
-	// keep at most that many (the last ones, since the Output Layer is counted from the end).
+	// keep at most that many, the first ones (Output Layer "Layer -k" is image [k], see pluginProcess).
 	// Some filters return more by default, e.g. Fade Layers, Morph Layers, Tiles to Layers.
-	cmd += " -if {$!>" + intToString(MAX_NOF_LAYERS) + "} -keep[-" + intToString(MAX_NOF_LAYERS) + "--1] -fi";
+	cmd += " -if {$!>" + intToString(MAX_NOF_LAYERS) + "} -keep[0-" + intToString(MAX_NOF_LAYERS - 1) + "] -fi";
 
-	// Ignore Alpha: apply_channels takes the command as a quoted string, which it un-escapes
-	// again, so quoting the command (whose text arguments are already escaped) breaks any text
-	// containing a quote or backslash. Define it as a custom command and apply that instead.
-	if (PAR_VAL(PARAM_NOALPHA) > 0.f) {
-		strReplace(cmd, "\n", " ");
-		strReplace(cmd, "\r", " ");
-		customCommands += "\n_openfx_gmic_cmd :\n  " + cmd + "\n";
-		cmd = "-apply_channels \"_openfx_gmic_cmd\",rgb";
-	}
 	mySequenceDataP->options.custom_commands = customCommands.c_str();
 	
 	// Variables that G'MIC-Qt defines for the filters (GmicProcessor.cpp, FilterThread.cpp), with
@@ -999,11 +1048,12 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		// not reported as a failure there.
 		err = PF_Err_INTERNAL_STRUCT_DAMAGED;
 	} else if (result == 0) {
-		int idx = (int)PAR_VAL(PARAM_OUTPUT);
-		if (idx > 0) {
-			idx = nofImages - idx;
-			if (idx < 0) idx = 0;
-		}
+		// Output Layer: 0 is Merged (a single image), k > 0 is "Layer -(k-1)", i.e. image [k-1],
+		// counted from the top of the stack like the inputs (Source = [0] = "Layer 0", the active
+		// layer in G'MIC-Qt, then the "Layer -1" input = [1]...). Past the last result: the last one.
+		int idx = (int)PAR_VAL(PARAM_OUTPUT) - 1;
+		if (idx < 0) idx = 0;
+		if (nofImages > 0 && (unsigned)idx >= nofImages) idx = (int)nofImages - 1;
 
 		if (nofImages == 0 || (unsigned)idx >= nofImages || images[idx].spectrum == 0 || !images[idx].data) {
 			result = -1;
@@ -1114,7 +1164,7 @@ void getPluginInfo(int pluginIndex, PluginInfo& pluginInfo)
 	d = strToAscii(d);
 	strReplace(d, "<", "(");
 	strReplace(d, ">", ")");
-	pluginInfo.description = d + "\n\n" + PLUGIN_DESCRIPTION;
+	pluginInfo.description = d + ignoreAlphaNote(pluginGlobalData.pluginData[pluginIndex]) + "\n\n" + PLUGIN_DESCRIPTION;
 	pluginInfo.major_version = MAJOR_VERSION;
 	pluginInfo.minor_version = MINOR_VERSION;
 }
