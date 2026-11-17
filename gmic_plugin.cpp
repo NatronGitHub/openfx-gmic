@@ -75,8 +75,8 @@
 #define PLUGIN_DESCRIPTION	"Wrapper for the G'MIC framework (http://gmic.eu) written by Tobias Fleischer (http://www.reduxfx.com) and Frederic Devernay.";
 
 #ifdef OFX_PLUGIN
-#define PLUGIN_NAME	        "GMIC"
-#define PLUGIN_CATEGORY		"GMIC"
+#define PLUGIN_NAME	        "G'MIC"
+#define PLUGIN_CATEGORY		"G'MIC"
 #define PLUGIN_UNIQUEID		"GMIC"
 #else
 // AE plugin needs these with spaces to replace them with proper effect names in the gmic_ae_tool
