@@ -1126,9 +1126,11 @@ static void premultiplyPlanar(float* data, int width, int height, float maxValue
 // would be opaque everywhere, with hard bright edges where the input was transparent. Before the
 // premultiplication handling, G'MIC got the premultiplied colours, i.e. the input composited over
 // black, and the result looked composited over black too. To keep that look, the colours are
-// multiplied by the main input's alpha and the output alpha stays opaque. Only done when the result
-// has the main input's size (G'MIC anchors it at the input's rectangle): out is the output buffer,
-// in the main input's buffer, both in pixel coordinates with rows top-down.
+// multiplied by the main input's alpha and the output alpha stays opaque. The result is resized to
+// the input's size at the end of the G'MIC command: only gray or RGB results that had the processed
+// input's size come here without alpha, the others get an opaque alpha before that resize, since
+// the input alpha wouldn't line up with them (see kOpaqueResizedCommand in gmic_plugin.cpp). out is the
+// output buffer, in the main input's buffer, both in pixel coordinates with rows top-down.
 static void multiplyByInputAlphaPlanar(const World& out, const World& in, float maxValue)
 {
 	if (!out.data || !in.data) return;
@@ -1470,8 +1472,7 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 		// the G'MIC result has straight colours, converted here before the conversion to the output depth
 		if (customOutputData) {
 			const SequenceData* sd = myData->sequenceDataP;
-			if (firstSrcPremultiplied && !sd->resultHasAlpha &&
-				sd->resultWidth == sd->inWorld[0].width && sd->resultHeight == sd->inWorld[0].height) {
+			if (firstSrcPremultiplied && !sd->resultHasAlpha) {
 				// no alpha in the result: keep the look of the input composited over black (see
 				// multiplyByInputAlphaPlanar)
 				multiplyByInputAlphaPlanar(sd->outWorld, sd->inWorld[0], scale);
