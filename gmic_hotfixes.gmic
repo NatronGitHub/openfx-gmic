@@ -10,25 +10,37 @@
 #                definition replaces the built-in one, also when the command is called by
 #                another one (e.g. rep_ncee from fx_ncee).
 #
-#  Format      : '#@hotfix <command> <checksum> [<callee>:<checksum>...]' starts a block,
-#                which ends at the next '#@hotfix' line. <checksum> is the FNV-1a 64-bit
-#                hash of the built-in definition the fix was made from, as G'MIC reads it
-#                (comments and blank lines removed, lines trimmed, each followed by a
-#                newline). The optional callees are built-in commands that the fix relies
-#                on (e.g. one it calls instead of a misspelt one), with their checksums.
-#                The plug-in applies a block only if all these built-in definitions still
-#                have these checksums, and otherwise prints a warning with the checksum it
-#                found (the CI describe test fails on it): when G'MIC changes one of these
-#                commands, review the fix, and drop it once upstream has fixed the bug.
+#  Format      : '#@hotfix <command> <original> <fixed> [<callee>:<checksum>...]' starts a
+#                block, which ends at the next '#@hotfix' line. The checksums are FNV-1a
+#                64-bit hashes of command definitions as G'MIC reads them (comments and
+#                blank lines removed, lines trimmed, each followed by a newline): <original>
+#                is the one of the built-in definition the fix was made from, and <fixed>
+#                the one of the block's own (fixed) definition. The optional callees are
+#                built-in commands that the fix relies on (e.g. one it calls instead of a
+#                misspelt one), with their checksums. At load, the plug-in compares the
+#                built-in definition of <command> with both ("if the fix is already there,
+#                don't apply it"):
+#                - it is <original>: the block is applied if every callee still has its
+#                  checksum (the bug is still there, and the fix still fits);
+#                - it is <fixed>: upstream has made the same fix, and the block is skipped
+#                  silently (whatever the callees);
+#                - anything else (or a callee changed or missing): the block is skipped with
+#                  a warning giving the checksum found, on which the CI describe test fails.
+#                  Review the fix against the new G'MIC sources: drop it if upstream fixed
+#                  the bug in another way, otherwise update the definition and checksums.
+#                The plug-in also warns, and skips the block, if <fixed> is not the checksum
+#                of the block's definition (it was edited without updating its line).
 #
 #                The '#@openfx_gmic_hotfixes' line gives the G'MIC version (GMICVER in the
-#                Makefile) these fixes were written for: the build fails for another version.
-#                When bumping GMICVER, check each fix against the new sources, remove the
-#                fixed ones, and update the checksums and this version.
+#                Makefile) these fixes were last reviewed against: the build warns (and
+#                does not fail) for another version, since the checks above already find
+#                every fix that needs a review. When bumping GMICVER, remove the blocks that
+#                upstream has fixed (dead weight from then on), review the others if the
+#                describe test warns, and update this version.
 #
 #@openfx_gmic_hotfixes 4.0.7
 
-#@hotfix denoise_patchpca b80cb9ad2b4df332
+#@hotfix denoise_patchpca b80cb9ad2b4df332 9c933f7616da9abf
 # Smooth [Patch-PCA] (fx_smooth_patchpca) reads pY[k] out of bounds whenever every eigenvalue
 # passes the threshold, so that k reaches size(pY): on a flat (e.g. black) image, where the
 # noise estimate is 0, but also on smooth regions of natural images at a low strength, e.g.
@@ -86,7 +98,7 @@ denoise_patchpca : check "${1=1.8} && $1>=0 && isint(${2=7},1) && isint(${3=11},
     max[weights] 0.01 /[aggreg,weights] k[aggreg] => $nm
   }
 
-#@hotfix fx_recolorize 94bf1254223209cb
+#@hotfix fx_recolorize 94bf1254223209cb fcdc583edbb2eb6f
 # Colorize [Photographs] fails with two or more layers ("Unknown command '{'"): the local
 # block is opened after 'rv[0,1]'.
 # https://github.com/GreycLab/gmic/issues/220, NatronGitHub/openfx-gmic#53.
@@ -106,7 +118,7 @@ fx_recolorize :
     }
   }
 
-#@hotfix fx_rep_z_render c7fade49ea7684fb rep_z_render:24ea9b168818d76a
+#@hotfix fx_rep_z_render c7fade49ea7684fb 9c29c9a18db02bb3 rep_z_render:24ea9b168818d76a
 # Z-Time calls rep_r_render, which does not exist, instead of rep_z_render.
 # https://github.com/GreycLab/gmic-community/issues/296, NatronGitHub/openfx-gmic#53.
 # From include/reptorian.gmic (gmic-community); fix: 'rep_z_render'.
@@ -115,7 +127,7 @@ fx_rep_z_render :
   else rep_z_render $"*"
   fi
 
-#@hotfix fx_ExposureWeightMap a3b06ac24194632a Sub_BlurPyramid:5cbe9f072629234d
+#@hotfix fx_ExposureWeightMap a3b06ac24194632a 15addf502cec120a Sub_BlurPyramid:5cbe9f072629234d
 # Exposure Fusion Weight Map fails with Blur Map on: it calls sub_BlurPyramid, which is
 # defined as Sub_BlurPyramid.
 # https://github.com/GreycLab/gmic-community/issues/297, NatronGitHub/openfx-gmic#53.
@@ -144,7 +156,7 @@ fx_ExposureWeightMap :
     Sub_BlurPyramid[0]
   fi
 
-#@hotfix rep_ncee c3f584902340ae03
+#@hotfix rep_ncee c3f584902340ae03 507c3c65c62c4cc3
 # Non-Convolution Edge Extraction (fx_ncee) fails with the default RGB colour space
 # ("Unknown command ''"): $convert_colors_fwd and $convert_colors_bwd are empty for RGB.
 # https://github.com/GreycLab/gmic-community/issues/298, NatronGitHub/openfx-gmic#53.

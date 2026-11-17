@@ -137,8 +137,9 @@ FILE(GLOB GMIC_SOURCES
 
 # Hot fixes for G'MIC bugs (see gmic_hotfixes.gmic and the top-level Makefile), embedded as a
 # null-terminated byte array into gmic_hotfixes.h, in the build directory (searched first, before a
-# header left in the sources by a Makefile build). They are written for one G'MIC version: fail if
-# gmic.h is another one, so that each fix gets reviewed.
+# header left in the sources by a Makefile build). They were last reviewed for one G'MIC version:
+# warn if gmic.h is another one (not an error: the plug-in checks each fix against the built-in
+# definitions at load, see the top of gmic_hotfixes.gmic).
 SET(GMIC_HOTFIXES ${CMAKE_CURRENT_SOURCE_DIR}/gmic_hotfixes.gmic)
 SET_PROPERTY(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${GMIC_HOTFIXES} ${CMAKE_CURRENT_SOURCE_DIR}/gmic.h)
 FILE(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/gmic.h GMIC_VERSION_LINE REGEX "^#define gmic_version [0-9]+")
@@ -147,7 +148,7 @@ FILE(STRINGS ${GMIC_HOTFIXES} GMIC_HOTFIXES_VERSION_LINE REGEX "^#@openfx_gmic_h
 STRING(REGEX REPLACE "^#@openfx_gmic_hotfixes ([0-9.]+).*" "\\1" GMIC_HOTFIXES_VERSION "${GMIC_HOTFIXES_VERSION_LINE}")
 STRING(REPLACE "." "" GMIC_HOTFIXES_VERSION_NUMBER "${GMIC_HOTFIXES_VERSION}")
 IF(NOT "${GMIC_HOTFIXES_VERSION_NUMBER}" STREQUAL "${GMIC_VERSION_NUMBER}")
-  MESSAGE(FATAL_ERROR "gmic_hotfixes.gmic is for G'MIC ${GMIC_HOTFIXES_VERSION}, gmic.h is version ${GMIC_VERSION_NUMBER}: review each fix, see the top of gmic_hotfixes.gmic")
+  MESSAGE(WARNING "gmic_hotfixes.gmic was reviewed for G'MIC ${GMIC_HOTFIXES_VERSION}, gmic.h is version ${GMIC_VERSION_NUMBER}: drop the fixes that it has, and run the describe test, see the top of gmic_hotfixes.gmic")
 ENDIF()
 FILE(READ ${GMIC_HOTFIXES} GMIC_HOTFIXES_HEX HEX)
 STRING(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," GMIC_HOTFIXES_BYTES "${GMIC_HOTFIXES_HEX}")

@@ -42,10 +42,13 @@ uninstall:
 sources: $(GMICSOURCES) gmic_hotfixes.h
 
 # Hot fixes for G'MIC bugs, embedded into the plug-in as a null-terminated byte array (no string
-# literal, which MSVC limits to 16 KB per piece). They are written for one G'MIC version: fail if
-# GMICVER changed, so that each fix gets reviewed (see the top of gmic_hotfixes.gmic). The
-# gmic_hotfixes.version stamp holds GMICVER, so that 'make GMICVER=...' also redoes the check.
-# Carriage returns (Windows checkouts) are removed.
+# literal, which MSVC limits to 16 KB per piece). They were last reviewed for one G'MIC version:
+# warn if GMICVER is another one, as a reminder to drop the fixes that upstream has made. This is
+# not an error: the plug-in checks each fix against the built-in G'MIC definitions, applies it
+# only where the bug is still there, and warns (failing the CI describe test) where the code
+# changed otherwise (see the top of gmic_hotfixes.gmic). The gmic_hotfixes.version stamp holds
+# GMICVER, so that 'make GMICVER=...' also redoes the check. Carriage returns (Windows checkouts)
+# are removed.
 gmic_hotfixes.version: gmic_hotfixes_force
 	@echo '$(GMICVER)' | cmp -s - $@ || echo '$(GMICVER)' > $@
 
@@ -54,7 +57,7 @@ gmic_hotfixes_force:
 
 gmic_hotfixes.h: gmic_hotfixes.gmic gmic_hotfixes.version
 	@if ! tr -d '\r' < $< | grep -qxF '#@openfx_gmic_hotfixes $(GMICVER)'; then \
-	  echo "Error: $< is not for G'MIC $(GMICVER) (no '#@openfx_gmic_hotfixes $(GMICVER)' line): review each fix against G'MIC $(GMICVER), see the top of $<"; exit 1; \
+	  echo "Warning: $< was reviewed for another G'MIC version than $(GMICVER) (no '#@openfx_gmic_hotfixes $(GMICVER)' line): drop the fixes that G'MIC $(GMICVER) has, and run the describe test, see the top of $<"; \
 	fi
 	{ echo '// Generated from $< by the Makefile: do not edit.'; \
 	  echo 'static const unsigned char gmic_hotfixes[] = {'; \
