@@ -326,7 +326,7 @@ jobs:
           msystem: UCRT64
           update: true
           install: >-
-            git make
+            git make diffutils
             mingw-w64-ucrt-x86_64-cc mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-fftw mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-curl
