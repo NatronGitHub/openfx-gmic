@@ -284,13 +284,13 @@ static OfxPointD pointNormalisedDefault(const reduxfx::Parameter& param)
 // with the project size, and the render converts points to percent of the first input, Source
 // (getAllParamData), so that they match the overlay handles: with a Source smaller than the project,
 // or offset, the defaults fell outside it. So, when the user connects or changes the Source clip
-// (instance changed action; parameters cannot be set in render, and should only be set there or in
-// interacts), each point parameter still at its default is moved to its G'MIC default within
+// (instance changed action: parameters cannot be set in render, and should only be set in the
+// instance changed action or in interacts), each point parameter still at its default is moved to its G'MIC default within
 // Source's region of definition, as openfx-misc's Transform does with its center; so is a point that
 // the user resets to its default (or sets to it). Points don't follow Source when its size changes
 // otherwise (e.g. a Reformat upstream edited), as with openfx-misc. A point is at its default if it
 // is not animated and has the default converted with the project size and offset, with the size only
-// (Natron ignores the offset), or unconverted (hosts that don't convert it); or the value the
+// (Natron ignores the offset), or unconverted (hosts without a project size); or the value the
 // plug-in gave it at the previous change of Source, kept in POINTS_FROM_SOURCE_PARAM. Points the user
 // moved elsewhere stay where they are; an undo that brings a point back to its default is a user edit
 // too, and moves it again.
@@ -298,11 +298,14 @@ static OfxPointD pointNormalisedDefault(const reduxfx::Parameter& param)
 static bool pointIsDefault(const reduxfx::Parameter& param, OfxImageEffectHandle instance, double x, double y)
 {
 	const OfxPointD n = pointNormalisedDefault(param);
-	if (pointValueIs(x, n.x) && pointValueIs(y, n.y)) return true;
 	OfxPointD size = {0., 0.}, offset = {0., 0.};
 	OfxPropertySetHandle effectProps;
-	if (gEffectHost->getPropertySet(instance, &effectProps) != kOfxStatOK) return false;
-	if (gPropHost->propGetDoubleN(effectProps, kOfxImageEffectPropProjectSize, 2, &size.x) != kOfxStatOK || !(size.x > 0. && size.y > 0.)) return false;
+	if (gEffectHost->getPropertySet(instance, &effectProps) != kOfxStatOK ||
+		gPropHost->propGetDoubleN(effectProps, kOfxImageEffectPropProjectSize, 2, &size.x) != kOfxStatOK || !(size.x > 0. && size.y > 0.)) {
+		// no project size: the host can't have converted the default (a user point at these
+		// coordinates, a fraction of a pixel, would be taken for the default otherwise)
+		return pointValueIs(x, n.x) && pointValueIs(y, n.y);
+	}
 	if (gPropHost->propGetDoubleN(effectProps, kOfxImageEffectPropProjectOffset, 2, &offset.x) != kOfxStatOK) offset.x = offset.y = 0.;
 	return (pointValueIs(x, n.x * size.x + offset.x) && pointValueIs(y, n.y * size.y + offset.y)) ||
 		(pointValueIs(x, n.x * size.x) && pointValueIs(y, n.y * size.y));
@@ -326,6 +329,15 @@ static string pointValueToString(double v)
 	return ss.str();
 }
 
+// a finite number written by pointValueToString (other text, e.g. in a hand-edited project, would
+// read as 0)
+static bool pointValueParse(const string& s, double& v)
+{
+	if (s.empty() || s.find_first_not_of("0123456789+-.eE") != string::npos) return false;
+	v = stringToDouble(s);
+	return std::isfinite(v);
+}
+
 // POINTS_FROM_SOURCE_PARAM: "<parameter name>=<x>,<y>;" for each point the plug-in moved
 static void pointsFromSourceRead(int pluginIndex, MyInstanceData* myData)
 {
@@ -344,9 +356,12 @@ static void pointsFromSourceRead(int pluginIndex, MyInstanceData* myData)
 		const string name = item.substr(0, eq);
 		for (int i = 0; i < globalData[pluginIndex].nofParams; i++) {
 			if (globalData[pluginIndex].param[i].paramType == PT_POINT && globalData[pluginIndex].param[i].paramName == name) {
-				myData->pointFromSource[i] = true;
-				myData->pointFromSourceValue[i][0] = stringToDouble(item.substr(eq + 1, comma - eq - 1));
-				myData->pointFromSourceValue[i][1] = stringToDouble(item.substr(comma + 1));
+				double px, py;
+				if (pointValueParse(item.substr(eq + 1, comma - eq - 1), px) && pointValueParse(item.substr(comma + 1), py)) {
+					myData->pointFromSource[i] = true;
+					myData->pointFromSourceValue[i][0] = px;
+					myData->pointFromSourceValue[i][1] = py;
+				}
 			}
 		}
 	}
@@ -955,9 +970,18 @@ static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance,
 			for (int i = 0; i < globalData[pluginIndex].nofParams; i++) {
 				if (globalData[pluginIndex].param[i].paramType == PT_POINT && globalData[pluginIndex].param[i].paramName == objChanged) {
 					double x, y;
-					if (myData->param[i] && gParamHost->paramGetValue(myData->param[i], &x, &y) == kOfxStatOK &&
-						pointIsDefault(globalData[pluginIndex].param[i], instance, x, y)) {
-						pointsMoveToSource(pluginIndex, instance, myData, time, i);
+					if (myData->param[i] && gParamHost->paramGetValue(myData->param[i], &x, &y) == kOfxStatOK) {
+						if (pointIsDefault(globalData[pluginIndex].param[i], instance, x, y)) {
+							pointsMoveToSource(pluginIndex, instance, myData, time, i);
+						} else {
+							// moved elsewhere by the user: forget the value the plug-in gave it
+							pointsFromSourceRead(pluginIndex, myData);
+							if (myData->pointFromSource[i] && !(pointValueIs(x, myData->pointFromSourceValue[i][0]) &&
+								pointValueIs(y, myData->pointFromSourceValue[i][1]))) {
+								myData->pointFromSource[i] = false;
+								pointsFromSourceWrite(pluginIndex, myData);
+							}
+						}
 					}
 					break;
 				}
