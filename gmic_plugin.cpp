@@ -614,6 +614,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 				flags = 4;
 			} else if (paramType == "text") {
 				t = PT_TEXT;
+				flags = (maxValue == "1") ? 1 : 0; // text(1,...): multi-line (the parser stores the flag in maxValue)
 			} else if (paramType == "separator") {
 				t = PT_SEPARATOR;
 			} else if (paramType == "input") {

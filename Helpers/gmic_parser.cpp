@@ -158,6 +158,84 @@ static bool isPlaceholder(const string& v)
 	return false;
 }
 
+// G'MIC-Qt's unquoted(): the text between enclosing double quotes (surrounding blanks allowed),
+// else the trimmed text
+static string textUnquoted(const string& s)
+{
+	const string t = strTrim(s, " \t\r\n\v\f");
+	if (t.size() >= 2 && t[0] == '"' && t[t.size() - 1] == '"') return t.substr(1, t.size() - 2);
+	return t;
+}
+
+static void appendUtf8(string& d, unsigned int c)
+{
+	if (c <= 0x7f) {
+		d += (char)c;
+	} else if (c <= 0x7ff) {
+		d += (char)((c >> 6) | 0xc0);
+		d += (char)((c & 0x3f) | 0x80);
+	} else if (c <= 0xffff) {
+		d += (char)((c >> 12) | 0xe0);
+		d += (char)(((c >> 6) & 0x3f) | 0x80);
+		d += (char)((c & 0x3f) | 0x80);
+	} else {
+		d += (char)((c >> 18) | 0xf0);
+		d += (char)(((c >> 12) & 0x3f) | 0x80);
+		d += (char)(((c >> 6) & 0x3f) | 0x80);
+		d += (char)((c & 0x3f) | 0x80);
+	}
+}
+
+// G'MIC-Qt's unescaped(), i.e. cimg::strunescape: \n \t \\ \" etc., octal \ooo, hex \xHH,
+// \uHHHH and \UHHHHHHHH (as UTF-8); any other "\c" gives "c"
+static string textUnescaped(const string& s)
+{
+	string d;
+	for (size_t i = 0; i < s.size(); ) {
+		if (s[i] != '\\') {
+			d += s[i++];
+			continue;
+		}
+		if (++i >= s.size()) break;
+		const char c = s[i];
+		const char* const esc = "abefnrtv\\'\"?";
+		const char* const val = "\a\b\x1b\f\n\r\t\v\\'\"?";
+		const char* e = strchr(esc, c);
+		if (e) {
+			d += val[e - esc];
+			++i;
+		} else if (c >= '0' && c <= '7') {
+			unsigned int v = 0;
+			for (int n = 0; n < 3 && i < s.size() && s[i] >= '0' && s[i] <= '7'; ++n) v = (v << 3) | (unsigned int)(s[i++] - '0');
+			d += (char)v;
+		} else if (c == 'x') {
+			unsigned int v = 0;
+			int n = 0;
+			++i;
+			while (n < 2 && i < s.size() && isxdigit((unsigned char)s[i])) {
+				const char h = (char)tolower((unsigned char)s[i++]);
+				v = (v << 4) | (unsigned int)(h <= '9' ? h - '0' : h - 'a' + 10);
+				++n;
+			}
+			if (n) d += (char)v;
+			else if (i < s.size()) d += s[i++];
+		} else if (c == 'u' || c == 'U') {
+			const size_t n = (c == 'u') ? 4 : 8;
+			bool ok = true;
+			for (size_t k = 1; ok && k <= n; ++k) ok = i + k < s.size() && isxdigit((unsigned char)s[i + k]);
+			if (ok) {
+				appendUtf8(d, (unsigned int)strtoul(s.substr(i + 1, n).c_str(), NULL, 16));
+				i += n + 1;
+			} else {
+				d += s[i++];
+			}
+		} else {
+			d += s[i++];
+		}
+	}
+	return d;
+}
+
 static
 void processParam(const string& s, EffectParameter& cp)
 {
@@ -187,6 +265,7 @@ void processParam(const string& s, EffectParameter& cp)
 	cp.paramType = strLowercase(cp.paramType);
 	string pval = strTrim(r.substr(p1 + 1));
 	pval = pval.substr(0, pval.size() - 1);
+	const string rawVal = pval; // text(): without the true/false replacement below
 	strLowercase(pval);
 	strReplace(pval, "true", "1");
 	strReplace(pval, "false", "0");
@@ -317,15 +396,22 @@ void processParam(const string& s, EffectParameter& cp)
 	} else if (cp.paramType == "text") { // || cp.paramType == "flags") {
 		// 'text(_is_multiline={ 0 | 1 },_default text)'
 		// Add a single or multi-line text parameter (as a text entry).
-		p1 = (int)pval.find(",");
-		p2 = (int)pval.find("\"");
-		if (p1 >= 0 && p1 < p2) {
-			cp.maxValue = pval.substr(0, p1);
-			pval = pval.substr(p1 + 1);
-		} else {
-			cp.maxValue = "0";
+		// As G'MIC-Qt (TextParameter::initFromText): a leading "0," or "1," (regex "^\s*(0|1)\s*,")
+		// is the multi-line flag, also before an unquoted default (e.g. "text(0,0xFFFFFFFF)" in
+		// Kaleido Patterns: the default is "0xFFFFFFFF"); the rest is unquoted (one pair of
+		// enclosing double quotes, else trimmed) then unescaped as cimg::strunescape does.
+		// maxValue holds the flag.
+		string v = rawVal;
+		size_t b = v.find_first_not_of(" \t\r\n");
+		cp.maxValue = "0";
+		if (b != string::npos && (v[b] == '0' || v[b] == '1')) {
+			size_t c = v.find_first_not_of(" \t\r\n", b + 1);
+			if (c != string::npos && v[c] == ',') {
+				cp.maxValue = v.substr(b, 1);
+				v = v.substr(c + 1);
+			}
 		}
-		cp.text = strTrim(pval, "\"");
+		cp.text = textUnescaped(textUnquoted(v));
 		cp.defaultValue = cp.text;
 	} else if (cp.paramType == "separator") {
 		// 'separator()'
@@ -374,8 +460,14 @@ static bool usesSeveralLayers(const string& content)
 	for (size_t i = 0; i < lc.size(); ++i) {
 		lc[i] = (char)tolower((unsigned char)lc[i]);
 	}
+	// also a note asking for two images, or a choice/note naming another input: "requires 2 images
+	// as input" (Save Noise Print), "Two input images" (Fast Median Stack), "at least 2 layer"
+	// (Tiled Form), "another image" (Softlight), "Other Layer (Image)" (Page Curl); not the
+	// plural "other images" ("may work on other images as well")
 	static const char* const refs[] = { "top layer", "bottom layer", "upper layer", "lower layer",
-	                                    "top-layer", "bottom-layer", "upper-layer", "lower-layer" };
+	                                    "top-layer", "bottom-layer", "upper-layer", "lower-layer",
+	                                    "2 images", "two images", "2 input images", "two input images",
+	                                    "2 layer", "another image", "another layer", "other layer" };
 	for (size_t i = 0; i < sizeof(refs) / sizeof(refs[0]); ++i) {
 		size_t pos = lc.find(refs[i]);
 		while (pos != string::npos) {
@@ -674,6 +766,73 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 	}
 }
 
+// Filters that need a second input although their #@gui text doesn't say so (see usesSeveralLayers),
+// from the first command of the definition of the main command (after "skip ..."), before it
+// can have created an image:
+// - "if $!<2" or "if $!<=1" (it returns or fails with one image): Blur by Color, Depth Map
+//   Reconstruction, Lenticular Print, Stereoscopic Image Alignment;
+// - a command that is not "+..." (nor a "var=..." assignment) selecting image 1 ("cmd[1]",
+//   "cmd[0,1]") or reading it in an unquoted argument ("{1,w}", "#1"): Fourier Picture Watermark
+//   ("rs[0] {1,w*$1},{1,h*$1}", the watermark is the second image).
+// This needs the command definitions in "content".
+static bool selectsImage1(const string& cmd)
+{
+	const size_t b = cmd.find('[');
+	if (b == string::npos || cmd[cmd.size() - 1] != ']') return false;
+	const string sel = "," + cmd.substr(b + 1, cmd.size() - b - 2) + ",";
+	return sel.find(",1,") != string::npos;
+}
+
+static bool readsImage1(const string& arg)
+{
+	if (arg.empty() || arg[0] == '"') return false;
+	if (arg.find("{1,") != string::npos) return true;
+	for (size_t p = arg.find("#1"); p != string::npos; p = arg.find("#1", p + 1)) {
+		if (p + 2 >= arg.size() || !isdigit((unsigned char)arg[p + 2])) return true;
+	}
+	return false;
+}
+
+static void markMultiInputFilters(const string& content, vector<EffectData>& cds)
+{
+	set<string> mains;
+	for (vector<EffectData>::const_iterator it = cds.begin(); it != cds.end(); ++it) {
+		if (!it->multiLayer) mains.insert(it->command);
+	}
+	set<string> flagged;
+	stringstream ss(content);
+	string line, cur, rest;
+	vector<string> items; // the first items of the current definition
+	while (getline(ss, line)) {
+		if (line.empty() || line[0] == '#') continue;
+		string name = commandDefinition(line, rest);
+		if (!name.empty()) {
+			cur = mains.count(name) ? name : string();
+			items.clear();
+		} else {
+			rest = line;
+		}
+		if (cur.empty() || items.size() >= 4) continue;
+		gmicItems(rest, items);
+		size_t k = 0;
+		if (k < items.size() && items[k] == "skip") k += 2;
+		if (k + 1 >= items.size()) continue; // wait for more items
+		const string& a = items[k];
+		string cond = items[k + 1];
+		strReplace(cond, " ", "");
+		if (a == "if" && (cond.compare(0, 4, "$!<2") == 0 || cond.compare(0, 5, "$!<=1") == 0)) {
+			flagged.insert(cur);
+		} else if (a[0] != '+' && a[0] != '(' && a[0] != '#' && a.find('=') == string::npos &&
+		           (selectsImage1(a) || readsImage1(items[k + 1]))) {
+			flagged.insert(cur);
+		}
+		items.resize(4); // decided: skip the rest of this definition
+	}
+	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
+		if (flagged.count(it->command)) it->multiLayer = true;
+	}
+}
+
 // Does s contain the word "video", "frame" or "frames" (any case)?
 static bool namesFrames(const string& s)
 {
@@ -878,6 +1037,7 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 		return;
 	}
 	markPersistentFilters(content, *cds);
+	markMultiInputFilters(content, *cds);
     // plug-in identifiers must be unique: G'MIC 4 has several filters with the same name in
     // different folders (in 4.0.7: the "About" page of each Testing author, giving About and
     // About2..About5, and "Color Harmonies", giving ColorHarmonies2). The first one in stdlib
