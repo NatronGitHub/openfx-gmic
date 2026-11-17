@@ -2,7 +2,7 @@ name: Continuous Integration
 
 # Natron CI policy: per PR/push, exactly three full builds plus tests (macOS 15 arm64 with the
 # system clang and MacPorts libraries, Ubuntu 24.04, Windows MSYS2 UCRT64). Extra variants (debug
-# builds, a C++20 build, a LICENSE=COMMERCIAL build on Linux) run nightly or on demand; the per-PR
+# builds, a C++20 build, LICENSE=COMMERCIAL builds on Linux) run nightly or on demand; the per-PR
 # builds use C++17 (Natron RB-2.6 policy: Qt5 builds C++17, Qt6 builds C++20); build artifacts
 # are uploaded only on demand or for pre-release tags.
 #
@@ -46,7 +46,7 @@ permissions:
 env:
   # number of plug-ins expected from the pinned G'MIC version: update when upgrading G'MIC
   GMIC_PLUGIN_COUNT: 1205
-  # extra variants (debug, C++20, LICENSE=COMMERCIAL) only on the nightly schedule or on demand
+  # extra variants (debug, C++20) only on the nightly schedule or on demand
   BUILD_VARIANTS: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
   # artifacts only on demand or for pre-release tags (containing "alpha", "beta" or "rc", e.g.
   # Natron-2.6.0-rc1; contains() is case-insensitive)
@@ -120,17 +120,57 @@ jobs:
           (cd GMIC_OFX && make clean CONFIG=release)
           make -j4 CONFIG=release OPENMP=1 CXXSTD=c++20
           .github/workflows/describe_plugins.sh GMIC_OFX/Linux-64-release $GMIC_PLUGIN_COUNT
-      # Natron's COMMERCIAL builds must not link FFTW (GPLv2)
-      - name: Build and check (release, LICENSE=COMMERCIAL, without FFTW)
-        if: env.BUILD_VARIANTS == 'true'
+
+  # Natron's COMMERCIAL builds (make LICENSE=COMMERCIAL, see license.mk), nightly or on demand:
+  # on x86-64 they use Intel oneMKL's FFTW3 interface (linked statically) instead of FFTW (GPL),
+  # elsewhere pocketfft (also built here, FFT=pocketfft), and a standard library without the
+  # community filters under the GPL or a CeCILL-only licence. Both builds are checked for FFTW
+  # (readelf, nm) and described.
+  linux-commercial:
+    name: Linux (Ubuntu 24.04), LICENSE=COMMERCIAL (MKL, pocketfft)
+    runs-on: ubuntu-24.04
+    needs: changes
+    if: >-
+      needs.changes.outputs.run == 'true' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash -eo pipefail {0}
+    env:
+      # number of plug-ins of COMMERCIAL builds: update with gmic_stdlib_commercial.txt or G'MIC
+      GMIC_PLUGIN_COUNT_COMMERCIAL: 819
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      # oneMKL from Intel's APT repository (core libraries only, without the SYCL ones)
+      - name: Install packages
         run: |
-          (cd GMIC_OFX && make clean CONFIG=release)
-          make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17 LICENSE=COMMERCIAL
-          ofx=GMIC_OFX/Linux-64-release/GMIC.ofx.bundle/Contents/Linux-x86-64/GMIC.ofx
-          readelf -d "$ofx" | grep NEEDED
-          if readelf -d "$ofx" | grep -i fftw || nm -D --undefined-only "$ofx" | grep -i fftw; then
-            echo "Error: the LICENSE=COMMERCIAL build uses FFTW"; exit 1
-          fi
+          curl -fsSL https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB |
+            gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" |
+            sudo tee /etc/apt/sources.list.d/oneAPI.list
+          sudo apt-get update
+          sudo apt-get install -y pkg-config zlib1g-dev libcurl4-openssl-dev libpng-dev libexpat1-dev \
+            libgl-dev libglu1-mesa-dev intel-oneapi-mkl-core-devel
+          ls /opt/intel/oneapi/mkl/latest/lib/pkgconfig
+      - name: Cache G'MIC sources
+        uses: actions/cache@v4
+        with:
+          path: gmic_*.tar.gz
+          key: gmic-src-${{ hashFiles('Makefile') }}
+      - name: Build and check (release, LICENSE=COMMERCIAL, FFT=mkl)
+        run: |
+          export PKG_CONFIG_PATH=/opt/intel/oneapi/mkl/latest/lib/pkgconfig
+          make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17 LICENSE=COMMERCIAL FFT=mkl
+          .github/workflows/check_commercial.sh GMIC_OFX/Linux-64-release mkl
+          .github/workflows/describe_plugins.sh GMIC_OFX/Linux-64-release $GMIC_PLUGIN_COUNT_COMMERCIAL
+      - name: Build and check (release, LICENSE=COMMERCIAL, FFT=pocketfft)
+        run: |
+          make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17 LICENSE=COMMERCIAL FFT=pocketfft
+          .github/workflows/check_commercial.sh GMIC_OFX/Linux-64-release pocketfft
+          .github/workflows/describe_plugins.sh GMIC_OFX/Linux-64-release $GMIC_PLUGIN_COUNT_COMMERCIAL
 
   macos:
     name: macOS 15 arm64 (Apple clang, MacPorts libraries)
