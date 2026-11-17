@@ -93,11 +93,7 @@ jobs:
       - name: Cache G'MIC sources
         uses: actions/cache@v4
         with:
-          path: |
-            gmic_*.tar.gz
-            gmic_libc.cpp
-            gmic_libc.h
-            gmic_stdlib_gmic.h
+          path: gmic_*.tar.gz
           key: gmic-src-${{ hashFiles('Makefile') }}
       # the standard is given in CXX, as Natron's build does (the other jobs use CXXSTD)
       - name: Build (release, OpenMP)
@@ -107,6 +103,10 @@ jobs:
       - name: Build (debug)
         if: env.BUILD_VARIANTS == 'true'
         run: make -j4 CONFIG=debug OPENMP=1 CXX="g++ -std=c++17"
+      # The Linux bundle is uploaded as is (it needs libfftw3, libcurl, libpng, libgomp): it requires
+      # the glibc of Ubuntu 24.04 anyway, where these libraries are standard packages, and bundled
+      # copies of libstdc++/libgomp/libcurl could clash with the host's own. Natron's Linux
+      # releases build the plug-in on their own SDK and bundle its libraries themselves.
       - name: Upload bundle
         if: env.UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@v4
@@ -167,12 +167,28 @@ jobs:
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
           make -j4 CONFIG=debug $MAKE_ARGS
+      # self-contained artifact (on a copy, the build directory is left as is): the release build's
+      # osxDeploy.sh already copied the MacPorts dylibs into Contents/Libraries; bundle_libs.sh
+      # copies any that's missing, removes the rpaths into /opt/local, signs the bundle ad hoc, and
+      # fails if a dependency is neither a system library nor bundled. The artifact requires the
+      # runner's macOS version or newer, and must be unquarantined after download
+      # (xattr -dr com.apple.quarantine GMIC.ofx.bundle); see the header of bundle_libs.sh.
+      - name: Bundle libraries
+        if: env.UPLOAD_ARTIFACTS == 'true'
+        run: |
+          export PATH=/opt/local/bin:/opt/local/sbin:$PATH
+          rm -rf Bundle && mkdir Bundle
+          cp -R GMIC_OFX/Darwin-64-release/GMIC.ofx.bundle Bundle/
+          .github/workflows/bundle_libs.sh Bundle/GMIC.ofx.bundle
+          CXX="/usr/bin/clang++ -I/opt/local/include" \
+            HOST_LDFLAGS=-L/opt/local/lib \
+            .github/workflows/describe_plugins.sh Bundle $GMIC_PLUGIN_COUNT
       - name: Upload bundle
         if: env.UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: openfx-gmic-macos-release
-          path: GMIC_OFX/Darwin-64-release/GMIC.ofx.bundle
+          path: Bundle/GMIC.ofx.bundle
       - name: Build and describe (release, C++20)
         if: env.BUILD_VARIANTS == 'true'
         run: |
@@ -209,11 +225,7 @@ jobs:
       - name: Cache G'MIC sources
         uses: actions/cache@v4
         with:
-          path: |
-            gmic_*.tar.gz
-            gmic_libc.cpp
-            gmic_libc.h
-            gmic_stdlib_gmic.h
+          path: gmic_*.tar.gz
           key: gmic-src-${{ hashFiles('Makefile') }}
       - name: Build (release, OpenMP)
         run: |
@@ -229,12 +241,22 @@ jobs:
         run: |
           set -eo pipefail
           make -j4 CONFIG=debug OPENMP=1 CXXSTD=c++17
-      - name: Collect bundle
+      # self-contained artifact: the UCRT64 DLLs that GMIC.ofx imports (recursively, objdump -p) are
+      # copied next to it, and a manifest listing them is embedded with the Windows SDK's mt.exe.
+      # The describe test then runs a statically linked host with a PATH without /ucrt64/bin, so
+      # that the plug-in loads only if it finds its DLLs in the bundle. The plug-in itself links
+      # libstdc++/libgcc/libgomp dynamically, as the per-PR build does (see bundle_libs.sh for
+      # the clash with a host's DLLs of the same names). Limitations of the artifacts: see the
+      # header of bundle_libs.sh.
+      - name: Collect bundle and libraries
         if: env.UPLOAD_ARTIFACTS == 'true'
         run: |
           set -eo pipefail
-          mkdir -p Bundle
+          rm -rf Bundle && mkdir -p Bundle
           cp -R "$(find GMIC_OFX -maxdepth 1 -type d -name '*-release' | head -1)/GMIC.ofx.bundle" Bundle/
+          .github/workflows/bundle_libs.sh Bundle/GMIC.ofx.bundle
+          CXX="c++ -DXML_STATIC" HOST_LDFLAGS=-static HOST_RUN_PATH=/c/Windows/System32:/c/Windows \
+            .github/workflows/describe_plugins.sh Bundle $GMIC_PLUGIN_COUNT
       - name: Upload bundle
         if: env.UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@v4
