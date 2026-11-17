@@ -50,7 +50,7 @@ if(NOT _multi_config AND NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Debug, Release or RelWithDebInfo" FORCE)
 endif()
 
-# C++ standard (OFX_CXX_STANDARD, see cmake/OpenFXLocal.cmake): C++17 by default (Natron RB-2.6
+# C++ standard (OFX_CXX_STANDARD, see openfx/cmake/OpenFX.cmake): C++17 by default (Natron RB-2.6
 # Qt5 builds), C++20 for Qt6 builds (RB-2.7). Strict -std=c++NN, as the Makefile's CXXSTD and the
 # CI builds.
 if(NOT DEFINED CMAKE_CXX_EXTENSIONS)
@@ -59,14 +59,14 @@ endif()
 
 # ========================== openfx ==========================
 
-# The OFX C API headers (openfx::Api): the plug-in uses the raw C API, not the Support library.
+# openfx's cmake/OpenFX.cmake: add_ofx_plugin (which links the OFX C API, openfx::Api: the plug-in
+# doesn't use the Support library), ofx_plugin_resources, ofx_target_openmp, ofx_deploy_bundle, and
+# the OFX_CXX_STANDARD, OFX_USE_OPENMP, OFX_DEPLOY_BUNDLES and PLUGIN_INSTALLDIR options.
 # EXCLUDE_FROM_ALL: openfx's libraries are not built.
 add_subdirectory(openfx EXCLUDE_FROM_ALL)
 
 # The bundle is installed into ${CMAKE_INSTALL_PREFIX}/${PLUGIN_INSTALLDIR}, by default
 # <prefix>/OFX/Plugins (e.g. /usr/OFX/Plugins with the prefix /usr).
-list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
-include(OpenFXLocal) # stop-gap for openfx's add_ofx_plugin etc.: see the file
 
 # ========================== G'MIC sources ==========================
 #
@@ -219,9 +219,29 @@ foreach(_f IN LISTS GMICSOURCES)
   endif()
 endforeach()
 
-# ---- Patches to the extracted G'MIC sources go here: they run on the fresh copies in
-# ${_gmic_extracted} (add the patch scripts to CMAKE_CONFIGURE_DEPENDS, so that a change re-runs
-# them). ----
+# Local patches to the extracted G'MIC sources, the same as the Makefile's (see patches/): each
+# <script>:<file> runs "sh patches/<script> <file>" on the fresh copy, and fails if the source
+# doesn't contain the expected code (e.g. after a GMICVER bump). Adding a patch is one line here
+# (and one in the Makefile's extraction rule).
+set(GMIC_PATCHES
+  gmic-apple-abort.sh:gmic.h   # abort support on macOS (#41)
+  gmic-apple-abort.sh:gmic.cpp
+)
+find_program(GMIC_PATCH_SH sh)
+if(NOT GMIC_PATCH_SH)
+  message(FATAL_ERROR "sh not found: it is needed to apply the patches to the G'MIC sources (patches/)")
+endif()
+foreach(_patch IN LISTS GMIC_PATCHES)
+  string(REPLACE ":" ";" _patch "${_patch}")
+  list(GET _patch 0 _script)
+  list(GET _patch 1 _file)
+  execute_process(COMMAND "${GMIC_PATCH_SH}" "${PROJECT_SOURCE_DIR}/patches/${_script}" "${_file}"
+    WORKING_DIRECTORY "${_gmic_extracted}" RESULT_VARIABLE _r)
+  if(NOT _r EQUAL 0)
+    message(FATAL_ERROR "patches/${_script} failed on ${_file} of G'MIC ${GMICVER}")
+  endif()
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/patches/${_script}")
+endforeach()
 
 foreach(_f IN LISTS GMICSOURCES)
   configure_file("${_gmic_extracted}/${_f}" "${GMIC_SRC_DIR}/${_f}" COPYONLY)
@@ -247,8 +267,31 @@ foreach(_f IN LISTS GMICSOURCES)
   endif()
 endforeach()
 
-# Generated headers (none yet) also go into the build tree, e.g. ${CMAKE_BINARY_DIR}/generated,
-# added to the include directories below.
+# Hot fixes for G'MIC bugs (see gmic_hotfixes.gmic and the top-level Makefile), embedded as a
+# null-terminated byte array into gmic_hotfixes.h, generated into the build tree (GMIC_GENERATED_DIR,
+# an include directory; gmic_plugin.cpp includes it with <...>, so that a header left in the
+# source directory by a Makefile build is not used). They are written for one G'MIC version: fail
+# if gmic.h is another one, so that each fix gets reviewed.
+set(GMIC_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated")
+set(GMIC_HOTFIXES "${PROJECT_SOURCE_DIR}/gmic_hotfixes.gmic")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${GMIC_HOTFIXES}")
+file(STRINGS "${GMIC_SRC_DIR}/gmic.h" _line REGEX "^#define gmic_version [0-9]+")
+string(REGEX REPLACE "^#define gmic_version ([0-9]+).*" "\\1" _gmic_version_number "${_line}")
+file(STRINGS "${GMIC_HOTFIXES}" _line REGEX "^#@openfx_gmic_hotfixes ")
+string(REGEX REPLACE "^#@openfx_gmic_hotfixes ([0-9.]+).*" "\\1" _hotfixes_version "${_line}")
+string(REPLACE "." "" _hotfixes_version_number "${_hotfixes_version}")
+if(NOT _hotfixes_version_number STREQUAL _gmic_version_number)
+  message(FATAL_ERROR "gmic_hotfixes.gmic is for G'MIC ${_hotfixes_version}, gmic.h is version "
+    "${_gmic_version_number}: review each fix, see the top of gmic_hotfixes.gmic")
+endif()
+file(READ "${GMIC_HOTFIXES}" _hex HEX)
+string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," _bytes "${_hex}")
+string(REPLACE "0x0d," "" _bytes "${_bytes}") # carriage returns (Windows checkouts)
+file(WRITE "${GMIC_GENERATED_DIR}/gmic_hotfixes.h.tmp"
+  "// Generated from gmic_hotfixes.gmic by CMake: do not edit.\nstatic const unsigned char gmic_hotfixes[] = {\n${_bytes}\n0x00 };\n")
+# only rewritten when it changes, so that a new configure does not recompile gmic_plugin.cpp
+configure_file("${GMIC_GENERATED_DIR}/gmic_hotfixes.h.tmp" "${GMIC_GENERATED_DIR}/gmic_hotfixes.h" COPYONLY)
+file(REMOVE "${GMIC_GENERATED_DIR}/gmic_hotfixes.h.tmp")
 
 set(GMIC_EXTRACTED_SOURCES "")
 foreach(_f IN LISTS GMICSOURCES)
@@ -257,17 +300,20 @@ endforeach()
 
 # ========================== the plug-in ==========================
 
-# the .cpp files of GMICSOURCES (gmic.cpp, gmic_libc.cpp) and those of GMIC_OFX/Makefile
+# the .cpp files of GMICSOURCES (gmic.cpp) and those of GMIC_OFX/Makefile
+# (gmic_plugin_call.cpp replaces gmic_libc.cpp)
 add_ofx_plugin(GMIC
   INFO_PLIST GMIC_OFX/Info.plist
   SOURCES
     ${GMIC_EXTRACTED_SOURCES}
+    "${GMIC_GENERATED_DIR}/gmic_hotfixes.h"
     gmic_plugin.cpp
+    gmic_plugin_call.cpp
+    gmic_plugin_call.h
     Helpers/gmic_parser.cpp
     Helpers/RFX_FileUtils.cpp
     Helpers/RFX_StringUtils.cpp)
-ofx_plugin_resources(GMIC GMIC_OFX/GMIC.png)
-target_link_libraries(GMIC PRIVATE openfx::Api) # the OFX C API only, not the Support library
+ofx_plugin_resources(GMIC GMIC_OFX/GMIC.png) # before ofx_deploy_bundle (below)
 source_group("G'MIC" FILES ${GMIC_EXTRACTED_SOURCES})
 
 # Optimization and warnings of openfx/Examples/Makefile.master (CONFIG=release/debug): -O2 instead
@@ -284,6 +330,7 @@ endif()
 
 target_include_directories(GMIC PRIVATE
   "${GMIC_SRC_DIR}"
+  "${GMIC_GENERATED_DIR}"
   Helpers
   openfx/Examples/include) # ofxUtilities.H
 

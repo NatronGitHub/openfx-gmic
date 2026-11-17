@@ -157,6 +157,7 @@ public:
 	string paramName;
 	string displayName;
 	string text;
+	string hint; // tooltip (OFX), empty for none
 	float defaultValue[4];
 	float minValue;
 	float maxValue;
@@ -180,7 +181,12 @@ public:
 	void* customSequenceDataP;
 	void* contextP;
 	bool inputConnected[MAX_NOF_LAYERS];
+	// set by pluginProcess: whether the image copied to outWorld had an alpha channel, and its size
+	bool resultHasAlpha;
+	int resultWidth, resultHeight;
 	SequenceData() {
+		resultHasAlpha = true;
+		resultWidth = resultHeight = 0;
 		isFlat = false;
 		update = false;
 		for (int i = 0; i < MAX_NOF_PARAMS; i++) 
@@ -214,6 +220,8 @@ public:
 	string pluginFilename;
 	string buttonName;
 	float scale;
+	// always false: read only by the (unmaintained) AE glue, RFX_AE_Utils.h. The plug-in never
+	// processes in place (the "Fixed (Inplace)" Resize Mode behaves like "Dynamic").
 	bool inplaceProcessing;
 	int pluginIndex;
 	bool headlessMode;
