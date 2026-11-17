@@ -326,15 +326,10 @@ add_ofx_plugin(GMIC
 ofx_plugin_resources(GMIC GMIC_OFX/GMIC.png) # before ofx_deploy_bundle (below)
 source_group("G'MIC" FILES ${GMIC_EXTRACTED_SOURCES})
 
-# Optimization and warnings of openfx/Examples/Makefile.master (CONFIG=release/debug): -O2 instead
-# of CMake's default -O3 (an -O given in CMAKE_CXX_FLAGS_RELEASE is kept), -Wall -Wextra in debug
-# builds. Not -Ofast: its -ffast-math breaks G'MIC's NaN tests.
+# Optimization: CMake's CMAKE_CXX_FLAGS_<CONFIG> (Release: -O3 -DNDEBUG; the Makefile uses -O2), which
+# the user may override. Not -Ofast: its -ffast-math breaks G'MIC's NaN tests. Debug builds also
+# get Makefile.master's -Wall -Wextra.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  if(NOT CMAKE_CXX_FLAGS_RELEASE MATCHES "-O")
-    target_compile_options(GMIC PRIVATE $<$<CONFIG:Release>:-O2>)
-  elseif(CMAKE_CXX_FLAGS_RELEASE STREQUAL "-O3 -DNDEBUG") # CMake's default
-    target_compile_options(GMIC PRIVATE $<$<CONFIG:Release>:-O2>)
-  endif()
   target_compile_options(GMIC PRIVATE $<$<CONFIG:Debug>:-Wall -Wextra>)
 endif()
 
