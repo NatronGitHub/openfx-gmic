@@ -2074,8 +2074,13 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 		} else if (param.paramType == PT_TEXT) {
 			std::string txt = param.text;
 			bool multiline = false;
-			strReplace(txt, "\\r", "\r");
-			strReplace(txt, "\\n", "\n");
+			// as G'MIC-Qt, the parser already unescaped the defaults of text() and value(), and
+			// file()/folder() defaults are taken as they are: decoding "\n" again would turn the
+			// "\\n" of text("C:\\new") into a newline. Only labels (notes) need it.
+			if (param.flags == 4) {
+				strReplace(txt, "\\r", "\r");
+				strReplace(txt, "\\n", "\n");
+			}
 			multiline |= (txt.find_first_of("\r\n") != string::npos);
 			int flags = param.flags;
 			// force the param to be multiline if there are newlines in the default value
