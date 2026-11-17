@@ -759,6 +759,11 @@ static void hideBatchFilters(const string& content, vector<EffectData>& cds, vec
 		if (mains.count(curated[c])) {
 			hidden.insert(curated[c]);
 		} else if (checkCurated && !mains.empty()) {
+#ifdef OFX_GMIC_COMMERCIAL
+			// COMMERCIAL standard libraries leave out some of these filters, or only their #@gui
+			// lines (e.g. fx_tk_video3D, see gmic_stdlib_commercial.txt): the GPL build checks the list
+			continue;
+#endif
 			fprintf(stderr, "G'MIC: HIDDEN_FILTER_UNKNOWN %s: not the main command of a filter, update hideBatchFilters()\n", curated[c]);
 		}
 	}
