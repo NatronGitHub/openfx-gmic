@@ -186,6 +186,8 @@ public:
 	float floatValue[MAX_NOF_PARAMS][4];
 	string textValue[MAX_NOF_PARAMS];
 	double time;
+	// the first frame of the main input's frame range (Output Layer "Frame" in G'MIC), 0 if unknown
+	double frameRangeStart;
 	float downsample_x, downsample_y, pixelsize_x, pixelsize_y;
 	reduxfx::World inWorld[MAX_NOF_LAYERS];
 	reduxfx::World outWorld;
@@ -203,6 +205,7 @@ public:
 			for (int j = 0; j < 4; j++) floatValue[i][j] = 0.f;
 		for (int i = 0; i < MAX_NOF_LAYERS; i++) inputConnected[i] = false;
 		time = 0;
+		frameRangeStart = 0;
 		downsample_x = 1.f;
 		downsample_y = 1.f;
 		pixelsize_x = 1.f;
