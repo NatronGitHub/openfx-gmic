@@ -877,8 +877,9 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	// customCommands goes out of scope: reset the pointer on return, also when G'MIC throws
 	struct ResetCustomCommands {
 		gmic_interface_options& options;
+		explicit ResetCustomCommands(gmic_interface_options& o) : options(o) {}
 		~ResetCustomCommands() { options.custom_commands = NULL; }
-	} resetCustomCommands = { mySequenceDataP->options };
+	} resetCustomCommands(mySequenceDataP->options);
 	
 	{
 		// Resize Mode: "Downsample 1/N" processes a downsampled input; the result is always resized
