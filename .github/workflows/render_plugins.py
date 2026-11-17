@@ -5,13 +5,18 @@ Each plug-in is rendered at frame 0 with its default parameters, on a small fixe
 (160x120 float RGB with gradients, stripes and a rectangle: every input clip, the extra layers
 included, gets the same image), in its own directory, with a timeout. The test fails on any
 load, describe, instance or render error, and on a missing output; NaN pixels in an output are
-reported as warnings. A few plug-ins are skipped (SKIP), are expected to fail (EXPECTED_FAIL), or
-have a longer timeout (TIMEOUT), with the reason; the script warns when one of them is no longer a
-plug-in, or when an expected failure renders.
+reported as warnings. A few plug-ins are skipped (SKIP), are expected to fail with a given error
+(EXPECTED_FAIL), or have a longer timeout (TIMEOUT), with the reason; the test also fails when an
+expected failure renders (XPASS), or when fewer than --min-rendered plug-ins rendered (default:
+100 with --subset pr, 700 with --subset all). It warns when a listed plug-in is not in the list of
+plug-ins, except for COMMERCIAL builds (--stdlib is their standard library), which leave many out.
 
-usage: render_plugins.py --host <hostDemo> --plugins <dir with GMIC.ofx.bundle>
+usage: render_plugins.py --host <hostDemo, or the CMake build directory> [--config <config>]
+                         --plugins <dir with GMIC.ofx.bundle>
                          --list <plug-in list> [--subset pr|all] [--stdlib <gmic_stdlib_community.h>]
-                         [--jobs N] [--timeout S] [--work <dir>]
+                         [--jobs N] [--timeout S] [--min-rendered N] [--work <dir>]
+--host <build dir> reads hostDemo-path.txt there (written by CMake with GMIC_BUILD_TESTS=ON), or
+hostDemo-path-<config>.txt with a multi-config generator (--config, default Release).
 The plug-in list (one line per plug-in: id, context and input clips, tab-separated) is written
 by describe_plugins.sh with PLUGIN_LIST=<file>. --subset pr (the default) renders a
 representative subset: the filters whose command uses the FFT (found in the G'MIC standard
@@ -54,35 +59,51 @@ SKIP = {
 }
 # Plug-ins that fail with their default parameters, checked with G'MIC 4.0.7 and the hot fixes of
 # gmic_hotfixes.gmic (which fix Gleam, MorphologyPainting, LayerManipulation, MontageMultiRows and
-# HalftoneShapes): in G'MIC itself (the G'MIC error, also with the gmic command line), or in the
-# plug-in ("plug-in:"). A plug-in that renders again is reported (XPASS).
+# HalftoneShapes): in G'MIC itself (also with the gmic command line), or in the plug-in
+# ("plug-in:"). Each entry is (the error that the plug-in's log must contain, the reason). An
+# expected failure only counts if the render exits with an error status and its log contains that
+# error: a crash, a timeout, a missing output or another error is a failure. A listed plug-in that
+# renders is a failure too (XPASS), so that the list never goes stale: remove it from the list.
 EXPECTED_FAIL = {
-    'eu.gmic.Softlight': "afre_softlight: 'Select image(s) with 1 or 3 channels' on an RGBA image",
-    'eu.gmic.ContrastFFT': "afre_softlight: 'Select image(s) with 1 or 3 channels' on an RGBA image",
-    'eu.gmic.McFlou': "mc_flou: remove_opacity: 'Image [0] is not a G,GA,RGB or RGBA image (6 channels)' on RGBA",
-    'eu.gmic.BeautyRetouch': "compose_softlight: to_colormode: 'Image [1] is not a G,GA,RGB or RGBA image "
-                             "(7 channels)'",
-    'eu.gmic.Linify': "linify: resize: 'Invalid argument '0,0,1,3,2''",
-    'eu.gmic.ColorRegion': "rep_color_region: 'Invalid vector write at index [4]'",
-    'eu.gmic.PrimeSurface': "rep_primelist: 'Invalid vector write at index [<n>]'",
-    'eu.gmic.SmoothSketch': "fx_SmoothSketch blends with the Coloring Style ($11) as opacity, instead of $12",
-    'eu.gmic.Intarsia': "fx_intarsia: ${arg0\\ $5,...} is cut at the space: 'File 'left\"', format does not "
-                        "take any input options'",
-    'eu.gmic.KaleidoPatterns': "plug-in: text(0,0xFFFFFFFF) gets the default '0,0xFFFFFFFF' (one argument too many)",
-    'eu.gmic.SketchyEllipses': "plug-in: text(0,0xFFFFFFFF) gets the default '0,0xFFFFFFFF' (one argument too many)",
-    'eu.gmic.PerspectiveStreak': "plug-in: the point default is the project's center, outside the 160x120 "
-                                 "input (225%,-140%)",
-    'eu.gmic.KaleidoscopeReptorianPolar': "plug-in: the point default is the project's center, outside the "
-                                          "160x120 input: 'Invalid Number - Variable 3'",
-    'eu.gmic.FourierPictureWatermark': "plug-in: needs a second image (the watermark), but has no layer input",
-    # only on the small test input: it renders at 720x576
-    'eu.gmic.SolveMaze': "minimal_path: 'Invalid argument' on the 160x120 test input",
+    'eu.gmic.Softlight': ("softlight: Select image(s) with 1 or 3 channels",
+                          "afre_softlight rejects RGBA images"),
+    'eu.gmic.ContrastFFT': ("softlight: Select image(s) with 1 or 3 channels",
+                            "afre_contrastfft calls afre_softlight, which rejects RGBA images"),
+    'eu.gmic.McFlou': ("Command 'remove_opacity': Image [0] is not a G,GA,RGB or RGBA image (6 channels)",
+                       "mc_flou doubles the channels of an RGBA image"),
+    'eu.gmic.BeautyRetouch': ("Command 'to_colormode': Image [1] is not a G,GA,RGB or RGBA image (7 channels)",
+                              "compose_softlight, called by fx_tk_retouch"),
+    'eu.gmic.Linify': ("Command 'resize': Invalid argument '0,0,1,3,2'", "linify"),
+    'eu.gmic.ColorRegion': ("Unknown command or filename ',1,1,>begin( const color_distance_thre",
+                            "rep_color_region builds a math expression that G'MIC 4 takes for a command"),
+    'eu.gmic.PrimeSurface': ("Operator 'vector[ind]=': Invalid vector write at index",
+                             "rep_primelist writes one past the end of its vector"),
+    'eu.gmic.SmoothSketch': ("Command 'check': Expression 'inrange($opacity,0,1)' is false",
+                             "fx_SmoothSketch blends with the Coloring Style ($11) as opacity, instead of $12"),
+    'eu.gmic.Intarsia': ("File 'left\"', format does not take any input options",
+                         "fx_intarsia: ${arg0\\ $5,...} is cut at the space"),
+    'eu.gmic.KaleidoPatterns': ("defines 14 values for only 13 variables",
+                                "plug-in: text(0,0xFFFFFFFF) gets the default '0,0xFFFFFFFF' (one argument too many)"),
+    'eu.gmic.SketchyEllipses': ("defines 19 values for only 18 variables",
+                                "plug-in: text(0,0xFFFFFFFF) gets the default '0,0xFFFFFFFF' (one argument too many)"),
+    # point defaults outside the input: hostDemo connects Source at createInstance, and the
+    # defaults stay relative to the project (720x576), not to the 160x120 Source (#78)
+    'eu.gmic.PerspectiveStreak': ("(3.7999999999999998>=-1&&3.7999999999999998<=1)=0",
+                                  "plug-in: point default outside the input (225%,-140%)"),
+    'eu.gmic.KaleidoscopeReptorianPolar': ("Invalid Number - Variable 3",
+                                           "plug-in: point default outside the input"),
+    'eu.gmic.SolveMaze': ("Command 'minimal_path': Invalid argument '22.5%,-356%,0,427.5%,76%,0'",
+                          "plug-in: point defaults outside the input"),
+    'eu.gmic.FourierPictureWatermark': ("Invalid selection [1] (not in range -1...0)",
+                                        "plug-in: needs a second image (the watermark), but has no layer input"),
 }
 # Slow plug-ins (minutes on a CI runner): their own timeout (seconds); not in the pr subset
 TIMEOUT = {
     'eu.gmic.NonscapeWoods': 900,
 }
 
+ERROR_LINE = re.compile(r'\*\*\* Error|\bOfxMessageError\b|\bError\b|\berror:')
+COMMERCIAL_MARKER = ' #  openfx-gmic : COMMERCIAL standard library'
 FFT_COMMANDS = re.compile(r'(?<![A-Za-z0-9_])(fft|ifft|deconvolve|deconvolve_fft|convolve_fft|bandpass|watermark_fourier)(?![A-Za-z0-9_])')
 EVERY = 30
 
@@ -107,7 +128,8 @@ def write_input(path, w=160, h=120):
 
 def fft_plugins(stdlib_header):
     """Ids of the filters whose command (or its _<command> helpers) uses the FFT."""
-    src = open(stdlib_header, encoding='latin-1').read()
+    with open(stdlib_header, encoding='latin-1') as f:
+        src = f.read()
     body = src[src.index('data_gmic[] = {') + len('data_gmic[] = {'):]
     data = bytes(int(v) for v in re.findall(r'\d+', body[:body.index('};')]))
     nl1 = data.index(b'\n')
@@ -159,10 +181,16 @@ def render(host, plugins, work, timeout, plugin):
     t = time.time() - start
     problem, nan = None, 0
     if rc != 0:
-        problem = 'timeout after %ds' % timeout if rc == 'timeout' else 'exit status %s' % rc
+        if rc == 'timeout':
+            problem = 'timeout after %ds' % timeout
+        elif rc < 0:
+            problem = 'crash (signal %d)' % -rc
+        else:
+            problem = 'exit status %s' % rc
     else:
         try:
-            report = json.load(open(os.path.join(d, 'report.json')))
+            with open(os.path.join(d, 'report.json')) as f:
+                report = json.load(f)
             outputs = [r.get('output') for r in report.get('renders', [])]
             if not outputs or any(not o or not o.get('files') for o in outputs):
                 problem = 'no output image'
@@ -174,36 +202,53 @@ def render(host, plugins, work, timeout, plugin):
                     nan += sum(o.get('nan') or 0) if isinstance(o.get('nan'), list) else (o.get('nan') or 0)
         except (OSError, ValueError) as e:
             problem = 'no report: %s' % e
-    errors = [l for l in log.splitlines() if 'rror' in l][:3]
-    return pid, problem, nan, t, errors
+    errors = [l for l in log.splitlines() if ERROR_LINE.search(l)][:3]
+    return pid, rc, problem, nan, t, errors, log
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--host', required=True)
+    ap.add_argument('--config', default='Release')
     ap.add_argument('--plugins', required=True)
     ap.add_argument('--list', required=True)
     ap.add_argument('--subset', choices=('pr', 'all'), default='pr')
     ap.add_argument('--stdlib')
     ap.add_argument('--jobs', type=int, default=2)
     ap.add_argument('--timeout', type=int, default=300)
+    ap.add_argument('--min-rendered', type=int)
     ap.add_argument('--work')
     a = ap.parse_args()
 
     host = os.path.abspath(a.host)
+    if os.path.isdir(host):  # a CMake build directory
+        for n in ('hostDemo-path.txt', 'hostDemo-path-%s.txt' % a.config):
+            if os.path.exists(os.path.join(host, n)):
+                with open(os.path.join(host, n)) as f:
+                    host = f.read().strip()
+                break
+        else:
+            ap.error('no hostDemo-path.txt or hostDemo-path-%s.txt in %s (configure with GMIC_BUILD_TESTS=ON)'
+                     % (a.config, host))
+    min_rendered = a.min_rendered if a.min_rendered is not None else (700 if a.subset == 'all' else 100)
+    commercial = False
+    if a.stdlib:
+        with open(a.stdlib, encoding='latin-1') as f:
+            commercial = any(l.startswith(COMMERCIAL_MARKER) for l in f.readlines()[:20])
     plugins_dir = os.path.abspath(a.plugins)
     work = os.path.abspath(a.work) if a.work else tempfile.mkdtemp(prefix='render_plugins.')
     os.makedirs(os.path.join(work, 'home'), exist_ok=True)
     write_input(os.path.join(work, 'input.pfm'))
 
     allp = {}
-    for line in open(a.list, encoding='utf-8'):
-        f = line.rstrip('\r\n').split('\t')
-        if f and f[0]:
-            allp[f[0]] = (f[0], f[1] if len(f) > 1 else 'filter', f[2:])
+    with open(a.list, encoding='utf-8') as lst:
+        for line in lst:
+            f = line.rstrip('\r\n').split('\t')
+            if f and f[0]:
+                allp[f[0]] = (f[0], f[1] if len(f) > 1 else 'filter', f[2:])
     ids = sorted(allp)
     for pid in sorted(set(SKIP) | set(EXPECTED_FAIL) | set(TIMEOUT)):
-        if pid not in allp:
+        if pid not in allp and not commercial:
             print('WARNING: %s is in the skip or expected-failure list, but is not a plug-in' % pid)
     if a.subset == 'all':
         sel = ids
@@ -222,35 +267,50 @@ def main():
 
     start = time.time()
     fails, xfails, xpasses, nans, times = [], [], [], [], []
+    rendered = 0
     with concurrent.futures.ThreadPoolExecutor(a.jobs) as ex:
         run = lambda p: render(host, plugins_dir, work, TIMEOUT.get(p[0], a.timeout), p)
-        for pid, problem, nan, t, errors in ex.map(run, todo):
+        for pid, rc, problem, nan, t, errors, log in ex.map(run, todo):
             times.append((t, pid))
             if len(times) % 25 == 0:
                 print('... %d/%d (%.0fs)' % (len(times), len(todo), time.time() - start))
                 sys.stdout.flush()
             if problem and pid in EXPECTED_FAIL:
-                xfails.append(pid)
-            elif problem:
+                expected, reason = EXPECTED_FAIL[pid]
+                # only an error exit with the documented G'MIC error: not a crash or a timeout
+                if isinstance(rc, int) and rc > 0 and expected in log:
+                    xfails.append(pid)
+                    continue
+                problem = 'expected to fail with "%s" (%s), but: %s' % (expected, reason, problem)
+            if problem:
                 fails.append(pid)
                 print('FAIL %s: %s' % (pid, problem))
                 for e in errors:
                     print('    ' + e)
-            elif pid in EXPECTED_FAIL:
+                continue
+            rendered += 1
+            if pid in EXPECTED_FAIL:
                 xpasses.append(pid)
-            if not problem and nan:
+                print('XPASS %s: rendered, remove it from EXPECTED_FAIL (%s)' % (pid, EXPECTED_FAIL[pid][1]))
+            if nan:
                 nans.append((pid, nan))
     print('%d rendered in %.0fs: %d failed, %d expected failures, %d skipped' % (
         len(todo), time.time() - start, len(fails), len(xfails), len(sel) - len(todo)))
     print('slowest: ' + ', '.join('%s %.0fs' % (p[len('eu.gmic.'):], t) for t, p in sorted(times)[-5:]))
     for pid, nan in nans:
         print('WARNING: %s: %d NaN values in its output' % (pid, nan))
-    for pid in xpasses:
-        print('WARNING: %s rendered, remove it from EXPECTED_FAIL (%s)' % (pid, EXPECTED_FAIL[pid]))
+    status = 0
     if fails:
         print('FAIL: %d plug-ins failed to render: %s (logs and images in %s)' % (len(fails), ' '.join(fails), work))
-        return 1
-    return 0
+        status = 1
+    if xpasses:
+        print('FAIL: %d expected failures rendered (XPASS), remove them from EXPECTED_FAIL: %s' % (
+            len(xpasses), ' '.join(xpasses)))
+        status = 1
+    if rendered < min_rendered:
+        print('FAIL: only %d plug-ins rendered, fewer than %d (--min-rendered)' % (rendered, min_rendered))
+        status = 1
+    return status
 
 
 if __name__ == '__main__':
