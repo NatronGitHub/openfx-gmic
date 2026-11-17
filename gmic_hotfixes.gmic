@@ -407,3 +407,37 @@ afre_gleam : check "${1=3}>=2 && ${2=50}>=10 && $1<=100 && $2<=90"
     l[0] { +afre_y50 1 >. {100-$2}% b. $1% sqrt. +afre_softlight 100 rm.. max }
     a c
   }
+
+#@hotfix gcd_layers c9dad40bf8814508 51fcb2cbe30cd02c
+# Layer Manipulation fails when applied, but not in the preview ("Command 'name': Number of
+# arguments (4) cannot be higher than the number of images in the selection (1)"): the layer
+# name 'mode(...),opacity(...),pos(x,y)' is not quoted, so that its commas split it into 4 names.
+# https://github.com/GreycLab/gmic-community/issues/303.
+# From include/andy_kelday.gmic (gmic-community, as in G'MIC 4.0.7: upstream has since split the
+# 'mode=' line); fix: the name quoted as the stdlib does, '=>[0] "mode("$mode"),opacity(...),
+# pos("{arg0(0,$pos)}","{arg0(1,$pos)}")"', with 'pos=0,0' when the layer was joined.
+gcd_layers : skip ${1=100},${2=0},${3=1},${4=50},${5=50},${6=0},${7=0},${8=0},${9=1},${10=1},${11=0},${12=0},${13=0}
+  one={$!<2}
+  l[${arg0\ $one,0-1,0}]
+    if $3" && "!$one" && "$1>100 rs. {w/$1%},,{if($-1,2,6)} c. 0,255 fi # ** SCALE
+    w={w} h={h} gcd_force_a[0]
+    l[0]
+      if $11 mirror ${arg1\ $11,x,y,xy} fi # FLIP
+      if !$3" || "$one" || "$1<100 rs {w*$1%},,{if($-1,2,6)} c 0,255 fi # ** SCALE
+      if $2 split_opacity rotate. $2,{2-($-1)} rotate.. $2,{2-($-1)},1 a c c 0,255 fi # ** ROTATE
+      if $6" || "$7 # ** ERODE/SMOOTH
+        sh 100% +gt. 1 expand. xy,1 distance. 0 gt. {1+$6}% shrink. xy,1
+        *. .. if $8" && "$7 pde_flow. $7,30,iee,0 max. 0 fi min[-2,-1] rm.
+      fi
+      if !$8" && "$7 sh 100% b. {$7/10}%,1,{!$-1} rm. fi
+    done
+    pos={round(($w-w#0)/2+$w*$4%)},{round(($h-h#0)/2-$h*$5%)} # ** POSITION
+    if $-1" || "$12 i[0] $w,$h,1,{0,s} j[0] [1],$pos rm[1] pos=0,0 fi
+    mode=${arg0\ $10,alpha,add,burn,darken,difference,divide,dodge,grainextract,grainmerge,hardlight,hue,lighten,multiply,overlay,saturation,softlight,screen,subtract,value}
+    if $-1 if $!>1 rv blend $mode,$9 else sh 100% *. $9 rm. fi
+    else =>[0] "mode("$mode"),opacity("{$9*100}"),pos("{arg0(0,$pos)}","{arg0(1,$pos)}")" fi # ** OPACITY
+  done
+
+gcd_layers_preview :
+  gcd_layers $*,1
+
