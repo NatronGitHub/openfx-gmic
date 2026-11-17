@@ -139,7 +139,7 @@ jobs:
         shell: bash -eo pipefail {0}
     env:
       # number of plug-ins of COMMERCIAL builds: update with gmic_stdlib_commercial.txt or G'MIC
-      GMIC_PLUGIN_COUNT_COMMERCIAL: 811
+      GMIC_PLUGIN_COUNT_COMMERCIAL: 812
     steps:
       - uses: actions/checkout@v4
         with:
