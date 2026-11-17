@@ -2,18 +2,16 @@
 # This file is part of openfx-gmic <https://github.com/NatronGitHub/openfx-gmic>,
 # Copyright (C) 2013-2018 INRIA
 #
-# openfx-gmic is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation; either version 2 of the License, or
-# (at your option) any later version.
+# This file is 'dual-licensed', you have to choose one of the two licenses below to apply
+# (see COPYING), as the rest of openfx-gmic:
 #
-# openfx-gmic is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+#     CeCILL-C
+#     The CeCILL-C license is close to the GNU LGPL.
+#     ( http://www.cecill.info/licences/Licence_CeCILL-C_V1-en.html , Licence_CeCILL-C_V1-en.txt )
 #
-# You should have received a copy of the GNU General Public License
-# along with openfx-gmic.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+# or  CeCILL v2.0
+#     The CeCILL license is compatible with the GNU GPL.
+#     ( http://www.cecill.info/licences/Licence_CeCILL_V2-en.html , Licence_CeCILL_V2-en.txt )
 # ***** END LICENSE BLOCK *****
 
 ########################################################################
