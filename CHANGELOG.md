@@ -12,7 +12,7 @@ Changes in openfx-gmic since Natron 2.5.0 (tag `Natron-2.5.0`). Natron 2.6 polic
 - Smooth [Patch-PCA] no longer returns NaN on flat areas: CImg's eigen fix is applied until G'MIC includes it (#71, #77).
 
 ### Behaviour changes (saved projects may render differently)
-- **Menu group** renamed from "GMIC" to "G'MIC" (e.g. G'MIC/Artistic). Plug-in identifiers are unchanged, so saved projects load as before.
+- **Menu group in Natron** renamed from "GMIC" to "G'MIC" (e.g. G'MIC/Artistic). Other hosts still show "GMIC" (apostrophes are removed for their plug-in caches). Plug-in identifiers are unchanged, so saved projects load as before.
 - **Plug-in version 2.0: Output Layer** (#57). "Output Layer" now counts from the top of the G'MIC image stack (Source = Layer 0, the "Layer -1" input = Layer -1…), as in G'MIC-Qt; before, it counted from the end. Affects filters that return several images (e.g. Channels to Layers now shows R instead of B by default; Fade Layers, Morph Layers, Tiles to Layers show the first result instead of the last) and filters with layer inputs connected. "Merged" and filters with a single result are unchanged. Natron loads nodes saved with version 1.x using 2.0 and lists them in its error log.
 - **Layer inputs for more filters** (#22): filters that work on several layers (Stylize, Align Layers, Morph Layers, Pixel Sort, Brushify…) now have Layer -1…-4 inputs; layer inputs are read at the current frame (some filters, e.g. Deconvolve, read them at another frame before) (#40).
 - **Nodes with Ignore Alpha on** (#57): the filter now processes all layers at once (multi-input filters work), and `$1`, `$*`… in text parameters are kept as typed. Gray or RGB results whose size changed (frames, rotation, crop…) come out opaque (#66).
