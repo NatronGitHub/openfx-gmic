@@ -468,7 +468,7 @@ public:
 	};
 	~MySequenceData() {
 #ifdef OFX_PLUGIN
-		if (usesFrameCache) frameCacheRelease(this);
+		frameCacheRelease(this); // unconditionally: usesFrameCache may be reset by instanceChanged during a render
 #endif
 		delete[] options.error_message_buffer;
 	};
@@ -1207,7 +1207,7 @@ static size_t computeFrameCacheBudget()
 	const char* env = getenv("OFX_GMIC_FRAME_CACHE_MB");
 	char* end = NULL;
 	const double mb = (env && *env) ? strtod(env, &end) : -1.;
-	if (env && *env && end != env && mb >= 0.) {
+	if (env && *env && end != env && *end == '\0' && mb >= 0.) {
 		bytes = mb * 1024. * 1024.;
 	} else {
 		bytes = (double)physicalMemoryBytes() / 4.;
@@ -1519,7 +1519,7 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	const bool runGmic = true;
 #endif
 	// Frame: at most the results that can be kept (see kFrameSelectCommand), after the key
-	const string frameSelect = frameMode ? " -_openfx_gmic_frame_select " + intToString((int)(frame % 1000000000LL)) + "," +
+	const string frameSelect = frameMode ? " -_openfx_gmic_frame_select " + std::to_string(frame) + "," +
 		intToString(kMaxFrameResults) + "," + std::to_string((unsigned long long)frameCacheBudget()) : string();
 	if (runGmic) {
 		cmd += frameSelect;

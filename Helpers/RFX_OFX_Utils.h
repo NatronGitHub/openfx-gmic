@@ -972,7 +972,7 @@ static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance,
 		const char* name = NULL;
 		gPropHost->propGetString(inArgs, kOfxPropName, 0, &name);
 		MyInstanceData* d = getMyInstanceData(instance);
-		GlobalData* globalDataP = &globalData[pluginIndex];
+		GlobalData* globalDataP = &globalData[pluginIndex]; // used by PARAM_OUTPUT
 		if (d && name && strcmp(name, "Output Layer") == 0 && d->param[PARAM_OUTPUT]) {
 			int v = 0;
 			if (gParamHost->paramGetValue(d->param[PARAM_OUTPUT], &v) == kOfxStatOK) {
