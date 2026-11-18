@@ -53,6 +53,7 @@
 #include <stdexcept>
 #include <new>
 #include <cstring>
+#include <cerrno>
 #include <cstddef>
 #include <cassert>
 #include <cmath>
@@ -333,13 +334,15 @@ static string pointValueToString(double v)
 	return ss.str();
 }
 
-// a finite number written by pointValueToString (other text, e.g. in a hand-edited project, would
-// read as 0)
+// a number written by pointValueToString (other text, e.g. in a hand-edited project, would read
+// as 0), refused if it overflows (strtod gives an infinity and sets errno: no std::isfinite, which
+// -ffinite-math-only folds to true)
 static bool pointValueParse(const string& s, double& v)
 {
 	if (s.empty() || s.find_first_not_of("0123456789+-.eE") != string::npos) return false;
+	errno = 0;
 	v = stringToDouble(s);
-	return std::isfinite(v);
+	return !(errno == ERANGE && std::fabs(v) > 1.);
 }
 
 // POINTS_FROM_SOURCE_PARAM: "<parameter name>=<x>,<y>;" for each point the plug-in moved
@@ -577,9 +580,11 @@ static void getAllParamData(int pluginIndex, const OfxRectI& dstRect, double par
 			// point parameter is in % (percent) in gmic: no need to scale
 			double myX, myY;
 			gParamHost->paramGetValueAtTime(myData->param[i], t, &myX, &myY);
-			// percent of the image, from its top-left corner (G'MIC's y goes down)
-			myData->sequenceDataP->floatValue[i][0] = (float)((myX * renderScale.x / par - dstRect.x1) * 100. / (dstRect.x2 - dstRect.x1));
-			myData->sequenceDataP->floatValue[i][1] = 100.f - (float)((myY * renderScale.y - dstRect.y1) * 100. / (dstRect.y2 - dstRect.y1));
+			// percent of the image, from its top-left corner (G'MIC's y goes down); an empty dstRect
+			// (no input, empty output) counts as 1 pixel, so as not to divide by 0
+			const int w = Maximum(1, dstRect.x2 - dstRect.x1), h = Maximum(1, dstRect.y2 - dstRect.y1);
+			myData->sequenceDataP->floatValue[i][0] = (float)((myX * renderScale.x / par - dstRect.x1) * 100. / w);
+			myData->sequenceDataP->floatValue[i][1] = 100.f - (float)((myY * renderScale.y - dstRect.y1) * 100. / h);
 		} else if (globalData[pluginIndex].param[i].paramType == PT_ANGLE) {
 			double v;
 			gParamHost->paramGetValueAtTime(myData->param[i], t, &v);
