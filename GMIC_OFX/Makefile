@@ -58,7 +58,6 @@ $(OBJECTPATH)/gmic.o: $(GMIC_HEADERS) $(SRCDIR)/gmic_stdlib_community.h
 $(OBJECTPATH)/gmic_plugin_call.o: $(GMIC_HEADERS) $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h
 $(OBJECTPATH)/gmic_plugin.o: $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h
 
-# we need zlib to decompress the G'MIC standard library, and an FFT library (FFT) for the effects that use the FFT
 CXXFLAGS += \
 -DOFX_EXTENSIONS_NATRON \
 -DOFX_EXTENSIONS_NUKE \
@@ -87,7 +86,8 @@ ifeq ($(shell pkg-config --atleast-version=3.3.5 fftw3 && echo ok),)
 endif
 endif
 FFT_CXXFLAGS = `pkg-config --cflags fftw3` -Dcimg_use_fftw3
-FFT_LINKFLAGS = `pkg-config --libs fftw3` -lfftw3_threads
+FFT_MODULES = fftw3
+FFT_LIBS = -lfftw3_threads
 endif
 ifeq ($(FFT),pocketfft)
 # pocketfft (BSD-3-Clause, the default), header-only, multithreaded (patches/cimg-pocketfft.sh)
@@ -98,20 +98,45 @@ ifeq ($(LICENSE),COMMERCIAL)
 CXXFLAGS += -DOFX_GMIC_COMMERCIAL
 endif
 
-# Zlib, necessary to uncompress the glic stdlib
-ZLIB_CXXFLAGS=`pkg-config --cflags zlib` -Dcimg_use_zlib
-ZLIB_LINKFLAGS=`pkg-config --libs zlib`
-
-# libcurl, necessary to download presets:
-LIBCURL_CXXFLAGS=`pkg-config --cflags libcurl` -Dcimg_use_curl
-LIBCURL_LINKFLAGS=`pkg-config --libs libcurl`
-
-# libpng, necessary for HaldCLUTs:
-LIBPNG_CXXFLAGS=`pkg-config --cflags libpng` -Dcimg_use_png
-LIBPNG_LINKFLAGS=`pkg-config --libs libpng`
-
-CXXFLAGS += $(FFT_CXXFLAGS) $(ZLIB_CXXFLAGS) $(LIBCURL_CXXFLAGS) $(LIBPNG_CXXFLAGS)
-LINKFLAGS += $(FFT_LINKFLAGS) $(ZLIB_LINKFLAGS) $(LIBCURL_LINKFLAGS) $(LIBPNG_LINKFLAGS)
+# The libraries, through pkg-config: zlib (to decompress the G'MIC standard library), libpng
+# (HaldCLUTs), libcurl (downloads of filter data, except on Linux) and FFTW (FFT=fftw3).
+#
+# Linux: GMIC.ofx needs only system libraries (libc, libm, libpthread, libdl, librt, libstdc++,
+# libgcc_s, libgomp), so that one binary runs on every distribution (Natron's release builds:
+# Rocky Linux 8, glibc 2.28). No libcurl: G'MIC downloads with the external curl or wget command
+# instead (cimg::load_network). zlib, libpng and FFTW are linked statically (GMIC_STATIC_DEPS=1,
+# the default on Linux): their static archives (libz.a, libpng16.a, libfftw3.a,
+# libfftw3_threads.a, built with -fPIC) must be in pkg-config's libdir or the compiler's library
+# path. GMIC_STATIC_DEPS=0 links the shared libraries, e.g. for distribution packages. The
+# plug-in's version script (linuxSymbols) keeps the symbols of the static libraries local.
+# Other systems: shared libraries, with libcurl (macOS and Windows bundles copy them).
+DEPS_MODULES = libpng zlib $(FFT_MODULES)
+ifeq ($(OS),Linux)
+  GMIC_STATIC_DEPS ?= 1
+  # Makefile.master links OpenGL to every plug-in: G'MIC doesn't use it
+  LINKFLAGS := $(filter-out -lGL,$(LINKFLAGS))
+else
+  GMIC_STATIC_DEPS = 0
+  DEPS_MODULES += libcurl
+  CXXFLAGS += -Dcimg_use_curl
+endif
+CXXFLAGS += $(FFT_CXXFLAGS) -Dcimg_use_zlib -Dcimg_use_png
+ifeq ($(GMIC_STATIC_DEPS),1)
+# the static archive lib<name>.a, in the libdirs of the modules or the compiler's library path
+STATIC_DEPS_SYSLIBS = -lm -ldl -lpthread -lrt -lc
+static_archive = $(or $(firstword $(wildcard $(addsuffix /lib$(1).a,$(STATIC_DEPS_DIRS)))),$(filter /%,$(shell $(CXX) -print-file-name=lib$(1).a)),$(error GMIC_STATIC_DEPS=1: lib$(1).a not found (in $(STATIC_DEPS_DIRS) or the compiler's library path): install the static libraries (e.g. zlib1g-dev and libpng-dev on Debian/Ubuntu, zlib-static and libpng-static on RHEL/Rocky), or build with GMIC_STATIC_DEPS=0))
+ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
+  STATIC_DEPS_DIRS := $(patsubst -L%,%,$(shell pkg-config --static --libs-only-L $(DEPS_MODULES))) \
+    $(foreach m,$(DEPS_MODULES),$(shell pkg-config --variable=libdir $(m)))
+  STATIC_DEPS_L := $(FFT_LIBS) $(shell pkg-config --static --libs-only-l $(DEPS_MODULES))
+  STATIC_DEPS_ARCHIVES := $(foreach l,$(filter-out $(STATIC_DEPS_SYSLIBS),$(STATIC_DEPS_L)),$(call static_archive,$(patsubst -l%,%,$(l))))
+endif
+CXXFLAGS += `pkg-config --cflags $(DEPS_MODULES)`
+LINKFLAGS += $(STATIC_DEPS_ARCHIVES) $(filter $(STATIC_DEPS_SYSLIBS),$(STATIC_DEPS_L))
+else
+CXXFLAGS += `pkg-config --cflags $(DEPS_MODULES)`
+LINKFLAGS += `pkg-config --libs $(DEPS_MODULES)` $(FFT_LIBS)
+endif
 
 VPATH = $(SRCDIR):$(SRCDIR)/Helpers
 

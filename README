@@ -45,11 +45,24 @@ Requirements
 
 - A C++17 compiler (C++20 for Qt6 builds of Natron), pkg-config, and make and curl, or CMake
   >= 3.16 (with Ninja for the example below, or any other generator).
-- Libraries, found through pkg-config: zlib, libcurl, libpng; with FFT=fftw3 only, fftw3 >= 3.3.5
-  and fftw3_threads (the default FFT, pocketfft, is header-only and downloaded at build time).
+- Libraries, found through pkg-config: zlib, libpng, libcurl (not on Linux); with FFT=fftw3 only,
+  fftw3 >= 3.3.5 and fftw3_threads (the default FFT, pocketfft, is header-only and downloaded at
+  build time).
+- Linux: the static archives of these libraries (libz.a, libpng16.a; libfftw3.a and
+  libfftw3_threads.a with FFT=fftw3), built with -fPIC: e.g. zlib1g-dev and libpng-dev on
+  Debian/Ubuntu, zlib-static and libpng-static on RHEL/Rocky. They are linked statically, so that
+  GMIC.ofx needs only system libraries; GMIC_STATIC_DEPS=0 (CMake: -DGMIC_STATIC_DEPS=OFF) links
+  the shared ones instead, e.g. for distribution packages.
 - Python 3, for the render test only.
 - Platforms: Linux, macOS (Apple clang; libraries from MacPorts or Homebrew) and Windows (MSYS2
   UCRT64, as in CI: see .github/workflows/ci.yml for the packages).
+
+Runtime requirements on Linux: GMIC.ofx links only system libraries (libc, libm, libpthread,
+libdl, librt, libstdc++, libgcc_s and, with OpenMP, libgomp), and needs no other library at run
+time. Natron's release builds are made on Rocky Linux 8 (GCC 8.5, glibc 2.28) and run on newer
+distributions. Without libcurl, the filters that download data (CLUTs of Color Presets and
+Simulate Film, CNN networks, sample images...) run the curl command, or wget if curl fails: one of
+them must be installed (on macOS and Windows, the plug-in downloads with libcurl).
 
 Building with make
 ------------------
@@ -68,6 +81,7 @@ Options:
   (default /opt/local, MacPorts' layout: include/libomp and lib/libomp); with Homebrew's libomp,
   build with CMake and OFX_LIBOMP_ROOT.
 - CXXSTD: e.g. c++17 or c++20 (default: the compiler's).
+- GMIC_STATIC_DEPS: Linux only, 1 (default): link zlib, libpng and FFTW statically; 0: shared.
 - LICENSE: GPL (default) or COMMERCIAL (see "Licence"; gmic_stdlib_commercial.txt lists the
   filters left out, and why).
 - FFT: pocketfft (default, downloaded; BSD-3-Clause, as in openfx-misc) or fftw3 (FFTW, opt-in,
@@ -96,6 +110,7 @@ Options (the Makefile's equivalent in parentheses):
 - GMIC_POCKETFFT: a downloaded pocketfft_hdronly.h (POCKETFFT_HEADER), for offline builds: the
   file at the Makefile's POCKETFFTCOMMIT, checked against POCKETFFT_SHA256 (downloaded there if
   missing).
+- GMIC_STATIC_DEPS: Linux only, ON (default) or OFF (GMIC_STATIC_DEPS=1 or 0).
 - OFX_DEPLOY_BUNDLES=ON: on macOS, the install step copies the libraries into the bundle.
 - GMIC_BUILD_TESTS=ON: also build openfx's hostDemo, for the render test.
 

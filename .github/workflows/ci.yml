@@ -23,6 +23,13 @@ name: Continuous Integration
 # representative subset of the plug-ins (the FFT and multi-layer filters, every 30th plug-in) on
 # the three systems; nightly and on demand, all the plug-ins on Linux.
 #
+# Linux dependencies: GMIC.ofx may need only system libraries (glibc's, libstdc++, libgcc_s,
+# libgomp): no libcurl, static zlib and libpng (see GMIC_OFX/Makefile). Each Linux build checks it
+# (check_linux_deps.sh), and reports the highest symbol versions that it requires; the nightly and
+# on-demand runs also build with the Makefile on Rocky Linux 8 (GCC 8.5, glibc 2.28), the system of
+# Natron's release builds. The per-PR Linux build renders Color Presets, which downloads its CLUTs
+# with the curl command (no libcurl).
+#
 # Frugal CI (the NatronGitHub runners are shared by all repos): one run per change. Pushes run CI
 # only on master and tags; feature branches run through their pull request. Draft pull requests
 # don't run CI. Superseded runs are cancelled, except for tags. The nightly run is skipped when
@@ -107,8 +114,8 @@ jobs:
       - name: Install packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build pkg-config zlib1g-dev libcurl4-openssl-dev \
-            libpng-dev libexpat1-dev libgl-dev
+          sudo apt-get install -y cmake ninja-build pkg-config zlib1g-dev libpng-dev libexpat1-dev \
+            libgl-dev
       # the tarball and pocketfft_hdronly.h, downloaded into the source directory (GMIC_DOWNLOAD_DIR,
       # GMIC_POCKETFFT), where both the CMake and the Makefile builds find them; the key hashes the
       # Makefile, which pins both (GMICVER, POCKETFFTCOMMIT)
@@ -125,6 +132,7 @@ jobs:
             -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h" -DGMIC_BUILD_TESTS=ON
           cmake --build build -j4
           .github/workflows/check_fft.sh build/Plugins/GMIC.ofx.bundle pocketfft
+          .github/workflows/check_linux_deps.sh build/Plugins/GMIC.ofx.bundle
       - name: Describe all plug-ins
         run: PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh build/Plugins $GMIC_PLUGIN_COUNT
       # the default FFT (pocketfft) on a non-power-of-two image, with an interpreter built from the
@@ -137,6 +145,13 @@ jobs:
           python3 .github/workflows/render_plugins.py --host build \
             --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset "$([ "$BUILD_VARIANTS" = true ] && echo all || echo pr)" --jobs 2
+      # no libcurl on Linux: G'MIC downloads with the curl command (cimg::load_network). Color
+      # Presets downloads its CLUTs (gmic_cluts.gmz, from gmic.eu) into G'MIC's cache
+      - name: Download filter data with the curl command (Color Presets)
+        run: |
+          python3 .github/workflows/render_plugins.py --host build \
+            --plugins build/Plugins --list plugins.txt --only eu.gmic.ColorPresets --work render-download
+          find render-download/home -name 'gmic_cluts*' -size +0 | grep . || { echo "FAIL: no gmic_cluts downloaded"; exit 1; }
       # FFTW (opt-in, GPL builds only), rendered with the hostDemo of the default build; before the
       # Makefile build, whose (pocketfft) G'MIC headers in the checkout would stop CMake's FFT=fftw3
       # configure (CMakeLists.txt refuses headers that are not the build's own)
@@ -148,6 +163,7 @@ jobs:
             -DFFT=fftw3
           cmake --build build-fftw3 -j4
           .github/workflows/check_fft.sh build-fftw3/Plugins/GMIC.ofx.bundle fftw3
+          .github/workflows/check_linux_deps.sh build-fftw3/Plugins/GMIC.ofx.bundle
           PLUGIN_LIST=plugins-fftw3.txt .github/workflows/describe_plugins.sh build-fftw3/Plugins $GMIC_PLUGIN_COUNT
           python3 .github/workflows/render_plugins.py --host build \
             --plugins build-fftw3/Plugins --list plugins-fftw3.txt --stdlib build-fftw3/gmic/gmic_stdlib_community.h \
@@ -158,13 +174,13 @@ jobs:
         if: env.BUILD_VARIANTS == 'true'
         run: |
           make -j4 CONFIG=debug OPENMP=1 CXX="g++ -std=c++17"
+          .github/workflows/check_linux_deps.sh GMIC_OFX/Linux-64-debug/GMIC.ofx.bundle
           cmake --install build --prefix install
           .github/workflows/compare_bundles.sh GMIC_OFX/Linux-64-debug/GMIC.ofx.bundle install/OFX/Plugins/GMIC.ofx.bundle
           .github/workflows/compare_sources.sh build
-      # The Linux bundle is uploaded as is (it needs libcurl, libpng, libgomp): it requires
-      # the glibc of Ubuntu 24.04 anyway, where these libraries are standard packages, and bundled
-      # copies of libstdc++/libgomp/libcurl could clash with the host's own. Natron's Linux
-      # releases build the plug-in on their own SDK and bundle its libraries themselves.
+      # The Linux bundle is uploaded as is: it needs only system libraries (check_linux_deps.sh),
+      # but the glibc and libstdc++ of Ubuntu 24.04. Natron's Linux releases build the plug-in on
+      # Rocky Linux 8 (see the linux-rocky8 job).
       - name: Upload bundle
         if: env.UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@v4
@@ -206,8 +222,8 @@ jobs:
       - name: Install packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build pkg-config zlib1g-dev libcurl4-openssl-dev libpng-dev \
-            libexpat1-dev libgl-dev
+          sudo apt-get install -y cmake ninja-build pkg-config zlib1g-dev libpng-dev libexpat1-dev \
+            libgl-dev
       - name: Cache G'MIC sources
         uses: actions/cache@v4
         with:
@@ -220,6 +236,7 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
             -DOFX_LICENSE=COMMERCIAL -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h" -DGMIC_BUILD_TESTS=ON
           cmake --build build -j4
+          .github/workflows/check_linux_deps.sh build/Plugins/GMIC.ofx.bundle
       - name: Describe and check
         run: |
           DESCRIBE_LOG=$PWD/describe-commercial.log PLUGIN_LIST=plugins.txt \
@@ -235,9 +252,53 @@ jobs:
       - name: Build with the Makefile (release, LICENSE=COMMERCIAL), compare with CMake
         run: |
           make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17 LICENSE=COMMERCIAL
+          .github/workflows/check_linux_deps.sh GMIC_OFX/Linux-64-release/GMIC.ofx.bundle
           cmake --install build --prefix install
           .github/workflows/compare_bundles.sh GMIC_OFX/Linux-64-release/GMIC.ofx.bundle install/OFX/Plugins/GMIC.ofx.bundle
           .github/workflows/compare_sources.sh build
+
+  # The system of Natron's Linux release builds, nightly or on demand: Rocky Linux 8 (GCC 8.5,
+  # glibc 2.28), with the Makefile, as Natron's build-plugins.sh does. The plug-in must need only
+  # system libraries, and no GLIBC_ version newer than 2.28 (check_linux_deps.sh); the describe
+  # test runs there.
+  linux-rocky8:
+    name: Linux (Rocky Linux 8, GCC 8.5), Makefile
+    runs-on: ubuntu-24.04
+    container: rockylinux:8
+    needs: changes
+    if: >-
+      needs.changes.outputs.run == 'true' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash -eo pipefail {0}
+    steps:
+      # git before the checkout, for the submodule; zlib-static and libpng-static are in PowerTools
+      - name: Install packages
+        run: |
+          dnf install -y dnf-plugins-core
+          dnf config-manager --set-enabled powertools
+          dnf install -y git gcc-c++ make pkgconf-pkg-config zlib-devel zlib-static libpng-devel \
+            libpng-static expat-devel perl binutils diffutils findutils which xz tar gzip
+          gcc --version | head -n 1; ldd --version | head -n 1
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Cache G'MIC sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            gmic_*.tar.gz
+            pocketfft_hdronly.h
+          key: gmic-src-${{ hashFiles('Makefile') }}
+      - name: Build with the Makefile (release, OpenMP, C++17)
+        run: |
+          git config --global --add safe.directory "$PWD"
+          make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17
+          MAX_GLIBC=2.28 .github/workflows/check_linux_deps.sh GMIC_OFX/Linux-64-release/GMIC.ofx.bundle
+      - name: Describe all plug-ins
+        run: CXX=g++ .github/workflows/describe_plugins.sh GMIC_OFX/Linux-64-release $GMIC_PLUGIN_COUNT
 
   macos:
     name: macOS 15 arm64 (Apple clang, MacPorts libraries)
@@ -310,6 +371,7 @@ jobs:
           cmake -S . -B build-fftw3 $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DFFT=fftw3
           cmake --build build-fftw3 -j4
           .github/workflows/check_fft.sh build-fftw3/Plugins/GMIC.ofx.bundle fftw3
+          .github/workflows/check_linux_deps.sh build-fftw3/Plugins/GMIC.ofx.bundle
           CXX="/usr/bin/clang++ -I/opt/local/include" \
             HOST_LDFLAGS=-L/opt/local/lib PLUGIN_LIST=plugins-fftw3.txt \
             .github/workflows/describe_plugins.sh build-fftw3/Plugins $GMIC_PLUGIN_COUNT
@@ -395,6 +457,7 @@ jobs:
             -DGMIC_POCKETFFT="$(cygpath -m "$PWD")/pocketfft_hdronly.h" -DGMIC_BUILD_TESTS=ON
           cmake --build build -j4
           .github/workflows/check_fft.sh build/Plugins/GMIC.ofx.bundle pocketfft
+          .github/workflows/check_linux_deps.sh build/Plugins/GMIC.ofx.bundle
       - name: Describe all plug-ins
         run: |
           set -eo pipefail

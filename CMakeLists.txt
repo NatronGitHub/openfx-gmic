@@ -621,7 +621,6 @@ target_compile_definitions(GMIC PRIVATE
   "cimg_appname=\"gmic\""
   cimg_verbosity=0
   cimg_use_zlib  # zlib: decompress the G'MIC standard library
-  cimg_use_curl  # libcurl: download filter data
   cimg_use_png)  # libpng: HaldCLUTs
 if(MSVC)
   target_compile_definitions(GMIC PRIVATE NOMINMAX)
@@ -642,18 +641,64 @@ if(OFX_LICENSE STREQUAL "COMMERCIAL")
 endif()
 
 # The libraries of GMIC_OFX/Makefile, through pkg-config as it does (so that the same ones are
-# found, e.g. MacPorts' zlib and libcurl rather than the macOS SDK's), plus fftw3 and fftw3_threads
-# with FFT=fftw3
+# found, e.g. MacPorts' zlib and libcurl rather than the macOS SDK's): zlib, libpng, libcurl
+# (downloads of filter data, except on Linux), plus fftw3 and fftw3_threads with FFT=fftw3.
+#
+# Linux (as GMIC_OFX/Makefile): GMIC.ofx needs only system libraries (libc, libm, libpthread,
+# libdl, librt, libstdc++, libgcc_s, libgomp), so that one binary runs on every distribution
+# (Natron's release builds: Rocky Linux 8, glibc 2.28). No libcurl: G'MIC downloads with the
+# external curl or wget command instead (cimg::load_network). zlib, libpng and FFTW are linked
+# statically with GMIC_STATIC_DEPS (ON by default on Linux): their static archives (libz.a,
+# libpng16.a, libfftw3.a, libfftw3_threads.a, built with -fPIC) must be in pkg-config's libdir
+# or the linker's search path. -DGMIC_STATIC_DEPS=OFF links the shared libraries, e.g. for
+# distribution packages. The version script of add_ofx_plugin keeps their symbols local.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  option(GMIC_STATIC_DEPS "Linux: link zlib, libpng and FFTW statically (GMIC.ofx needs only system libraries)" ON)
+  set(_curl_module "")
+else()
+  set(GMIC_STATIC_DEPS OFF)
+  set(_curl_module libcurl)
+  target_compile_definitions(GMIC PRIVATE cimg_use_curl)
+endif()
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(GMIC_DEPS REQUIRED IMPORTED_TARGET ${_fft_module} zlib libcurl libpng)
-target_link_libraries(GMIC PRIVATE PkgConfig::GMIC_DEPS)
+pkg_check_modules(GMIC_DEPS REQUIRED IMPORTED_TARGET ${_fft_module} libpng zlib ${_curl_module})
 if(GMIC_FFT STREQUAL "fftw3")
-  pkg_get_variable(_fftw3_libdir fftw3 libdir)
-  find_library(FFTW3_THREADS_LIBRARY fftw3_threads HINTS ${_fftw3_libdir} ${GMIC_DEPS_LIBRARY_DIRS})
-  if(NOT FFTW3_THREADS_LIBRARY)
-    message(FATAL_ERROR "fftw3_threads not found (in ${_fftw3_libdir})")
+  set(_fftw3_threads fftw3_threads)
+else()
+  set(_fftw3_threads "")
+endif()
+if(GMIC_STATIC_DEPS)
+  target_include_directories(GMIC PRIVATE ${GMIC_DEPS_STATIC_INCLUDE_DIRS})
+  target_compile_options(GMIC PRIVATE ${GMIC_DEPS_STATIC_CFLAGS_OTHER})
+  set(_dirs ${GMIC_DEPS_STATIC_LIBRARY_DIRS})
+  foreach(_module ${_fft_module} libpng zlib)
+    string(REGEX REPLACE "[<>=].*" "" _module "${_module}")
+    pkg_get_variable(_libdir ${_module} libdir)
+    list(APPEND _dirs ${_libdir})
+  endforeach()
+  foreach(_lib ${_fftw3_threads} ${GMIC_DEPS_STATIC_LIBRARIES})
+    if(_lib MATCHES "^(m|dl|pthread|rt|c)$") # system libraries
+      target_link_libraries(GMIC PRIVATE ${_lib})
+      continue()
+    endif()
+    find_library(GMIC_STATIC_${_lib} NAMES lib${_lib}.a HINTS ${_dirs})
+    if(NOT GMIC_STATIC_${_lib})
+      message(FATAL_ERROR "GMIC_STATIC_DEPS: lib${_lib}.a not found (in ${_dirs} or the default paths): "
+        "install the static libraries (e.g. zlib1g-dev and libpng-dev on Debian/Ubuntu, zlib-static and "
+        "libpng-static on RHEL/Rocky), or configure with -DGMIC_STATIC_DEPS=OFF")
+    endif()
+    target_link_libraries(GMIC PRIVATE ${GMIC_STATIC_${_lib}})
+  endforeach()
+else()
+  target_link_libraries(GMIC PRIVATE PkgConfig::GMIC_DEPS)
+  if(_fftw3_threads)
+    pkg_get_variable(_fftw3_libdir fftw3 libdir)
+    find_library(FFTW3_THREADS_LIBRARY fftw3_threads HINTS ${_fftw3_libdir} ${GMIC_DEPS_LIBRARY_DIRS})
+    if(NOT FFTW3_THREADS_LIBRARY)
+      message(FATAL_ERROR "fftw3_threads not found (in ${_fftw3_libdir})")
+    endif()
+    target_link_libraries(GMIC PRIVATE ${FFTW3_THREADS_LIBRARY})
   endif()
-  target_link_libraries(GMIC PRIVATE ${FFTW3_THREADS_LIBRARY})
 endif()
 
 # OpenMP (OFX_USE_OPENMP), except with MSVC, whose OpenMP 2.0 has issues with CImg
@@ -666,4 +711,5 @@ endif()
 ofx_deploy_bundle(GMIC)
 
 message(STATUS "G'MIC ${GMICVER} (${_gmic_tarball}), ${OFX_LICENSE}, FFT: ${GMIC_FFT}, C++${OFX_CXX_STANDARD}, OpenMP: ${OFX_USE_OPENMP}, "
+  "static zlib/libpng/FFTW: ${GMIC_STATIC_DEPS}, "
   "bundle: ${OFX_PLUGIN_BUILD_DIR}/GMIC.ofx.bundle/Contents/${ARCHDIR}")

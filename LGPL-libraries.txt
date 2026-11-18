@@ -16,7 +16,7 @@ same libraries, with the same ABI (major version):
   bundle again (ad hoc), as macOS requires on arm64:
       codesign -s - --force --deep GMIC.ofx.bundle
 - Windows: they are in GMIC.ofx.bundle/Contents/Win64. Replacing the .dll file is enough.
-- Linux: they are not bundled; the plug-in uses the system's libraries.
+- Linux: the plug-in doesn't use libcurl (it runs the curl or wget command to download).
 
 The sources of these libraries are available from https://www.gnu.org/software/libidn/,
 https://www.gnu.org/software/libunistring/, https://www.gnu.org/software/gettext/ and
