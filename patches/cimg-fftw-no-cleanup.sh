@@ -11,7 +11,7 @@
 # and then uses freed memory. fftw_make_planner_thread_safe() (gmic_plugin.cpp) doesn't protect
 # against it: FFTW's cleanup functions don't take the planner lock. Not cleaning up is safe: the
 # planner and the threads are kept until the process exits, and fftw_init_threads() stays in
-# CImg's static initialisation. Same in GreycLab/CImg develop (not reported upstream yet).
+# CImg's static initialisation. Same in GreycLab/CImg develop.
 #
 # This script replaces each of the two blocks
 #   #ifndef cimg_use_fftw3_singlethread
@@ -38,7 +38,7 @@ fail() {
   rm -f "$f.patched" "$f.stripped1" "$f.stripped2"
   exit 1
 }
-trap 'rm -f "$f.patched" "$f.stripped1" "$f.stripped2"' INT TERM HUP
+trap 'rm -f "$f.patched" "$f.stripped1" "$f.stripped2"; exit 1' INT TERM HUP
 
 case "$f" in
   *CImg.h) ;;
@@ -59,7 +59,7 @@ state() {
       for (i = 1; i <= n; ++i) {
         if (i + 2 <= n && t[i] == b1 && t[i + 1] == b2 && t[i + 2] == b3) { ++blocks; i += 2; continue }
         if (t[i] == cm) ++comments
-        else if (index(t[i], "fftw_cleanup")) ++others
+        else if (t[i] ~ /fftw[fl]?_cleanup/) ++others
       }
       print blocks + 0, comments + 0, others + 0
     }' "$1"
