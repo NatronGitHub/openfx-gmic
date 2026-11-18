@@ -178,6 +178,10 @@ Licence_pocketfft.txt: pocketfft_hdronly.h
 # - cimg-symmetric-eigen.sh: eigen and eig() return NaN eigenvectors for rank-deficient symmetric
 #   matrices, e.g. in Smooth [Patch-PCA] (https://github.com/GreycLab/gmic/issues/221,
 #   https://github.com/NatronGitHub/openfx-gmic/issues/71, fixed after G'MIC 4.0.7)
+# - cimg-fftw-no-cleanup.sh: CImg's FFTs no longer call fftw_cleanup_threads() after each FFT,
+#   which frees FFTW's process-wide planner and threads while another plug-in of the host (e.g.
+#   openfx-misc's CImg plug-ins, same shared libfftw3) may be using them (also in CImg develop,
+#   https://github.com/GreycLab/CImg/issues/500)
 # - cimg-pocketfft.sh: let CImg compute its FFTs with pocketfft (cimg_use_pocketfft), which
 #   COMMERCIAL builds use instead of FFTW (only applied for FFT=pocketfft; merged upstream after
 #   G'MIC 4.0.7, https://github.com/GreycLab/CImg/pull/497)
@@ -186,7 +190,7 @@ Licence_pocketfft.txt: pocketfft_hdronly.h
 GMIC_PATCHES = patches/gmic-apple-abort.sh
 gmic.h gmic.cpp: $(GMIC_PATCHES)
 CIMG_PATCHES_POCKETFFT = patches/cimg-pocketfft.sh
-CIMG_PATCHES = patches/cimg-math-macro-overread.sh patches/cimg-omp-rand.sh patches/cimg-ij-boundary.sh patches/cimg-symmetric-eigen.sh
+CIMG_PATCHES = patches/cimg-math-macro-overread.sh patches/cimg-omp-rand.sh patches/cimg-ij-boundary.sh patches/cimg-symmetric-eigen.sh patches/cimg-fftw-no-cleanup.sh
 ifeq ($(FFT),pocketfft)
 CIMG_PATCHES += $(CIMG_PATCHES_POCKETFFT)
 endif

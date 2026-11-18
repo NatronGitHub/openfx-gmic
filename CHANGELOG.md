@@ -43,6 +43,7 @@ Changes in openfx-gmic since Natron 2.5.0 (tag `Natron-2.5.0`). Natron 2.6 polic
   - Each run computes all N results before one is picked or kept, so its peak memory is N full-size frames whatever the cache budget (e.g. 512 HD frames, about 17 GB): the filter's own frame count parameter limits it.
 
 ### Fixes
+- FFTW shared with other plug-ins of the host (e.g. openfx-misc's CImg plug-ins, same libfftw3): FFTW's planner is made thread-safe once per process (`fftw_make_planner_thread_safe`), and CImg no longer calls `fftw_cleanup_threads()` after each FFT, which freed FFTW's planner and threads while another plug-in could be using them (possible crash with concurrent FFTs). FFTW ≥ 3.3.5 is now required. `fftw_plan_with_nthreads` stays a process-wide setting (performance only).
 - Global Random Seed (#44, #68): random numbers in multithreaded (OpenMP) filters no longer depend on thread scheduling, so for most filters a seed gives the same result for a given number of threads (with one thread, results are as before). Filters using patch matching or G'MIC's `parallel` command, and concurrent renders, can still vary (see the parameter's help).
 - Renders where the input and output image bounds differ (e.g. partial render windows) no longer fail with "The image produced by G'MIC has the wrong size" (#40; likely fixes #2, waiting for a retest).
 - Wrong parameters or output for many filters: value(), file defaults, choices, colours with alpha, 8-bit flip, gray+alpha (#7, #17, #20, #39).

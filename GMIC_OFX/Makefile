@@ -80,6 +80,12 @@ CXXFLAGS += \
 # not powers of two), see license.mk:
 ifeq ($(FFT),fftw3)
 # FFTW (license: GPLv2), multithreaded
+# fftw_make_planner_thread_safe (see gmic_plugin.cpp) needs FFTW 3.3.5 (not checked for clean)
+ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
+ifeq ($(shell pkg-config --atleast-version=3.3.5 fftw3 && echo ok),)
+  $(error FFT=fftw3 needs FFTW >= 3.3.5 (pkg-config fftw3))
+endif
+endif
 FFT_CXXFLAGS = `pkg-config --cflags fftw3` -Dcimg_use_fftw3
 FFT_LINKFLAGS = `pkg-config --libs fftw3` -lfftw3_threads
 endif
