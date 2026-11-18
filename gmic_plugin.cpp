@@ -514,10 +514,16 @@ static string layerTimesNote(const EffectData& effectData)
 
 #if defined(cimg_use_fftw3) && !defined(cimg_use_fftw3_singlethread)
 // FFTW is a shared library: other plug-ins of the host process (e.g. openfx-misc's CImg plug-ins)
-// share its planner, which isn't thread-safe, and each one only locks its own mutex around
-// planning. Make FFTW's planner thread-safe, once per process, at the first plug-in load (FFTW >=
-// 3.3.5, in libfftw3_threads; CImg calls fftw_init_threads at library initialisation, calling it
-// again is harmless).
+// share its global planner and thread pool, and each one only locks its own mutex around its
+// FFTs. Two fixes make this safe:
+// - FFTW's planner is made thread-safe, once per process, at the first plug-in load (FFTW >=
+//   3.3.5, in libfftw3_threads; CImg calls fftw_init_threads at library initialisation, calling
+//   it again is harmless);
+// - CImg no longer calls fftw_cleanup_threads() after each FFT (patches/cimg-fftw-no-cleanup.sh):
+//   that frees the planner and the threads without the planner lock, while another plug-in may
+//   be planning or executing an FFT.
+// fftw_plan_with_nthreads(), called by CImg before each plan, remains a process-wide setting: a
+// plug-in may plan with another one's thread count (performance only, results are the same).
 static void makeFftwThreadSafe()
 {
 	static std::once_flag once;
