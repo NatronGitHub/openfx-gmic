@@ -13,6 +13,10 @@ name: Continuous Integration
 # and compare its bundle with the installed CMake one (compare_bundles.sh). The per-PR runs only
 # build with CMake.
 #
+# FFT: all builds use the default, pocketfft (header-only, downloaded), as Natron's builds do; the
+# nightly and on-demand runs also build FFT=fftw3 (FFTW, opt-in for GPL builds) on Linux and macOS,
+# and describe and render it (the pr subset, with the FFT filters).
+#
 # Render test (render_plugins.py, with openfx's hostDemo: GMIC_BUILD_TESTS=ON): per PR, a
 # representative subset of the plug-ins (the FFT and multi-layer filters, every 30th plug-in) on
 # the three systems; nightly and on demand, all the plug-ins on Linux.
@@ -101,7 +105,7 @@ jobs:
       - name: Install packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build pkg-config libfftw3-dev zlib1g-dev libcurl4-openssl-dev \
+          sudo apt-get install -y cmake ninja-build pkg-config zlib1g-dev libcurl4-openssl-dev \
             libpng-dev libexpat1-dev libgl-dev
       # the tarball, downloaded into the source directory (GMIC_DOWNLOAD_DIR), where both the
       # CMake and the Makefile builds find it
@@ -132,7 +136,7 @@ jobs:
           cmake --install build --prefix install
           .github/workflows/compare_bundles.sh GMIC_OFX/Linux-64-debug/GMIC.ofx.bundle install/OFX/Plugins/GMIC.ofx.bundle
           .github/workflows/compare_sources.sh build
-      # The Linux bundle is uploaded as is (it needs libfftw3, libcurl, libpng, libgomp): it requires
+      # The Linux bundle is uploaded as is (it needs libcurl, libpng, libgomp): it requires
       # the glibc of Ubuntu 24.04 anyway, where these libraries are standard packages, and bundled
       # copies of libstdc++/libgomp/libcurl could clash with the host's own. Natron's Linux
       # releases build the plug-in on their own SDK and bundle its libraries themselves.
@@ -148,9 +152,21 @@ jobs:
           cmake -S . -B build-cxx20 -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=20 -DGMIC_DOWNLOAD_DIR="$PWD"
           cmake --build build-cxx20 -j4
           .github/workflows/describe_plugins.sh build-cxx20/Plugins $GMIC_PLUGIN_COUNT
+      # FFTW (opt-in, GPL builds only), rendered with the hostDemo of the default build
+      - name: Build, describe and render (release, FFT=fftw3)
+        if: env.BUILD_VARIANTS == 'true'
+        run: |
+          sudo apt-get install -y libfftw3-dev
+          cmake -S . -B build-fftw3 -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
+            -DFFT=fftw3
+          cmake --build build-fftw3 -j4
+          PLUGIN_LIST=plugins-fftw3.txt .github/workflows/describe_plugins.sh build-fftw3/Plugins $GMIC_PLUGIN_COUNT
+          python3 .github/workflows/render_plugins.py --host build \
+            --plugins build-fftw3/Plugins --list plugins-fftw3.txt --stdlib build-fftw3/gmic/gmic_stdlib_community.h \
+            --subset pr --jobs 2
 
   # Natron's COMMERCIAL builds (-DOFX_LICENSE=COMMERCIAL, make LICENSE=COMMERCIAL, see license.mk),
-  # nightly or on demand: pocketfft instead of FFTW (GPL), and a standard library without the
+  # nightly or on demand: pocketfft (the default; FFTW is GPL), and a standard library without the
   # community filters under the GPL or a CeCILL-only licence. The bundle is checked
   # (check_commercial.sh: no FFTW, licence texts, left-out plug-ins), described and rendered (the pr
   # subset, with the FFT filters), and FFT-based filters are rendered on a 720x576 image with an
@@ -308,6 +324,20 @@ jobs:
           CXX="/usr/bin/clang++ -I/opt/local/include" \
             HOST_LDFLAGS=-L/opt/local/lib \
             .github/workflows/describe_plugins.sh build-cxx20/Plugins $GMIC_PLUGIN_COUNT
+      # FFTW (opt-in, GPL builds only; setup-macports.yaml installs fftw-3 for it), rendered with
+      # the hostDemo of the default build
+      - name: Build, describe and render (release, FFT=fftw3)
+        if: env.BUILD_VARIANTS == 'true'
+        run: |
+          export PATH=/opt/local/bin:/opt/local/sbin:$PATH
+          cmake -S . -B build-fftw3 $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DFFT=fftw3
+          cmake --build build-fftw3 -j4
+          CXX="/usr/bin/clang++ -I/opt/local/include" \
+            HOST_LDFLAGS=-L/opt/local/lib PLUGIN_LIST=plugins-fftw3.txt \
+            .github/workflows/describe_plugins.sh build-fftw3/Plugins $GMIC_PLUGIN_COUNT
+          python3 .github/workflows/render_plugins.py --host build \
+            --plugins build-fftw3/Plugins --list plugins-fftw3.txt --stdlib build-fftw3/gmic/gmic_stdlib_community.h \
+            --subset pr --jobs 2
 
   windows:
     name: Windows (MSYS2 UCRT64)
@@ -331,7 +361,7 @@ jobs:
             git make diffutils
             mingw-w64-ucrt-x86_64-cc mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-fftw mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-curl
+            mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-curl
             mingw-w64-ucrt-x86_64-libpng mingw-w64-ucrt-x86_64-expat mingw-w64-ucrt-x86_64-python
       - name: Cache G'MIC sources
         uses: actions/cache@v4
