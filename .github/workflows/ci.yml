@@ -27,8 +27,8 @@ name: Continuous Integration
 # libgomp): no libcurl, static zlib and libpng (see GMIC_OFX/Makefile). Each Linux build checks it
 # (check_linux_deps.sh), and reports the highest symbol versions that it requires; the nightly and
 # on-demand runs also build with the Makefile on Rocky Linux 9 (GCC 11, glibc 2.34), Natron 2.6's
-# Linux baseline. The per-PR Linux build renders Color Presets, which downloads its CLUTs
-# with the curl command (no libcurl).
+# Linux baseline. The per-PR Linux build renders Add Grain, which downloads its grain images with
+# the curl command (no libcurl).
 #
 # Frugal CI (the NatronGitHub runners are shared by all repos): one run per change. Pushes run CI
 # only on master and tags; feature branches run through their pull request. Draft pull requests
@@ -156,13 +156,15 @@ jobs:
           python3 .github/workflows/render_plugins.py --host build \
             --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset "$([ "$BUILD_VARIANTS" = true ] && echo all || echo pr)" --jobs 2
-      # no libcurl on Linux: G'MIC downloads with the curl command (cimg::load_network). Color
-      # Presets downloads its CLUTs (gmic_cluts.gmz, from gmic.eu) into G'MIC's cache
-      - name: Download filter data with the curl command (Color Presets)
+      # no libcurl on Linux: G'MIC downloads with the curl command (cimg::load_network). Add Grain
+      # downloads its grain images (gmic_grain.gmz, from gmic.eu) into G'MIC's cache, in the
+      # render's HOME (Color Presets downloads only for a preset other than the default)
+      - name: Download filter data with the curl command (Add Grain)
         run: |
-          python3 .github/workflows/render_plugins.py --host build \
-            --plugins build/Plugins --list plugins.txt --only eu.gmic.ColorPresets --work render-download
-          find render-download/home -name 'gmic_cluts*' -size +0 | grep . || { echo "FAIL: no gmic_cluts downloaded"; exit 1; }
+          env -u XDG_CACHE_HOME python3 .github/workflows/render_plugins.py --host build \
+            --plugins build/Plugins --list plugins.txt --only eu.gmic.AddGrain --work render-download
+          find render-download/home -name 'gmic_grain*' -size +0 -exec ls -l {} + | grep . ||
+            { echo "FAIL: gmic_grain.gmz was not downloaded"; exit 1; }
       # FFTW (opt-in, GPL builds only), rendered with the hostDemo of the default build; before the
       # Makefile build, whose (pocketfft) G'MIC headers in the checkout would stop CMake's FFT=fftw3
       # configure (CMakeLists.txt refuses headers that are not the build's own)
