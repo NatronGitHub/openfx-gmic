@@ -27,8 +27,8 @@ name: Continuous Integration
 # libgomp): no libcurl, static zlib and libpng (see GMIC_OFX/Makefile). Each Linux build checks it
 # (check_linux_deps.sh), and reports the highest symbol versions that it requires; the nightly and
 # on-demand runs also build with the Makefile on Rocky Linux 9 (GCC 11, glibc 2.34), Natron 2.6's
-# Linux baseline. The per-PR Linux build renders Add Grain, which downloads its grain images with
-# the curl command (no libcurl).
+# Linux baseline. The Linux build renders Add Grain, which downloads its grain images with
+# the curl command (no libcurl), on the nightly and on-demand runs (gmic.eu may refuse downloads).
 #
 # Frugal CI (the NatronGitHub runners are shared by all repos): one run per change. Pushes run CI
 # only on master and tags; feature branches run through their pull request. Draft pull requests
@@ -126,17 +126,8 @@ jobs:
             gmic_*.tar.gz
             pocketfft_hdronly.h
           key: gmic-src-${{ hashFiles('Makefile') }}
-      # static zlib and libpng built with -fPIC (distributions' archives may not be, e.g. Ubuntu's
-      # libpng16.a), linked into GMIC.ofx (GMIC_STATIC_DEPS, the default on Linux)
-      - name: Cache static zlib and libpng
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/static-deps
-          key: static-deps-${{ github.job }}-${{ hashFiles('.github/workflows/build_static_deps.sh') }}
-      - name: Static zlib and libpng (-fPIC)
-        run: |
-          [ -f "$RUNNER_TEMP/static-deps/lib/libpng16.a" ] || .github/workflows/build_static_deps.sh "$RUNNER_TEMP/static-deps"
-          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/static-deps/lib/pkgconfig" >> "$GITHUB_ENV"
+      # static zlib and libpng built with -fPIC, linked into GMIC.ofx (GMIC_STATIC_DEPS)
+      - uses: ./.github/actions/static-deps
       - name: Build (release, OpenMP)
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
@@ -160,6 +151,7 @@ jobs:
       # downloads its grain images (gmic_grain.gmz, from gmic.eu) into G'MIC's cache, here an empty
       # GMIC_CACHE_PATH (Color Presets downloads only for a preset other than the default)
       - name: Download filter data with the curl command (Add Grain)
+        if: env.BUILD_VARIANTS == 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/gmic-cache"
           GMIC_CACHE_PATH="$RUNNER_TEMP/gmic-cache/" python3 .github/workflows/render_plugins.py --host build \
@@ -245,17 +237,8 @@ jobs:
             gmic_*.tar.gz
             pocketfft_hdronly.h
           key: gmic-src-${{ hashFiles('Makefile') }}
-      # static zlib and libpng built with -fPIC (distributions' archives may not be, e.g. Ubuntu's
-      # libpng16.a), linked into GMIC.ofx (GMIC_STATIC_DEPS, the default on Linux)
-      - name: Cache static zlib and libpng
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/static-deps
-          key: static-deps-${{ github.job }}-${{ hashFiles('.github/workflows/build_static_deps.sh') }}
-      - name: Static zlib and libpng (-fPIC)
-        run: |
-          [ -f "$RUNNER_TEMP/static-deps/lib/libpng16.a" ] || .github/workflows/build_static_deps.sh "$RUNNER_TEMP/static-deps"
-          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/static-deps/lib/pkgconfig" >> "$GITHUB_ENV"
+      # static zlib and libpng built with -fPIC, linked into GMIC.ofx (GMIC_STATIC_DEPS)
+      - uses: ./.github/actions/static-deps
       - name: Build (release, OpenMP, OFX_LICENSE=COMMERCIAL)
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
@@ -284,8 +267,8 @@ jobs:
 
   # Natron 2.6's Linux baseline, nightly or on demand: Rocky Linux 9 (GCC 11, glibc 2.34; VFX
   # Reference Platform CY2027), with the Makefile, as Natron's build-plugins.sh does. The plug-in
-  # must need only system libraries, and no GLIBC_ or GLIBCXX_ version newer than glibc 2.34's and
-  # GCC 11's (check_linux_deps.sh); the describe test runs there.
+  # must need only system libraries (check_linux_deps.sh, which reports the GLIBC_ and GLIBCXX_
+  # versions required: at most glibc 2.34's and GCC 11's there); the describe test runs there.
   linux-rocky9:
     name: Linux (Rocky Linux 9, GCC 11), Makefile
     runs-on: ubuntu-24.04
@@ -315,22 +298,13 @@ jobs:
             gmic_*.tar.gz
             pocketfft_hdronly.h
           key: gmic-src-${{ hashFiles('Makefile') }}
-      # static zlib and libpng built with -fPIC (distributions' archives may not be, e.g. Ubuntu's
-      # libpng16.a), linked into GMIC.ofx (GMIC_STATIC_DEPS, the default on Linux)
-      - name: Cache static zlib and libpng
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/static-deps
-          key: static-deps-${{ github.job }}-${{ hashFiles('.github/workflows/build_static_deps.sh') }}
-      - name: Static zlib and libpng (-fPIC)
-        run: |
-          [ -f "$RUNNER_TEMP/static-deps/lib/libpng16.a" ] || .github/workflows/build_static_deps.sh "$RUNNER_TEMP/static-deps"
-          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/static-deps/lib/pkgconfig" >> "$GITHUB_ENV"
+      # static zlib and libpng built with -fPIC, linked into GMIC.ofx (GMIC_STATIC_DEPS)
+      - uses: ./.github/actions/static-deps
       - name: Build with the Makefile (release, OpenMP, C++17)
         run: |
           git config --global --add safe.directory "$PWD"
           make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17
-          MAX_GLIBC=2.34 MAX_GLIBCXX=3.4.29 .github/workflows/check_linux_deps.sh GMIC_OFX/Linux-64-release/GMIC.ofx.bundle
+          .github/workflows/check_linux_deps.sh GMIC_OFX/Linux-64-release/GMIC.ofx.bundle
       - name: Describe all plug-ins
         run: CXX=g++ .github/workflows/describe_plugins.sh GMIC_OFX/Linux-64-release $GMIC_PLUGIN_COUNT
 

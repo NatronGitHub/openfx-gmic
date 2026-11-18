@@ -22,9 +22,10 @@ ifeq ($(FFT),pocketfft)
 RESOURCES += $(SRCDIR)/Licence_pocketfft.txt
 endif
 
-# LICENSE, FFT and OPENMP change the compiled code and the bundled files: when they change, rebuild
-# the objects and the bundle (whose Contents/Libraries and Resources would keep stale files).
-BUILD_KEY = LICENSE=$(LICENSE) FFT=$(FFT) OPENMP=$(OPENMP)
+# LICENSE, FFT, OPENMP and GMIC_STATIC_DEPS change the compiled code, the linked libraries and the
+# bundled files: when they change, rebuild the objects and the bundle (whose Contents/Libraries
+# and Resources would keep stale files).
+BUILD_KEY = LICENSE=$(LICENSE) FFT=$(FFT) OPENMP=$(OPENMP) GMIC_STATIC_DEPS=$(GMIC_STATIC_DEPS)
 $(OBJECTPATH)/build.license: gmic_sources
 	@mkdir -p $(OBJECTPATH)
 	@echo '$(BUILD_KEY)' | cmp -s - $@ || { echo '$(BUILD_KEY)' > $@; rm -rf $(OBJECTPATH)/$(PLUGINNAME).ofx.bundle; }
@@ -117,7 +118,7 @@ ifeq ($(OS),Linux)
   # Makefile.master links OpenGL to every plug-in: G'MIC doesn't use it
   LINKFLAGS := $(filter-out -lGL,$(LINKFLAGS))
 else
-  GMIC_STATIC_DEPS = 0
+  override GMIC_STATIC_DEPS = 0
   DEPS_MODULES += libcurl
   CXXFLAGS += -Dcimg_use_curl
 endif

@@ -14,14 +14,16 @@ case $(uname -s) in
     *) libs=$(objdump -p "$ofx" | sed -n 's/.*DLL Name: //p') ;;
 esac
 fftw=$(echo "$libs" | grep -i fftw || true)
-static=""
+static=""          # how FFTW is linked statically, for the messages
+static_complete=0  # 1: both libfftw3.a and libfftw3_threads.a are linked
 if [ "$(uname -s)" = Linux ] && [ -z "$fftw" ]; then
     undefined=$(nm -D --undefined-only "$ofx" | grep -i fftw || true)
     [ -z "$undefined" ] || { echo "Error: $ofx has undefined FFTW symbols:" $undefined; exit 1; }
     # the (unstripped) symbol table: FFTW's code, local, from libfftw3.a and libfftw3_threads.a
     defined=$(nm "$ofx" 2>/dev/null | awk '$2 ~ /^[tT]$/ && $3 ~ /^fftw_(execute|plan_with_nthreads)$/ { print $3 }' | LC_ALL=C sort -u | tr '\n' ' ')
     case "$defined" in
-        "fftw_execute fftw_plan_with_nthreads ") static="FFTW (static: libfftw3.a, libfftw3_threads.a)" ;;
+        "fftw_execute fftw_plan_with_nthreads ")
+            static="FFTW (static: libfftw3.a, libfftw3_threads.a)"; static_complete=1 ;;
         ?*) static="FFTW (static, incomplete: $defined)" ;;
     esac
 fi
@@ -29,8 +31,12 @@ case $fft in
     pocketfft)
         [ -z "$fftw$static" ] || { echo "Error: $ofx (FFT=pocketfft) links FFTW:" $fftw $static; exit 1; } ;;
     fftw3)
-        if [ "${static#FFTW (static:}" = "$static" ] && { ! echo "$fftw" | grep -q fftw3_threads || ! echo "$fftw" | grep -v fftw3_threads | grep -q fftw3; }; then
-            echo "Error: $ofx (FFT=fftw3) does not link libfftw3 and libfftw3_threads:" $libs; exit 1
+        shared_complete=0 # NEEDED has both libfftw3 and libfftw3_threads
+        if echo "$fftw" | grep -q fftw3_threads && echo "$fftw" | grep -v fftw3_threads | grep -q fftw3; then
+            shared_complete=1
+        fi
+        if [ $static_complete = 0 ] && [ $shared_complete = 0 ]; then
+            echo "Error: $ofx (FFT=fftw3) does not link libfftw3 and libfftw3_threads:" $libs $static; exit 1
         fi ;;
     *) echo "Usage: $0 <GMIC.ofx.bundle> pocketfft|fftw3"; exit 2 ;;
 esac

@@ -686,6 +686,8 @@ if(GMIC_STATIC_DEPS)
       target_link_libraries(GMIC PRIVATE ${_lib})
       continue()
     endif()
+    # cached (find_library's NO_CACHE needs CMake 3.21): after changing PKG_CONFIG_PATH or the
+    # archives' location, configure a new build directory, or with -U 'GMIC_STATIC_*'
     find_library(GMIC_STATIC_${_lib} NAMES lib${_lib}.a HINTS ${_dirs})
     if(NOT GMIC_STATIC_${_lib})
       message(FATAL_ERROR "GMIC_STATIC_DEPS: lib${_lib}.a not found (in ${_dirs} or the default paths): "

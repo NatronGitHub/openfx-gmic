@@ -1,18 +1,15 @@
 #!/bin/bash
 # Check that a Linux GMIC.ofx needs only system libraries, and exports only the OFX entry points:
 # - its NEEDED entries are all in the allowed set: libc, libm, ld-linux (glibc's dynamic loader),
-#   libstdc++, libgcc_s, libgomp (OpenMP), zlib (a system library, though GMIC.ofx links it
-#   statically), and libpthread, libdl and librt, which are separate from libc only before glibc
-#   2.34 (older systems than Natron's Rocky Linux 9 baseline); libpng and FFTW are linked
-#   statically;
+#   libstdc++, libgcc_s, libgomp (OpenMP), and libpthread, libdl and librt, which are separate
+#   from libc only before glibc 2.34 (older systems than Natron's Rocky Linux 9 baseline); zlib,
+#   libpng and FFTW are linked statically (a shared libz.so.1 fails);
 # - no libcurl (G'MIC downloads with the curl or wget command), checked through the NEEDED list;
 # - it exports only OfxGetNumberOfPlugins and OfxGetPlugin (the version script keeps the symbols
 #   of the static libraries local).
-# It also prints the highest GLIBC_, GLIBCXX_, CXXABI_, GCC_ and GOMP_ symbol versions required,
+# It also reports the highest GLIBC_, GLIBCXX_, CXXABI_, GCC_ and GOMP_ symbol versions required,
 # which must exist on the oldest supported system (Natron 2.6: Rocky Linux 9, glibc 2.34 and
-# GCC 11's libstdc++, GLIBCXX_3.4.29 and CXXABI_1.3.13).
-# MAX_GLIBC=<version> (e.g. 2.34), MAX_GLIBCXX=<version> (e.g. 3.4.29): fail if a newer GLIBC_ or
-# GLIBCXX_ version is required.
+# GCC 11's libstdc++, GLIBCXX_3.4.29 and CXXABI_1.3.13): a build there can only require those.
 # Usage: check_linux_deps.sh <GMIC.ofx.bundle>
 set -euo pipefail
 
@@ -31,7 +28,7 @@ fi
 echo "NEEDED: $(echo $needed)"
 for lib in $needed; do
     case "$lib" in
-        libc.so.6|libm.so.6|ld-linux*.so*|libstdc++.so.6|libgcc_s.so.1|libgomp.so.1|libz.so.1) ;;
+        libc.so.6|libm.so.6|ld-linux*.so*|libstdc++.so.6|libgcc_s.so.1|libgomp.so.1) ;;
         libpthread.so.0|libdl.so.2|librt.so.1) ;; # glibc < 2.34
         *) echo "FAIL: $bin needs $lib, which is not a system library (link it statically)"; status=1 ;;
     esac
@@ -52,12 +49,6 @@ for prefix in GLIBC GLIBCXX CXXABI GCC GOMP OMP; do
     v=$(echo "$versions" | sed -n -e "s/^${prefix}_//p" | vsort | tail -n 1)
     [ -z "$v" ] && continue
     echo "Highest ${prefix}_ version required: ${prefix}_$v"
-    case "$prefix" in GLIBC) max=${MAX_GLIBC:-} ;; GLIBCXX) max=${MAX_GLIBCXX:-} ;; *) max= ;; esac
-    if [ -n "$max" ] && [ "$(printf '%s\n%s\n' "$v" "$max" | vsort | tail -n 1)" != "$max" ]; then
-        echo "FAIL: ${prefix}_$v is newer than ${prefix}_$max; symbols that need it:"
-        objdump -T "$bin" | grep -E "\b${prefix}_$v\b" | awk '{ print "  " $NF }' | head -n 10 || true
-        status=1
-    fi
 done
 
 [ $status = 0 ] && echo "OK: $bin needs only system libraries"
