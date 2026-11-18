@@ -147,11 +147,16 @@ else
 	tar -m --strip-components 2 -zxf $< -O $(GMICSRCDIR)/src/$@ > $@.tmp && mv $@.tmp $@
 endif
 
-# pocketfft (FFT=pocketfft, the default), C++ header-only version, at a pinned commit of its 'cpp' branch
+# pocketfft (FFT=pocketfft, the default), C++ header-only version, at a pinned commit of its 'cpp' branch,
+# downloaded, or copied from POCKETFFT_HEADER=<path> (offline builds); checked against POCKETFFT_SHA256
 POCKETFFTCOMMIT=4d865cba24359b05b37da4e75aee24498c3b78e7
 POCKETFFT_SHA256=518a95c552aeaee352aa30122137cd9e135d23c91e2863d9272aaa758744c86d
 pocketfft_hdronly.h:
+ifneq ($(POCKETFFT_HEADER),)
+	cp "$(POCKETFFT_HEADER)" $@.tmp
+else
 	curl -f --retry 5 --retry-all-errors -L -s -S -o $@.tmp https://raw.githubusercontent.com/mreineck/pocketfft/$(POCKETFFTCOMMIT)/pocketfft_hdronly.h
+endif
 	@if command -v sha256sum >/dev/null 2>&1; then sum=`sha256sum $@.tmp | cut -d' ' -f1`; \
 	else sum=`shasum -a 256 $@.tmp | cut -d' ' -f1`; fi; \
 	if [ "$$sum" != "$(POCKETFFT_SHA256)" ]; then rm -f $@.tmp; echo "Error: checksum mismatch for $@ (got $$sum)"; exit 1; fi

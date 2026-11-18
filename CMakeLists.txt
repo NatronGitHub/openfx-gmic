@@ -25,7 +25,8 @@
 # -DOFX_USE_OPENMP=OFF (default ON, the Makefile's OPENMP=1), -DOFX_LIBOMP_ROOT=<dir> (Apple clang:
 # libomp, default MacPorts'), -DOFX_DEPLOY_BUNDLES=ON (macOS: the install step copies the MacPorts
 # libraries into the bundle, as the Makefile's release builds do), -DGMIC_TARBALL=<path> (a
-# downloaded gmic_<version>.tar.gz, for offline builds), -DGMICVER=... -DGMICSRC_SHA256=...,
+# downloaded gmic_<version>.tar.gz, for offline builds), -DGMIC_POCKETFFT=<path> (a downloaded
+# pocketfft_hdronly.h, likewise), -DGMICVER=... -DGMICSRC_SHA256=...,
 # -DOFX_LICENSE=COMMERCIAL (the Makefile's LICENSE=COMMERCIAL, see license.mk) and -DFFT=fftw3
 # (the Makefile's FFT; default: pocketfft).
 
@@ -369,24 +370,43 @@ if(GMIC_FFT STREQUAL "pocketfft")
   if(NOT _pocketfft_commit OR NOT _pocketfft_sha256)
     message(FATAL_ERROR "Could not read POCKETFFTCOMMIT and POCKETFFT_SHA256 from ${GMIC_MAKEFILE}")
   endif()
+  # The header: GMIC_POCKETFFT if given (downloaded there if missing, as GMIC_TARBALL), else one
+  # left in the source directory by the Makefile, else downloaded into GMIC_SRC_DIR. Each is
+  # checked against POCKETFFT_SHA256, then copied into GMIC_SRC_DIR.
+  set(GMIC_POCKETFFT "" CACHE FILEPATH "pocketfft_hdronly.h (at the Makefile's POCKETFFTCOMMIT), downloaded there if missing")
   set(_pocketfft "${GMIC_SRC_DIR}/pocketfft_hdronly.h")
+  if(GMIC_POCKETFFT)
+    set(_pocketfft_src "${GMIC_POCKETFFT}")
+  elseif(EXISTS "${PROJECT_SOURCE_DIR}/pocketfft_hdronly.h")
+    set(_pocketfft_src "${PROJECT_SOURCE_DIR}/pocketfft_hdronly.h")
+  else()
+    set(_pocketfft_src "${_pocketfft}")
+  endif()
   set(_sum "")
-  if(EXISTS "${_pocketfft}")
-    file(SHA256 "${_pocketfft}" _sum)
+  if(EXISTS "${_pocketfft_src}")
+    file(SHA256 "${_pocketfft_src}" _sum)
+    if(NOT _sum STREQUAL _pocketfft_sha256 AND NOT _pocketfft_src STREQUAL _pocketfft)
+      message(FATAL_ERROR "${_pocketfft_src}: checksum mismatch (got ${_sum}, expected ${_pocketfft_sha256}): remove it")
+    endif()
   endif()
   if(NOT _sum STREQUAL _pocketfft_sha256)
     set(_url "https://raw.githubusercontent.com/mreineck/pocketfft/${_pocketfft_commit}/pocketfft_hdronly.h")
     message(STATUS "Fetching ${_url}")
-    file(DOWNLOAD "${_url}" "${_pocketfft}.tmp" STATUS _status TLS_VERIFY ON INACTIVITY_TIMEOUT 60)
+    file(DOWNLOAD "${_url}" "${_pocketfft_src}.tmp" STATUS _status TLS_VERIFY ON INACTIVITY_TIMEOUT 60)
     list(GET _status 0 _code)
     if(_code EQUAL 0)
-      file(SHA256 "${_pocketfft}.tmp" _sum)
+      file(SHA256 "${_pocketfft_src}.tmp" _sum)
     endif()
     if(NOT _code EQUAL 0 OR NOT _sum STREQUAL _pocketfft_sha256)
-      file(REMOVE "${_pocketfft}.tmp")
-      message(FATAL_ERROR "Could not download a valid ${_url} (${_status}, sha256 ${_sum})")
+      file(REMOVE "${_pocketfft_src}.tmp")
+      message(FATAL_ERROR "Could not download a valid ${_url} (${_status}, sha256 ${_sum}): download it "
+        "and configure with -DGMIC_POCKETFFT=<path>")
     endif()
-    file(RENAME "${_pocketfft}.tmp" "${_pocketfft}")
+    file(RENAME "${_pocketfft_src}.tmp" "${_pocketfft_src}")
+  endif()
+  if(NOT _pocketfft_src STREQUAL _pocketfft)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_pocketfft_src}")
+    configure_file("${_pocketfft_src}" "${_pocketfft}" COPYONLY)
   endif()
   file(READ "${_pocketfft}" _text)
   string(FIND "${_text}" "\n*/\n" _end)

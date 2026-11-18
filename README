@@ -72,6 +72,11 @@ Options:
   filters left out, and why).
 - FFT: pocketfft (default, downloaded; BSD-3-Clause, as in openfx-misc) or fftw3 (FFTW, opt-in,
   GPL builds only).
+- POCKETFFT_HEADER: a downloaded pocketfft_hdronly.h, for offline builds (copied, then checked
+  against POCKETFFT_SHA256); without it, it is downloaded at POCKETFFTCOMMIT.
+
+GMIC_OFX/GMIC_OFX.xcodeproj is unmaintained (it still uses FFTW and an old file list): build with
+make or CMake.
 
 Building with CMake
 -------------------
@@ -88,6 +93,9 @@ Options (the Makefile's equivalent in parentheses):
 - OFX_LICENSE: GPL (default) or COMMERCIAL (LICENSE); FFT: pocketfft (default) or fftw3 (FFT).
 - GMIC_TARBALL: a downloaded gmic_<version>.tar.gz, for offline builds; GMIC_DOWNLOAD_DIR: where
   to download it (default: the build directory).
+- GMIC_POCKETFFT: a downloaded pocketfft_hdronly.h (POCKETFFT_HEADER), for offline builds: the
+  file at the Makefile's POCKETFFTCOMMIT, checked against POCKETFFT_SHA256 (downloaded there if
+  missing).
 - OFX_DEPLOY_BUNDLES=ON: on macOS, the install step copies the libraries into the bundle.
 - GMIC_BUILD_TESTS=ON: also build openfx's hostDemo, for the render test.
 

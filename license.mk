@@ -11,14 +11,16 @@
 #   through patches/cimg-pocketfft.sh (applied only for FFT=pocketfft), for every LICENSE, as in
 #   openfx-misc (https://github.com/NatronGitHub/openfx-misc/pull/171);
 # - fftw3: FFTW (GPL, needs FFTW >= 3.3.5 and fftw3_threads), opt-in, for GPL builds only.
-ifeq ($(LICENSE),)
-  LICENSE := GPL
+# Empty (also LICENSE= or FFT= on the command line): the default. override, so that it also
+# replaces an empty command-line value, which would otherwise build with CImg's own FFT.
+ifeq ($(strip $(LICENSE)),)
+  override LICENSE := GPL
 endif
 ifneq ($(filter-out GPL COMMERCIAL,$(LICENSE)),)
   $(error LICENSE must be GPL or COMMERCIAL, not '$(LICENSE)')
 endif
-ifeq ($(FFT),)
-  FFT := pocketfft
+ifeq ($(strip $(FFT)),)
+  override FFT := pocketfft
 endif
 ifneq ($(filter-out fftw3 pocketfft,$(FFT)),)
   $(error FFT must be fftw3 or pocketfft, not '$(FFT)')
