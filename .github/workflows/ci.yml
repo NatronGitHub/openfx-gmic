@@ -304,7 +304,7 @@ jobs:
         run: |
           dnf install -y git gcc-c++ make pkgconf-pkg-config expat-devel perl binutils diffutils \
             findutils which xz tar gzip
-          gcc --version | head -n 1; ldd --version | head -n 1
+          gcc --version | sed -n 1p; ldd --version | sed -n 1p
       - uses: actions/checkout@v4
         with:
           submodules: recursive
