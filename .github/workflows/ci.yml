@@ -157,13 +157,14 @@ jobs:
             --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset "$([ "$BUILD_VARIANTS" = true ] && echo all || echo pr)" --jobs 2
       # no libcurl on Linux: G'MIC downloads with the curl command (cimg::load_network). Add Grain
-      # downloads its grain images (gmic_grain.gmz, from gmic.eu) into G'MIC's cache, in the
-      # render's HOME (Color Presets downloads only for a preset other than the default)
+      # downloads its grain images (gmic_grain.gmz, from gmic.eu) into G'MIC's cache, here an empty
+      # GMIC_CACHE_PATH (Color Presets downloads only for a preset other than the default)
       - name: Download filter data with the curl command (Add Grain)
         run: |
-          env -u XDG_CACHE_HOME python3 .github/workflows/render_plugins.py --host build \
+          mkdir -p "$RUNNER_TEMP/gmic-cache"
+          GMIC_CACHE_PATH="$RUNNER_TEMP/gmic-cache/" python3 .github/workflows/render_plugins.py --host build \
             --plugins build/Plugins --list plugins.txt --only eu.gmic.AddGrain --work render-download
-          find render-download/home -name 'gmic_grain*' -size +0 -exec ls -l {} + | grep . ||
+          find "$RUNNER_TEMP/gmic-cache" -name 'gmic_grain*' -size +0 -exec ls -l {} + | grep . ||
             { echo "FAIL: gmic_grain.gmz was not downloaded"; exit 1; }
       # FFTW (opt-in, GPL builds only), rendered with the hostDemo of the default build; before the
       # Makefile build, whose (pocketfft) G'MIC headers in the checkout would stop CMake's FFT=fftw3
