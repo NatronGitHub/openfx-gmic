@@ -2,12 +2,16 @@
 # Build a minimal HostSupport host and run describe + describeInContext on every plug-in.
 # Usage: describe_plugins.sh <dir containing GMIC.ofx.bundle> <minimum number of plug-ins>
 # Uses $CXX (default c++) and $HOST_LDFLAGS (extra link flags, e.g. -L/opt/local/lib).
+# PLUGIN_LIST=<file>: also write the plug-ins' ids, contexts and input clips there (for render_plugins.py).
 # If $HOST_RUN_PATH is set, the host runs with PATH=$HOST_RUN_PATH (the build still uses the
 # current PATH): on Windows, with a statically linked host and a PATH without the MSYS2 bin
 # directory, this checks that the plug-in finds the DLLs bundled with it.
 set -euo pipefail
 
 BUNDLE_DIR=$(cd "$1" && pwd)
+if [ -n "${PLUGIN_LIST:-}" ]; then # absolute: the script changes directory
+    PLUGIN_LIST="$(cd "$(dirname "$PLUGIN_LIST")" && pwd)/$(basename "$PLUGIN_LIST")"
+fi
 MIN_PLUGINS=$2
 SRC=$(cd "$(dirname "$0")/../.." && pwd)
 WORK=$(mktemp -d)
@@ -63,6 +67,10 @@ fi
 if grep "openfx-gmic: Warning: hot fix" describe.log; then
     echo "FAIL: hot fixes not applied, review them in gmic_hotfixes.gmic (see above)"
     status=1
+fi
+# PLUGIN_LIST=<file>: the plug-ins, their context and input clips, for render_plugins.py
+if [ -n "${PLUGIN_LIST:-}" ]; then
+    sed -n -e 's/^RENDERINFO //p' describe.log > "$PLUGIN_LIST"
 fi
 if [ $status != 0 ]; then
     echo "--- last lines of the host log:"

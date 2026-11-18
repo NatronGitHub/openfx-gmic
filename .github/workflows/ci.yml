@@ -6,6 +6,17 @@ name: Continuous Integration
 # builds use C++17 (Natron RB-2.6 policy: Qt5 builds C++17, Qt6 builds C++20); build artifacts
 # are uploaded only on demand or for pre-release tags.
 #
+# The builds use CMake (NatronGitHub/Natron#1181). The Makefile is still what Natron's
+# build-plugins.sh uses on the three systems: the nightly and on-demand runs also build it on each
+# (Linux: the debug variant, instead of a CMake debug build, and the COMMERCIAL release build;
+# macOS and Windows: a release build),
+# and compare its bundle with the installed CMake one (compare_bundles.sh). The per-PR runs only
+# build with CMake.
+#
+# Render test (render_plugins.py, with openfx's hostDemo: GMIC_BUILD_TESTS=ON): per PR, a
+# representative subset of the plug-ins (the FFT and multi-layer filters, every 30th plug-in) on
+# the three systems; nightly and on demand, all the plug-ins on Linux.
+#
 # Frugal CI (the NatronGitHub runners are shared by all repos): one run per change. Pushes run CI
 # only on master and tags; feature branches run through their pull request. Draft pull requests
 # don't run CI. Superseded runs are cancelled, except for tags. The nightly run is skipped when
@@ -78,7 +89,8 @@ jobs:
     runs-on: ubuntu-24.04
     needs: changes
     if: needs.changes.outputs.run == 'true'
-    timeout-minutes: 45
+    # the nightly and on-demand runs render all the plug-ins
+    timeout-minutes: 90
     defaults:
       run:
         shell: bash -eo pipefail {0}
@@ -89,21 +101,37 @@ jobs:
       - name: Install packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libfftw3-dev zlib1g-dev libcurl4-openssl-dev libpng-dev libexpat1-dev \
-            libgl-dev libglu1-mesa-dev
+          sudo apt-get install -y cmake ninja-build pkg-config libfftw3-dev zlib1g-dev libcurl4-openssl-dev \
+            libpng-dev libexpat1-dev libgl-dev
+      # the tarball, downloaded into the source directory (GMIC_DOWNLOAD_DIR), where both the
+      # CMake and the Makefile builds find it
       - name: Cache G'MIC sources
         uses: actions/cache@v4
         with:
           path: gmic_*.tar.gz
           key: gmic-src-${{ hashFiles('Makefile') }}
-      # the standard is given in CXX, as Natron's build does (the other jobs use CXXSTD)
       - name: Build (release, OpenMP)
-        run: make -j4 CONFIG=release OPENMP=1 CXX="g++ -std=c++17"
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
+            -DGMIC_BUILD_TESTS=ON
+          cmake --build build -j4
       - name: Describe all plug-ins
-        run: .github/workflows/describe_plugins.sh GMIC_OFX/Linux-64-release $GMIC_PLUGIN_COUNT
-      - name: Build (debug)
+        run: PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh build/Plugins $GMIC_PLUGIN_COUNT
+      # all the plug-ins on the nightly and on-demand runs, a subset per PR
+      - name: Render plug-ins
+        run: |
+          python3 .github/workflows/render_plugins.py --host build \
+            --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
+            --subset "$([ "$BUILD_VARIANTS" = true ] && echo all || echo pr)" --jobs 2
+      # the debug variant is built with the Makefile, as Natron's build-plugins.sh does (the
+      # standard in CXX), and its bundle is compared with the installed CMake one
+      - name: Build with the Makefile (debug), compare with CMake
         if: env.BUILD_VARIANTS == 'true'
-        run: make -j4 CONFIG=debug OPENMP=1 CXX="g++ -std=c++17"
+        run: |
+          make -j4 CONFIG=debug OPENMP=1 CXX="g++ -std=c++17"
+          cmake --install build --prefix install
+          .github/workflows/compare_bundles.sh GMIC_OFX/Linux-64-debug/GMIC.ofx.bundle install/OFX/Plugins/GMIC.ofx.bundle
+          .github/workflows/compare_sources.sh build
       # The Linux bundle is uploaded as is (it needs libfftw3, libcurl, libpng, libgomp): it requires
       # the glibc of Ubuntu 24.04 anyway, where these libraries are standard packages, and bundled
       # copies of libstdc++/libgomp/libcurl could clash with the host's own. Natron's Linux
@@ -113,19 +141,21 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: openfx-gmic-linux-release
-          path: GMIC_OFX/Linux-64-release/GMIC.ofx.bundle
+          path: build/Plugins/GMIC.ofx.bundle
       - name: Build and describe (release, C++20)
         if: env.BUILD_VARIANTS == 'true'
         run: |
-          (cd GMIC_OFX && make clean CONFIG=release)
-          make -j4 CONFIG=release OPENMP=1 CXXSTD=c++20
-          .github/workflows/describe_plugins.sh GMIC_OFX/Linux-64-release $GMIC_PLUGIN_COUNT
+          cmake -S . -B build-cxx20 -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=20 -DGMIC_DOWNLOAD_DIR="$PWD"
+          cmake --build build-cxx20 -j4
+          .github/workflows/describe_plugins.sh build-cxx20/Plugins $GMIC_PLUGIN_COUNT
 
-  # Natron's COMMERCIAL builds (make LICENSE=COMMERCIAL, see license.mk), nightly or on demand:
-  # pocketfft instead of FFTW (GPL), and a standard library without the community filters under
-  # the GPL or a CeCILL-only licence. The bundle is checked (check_commercial.sh: no FFTW, licence
-  # texts, left-out plug-ins) and described, and FFT-based filters are rendered on a 720x576 image
-  # with an interpreter built from the same sources (fft_smoke.sh).
+  # Natron's COMMERCIAL builds (-DOFX_LICENSE=COMMERCIAL, make LICENSE=COMMERCIAL, see license.mk),
+  # nightly or on demand: pocketfft instead of FFTW (GPL), and a standard library without the
+  # community filters under the GPL or a CeCILL-only licence. The bundle is checked
+  # (check_commercial.sh: no FFTW, licence texts, left-out plug-ins), described and rendered (the pr
+  # subset, with the FFT filters), and FFT-based filters are rendered on a 720x576 image with an
+  # interpreter built from the same sources (fft_smoke.sh). The Makefile's COMMERCIAL build is
+  # compared with the installed CMake one (compare_bundles.sh).
   linux-commercial:
     name: Linux (Ubuntu 24.04), LICENSE=COMMERCIAL
     runs-on: ubuntu-24.04
@@ -133,7 +163,7 @@ jobs:
     if: >-
       needs.changes.outputs.run == 'true' &&
       (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-    timeout-minutes: 60
+    timeout-minutes: 90
     defaults:
       run:
         shell: bash -eo pipefail {0}
@@ -147,22 +177,36 @@ jobs:
       - name: Install packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config zlib1g-dev libcurl4-openssl-dev libpng-dev libexpat1-dev \
-            libgl-dev libglu1-mesa-dev
+          sudo apt-get install -y cmake ninja-build pkg-config zlib1g-dev libcurl4-openssl-dev libpng-dev \
+            libexpat1-dev libgl-dev
       - name: Cache G'MIC sources
         uses: actions/cache@v4
         with:
           path: gmic_*.tar.gz
           key: gmic-src-${{ hashFiles('Makefile') }}
-      - name: Build (release, LICENSE=COMMERCIAL)
-        run: make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17 LICENSE=COMMERCIAL
+      - name: Build (release, OpenMP, OFX_LICENSE=COMMERCIAL)
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
+            -DOFX_LICENSE=COMMERCIAL -DGMIC_BUILD_TESTS=ON
+          cmake --build build -j4
       - name: Describe and check
         run: |
-          DESCRIBE_LOG=$PWD/describe-commercial.log \
-            .github/workflows/describe_plugins.sh GMIC_OFX/Linux-64-release $GMIC_PLUGIN_COUNT_COMMERCIAL
-          .github/workflows/check_commercial.sh GMIC_OFX/Linux-64-release describe-commercial.log
+          DESCRIBE_LOG=$PWD/describe-commercial.log PLUGIN_LIST=plugins.txt \
+            .github/workflows/describe_plugins.sh build/Plugins $GMIC_PLUGIN_COUNT_COMMERCIAL
+          .github/workflows/check_commercial.sh build/Plugins describe-commercial.log
+      - name: Render plug-ins (subset)
+        run: |
+          python3 .github/workflows/render_plugins.py --host build \
+            --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
+            --subset pr --jobs 2
       - name: Render FFT filters (720x576)
-        run: .github/workflows/fft_smoke.sh
+        run: .github/workflows/fft_smoke.sh build/gmic
+      - name: Build with the Makefile (release, LICENSE=COMMERCIAL), compare with CMake
+        run: |
+          make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17 LICENSE=COMMERCIAL
+          cmake --install build --prefix install
+          .github/workflows/compare_bundles.sh GMIC_OFX/Linux-64-release/GMIC.ofx.bundle install/OFX/Plugins/GMIC.ofx.bundle
+          .github/workflows/compare_sources.sh build
 
   macos:
     name: macOS 15 arm64 (Apple clang, MacPorts libraries)
@@ -183,9 +227,9 @@ jobs:
         shell: bash -eo pipefail {0}
     env:
       # Apple clang (the system compiler, pinned to /usr/bin so that a MacPorts clang_select can't
-      # take over clang++) with the MacPorts libraries found through MacPorts' pkg-config. MacPorts
-      # LLVM/clang is not used to build on macOS.
-      MAKE_ARGS: CC=/usr/bin/clang CXX=/usr/bin/clang++ OPENMP=1 CXXSTD=c++17
+      # take over clang++) with the MacPorts libraries found through MacPorts' pkg-config, and
+      # MacPorts' cmake and ninja. MacPorts LLVM/clang is not used to build on macOS.
+      CMAKE_ARGS: -G Ninja -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DGMIC_DOWNLOAD_DIR=${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -196,25 +240,47 @@ jobs:
         uses: melusina-org/setup-macports@103eded5f10979e927bffcd6d0b86cbbdb2c3bb3 # v1.1.6
         with:
           parameters: .github/parameters/setup-macports.yaml
-      - name: Build (release, OpenMP)
+      # OFX_DEPLOY_BUNDLES: the install step copies the MacPorts libraries into the bundle
+      # (osxDeploy.sh) and signs it, as the Makefile's release builds do; the describe test runs on
+      # the installed bundle, so that the deployment is tested on each PR
+      - name: Build and install (release, OpenMP)
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
-          make -j4 CONFIG=release $MAKE_ARGS
+          cmake -S . -B build $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DOFX_DEPLOY_BUNDLES=ON \
+            -DGMIC_BUILD_TESTS=ON
+          cmake --build build -j4
+          cmake --install build --prefix install
+          codesign --verify --strict install/OFX/Plugins/GMIC.ofx.bundle
       - name: Describe all plug-ins
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
           CXX="/usr/bin/clang++ -I/opt/local/include" \
-            HOST_LDFLAGS=-L/opt/local/lib \
-            .github/workflows/describe_plugins.sh GMIC_OFX/Darwin-64-release $GMIC_PLUGIN_COUNT
+            HOST_LDFLAGS=-L/opt/local/lib PLUGIN_LIST=plugins.txt \
+            .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
+      - name: Render plug-ins (subset)
+        run: |
+          python3 .github/workflows/render_plugins.py --host build \
+            --plugins install/OFX/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
+            --subset pr --jobs 2
       - name: Build (debug)
         if: env.BUILD_VARIANTS == 'true'
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
-          make -j4 CONFIG=debug $MAKE_ARGS
-      # self-contained artifact (on a copy, the build directory is left as is): the release build's
-      # osxDeploy.sh already copied the MacPorts dylibs into Contents/Libraries; bundle_libs.sh
-      # copies any that's missing, removes the rpaths into /opt/local, signs the bundle ad hoc, and
-      # fails if a dependency is neither a system library nor bundled. The artifact requires the
+          cmake -S . -B build-debug $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Debug -DOFX_CXX_STANDARD=17
+          cmake --build build-debug -j4
+      # the Makefile, as Natron's build-plugins.sh builds it; its release build also runs
+      # osxDeploy.sh, so it is compared with the installed (deployed) CMake bundle
+      - name: Build with the Makefile (release), compare with CMake
+        if: env.BUILD_VARIANTS == 'true'
+        run: |
+          export PATH=/opt/local/bin:/opt/local/sbin:$PATH
+          make -j4 CONFIG=release CC=/usr/bin/clang CXX=/usr/bin/clang++ OPENMP=1 CXXSTD=c++17
+          .github/workflows/compare_bundles.sh GMIC_OFX/Darwin-64-release/GMIC.ofx.bundle install/OFX/Plugins/GMIC.ofx.bundle
+      # self-contained artifact (on a copy, the install directory is left as is): the install
+      # step's osxDeploy.sh (OFX_DEPLOY_BUNDLES) already copied the MacPorts dylibs into
+      # Contents/Libraries; bundle_libs.sh copies any that's missing, removes the rpaths into
+      # /opt/local, signs the bundle ad hoc, and fails if a dependency is neither a system library
+      # nor bundled. The artifact requires the
       # runner's macOS version or newer, and must be unquarantined after download
       # (xattr -dr com.apple.quarantine GMIC.ofx.bundle); see the header of bundle_libs.sh.
       - name: Bundle libraries
@@ -222,7 +288,7 @@ jobs:
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
           rm -rf Bundle && mkdir Bundle
-          cp -R GMIC_OFX/Darwin-64-release/GMIC.ofx.bundle Bundle/
+          cp -R install/OFX/Plugins/GMIC.ofx.bundle Bundle/
           .github/workflows/bundle_libs.sh Bundle/GMIC.ofx.bundle
           CXX="/usr/bin/clang++ -I/opt/local/include" \
             HOST_LDFLAGS=-L/opt/local/lib \
@@ -237,11 +303,11 @@ jobs:
         if: env.BUILD_VARIANTS == 'true'
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
-          (cd GMIC_OFX && make clean CONFIG=release)
-          make -j4 CONFIG=release $MAKE_ARGS CXXSTD=c++20
+          cmake -S . -B build-cxx20 $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=20
+          cmake --build build-cxx20 -j4
           CXX="/usr/bin/clang++ -I/opt/local/include" \
             HOST_LDFLAGS=-L/opt/local/lib \
-            .github/workflows/describe_plugins.sh GMIC_OFX/Darwin-64-release $GMIC_PLUGIN_COUNT
+            .github/workflows/describe_plugins.sh build-cxx20/Plugins $GMIC_PLUGIN_COUNT
 
   windows:
     name: Windows (MSYS2 UCRT64)
@@ -262,10 +328,11 @@ jobs:
           msystem: UCRT64
           update: true
           install: >-
-            git make
+            git make diffutils
             mingw-w64-ucrt-x86_64-cc mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-fftw mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-curl
-            mingw-w64-ucrt-x86_64-libpng mingw-w64-ucrt-x86_64-expat
+            mingw-w64-ucrt-x86_64-libpng mingw-w64-ucrt-x86_64-expat mingw-w64-ucrt-x86_64-python
       - name: Cache G'MIC sources
         uses: actions/cache@v4
         with:
@@ -274,17 +341,36 @@ jobs:
       - name: Build (release, OpenMP)
         run: |
           set -eo pipefail
-          make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$(cygpath -m "$PWD")" \
+            -DGMIC_BUILD_TESTS=ON
+          cmake --build build -j4
       - name: Describe all plug-ins
         run: |
           set -eo pipefail
-          BUILD_DIR=$(find GMIC_OFX -maxdepth 1 -type d -name '*-release' | head -1)
-          .github/workflows/describe_plugins.sh "$BUILD_DIR" $GMIC_PLUGIN_COUNT
+          PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh build/Plugins $GMIC_PLUGIN_COUNT
+      - name: Render plug-ins (subset)
+        run: |
+          set -eo pipefail
+          python3 .github/workflows/render_plugins.py --host build \
+            --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
+            --subset pr --jobs 2
       - name: Build (debug)
         if: env.BUILD_VARIANTS == 'true'
         run: |
           set -eo pipefail
-          make -j4 CONFIG=debug OPENMP=1 CXXSTD=c++17
+          cmake -S . -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DOFX_CXX_STANDARD=17
+          cmake --build build-debug -j4
+      # the Makefile, as Natron's build-plugins.sh builds it, compared with the installed CMake
+      # bundle
+      - name: Build with the Makefile (release), compare with CMake
+        if: env.BUILD_VARIANTS == 'true'
+        run: |
+          set -eo pipefail
+          make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17
+          cmake --install build --prefix install
+          .github/workflows/compare_bundles.sh \
+            "$(find GMIC_OFX -maxdepth 1 -type d -name '*-release' | head -1)/GMIC.ofx.bundle" \
+            install/OFX/Plugins/GMIC.ofx.bundle
       # self-contained artifact: the UCRT64 DLLs that GMIC.ofx imports (recursively, objdump -p) are
       # copied next to it, and a manifest listing them is embedded with the Windows SDK's mt.exe.
       # The describe test then runs a statically linked host with a PATH without /ucrt64/bin, so
@@ -297,7 +383,7 @@ jobs:
         run: |
           set -eo pipefail
           rm -rf Bundle && mkdir -p Bundle
-          cp -R "$(find GMIC_OFX -maxdepth 1 -type d -name '*-release' | head -1)/GMIC.ofx.bundle" Bundle/
+          cp -R build/Plugins/GMIC.ofx.bundle Bundle/
           .github/workflows/bundle_libs.sh Bundle/GMIC.ofx.bundle
           CXX="c++ -DXML_STATIC" HOST_LDFLAGS=-static HOST_RUN_PATH=/c/Windows/System32:/c/Windows \
             .github/workflows/describe_plugins.sh Bundle $GMIC_PLUGIN_COUNT
@@ -311,7 +397,6 @@ jobs:
         if: env.BUILD_VARIANTS == 'true'
         run: |
           set -eo pipefail
-          (cd GMIC_OFX && make clean CONFIG=release)
-          make -j4 CONFIG=release OPENMP=1 CXXSTD=c++20
-          BUILD_DIR=$(find GMIC_OFX -maxdepth 1 -type d -name '*-release' | head -1)
-          .github/workflows/describe_plugins.sh "$BUILD_DIR" $GMIC_PLUGIN_COUNT
+          cmake -S . -B build-cxx20 -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=20
+          cmake --build build-cxx20 -j4
+          .github/workflows/describe_plugins.sh build-cxx20/Plugins $GMIC_PLUGIN_COUNT

@@ -44,7 +44,7 @@ uninstall:
 	done
 
 # gmic_sources.license records the LICENSE (first line) and FFT of the sources: it is only written
-# once they are all made (CMakeLists.txt reads it), and removed when LICENSE or FFT change.
+# once they are all made, and removed when LICENSE or FFT change.
 sources: $(GMICSOURCES) gmic_stdlib_community.h gmic_hotfixes.h $(if $(filter pocketfft,$(FFT)),pocketfft_hdronly.h Licence_pocketfft.txt)
 	@printf '%s\nFFT=%s\n' '$(LICENSE)' '$(FFT)' | cmp -s - gmic_sources.license || \
 	  { printf '%s\nFFT=%s\n' '$(LICENSE)' '$(FFT)' > gmic_sources.license.tmp && mv gmic_sources.license.tmp gmic_sources.license; }
@@ -100,6 +100,10 @@ GMICSRC_SHA256=$(GMICSRC_SHA256_$(GMICVER))
 # GreycLab/gmic on GitHub is the main G'MIC repository, and its releases (3.3.1 and later) attach
 # gmic_<ver>.tar.gz: try it first, then gmic.eu (which may answer 403) and the MacPorts mirror.
 GMICSRC_URLS=https://github.com/GreycLab/gmic/releases/download/v.$(GMICVER)/$(GMICSRC) https://gmic.eu/files/source/$(GMICSRC) https://distfiles.macports.org/gmic/$(GMICSRC)
+# CMakeLists.txt reads GMICSOURCES, GMICVER, GMICSRC, GMICSRCDIR, GMICSRC_SHA256_<version>,
+# GMICSRC_URLS, POCKETFFTCOMMIT and POCKETFFT_SHA256 from this file: keep each on one line, as a
+# plain "NAME = value" assignment (no backslash continuation, not inside ifeq), using no other
+# variables than $(GMICVER) and $(GMICSRC).
 
 # The checksum is mandatory: when bumping GMICVER, add GMICSRC_SHA256_<version>
 # (or pass GMICSRC_SHA256=<sha256> on the make command line).
@@ -127,7 +131,7 @@ $(GMICSRC):
 # compiled from older sources (GMIC_OFX/Makefile rebuilds them when the G'MIC headers change).
 $(GMICSOURCES): $(GMICSRC)
 	tar -m --strip-components 2 -zxvf $< $(patsubst %,$(GMICSRCDIR)/src/%, $@)
-	@case $@ in gmic.h|gmic.cpp) sh patches/gmic-apple-abort.sh $@ || { rm -f $@; exit 1; };; esac
+	@case $@ in gmic.h|gmic.cpp) for p in $(GMIC_PATCHES); do sh $$p $@ || { rm -f $@; exit 1; }; done;; esac
 	@case $@ in CImg.h) for p in $(CIMG_PATCHES); do sh $$p $@ || { rm -f $@; exit 1; }; done;; esac
 
 # G'MIC's standard library with the community filters: from the tarball (GPL builds), or, for
@@ -175,10 +179,14 @@ Licence_pocketfft.txt: pocketfft_hdronly.h
 #   https://github.com/NatronGitHub/openfx-gmic/issues/71, fixed after G'MIC 4.0.7)
 # - cimg-pocketfft.sh: let CImg compute its FFTs with pocketfft (cimg_use_pocketfft), which
 #   COMMERCIAL builds use instead of FFTW (only applied for FFT=pocketfft)
-gmic.h gmic.cpp: patches/gmic-apple-abort.sh
+# CMakeLists.txt reads GMIC_PATCHES, CIMG_PATCHES and CIMG_PATCHES_POCKETFFT (plain one-line
+# assignments, see above), and applies them in the same order.
+GMIC_PATCHES = patches/gmic-apple-abort.sh
+gmic.h gmic.cpp: $(GMIC_PATCHES)
+CIMG_PATCHES_POCKETFFT = patches/cimg-pocketfft.sh
 CIMG_PATCHES = patches/cimg-math-macro-overread.sh patches/cimg-omp-rand.sh patches/cimg-ij-boundary.sh patches/cimg-symmetric-eigen.sh
 ifeq ($(FFT),pocketfft)
-CIMG_PATCHES += patches/cimg-pocketfft.sh
+CIMG_PATCHES += $(CIMG_PATCHES_POCKETFFT)
 endif
 CImg.h: gmic_sources.request $(CIMG_PATCHES)
 

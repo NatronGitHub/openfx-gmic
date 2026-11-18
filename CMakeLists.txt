@@ -14,337 +14,633 @@
 #     ( http://www.cecill.info/licences/Licence_CeCILL_V2-en.html , Licence_CeCILL_V2-en.txt )
 # ***** END LICENSE BLOCK *****
 
-########################################################################
-IF(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR})
-MESSAGE(FATAL_ERROR "Prevented in-tree built. This is bad practice.")
-ENDIF(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR})
+# CMake build of GMIC.ofx.bundle, equivalent to the Makefiles (Makefile, GMIC_OFX/Makefile and
+# openfx/Examples/Makefile.master):
+#
+#   cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release   # Debug, RelWithDebInfo
+#   cmake --build build                    # assembles build/Plugins/GMIC.ofx.bundle
+#   cmake --install build --prefix <dir>   # installs <dir>/OFX/Plugins/GMIC.ofx.bundle
+#
+# Options: -DOFX_CXX_STANDARD=20 (default: CMAKE_CXX_STANDARD, or 17; the Makefile's CXXSTD),
+# -DOFX_USE_OPENMP=OFF (default ON, the Makefile's OPENMP=1), -DOFX_LIBOMP_ROOT=<dir> (Apple clang:
+# libomp, default MacPorts'), -DOFX_DEPLOY_BUNDLES=ON (macOS: the install step copies the MacPorts
+# libraries into the bundle, as the Makefile's release builds do), -DGMIC_TARBALL=<path> (a
+# downloaded gmic_<version>.tar.gz, for offline builds), -DGMICVER=... -DGMICSRC_SHA256=...,
+# -DOFX_LICENSE=COMMERCIAL (the Makefile's LICENSE=COMMERCIAL, see license.mk) and -DFFT=pocketfft
+# (the Makefile's FFT).
 
-########################################################################
-# Project setup
-########################################################################
-CMAKE_MINIMUM_REQUIRED(VERSION 3.1)
-PROJECT(OpenFXGMIC CXX)
-ENABLE_TESTING()
+cmake_minimum_required(VERSION 3.16)
 
-include(FindOpenGL REQUIRED)
-
-# C++17 by default (Natron RB-2.6 Qt5 builds); C++20 can be chosen with -DCMAKE_CXX_STANDARD=20
-if(NOT DEFINED CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 17)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
+  message(FATAL_ERROR "Prevented in-tree build: use a build directory (cmake -B build).")
 endif()
 
-# Use -Ofast when applicable (implies -ffast-math)
-if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
-    set (CMAKE_CXX_FLAGS_RELEASE "-Wall -Wextra -Ofast -DNDEBUG")
-    set (CMAKE_C_FLAGS_RELEASE   "-Wall -Wextra -Ofast -DNDEBUG")
-elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Intel")
-    set (CMAKE_CXX_FLAGS_RELEASE "-Wall -Ofast -DNDEBUG")
-    set (CMAKE_C_FLAGS_RELEASE   "-Wall -Ofast -DNDEBUG")
-elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
-    set (CMAKE_CXX_FLAGS_RELEASE "-Wall -Wextra -Ofast -DNDEBUG")
-    set (CMAKE_C_FLAGS_RELEASE   "-Wall -Wextra -Ofast -DNDEBUG")
-endif()
-SET(OPENFX_PATH ${CMAKE_CURRENT_SOURCE_DIR}/openfx)
+project(OpenFXGMIC CXX)
 
-# Check that submodule have been initialized and updated
-if(NOT EXISTS ${PROJECT_SOURCE_DIR}/openfx/include)
+if(NOT EXISTS "${PROJECT_SOURCE_DIR}/openfx/include")
   message(FATAL_ERROR
     "\n submodule(s) are missing, please update your repository:\n"
     "  > git submodule update -i\n")
 endif()
 
-# C++ Include directories
-INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR})
-INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR}/SupportExt)
-INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR}/Helpers)
-INCLUDE_DIRECTORIES(${OPENFX_PATH}/include)
-INCLUDE_DIRECTORIES(${OPENFX_PATH}/Examples/include)
-INCLUDE_DIRECTORIES(${OPENFX_PATH}/Support/include)
-INCLUDE_DIRECTORIES(${OPENFX_PATH}/Support/Plugins/include)
+# ========================== build configuration ==========================
 
-# Define "DEBUG" on debug builds
-SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DDEBUG")
+get_property(_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NOT _multi_config AND NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Debug, Release or RelWithDebInfo" FORCE)
+endif()
 
-# /MP on MSVC
-ADD_COMPILE_OPTIONS($<$<CXX_COMPILER_ID:MSVC>:/MP>)
+# C++ standard: OFX_CXX_STANDARD (openfx/cmake/OpenFX.cmake; default: CMAKE_CXX_STANDARD, or 17):
+# C++17 for Natron RB-2.6 (Qt5) builds, C++20 for Qt6 builds (RB-2.7). add_ofx_plugin compiles
+# with strict -std=c++NN (no GNU extensions), as the Makefile's CXXSTD and the CI builds do.
 
-SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DDEBUG")
-
-set(OFX_SUPPORT_HEADER_DIR "${OPENFX_PATH}/Support/include")
-set(OFX_SUPPORT_LIBRARY_DIR "${OPENFX_PATH}/Support/Library")
-
-FILE(GLOB SUPPORT_SOURCES
-    "${OFX_SUPPORT_HEADER_DIR}/*.h"
-
-    "${OFX_SUPPORT_LIBRARY_DIR}/ofxsCore.cpp"
-    "${OFX_SUPPORT_LIBRARY_DIR}/ofxsImageEffect.cpp"
-    "${OFX_SUPPORT_LIBRARY_DIR}/ofxsInteract.cpp"
-    "${OFX_SUPPORT_LIBRARY_DIR}/ofxsLog.cpp"
-    "${OFX_SUPPORT_LIBRARY_DIR}/ofxsMultiThread.cpp"
-    "${OFX_SUPPORT_LIBRARY_DIR}/ofxsParams.cpp"
-    "${OFX_SUPPORT_LIBRARY_DIR}/ofxsProperty.cpp"
-    "${OFX_SUPPORT_LIBRARY_DIR}/ofxsPropertyValidation.cpp"
-    "${OFX_SUPPORT_LIBRARY_DIR}/*.h"
-)
-
-#ADD_LIBRARY(Support STATIC )
-#TARGET_COMPILE_DEFINITIONS(Support PRIVATE OFX_SUPPORTS_OPENGLRENDER OFX_EXTENSIONS_TUTTLE OFX_EXTENSIONS_NUKE OFX_EXTENSIONS_NATRON OFX_EXTENSIONS_VEGAS NOMINMAX)
-
-# The G'MIC sources are extracted by the top-level Makefile (make sources), which also patches
-# them (patches/gmic-apple-abort.sh, issue #41, patches/cimg-math-macro-overread.sh,
-# GreycLab/CImg#496, patches/cimg-omp-rand.sh, issue #44, patches/cimg-ij-boundary.sh,
-# GreycLab/CImg#498, and patches/cimg-symmetric-eigen.sh, issue #71). Apply the patches here too,
-# for sources that were extracted otherwise; they do nothing on patched files, and fail if the
-# sources changed.
-FOREACH(_gmic_file gmic.h gmic.cpp CImg.h)
-  IF(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${_gmic_file})
-    MESSAGE(FATAL_ERROR "${_gmic_file} is missing: run 'make sources' first")
-  ENDIF()
-ENDFOREACH()
-FIND_PROGRAM(GMIC_PATCH_SH sh)
-IF(GMIC_PATCH_SH)
-  FOREACH(_gmic_patch gmic-apple-abort.sh:gmic.h gmic-apple-abort.sh:gmic.cpp cimg-math-macro-overread.sh:CImg.h cimg-omp-rand.sh:CImg.h cimg-ij-boundary.sh:CImg.h cimg-symmetric-eigen.sh:CImg.h)
-    STRING(REPLACE ":" ";" _gmic_patch "${_gmic_patch}")
-    LIST(GET _gmic_patch 0 _gmic_script)
-    LIST(GET _gmic_patch 1 _gmic_file)
-    EXECUTE_PROCESS(COMMAND ${GMIC_PATCH_SH} patches/${_gmic_script} ${_gmic_file}
-      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-      RESULT_VARIABLE _gmic_patch_result)
-    IF(NOT _gmic_patch_result EQUAL 0)
-      MESSAGE(FATAL_ERROR "patches/${_gmic_script} failed on ${_gmic_file}")
-    ENDIF()
-  ENDFOREACH()
-  SET_PROPERTY(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    ${CMAKE_CURRENT_SOURCE_DIR}/patches/gmic-apple-abort.sh
-    ${CMAKE_CURRENT_SOURCE_DIR}/patches/cimg-omp-rand.sh
-    ${CMAKE_CURRENT_SOURCE_DIR}/patches/cimg-math-macro-overread.sh
-    ${CMAKE_CURRENT_SOURCE_DIR}/patches/cimg-ij-boundary.sh
-    ${CMAKE_CURRENT_SOURCE_DIR}/patches/cimg-symmetric-eigen.sh
-    ${CMAKE_CURRENT_SOURCE_DIR}/gmic.h ${CMAKE_CURRENT_SOURCE_DIR}/gmic.cpp ${CMAKE_CURRENT_SOURCE_DIR}/CImg.h)
-ELSEIF(APPLE)
-  MESSAGE(FATAL_ERROR "sh not found: cannot apply patches/gmic-apple-abort.sh, which macOS builds need")
-ELSE()
-  MESSAGE(WARNING "sh not found: the patches to the G'MIC sources are not applied (patches/gmic-apple-abort.sh only changes Apple code, but patches/cimg-math-macro-overread.sh and patches/cimg-ij-boundary.sh fix reads out of bounds, patches/cimg-symmetric-eigen.sh NaN eigenvectors, and without patches/cimg-omp-rand.sh most seeded filters are not reproducible with OpenMP)")
-ENDIF()
-
-# gmic_plugin_call.cpp replaces gmic_libc.cpp
-FILE(GLOB GMIC_SOURCES
-  "CImg.h"
-  "gmic.cpp"
-  "gmic.h"
-  "gmic_stdlib_community.h"
-  "gmic_libc.h"
-  "gmic_plugin.cpp"
-  "gmic_plugin_call.cpp"
-  "gmic_plugin_call.h"
-  "Helpers/gmic_parser.cpp"
-  "Helpers/RFX_FileUtils.cpp"
-  "Helpers/RFX_StringUtils.cpp"
-  "Helpers/*h"
-)
-
-# Licence of the build, as make LICENSE= (Natron's NATRON_LICENSE, see license.mk): GPL, or
+# ========================== licence ==========================
+#
+# OFX_LICENSE: the Makefile's LICENSE (Natron's NATRON_LICENSE, see license.mk): GPL (default), or
 # COMMERCIAL, which only uses code under the CeCILL-C option of G'MIC's dual licence: pocketfft
-# instead of FFTW (GPL), and the standard library and hot fixes without the community filters under
-# the GPL or a CeCILL-only licence (see gmic_stdlib_commercial.txt). These sources are made by
-# 'make sources LICENSE=COMMERCIAL', which must be run first: it writes gmic_sources.license (the
-# licence on its first line, then FFT=...) once they are all made, and gmic_stdlib_community.h
-# starts with a marker line, checked here.
-SET(OFX_LICENSE "GPL" CACHE STRING "GPL, or COMMERCIAL (no FFTW, no GPL or CeCILL-only filters)")
-SET_PROPERTY(CACHE OFX_LICENSE PROPERTY STRINGS GPL COMMERCIAL)
-IF(NOT OFX_LICENSE MATCHES "^(GPL|COMMERCIAL)$")
-  MESSAGE(FATAL_ERROR "OFX_LICENSE must be GPL or COMMERCIAL, not \"${OFX_LICENSE}\"")
-ENDIF()
-SET(_sources_license "GPL;FFT=fftw3")
-IF(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/gmic_sources.license)
-  FILE(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/gmic_sources.license _sources_license LIMIT_COUNT 2)
-ELSEIF(OFX_LICENSE STREQUAL "COMMERCIAL")
-  SET(_sources_license "none")
-ENDIF()
-SET_PROPERTY(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/gmic_sources.license
-  ${CMAKE_CURRENT_SOURCE_DIR}/gmic_stdlib_community.h)
-LIST(GET _sources_license 0 _sources_licence0)
-IF(NOT _sources_licence0 STREQUAL OFX_LICENSE)
-  MESSAGE(FATAL_ERROR "The G'MIC sources were made for LICENSE=${_sources_licence0}: run 'make sources LICENSE=${OFX_LICENSE}' first")
-ENDIF()
-IF(OFX_LICENSE STREQUAL "COMMERCIAL")
-  FILE(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/gmic_stdlib_community.h _stdlib_marker LIMIT_COUNT 1
-    REGEX "^ #  openfx-gmic : COMMERCIAL standard library")
-  LIST(FIND _sources_license "FFT=pocketfft" _fft_index)
-  IF(NOT _stdlib_marker OR _fft_index LESS 0
-     OR NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/pocketfft_hdronly.h OR NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Licence_pocketfft.txt)
-    MESSAGE(FATAL_ERROR "gmic_stdlib_community.h is not the COMMERCIAL standard library, or pocketfft is missing: run 'make sources LICENSE=COMMERCIAL' first")
-  ENDIF()
-ENDIF()
+# instead of FFTW (GPL), and a standard library without the community filters under the GPL or a
+# CeCILL-only licence, generated by gmic_stdlib_commercial.sh (see gmic_stdlib_commercial.txt), with
+# the hot fixes of its commands only.
+# FFT: the Makefile's FFT, the library of G'MIC's Fourier transforms (CImg's own FFT fails on image
+# sizes that are not powers of two): fftw3 (FFTW, GPL) or pocketfft (BSD-3-Clause, header-only,
+# downloaded at the Makefile's POCKETFFTCOMMIT, through patches/cimg-pocketfft.sh). Empty (default):
+# fftw3 for GPL builds, pocketfft for COMMERCIAL ones, which can't use FFTW.
+set(OFX_LICENSE "GPL" CACHE STRING "GPL, or COMMERCIAL (no FFTW, no GPL or CeCILL-only filters)")
+set_property(CACHE OFX_LICENSE PROPERTY STRINGS GPL COMMERCIAL)
+if(NOT OFX_LICENSE MATCHES "^(GPL|COMMERCIAL)$")
+  message(FATAL_ERROR "OFX_LICENSE must be GPL or COMMERCIAL, not \"${OFX_LICENSE}\"")
+endif()
+set(FFT "" CACHE STRING "FFT library: fftw3 or pocketfft (empty: fftw3 for GPL, pocketfft for COMMERCIAL)")
+set_property(CACHE FFT PROPERTY STRINGS "" fftw3 pocketfft)
+if(FFT)
+  set(GMIC_FFT "${FFT}")
+elseif(OFX_LICENSE STREQUAL "COMMERCIAL")
+  set(GMIC_FFT pocketfft)
+else()
+  set(GMIC_FFT fftw3)
+endif()
+if(NOT GMIC_FFT MATCHES "^(fftw3|pocketfft)$")
+  message(FATAL_ERROR "FFT must be fftw3 or pocketfft, not \"${GMIC_FFT}\"")
+endif()
+if(OFX_LICENSE STREQUAL "COMMERCIAL" AND NOT GMIC_FFT STREQUAL "pocketfft")
+  message(FATAL_ERROR "OFX_LICENSE=COMMERCIAL needs FFT=pocketfft, not \"${GMIC_FFT}\" (FFTW is GPL)")
+endif()
+
+# ========================== openfx ==========================
+
+# openfx's cmake/OpenFX.cmake: add_ofx_plugin (which links the OFX C API, openfx::Api: the plug-in
+# doesn't use the Support library), ofx_plugin_resources, ofx_target_openmp, ofx_deploy_bundle, and
+# the OFX_CXX_STANDARD, OFX_USE_OPENMP, OFX_DEPLOY_BUNDLES and PLUGIN_INSTALLDIR options. The
+# bundle is installed into ${CMAKE_INSTALL_PREFIX}/${PLUGIN_INSTALLDIR}, by default
+# <prefix>/OFX/Plugins (e.g. /usr/OFX/Plugins with the prefix /usr).
+# EXCLUDE_FROM_ALL: openfx's libraries are not built.
+#
+# GMIC_BUILD_TESTS (default OFF): also build openfx's hostDemo (HostSupport/examples), the host
+# that .github/workflows/render_plugins.py renders the plug-ins with; its path is written to
+# ${CMAKE_BINARY_DIR}/hostDemo-path.txt, or, with a multi-config generator (Visual Studio, Xcode,
+# Ninja Multi-Config), to hostDemo-path-<config>.txt for each configuration (render_plugins.py
+# --host <build dir> [--config <config>] reads it). Off, openfx's HostSupport isn't even
+# configured. (As a subproject, openfx builds for CMAKE_OSX_ARCHITECTURES as given, the default
+# being the build machine's architecture, like the plug-in.)
+option(GMIC_BUILD_TESTS "Build openfx's hostDemo, for the render test (render_plugins.py)" OFF)
+if(GMIC_BUILD_TESTS)
+  set(OFX_BUILD_HOSTSUPPORT ON)
+  set(BUILD_EXAMPLE_HOSTS ON)
+endif()
+add_subdirectory(openfx EXCLUDE_FROM_ALL)
+if(GMIC_BUILD_TESTS)
+  add_custom_target(gmic_test_host ALL DEPENDS hostDemo)
+  if(_multi_config)
+    file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/hostDemo-path-$<CONFIG>.txt" CONTENT "$<TARGET_FILE:hostDemo>\n")
+  else()
+    file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/hostDemo-path.txt" CONTENT "$<TARGET_FILE:hostDemo>\n")
+  endif()
+endif()
+
+# ========================== G'MIC sources ==========================
+#
+# Downloaded and verified as the top-level Makefile's "sources" target does, and extracted into the
+# build tree (never into the source directory). The version, checksums, mirrors and file list are
+# read from the Makefile, which stays the single place to change when upgrading G'MIC
+# (GMICVER, GMICSRC_SHA256_<version>). -DGMICVER=<version> -DGMICSRC_SHA256=<sha256> override them,
+# as on the make command line; since CMake keeps them in its cache, a warning tells when they differ
+# from the Makefile (e.g. after a GMICVER bump): remove them with -UGMICVER -UGMICSRC_SHA256.
+
+set(GMIC_MAKEFILE "${PROJECT_SOURCE_DIR}/Makefile")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${GMIC_MAKEFILE}")
+file(STRINGS "${GMIC_MAKEFILE}" _gmic_mk REGEX "^[A-Za-z0-9_.]+ *=")
+# Only simple assignments are understood (one line, "NAME = value", not inside ifeq): fail on
+# anything else, rather than read a wrong value.
+function(gmic_makefile_var _name _out)
+  set(_value "")
+  set(_count 0)
+  foreach(_line IN LISTS _gmic_mk)
+    if(_line MATCHES "^([A-Za-z0-9_.]+) *= *(.*)$" AND CMAKE_MATCH_1 STREQUAL _name)
+      string(STRIP "${CMAKE_MATCH_2}" _value)
+      math(EXPR _count "${_count} + 1")
+    endif()
+  endforeach()
+  if(_count GREATER 1 OR _value MATCHES "\\\\$")
+    message(FATAL_ERROR "${GMIC_MAKEFILE}: ${_name} must be assigned once, on one line (it is parsed by CMakeLists.txt)")
+  endif()
+  set(${_out} "${_value}" PARENT_SCOPE)
+endfunction()
+
+gmic_makefile_var(GMICVER _mk_gmicver)
+if(NOT _mk_gmicver)
+  message(FATAL_ERROR "Could not read GMICVER from ${GMIC_MAKEFILE}")
+endif()
+if(NOT GMICVER)
+  set(GMICVER "${_mk_gmicver}")
+elseif(NOT GMICVER STREQUAL _mk_gmicver)
+  message(WARNING "GMICVER=${GMICVER} (command line or cache) overrides the Makefile's ${_mk_gmicver}: "
+    "remove it with -UGMICVER")
+endif()
+gmic_makefile_var("GMICSRC_SHA256_${GMICVER}" _mk_sha256)
+if(NOT GMICSRC_SHA256)
+  set(GMICSRC_SHA256 "${_mk_sha256}")
+elseif(_mk_sha256 AND NOT GMICSRC_SHA256 STREQUAL _mk_sha256)
+  message(WARNING "GMICSRC_SHA256=${GMICSRC_SHA256} (command line or cache) overrides the Makefile's "
+    "GMICSRC_SHA256_${GMICVER}: remove it with -UGMICSRC_SHA256")
+endif()
+string(LENGTH "${GMICSRC_SHA256}" _len)
+if(NOT _len EQUAL 64 OR NOT GMICSRC_SHA256 MATCHES "^[0-9a-fA-F]+$")
+  message(FATAL_ERROR "No valid sha256 (64 hex digits) for G'MIC ${GMICVER}: add GMICSRC_SHA256_${GMICVER} "
+    "to the Makefile (or configure with -DGMICSRC_SHA256=<sha256>)")
+endif()
+string(TOLOWER "${GMICSRC_SHA256}" GMICSRC_SHA256)
+foreach(_var GMICSRC GMICSRCDIR GMICSRC_URLS GMICSOURCES)
+  gmic_makefile_var(${_var} ${_var})
+  string(REPLACE "$(GMICVER)" "${GMICVER}" ${_var} "${${_var}}")
+  string(REPLACE "$(GMICSRC)" "${GMICSRC}" ${_var} "${${_var}}")
+  if(NOT ${_var} OR ${_var} MATCHES "\\$")
+    message(FATAL_ERROR "Could not read ${_var} from ${GMIC_MAKEFILE}")
+  endif()
+  separate_arguments(${_var} UNIX_COMMAND "${${_var}}")
+endforeach()
+
+# The tarball: GMIC_TARBALL if given (downloaded there if missing), else a gmic_<version>.tar.gz
+# left in the source directory by the Makefile, else downloaded into GMIC_DOWNLOAD_DIR.
+set(GMIC_TARBALL "" CACHE FILEPATH "G'MIC source tarball (gmic_<version>.tar.gz), downloaded there if missing")
+set(GMIC_DOWNLOAD_DIR "${CMAKE_BINARY_DIR}" CACHE PATH "Where to download the G'MIC source tarball")
+if(GMIC_TARBALL)
+  set(_gmic_tarball "${GMIC_TARBALL}")
+  get_filename_component(_name "${GMIC_TARBALL}" NAME)
+  if(NOT _name STREQUAL GMICSRC)
+    message(WARNING "GMIC_TARBALL=${GMIC_TARBALL} (command line or cache) is not ${GMICSRC}: "
+      "its checksum is verified anyway; remove it with -UGMIC_TARBALL")
+  endif()
+elseif(EXISTS "${PROJECT_SOURCE_DIR}/${GMICSRC}")
+  set(_gmic_tarball "${PROJECT_SOURCE_DIR}/${GMICSRC}")
+else()
+  set(_gmic_tarball "${GMIC_DOWNLOAD_DIR}/${GMICSRC}")
+endif()
+
+if(EXISTS "${_gmic_tarball}")
+  file(SHA256 "${_gmic_tarball}" _sum)
+  if(NOT _sum STREQUAL GMICSRC_SHA256)
+    message(FATAL_ERROR "${_gmic_tarball}: checksum mismatch (got ${_sum}, expected ${GMICSRC_SHA256}): remove it")
+  endif()
+else()
+  # Each mirror in turn, as the Makefile (gmic.eu may answer 403). The checksum is verified here,
+  # not with file(DOWNLOAD EXPECTED_HASH), which stops at the first mismatch instead of trying
+  # the next mirror; the file gets its final name only once verified.
+  set(_tmp "${_gmic_tarball}.tmp")
+  set(_ok FALSE)
+  foreach(_url IN LISTS GMICSRC_URLS)
+    # up to 3 tries, 5 s apart, except after an HTTP 4xx answer (e.g. gmic.eu's 403)
+    foreach(_try 1 2 3)
+      if(_try GREATER 1)
+        execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep 5)
+      endif()
+      message(STATUS "Fetching ${_url}")
+      file(DOWNLOAD "${_url}" "${_tmp}" STATUS _status LOG _log TLS_VERIFY ON INACTIVITY_TIMEOUT 60)
+      list(GET _status 0 _code)
+      if(_code EQUAL 0)
+        break()
+      endif()
+      list(GET _status 1 _msg)
+      message(WARNING "Could not download ${_url}: ${_msg}")
+      if(_log MATCHES "HTTP/[0-9.]+ 4[0-9][0-9]")
+        break()
+      endif()
+    endforeach()
+    if(_code EQUAL 0)
+      file(SHA256 "${_tmp}" _sum)
+      if(_sum STREQUAL GMICSRC_SHA256)
+        file(RENAME "${_tmp}" "${_gmic_tarball}")
+        set(_ok TRUE)
+        break()
+      endif()
+      message(WARNING "Checksum mismatch for ${_url} (got ${_sum})")
+    endif()
+  endforeach()
+  file(REMOVE "${_tmp}")
+  if(NOT _ok)
+    string(REPLACE ";" "\n  " _urls "${GMICSRC_URLS}")
+    message(FATAL_ERROR "Could not download a valid ${GMICSRC}: download it from one of\n  ${_urls}\n"
+      "and configure with -DGMIC_TARBALL=<path>")
+  endif()
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_gmic_tarball}")
+
+# The G'MIC sources of the build (GMICSOURCES, and for GPL builds the standard library with the
+# community filters, gmic_stdlib_community.h; COMMERCIAL builds generate it, below), extracted
+# into GMIC_EXTRACT_DIR, patched there, then copied into GMIC_SRC_DIR, which is what the build
+# uses. The copy only writes files that changed, so that a new extraction doesn't recompile
+# anything. Patching takes tens of seconds (awk on CImg.h), so it is only redone when its inputs
+# change: a stamp in GMIC_SRC_DIR keys the result on the tarball's sha256, the extracted files and
+# each patch script (name, file and sha256).
+set(GMIC_EXTRACT_DIR "${CMAKE_BINARY_DIR}/gmic-extract")
+set(GMIC_SRC_DIR "${CMAKE_BINARY_DIR}/gmic")
+set(_gmic_extract ${GMICSOURCES})
+if(OFX_LICENSE STREQUAL "GPL")
+  list(APPEND _gmic_extract gmic_stdlib_community.h)
+endif()
+
+# Local patches to the extracted G'MIC sources, read from the Makefile, so that both builds apply
+# the same scripts in the same order (see patches/): GMIC_PATCHES on gmic.h and gmic.cpp,
+# CIMG_PATCHES on CImg.h, then CIMG_PATCHES_POCKETFFT with FFT=pocketfft. Each runs as
+# "sh patches/<script> <file>" on the fresh copy, and fails if the source doesn't contain the
+# expected code (e.g. after a GMICVER bump).
+# The patches need a POSIX sh (Linux, macOS, MSYS2; with MSVC, e.g. Git for Windows' sh.exe in the
+# PATH, or -DGMIC_PATCH_SH=<path>). Without one, only the patches that don't change this platform's
+# code are skipped (with a warning): those listed in _gmic_patch_platform (<script>:<CMake
+# condition variable>); any other patch (e.g. a CImg.h fix) makes sh required everywhere.
+set(_gmic_patch_platform gmic-apple-abort.sh:APPLE) # abort support, only compiled on macOS (#41)
+gmic_makefile_var(GMIC_PATCHES _mk_gmic_patches)
+gmic_makefile_var(CIMG_PATCHES _mk_cimg_patches)
+gmic_makefile_var(CIMG_PATCHES_POCKETFFT _mk_cimg_patches_pocketfft)
+if(NOT _mk_gmic_patches OR NOT _mk_cimg_patches OR NOT _mk_cimg_patches_pocketfft)
+  message(FATAL_ERROR "Could not read GMIC_PATCHES, CIMG_PATCHES and CIMG_PATCHES_POCKETFFT from ${GMIC_MAKEFILE}")
+endif()
+set(_patches "")
+set(_gmic_patch_lists "_mk_gmic_patches:gmic.h" "_mk_gmic_patches:gmic.cpp" "_mk_cimg_patches:CImg.h")
+if(GMIC_FFT STREQUAL "pocketfft")
+  list(APPEND _gmic_patch_lists "_mk_cimg_patches_pocketfft:CImg.h")
+endif()
+find_program(GMIC_PATCH_SH sh)
+set(_gmic_patch_key "${GMICVER} ${GMICSRC_SHA256} ${_gmic_extract} sh=${GMIC_PATCH_SH}")
+foreach(_entry IN LISTS _gmic_patch_lists)
+  string(REPLACE ":" ";" _entry "${_entry}")
+  list(GET _entry 0 _var)
+  list(GET _entry 1 _file)
+  separate_arguments(_scripts UNIX_COMMAND "${${_var}}")
+  foreach(_script IN LISTS _scripts)
+    if(NOT _script MATCHES "^patches/[A-Za-z0-9_.-]+\\.sh$" OR NOT EXISTS "${PROJECT_SOURCE_DIR}/${_script}")
+      message(FATAL_ERROR "${GMIC_MAKEFILE}: ${_var} lists '${_script}', not an existing patches/<name>.sh")
+    endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/${_script}")
+    file(SHA256 "${PROJECT_SOURCE_DIR}/${_script}" _sum)
+    list(APPEND _patches "${_script}:${_file}")
+    string(APPEND _gmic_patch_key " ${_script}:${_file}:${_sum}")
+  endforeach()
+endforeach()
+
+set(_stamp "${GMIC_SRC_DIR}/sources.stamp")
+set(_old_key "")
+if(EXISTS "${_stamp}")
+  file(READ "${_stamp}" _old_key)
+  foreach(_f IN LISTS _gmic_extract)
+    if(NOT EXISTS "${GMIC_SRC_DIR}/${_f}")
+      set(_old_key "")
+    endif()
+  endforeach()
+endif()
+if(NOT _old_key STREQUAL _gmic_patch_key)
+  file(REMOVE "${_stamp}")
+  file(REMOVE_RECURSE "${GMIC_EXTRACT_DIR}")
+  set(_patterns "")
+  foreach(_f IN LISTS _gmic_extract)
+    list(APPEND _patterns "${GMICSRCDIR}/src/${_f}")
+  endforeach()
+  file(MAKE_DIRECTORY "${GMIC_EXTRACT_DIR}")
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E tar xzf "${_gmic_tarball}" ${_patterns}
+    WORKING_DIRECTORY "${GMIC_EXTRACT_DIR}" RESULT_VARIABLE _r)
+  if(NOT _r EQUAL 0)
+    message(FATAL_ERROR "Could not extract the G'MIC sources from ${_gmic_tarball}")
+  endif()
+  set(_gmic_extracted "${GMIC_EXTRACT_DIR}/${GMICSRCDIR}/src")
+  foreach(_f IN LISTS _gmic_extract)
+    if(NOT EXISTS "${_gmic_extracted}/${_f}")
+      message(FATAL_ERROR "${GMICSRC} has no ${GMICSRCDIR}/src/${_f}")
+    endif()
+  endforeach()
+  foreach(_patch IN LISTS _patches)
+    string(REPLACE ":" ";" _patch "${_patch}")
+    list(GET _patch 0 _script)
+    list(GET _patch 1 _file)
+    if(NOT GMIC_PATCH_SH)
+      get_filename_component(_name "${_script}" NAME)
+      set(_where "ALL")
+      foreach(_p IN LISTS _gmic_patch_platform)
+        if(_p MATCHES "^${_name}:(.*)$")
+          set(_where "${CMAKE_MATCH_1}")
+        endif()
+      endforeach()
+      if(_where STREQUAL "ALL" OR ${_where})
+        message(FATAL_ERROR "sh not found: it is needed to apply ${_script} to ${_file}, which "
+          "changes the code compiled on this platform: put a POSIX sh in the PATH, or configure with "
+          "-DGMIC_PATCH_SH=<path to sh>")
+      endif()
+      message(WARNING "sh not found: ${_script} is not applied to ${_file} (it only changes "
+        "${_where} code)")
+      continue()
+    endif()
+    execute_process(COMMAND "${GMIC_PATCH_SH}" "${PROJECT_SOURCE_DIR}/${_script}" "${_file}"
+      WORKING_DIRECTORY "${_gmic_extracted}" RESULT_VARIABLE _r)
+    if(NOT _r EQUAL 0)
+      message(FATAL_ERROR "${_script} failed on ${_file} of G'MIC ${GMICVER}")
+    endif()
+  endforeach()
+  foreach(_f IN LISTS _gmic_extract)
+    configure_file("${_gmic_extracted}/${_f}" "${GMIC_SRC_DIR}/${_f}" COPYONLY)
+  endforeach()
+  file(REMOVE_RECURSE "${GMIC_EXTRACT_DIR}")
+  file(WRITE "${_stamp}" "${_gmic_patch_key}")
+endif()
+
+# pocketfft (FFT=pocketfft): pocketfft_hdronly.h, at the Makefile's POCKETFFTCOMMIT and checked
+# against its POCKETFFT_SHA256, into GMIC_SRC_DIR (next to CImg.h, which includes it), and its
+# licence (BSD-3-Clause, which asks for its notice in binary distributions), from the header's
+# first comment, as the Makefile does, into GMIC_GENERATED_DIR.
+set(GMIC_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated")
+if(GMIC_FFT STREQUAL "pocketfft")
+  gmic_makefile_var(POCKETFFTCOMMIT _pocketfft_commit)
+  gmic_makefile_var(POCKETFFT_SHA256 _pocketfft_sha256)
+  if(NOT _pocketfft_commit OR NOT _pocketfft_sha256)
+    message(FATAL_ERROR "Could not read POCKETFFTCOMMIT and POCKETFFT_SHA256 from ${GMIC_MAKEFILE}")
+  endif()
+  set(_pocketfft "${GMIC_SRC_DIR}/pocketfft_hdronly.h")
+  set(_sum "")
+  if(EXISTS "${_pocketfft}")
+    file(SHA256 "${_pocketfft}" _sum)
+  endif()
+  if(NOT _sum STREQUAL _pocketfft_sha256)
+    set(_url "https://raw.githubusercontent.com/mreineck/pocketfft/${_pocketfft_commit}/pocketfft_hdronly.h")
+    message(STATUS "Fetching ${_url}")
+    file(DOWNLOAD "${_url}" "${_pocketfft}.tmp" STATUS _status TLS_VERIFY ON INACTIVITY_TIMEOUT 60)
+    list(GET _status 0 _code)
+    if(_code EQUAL 0)
+      file(SHA256 "${_pocketfft}.tmp" _sum)
+    endif()
+    if(NOT _code EQUAL 0 OR NOT _sum STREQUAL _pocketfft_sha256)
+      file(REMOVE "${_pocketfft}.tmp")
+      message(FATAL_ERROR "Could not download a valid ${_url} (${_status}, sha256 ${_sum})")
+    endif()
+    file(RENAME "${_pocketfft}.tmp" "${_pocketfft}")
+  endif()
+  file(READ "${_pocketfft}" _text)
+  string(FIND "${_text}" "\n*/\n" _end)
+  string(SUBSTRING "${_text}" 0 3 _begin)
+  if(NOT _begin STREQUAL "/*\n" OR _end LESS 0)
+    message(FATAL_ERROR "${_pocketfft}: no licence comment at the top")
+  endif()
+  math(EXPR _len "${_end} - 2")
+  string(SUBSTRING "${_text}" 3 ${_len} _licence) # the lines between "/*" and "*/"
+  if(NOT _licence MATCHES "Redistributions in binary form must reproduce")
+    message(FATAL_ERROR "${_pocketfft}: the licence comment is not the expected one")
+  endif()
+  file(WRITE "${GMIC_GENERATED_DIR}/Licence_pocketfft.txt.tmp" "${_licence}")
+  configure_file("${GMIC_GENERATED_DIR}/Licence_pocketfft.txt.tmp" "${GMIC_GENERATED_DIR}/Licence_pocketfft.txt" COPYONLY)
+  file(REMOVE "${GMIC_GENERATED_DIR}/Licence_pocketfft.txt.tmp")
+endif()
+
+# COMMERCIAL: gmic_stdlib_community.h is generated by gmic_stdlib_commercial.sh, as the Makefile
+# does. It builds a G'MIC interpreter from the tarball with this compiler and zlib (a few minutes
+# the first time; kept in ${CMAKE_BINARY_DIR}/gmic_stdlib_commercial), and downloads the community
+# files of gmic_stdlib_commercial.txt. It runs again when the tarball, the script or
+# gmic_stdlib_commercial.txt change. It also writes gmic_stdlib_community.h.commands, the commands
+# that the library defines, for the hot fixes (below).
+if(OFX_LICENSE STREQUAL "COMMERCIAL")
+  if(NOT GMIC_PATCH_SH)
+    message(FATAL_ERROR "sh not found: it is needed to generate the COMMERCIAL standard library "
+      "(gmic_stdlib_commercial.sh); configure with -DGMIC_PATCH_SH=<path to sh>")
+  endif()
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(GMIC_ZLIB REQUIRED zlib)
+  set(_script "${PROJECT_SOURCE_DIR}/gmic_stdlib_commercial.sh")
+  set(_conf "${PROJECT_SOURCE_DIR}/gmic_stdlib_commercial.txt")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_script}" "${_conf}")
+  set(_out "${CMAKE_BINARY_DIR}/gmic_stdlib_commercial/gmic_stdlib_community.h")
+  file(SHA256 "${_script}" _k1)
+  file(SHA256 "${_conf}" _k2)
+  set(_key "${GMICVER} ${GMICSRC_SHA256} ${_k1} ${_k2} ${CMAKE_CXX_COMPILER}")
+  set(_stamp "${CMAKE_BINARY_DIR}/gmic_stdlib_commercial/stamp")
+  set(_old_key "")
+  if(EXISTS "${_stamp}" AND EXISTS "${_out}" AND EXISTS "${_out}.commands")
+    file(READ "${_stamp}" _old_key)
+  endif()
+  if(NOT _old_key STREQUAL _key)
+    file(REMOVE "${_stamp}")
+    string(REPLACE ";" " " _zlib_cflags "${GMIC_ZLIB_CFLAGS}")
+    string(REPLACE ";" " " _zlib_libs "${GMIC_ZLIB_LDFLAGS}")
+    message(STATUS "Generating the COMMERCIAL standard library (gmic_stdlib_commercial.sh)")
+    execute_process(COMMAND "${CMAKE_COMMAND}" -E env "CXX=${CMAKE_CXX_COMPILER}"
+        "ZLIB_CFLAGS=${_zlib_cflags}" "ZLIB_LIBS=${_zlib_libs}"
+        "${GMIC_PATCH_SH}" "${_script}" "${_gmic_tarball}" "${GMICVER}" "${_out}"
+      WORKING_DIRECTORY "${CMAKE_BINARY_DIR}" RESULT_VARIABLE _r)
+    if(NOT _r EQUAL 0)
+      message(FATAL_ERROR "gmic_stdlib_commercial.sh failed (see above)")
+    endif()
+    file(WRITE "${_stamp}" "${_key}")
+  endif()
+  file(STRINGS "${_out}" _marker LIMIT_COUNT 10 REGEX "^ #  openfx-gmic : COMMERCIAL standard library")
+  if(NOT _marker)
+    message(FATAL_ERROR "${_out} is not the COMMERCIAL standard library")
+  endif()
+  configure_file("${_out}" "${GMIC_SRC_DIR}/gmic_stdlib_community.h" COPYONLY)
+  set(GMIC_STDLIB_COMMANDS "${_out}.commands")
+endif()
+
+# The sources in the source directory include their headers with #include "...", which looks first
+# in the source directory: a G'MIC header left there by a Makefile build would be used instead of
+# the one in GMIC_SRC_DIR. That is harmless only if it is the same file. This is checked at configure
+# time, again when such a header changes, but not when one appears after the configure (run cmake
+# again after a Makefile build in the same checkout).
+foreach(_f IN LISTS GMICSOURCES)
+  if(_f MATCHES "\\.h$" AND EXISTS "${PROJECT_SOURCE_DIR}/${_f}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/${_f}")
+    file(SHA256 "${PROJECT_SOURCE_DIR}/${_f}" _stray)
+    file(SHA256 "${GMIC_SRC_DIR}/${_f}" _ours)
+    if(NOT _stray STREQUAL _ours)
+      message(FATAL_ERROR "${PROJECT_SOURCE_DIR}/${_f} is not the ${_f} of this build (G'MIC ${GMICVER}, "
+        "${OFX_LICENSE}, FFT=${GMIC_FFT}; left by a Makefile build of another version, LICENSE or FFT?), "
+        "and would be included instead of ${GMIC_SRC_DIR}/${_f}: remove the G'MIC sources from the "
+        "source directory (make distclean), or update them (make sources LICENSE=${OFX_LICENSE} FFT=${GMIC_FFT})")
+    endif()
+  endif()
+endforeach()
 
 # Hot fixes for G'MIC bugs (see gmic_hotfixes.gmic and the top-level Makefile), embedded as a
-# null-terminated byte array into gmic_hotfixes.h, in the build directory (searched first, before a
-# header left in the sources by a Makefile build). They were last reviewed for one G'MIC version:
-# warn if gmic.h is another one (not an error: the plug-in checks each fix against the built-in
-# definitions at load, see the top of gmic_hotfixes.gmic).
-SET(GMIC_HOTFIXES ${CMAKE_CURRENT_SOURCE_DIR}/gmic_hotfixes.gmic)
-SET_PROPERTY(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${GMIC_HOTFIXES} ${CMAKE_CURRENT_SOURCE_DIR}/gmic.h)
-FILE(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/gmic.h GMIC_VERSION_LINE REGEX "^#define gmic_version [0-9]+")
-STRING(REGEX REPLACE "^#define gmic_version ([0-9]+).*" "\\1" GMIC_VERSION_NUMBER "${GMIC_VERSION_LINE}")
-FILE(STRINGS ${GMIC_HOTFIXES} GMIC_HOTFIXES_VERSION_LINE REGEX "^#@openfx_gmic_hotfixes ")
-STRING(REGEX REPLACE "^#@openfx_gmic_hotfixes ([0-9.]+).*" "\\1" GMIC_HOTFIXES_VERSION "${GMIC_HOTFIXES_VERSION_LINE}")
-STRING(REPLACE "." "" GMIC_HOTFIXES_VERSION_NUMBER "${GMIC_HOTFIXES_VERSION}")
-IF(NOT "${GMIC_HOTFIXES_VERSION_NUMBER}" STREQUAL "${GMIC_VERSION_NUMBER}")
-  MESSAGE(WARNING "gmic_hotfixes.gmic was reviewed for G'MIC ${GMIC_HOTFIXES_VERSION}, gmic.h is version ${GMIC_VERSION_NUMBER}: drop the fixes that it has, and run the describe test, see the top of gmic_hotfixes.gmic")
-ENDIF()
-IF(OFX_LICENSE STREQUAL "COMMERCIAL")
-  # without the fixes of commands that COMMERCIAL builds leave out: made by the Makefile
-  SET_PROPERTY(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/gmic_hotfixes.h)
-  CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/gmic_hotfixes.h ${CMAKE_CURRENT_BINARY_DIR}/gmic_hotfixes.h.tmp COPYONLY)
-ELSE()
-FILE(READ ${GMIC_HOTFIXES} GMIC_HOTFIXES_HEX HEX)
-STRING(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," GMIC_HOTFIXES_BYTES "${GMIC_HOTFIXES_HEX}")
-STRING(REPLACE "0x0d," "" GMIC_HOTFIXES_BYTES "${GMIC_HOTFIXES_BYTES}") # carriage returns
-FILE(WRITE ${CMAKE_CURRENT_BINARY_DIR}/gmic_hotfixes.h.tmp
-  "// Generated from gmic_hotfixes.gmic by CMake: do not edit.\nstatic const unsigned char gmic_hotfixes[] = {\n${GMIC_HOTFIXES_BYTES}\n0x00 };\n")
-ENDIF()
+# null-terminated byte array into gmic_hotfixes.h, generated into the build tree (GMIC_GENERATED_DIR,
+# an include directory; gmic_plugin.cpp includes it with <...>, so that a header left in the
+# source directory by a Makefile build is not used). They were last reviewed for one G'MIC
+# version: warn if gmic.h is another one (not an error: the plug-in checks each fix against the
+# built-in definitions at load, see the top of gmic_hotfixes.gmic).
+# COMMERCIAL builds only keep the fixes of the commands of their standard library, as the
+# Makefile does: a "#@hotfix <command> <original> <fixed> [callee:checksum...]" block is left out
+# when its command or a callee is not in GMIC_STDLIB_COMMANDS.
+set(GMIC_HOTFIXES "${PROJECT_SOURCE_DIR}/gmic_hotfixes.gmic")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${GMIC_HOTFIXES}")
+file(STRINGS "${GMIC_SRC_DIR}/gmic.h" _line REGEX "^#define gmic_version [0-9]+")
+string(REGEX REPLACE "^#define gmic_version ([0-9]+).*" "\\1" _gmic_version_number "${_line}")
+file(STRINGS "${GMIC_HOTFIXES}" _line REGEX "^#@openfx_gmic_hotfixes ")
+string(REGEX REPLACE "^#@openfx_gmic_hotfixes ([0-9.]+).*" "\\1" _hotfixes_version "${_line}")
+string(REPLACE "." "" _hotfixes_version_number "${_hotfixes_version}")
+if(NOT _hotfixes_version_number STREQUAL _gmic_version_number)
+  message(WARNING "gmic_hotfixes.gmic was reviewed for G'MIC ${_hotfixes_version}, gmic.h is version "
+    "${_gmic_version_number}: drop the fixes that it has, and run the describe test, see the top of "
+    "gmic_hotfixes.gmic")
+endif()
+set(_hotfixes "${GMIC_HOTFIXES}")
+if(OFX_LICENSE STREQUAL "COMMERCIAL")
+  find_program(GMIC_AWK NAMES awk gawk mawk)
+  if(NOT GMIC_AWK)
+    message(FATAL_ERROR "awk not found: it is needed to select the hot fixes of COMMERCIAL builds")
+  endif()
+  set(_hotfixes "${GMIC_GENERATED_DIR}/gmic_hotfixes.commercial.gmic")
+  file(MAKE_DIRECTORY "${GMIC_GENERATED_DIR}")
+  execute_process(COMMAND "${GMIC_AWK}" -v "cmds=${GMIC_STDLIB_COMMANDS}" [=[
+    BEGIN { while ((getline c < cmds) > 0) def[c] = 1; keep = 1 }
+    { sub(/\r$/, "") }
+    /^#@hotfix / { keep = 1; for (i = 2; i <= NF; i++) if (i == 2 || i > 4) { c = $i; sub(/:.*/, "", c); if (!(c in def)) keep = 0 }
+      if (!keep) print "gmic_hotfixes.h: leaving out the fix of " $2 " (not in the COMMERCIAL standard library)" > "/dev/stderr" }
+    keep { print }]=] "${GMIC_HOTFIXES}"
+    OUTPUT_FILE "${_hotfixes}" ERROR_VARIABLE _err RESULT_VARIABLE _r)
+  if(NOT _r EQUAL 0)
+    message(FATAL_ERROR "Could not select the hot fixes: ${_err}")
+  endif()
+  if(_err)
+    string(STRIP "${_err}" _err)
+    message(STATUS "${_err}")
+  endif()
+endif()
+file(READ "${_hotfixes}" _hex HEX)
+string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," _bytes "${_hex}")
+string(REPLACE "0x0d," "" _bytes "${_bytes}") # carriage returns (Windows checkouts)
+file(WRITE "${GMIC_GENERATED_DIR}/gmic_hotfixes.h.tmp"
+  "// Generated from gmic_hotfixes.gmic by CMake (${OFX_LICENSE}): do not edit.\nstatic const unsigned char gmic_hotfixes[] = {\n${_bytes}\n0x00 };\n")
 # only rewritten when it changes, so that a new configure does not recompile gmic_plugin.cpp
-CONFIGURE_FILE(${CMAKE_CURRENT_BINARY_DIR}/gmic_hotfixes.h.tmp ${CMAKE_CURRENT_BINARY_DIR}/gmic_hotfixes.h COPYONLY)
-INCLUDE_DIRECTORIES(BEFORE ${CMAKE_CURRENT_BINARY_DIR})
+configure_file("${GMIC_GENERATED_DIR}/gmic_hotfixes.h.tmp" "${GMIC_GENERATED_DIR}/gmic_hotfixes.h" COPYONLY)
+file(REMOVE "${GMIC_GENERATED_DIR}/gmic_hotfixes.h.tmp")
 
-# the licences of the plug-in and G'MIC (COPYING: dual CeCILL-C / CeCILL v2; COMMERCIAL builds use
-# CeCILL-C), installed in Contents/Resources with the icon
-FILE(GLOB GMIC_RESOURCES
-  "GMIC_OFX/GMIC.png"
-  "COPYING"
-  "Licence_CeCILL-C_V1-en.txt"
-  "Licence_CeCILL_V2-en.txt"
-)
-LIST(APPEND GMIC_RESOURCES ${CMAKE_CURRENT_SOURCE_DIR}/LGPL-libraries.txt)
-IF(OFX_LICENSE STREQUAL "COMMERCIAL")
-  LIST(APPEND GMIC_RESOURCES ${CMAKE_CURRENT_SOURCE_DIR}/Licence_CeCILL-B_V1-en.txt ${CMAKE_CURRENT_SOURCE_DIR}/Licence_pocketfft.txt)
-ENDIF()
-
-ADD_LIBRARY(GMIC SHARED ${GMIC_SOURCES} ${SUPPORT_SOURCES})
-SET_TARGET_PROPERTIES(GMIC PROPERTIES PREFIX "")
-SET_TARGET_PROPERTIES(GMIC PROPERTIES SUFFIX ".ofx")
-
-# Add extra flags to the link step of the plugin
-if(APPLE)
-    set_target_properties(GMIC PROPERTIES LINK_FLAGS "-fvisibility=hidden -exported_symbols_list,${OFX_SUPPORT_HEADER_DIR}/osxSymbols")
-    set_target_properties(GMIC PROPERTIES INSTALL_RPATH "@loader_path/../Frameworks;@loader_path/../Libraries")
-elseif(MINGW)
-    set_target_properties(GMIC PROPERTIES LINK_FLAGS "-shared -fvisibility=hidden -Xlinker --version-script=${OFX_SUPPORT_HEADER_DIR}/linuxSymbols")
-elseif(${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD" OR ${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
-# Linux & FreeBSD
-    set_target_properties(GMIC PROPERTIES LINK_FLAGS "-Wl,-fvisibility=hidden,--version-script=${OFX_SUPPORT_HEADER_DIR}/linuxSymbols")
-    set_target_properties(GMIC PROPERTIES INSTALL_RPATH "$ORIGIN/../../Libraries")
+set(GMIC_EXTRACTED_SOURCES "")
+foreach(_f IN LISTS GMICSOURCES)
+  list(APPEND GMIC_EXTRACTED_SOURCES "${GMIC_SRC_DIR}/${_f}")
+endforeach()
+list(APPEND GMIC_EXTRACTED_SOURCES "${GMIC_SRC_DIR}/gmic_stdlib_community.h")
+if(GMIC_FFT STREQUAL "pocketfft")
+  list(APPEND GMIC_EXTRACTED_SOURCES "${GMIC_SRC_DIR}/pocketfft_hdronly.h")
 endif()
 
-TARGET_COMPILE_DEFINITIONS(GMIC PRIVATE OFX_EXTENSIONS_NUKE OFX_EXTENSIONS_NATRON NOMINMAX OFX_PLUGIN gmic_core gmic_is_parallel cimg_use_abort cimg_display=0 cimg_appname=\"gmic\" cimg_verbosity=0)
-#TARGET_LINK_LIBRARIES(GMIC Support ${OPENGL_gl_LIBRARY})
-TARGET_LINK_LIBRARIES(GMIC ${OPENGL_gl_LIBRARY})
+# ========================== the plug-in ==========================
 
-# FFT library (CImg's own FFT fails on image sizes that are not powers of two), as in
-# GMIC_OFX/Makefile: FFTW (GPLv2) for GPL builds, pocketfft (BSD-3-Clause) for COMMERCIAL ones.
-IF(OFX_LICENSE STREQUAL "COMMERCIAL")
-  TARGET_COMPILE_DEFINITIONS(GMIC PRIVATE cimg_use_pocketfft OFX_GMIC_COMMERCIAL)
-ELSE()
-  FIND_PACKAGE(PkgConfig REQUIRED)
-  PKG_CHECK_MODULES(FFTW3 REQUIRED IMPORTED_TARGET fftw3)
-  FIND_LIBRARY(FFTW3_THREADS_LIBRARY fftw3_threads HINTS ${FFTW3_LIBRARY_DIRS})
-  IF(NOT FFTW3_THREADS_LIBRARY)
-    MESSAGE(FATAL_ERROR "fftw3_threads not found (in ${FFTW3_LIBRARY_DIRS})")
-  ENDIF()
-  TARGET_COMPILE_DEFINITIONS(GMIC PRIVATE cimg_use_fftw3)
-  TARGET_LINK_LIBRARIES(GMIC PkgConfig::FFTW3 ${FFTW3_THREADS_LIBRARY})
-ENDIF()
+# the .cpp files of GMICSOURCES (gmic.cpp) and those of GMIC_OFX/Makefile
+# (gmic_plugin_call.cpp replaces gmic_libc.cpp)
+add_ofx_plugin(GMIC
+  INFO_PLIST GMIC_OFX/Info.plist
+  SOURCES
+    ${GMIC_EXTRACTED_SOURCES}
+    "${GMIC_GENERATED_DIR}/gmic_hotfixes.h"
+    gmic_plugin.cpp
+    gmic_plugin_call.cpp
+    gmic_plugin_call.h
+    Helpers/gmic_parser.cpp
+    Helpers/RFX_FileUtils.cpp
+    Helpers/RFX_StringUtils.cpp)
+# The resources of GMIC_OFX/Makefile, before ofx_deploy_bundle (below): the icon, the licences of
+# the plug-in and G'MIC (COPYING: dual CeCILL-C / CeCILL v2; COMMERCIAL builds use CeCILL-C), and
+# a note on the LGPL libraries that libcurl uses (bundled on macOS and Windows); COMMERCIAL: the
+# CeCILL-B licence of the community files without a licence in their header; pocketfft's licence.
+set(GMIC_RESOURCES GMIC_OFX/GMIC.png COPYING Licence_CeCILL-C_V1-en.txt Licence_CeCILL_V2-en.txt
+  LGPL-libraries.txt)
+if(OFX_LICENSE STREQUAL "COMMERCIAL")
+  list(APPEND GMIC_RESOURCES Licence_CeCILL-B_V1-en.txt)
+endif()
+if(GMIC_FFT STREQUAL "pocketfft")
+  list(APPEND GMIC_RESOURCES "${GMIC_GENERATED_DIR}/Licence_pocketfft.txt")
+endif()
+# Switching OFX_LICENSE or FFT in the same build directory changes the resources: the build-tree
+# bundle's Resources are removed then (copied again by the build), so that it keeps no licence of
+# the other configuration, as the Makefile's BUILD_KEY does. An install prefix that already has the
+# bundle keeps them: install into a fresh prefix after such a switch.
+set(_resources_key "OFX_LICENSE=${OFX_LICENSE} FFT=${GMIC_FFT}")
+if(DEFINED GMIC_RESOURCES_KEY AND NOT GMIC_RESOURCES_KEY STREQUAL _resources_key)
+  file(REMOVE_RECURSE "${OFX_PLUGIN_BUILD_DIR}/GMIC.ofx.bundle/Contents/Resources")
+endif()
+set(GMIC_RESOURCES_KEY "${_resources_key}" CACHE INTERNAL "OFX_LICENSE and FFT of the bundle's resources")
+ofx_plugin_resources(GMIC ${GMIC_RESOURCES})
+source_group("G'MIC" FILES ${GMIC_EXTRACTED_SOURCES})
 
-# Find OpenMP
-# To compile on homebrew:
-# env CXX=/usr/local/opt/llvm/bin/clang++ CC=/usr/local/opt/llvm/bin/clang LDFLAGS=-L/usr/local/opt/llvm/lib cmake ..
-find_package(OpenMP)
-# MSVC is OpenMP 2.0 and has issues, see https://github.com/dtschump/CImg/issues/208 and https://msdn.microsoft.com/fr-fr/library/ff520162.aspx
-if (OPENMP_FOUND AND NOT MSVC)
-#if (OPENMP_FOUND)
-    #include_directories("${OPENMP_INCLUDES}")
-    #link_directories("${OPENMP_LIBRARIES}")
-    # set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
-    # set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-    # set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${OpenMP_SHARED_LINKER_FLAGS}")
-    # set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
-    SET_TARGET_PROPERTIES(GMIC PROPERTIES COMPILE_FLAGS "${OpenMP_CXX_FLAGS}")
-    SET_TARGET_PROPERTIES(GMIC PROPERTIES LINK_FLAGS "${OpenMP_EXE_LINKER_FLAGS}")
-    TARGET_LINK_LIBRARIES(GMIC ${OpenMP_CXX_LIB_NAMES})
-endif(OPENMP_FOUND AND NOT MSVC)
-
-IF (MSVC)
-  # Some files require this option. This breaks compatibility with older linkers.
-  SET_TARGET_PROPERTIES(GMIC PROPERTIES COMPILE_FLAGS "/bigobj")
-ENDIF ()
-
-# Find and set the arch name.
-# http://openeffects.org/documentation/reference/ch02s02.html
-SET(OFX_ARCH UNKNOWN)
-# Win
-if(MINGW)
-    set(OFX_ARCH "Win32")
-    if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
-        set(OFX_ARCH "Win64")
-    endif()
-# Visual Studio    
-elseif(MSVC)
-    set(OFX_ARCH "Win32")
-    if((${CMAKE_SYSTEM_PROCESSOR} STREQUAL "IA64") OR (${CMAKE_SYSTEM_PROCESSOR} STREQUAL "AMD64"))
-        set(OFX_ARCH "Win64")
-    endif()
-# FreeBSD
-elseif(${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD")
-    set(OFX_ARCH "FreeBSD-x86")
-    if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
-        set(OFX_ARCH "FreeBSD-x86-64")
-    endif()
-    if(${CMAKE_SYSTEM_PROCESSOR} MATCHES "arm")
-        if("${CMAKE_SIZEOF_VOID_P}" EQUAL "8")
-            set(OFX_ARCH FreeBSD-arm-64)
-        else()
-            set(OFX_ARCH FreeBSD-arm)
-        endif()
-    endif()
-# MacOS
-elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
-    set(OFX_ARCH "MacOS")
-# Linux
-elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
-    set(OFX_ARCH "Linux-x86")
-    if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
-        set(OFX_ARCH "Linux-x86-64")
-    endif()
-    if(${CMAKE_SYSTEM_PROCESSOR} MATCHES "arm")
-        if("${CMAKE_SIZEOF_VOID_P}" EQUAL "8")
-            set(OFX_ARCH Linux-arm-64)
-        else()
-            set(OFX_ARCH Linux-arm)
-        endif()
-    endif()
+# Optimization: CMake's CMAKE_CXX_FLAGS_<CONFIG> (Release: -O3 -DNDEBUG; the Makefile uses -O2), which
+# the user may override. Not -Ofast: its -ffast-math breaks G'MIC's NaN tests. Debug builds also
+# get Makefile.master's -Wall -Wextra.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(GMIC PRIVATE $<$<CONFIG:Debug>:-Wall -Wextra>)
 endif()
 
-SET(OFX_ARCH_NAME ${OFX_ARCH} CACHE STRING "OpenFX target OS and architecture")
-IF("${OFX_ARCH_NAME}" EQUAL "UNKNOWN")
-  MESSAGE(SEND_ERROR "OFX_ARCH_NAME was not detected. Install targets will be unavailable. See http://openeffects.org/documentation/reference/ch02s02.html to pick an arch name.")
-ELSE()
-  INSTALL(TARGETS GMIC
-    RUNTIME DESTINATION GMIC.ofx.bundle/Contents/${OFX_ARCH_NAME}
-    LIBRARY DESTINATION GMIC.ofx.bundle/Contents/${OFX_ARCH_NAME}
-  )
+target_include_directories(GMIC PRIVATE
+  "${GMIC_SRC_DIR}"
+  "${GMIC_GENERATED_DIR}"
+  Helpers
+  openfx/Examples/include) # ofxUtilities.H
 
-  INSTALL(FILES ${GMIC_RESOURCES}
-    DESTINATION GMIC.ofx.bundle/Contents/Resources
-  )
+# GMIC_OFX/Makefile's CXXFLAGS. G'MIC >= 3 compiles CImg in its own namespace (gmic_library), so it
+# cannot clash with the cimg_library of other plug-ins (e.g. openfx-misc) loaded in the same host.
+target_compile_definitions(GMIC PRIVATE
+  OFX_EXTENSIONS_NATRON
+  OFX_EXTENSIONS_NUKE
+  OFX_PLUGIN
+  gmic_core
+  gmic_is_parallel
+  cimg_use_abort
+  cimg_display=0
+  "cimg_appname=\"gmic\""
+  cimg_verbosity=0
+  cimg_use_zlib  # zlib: decompress the G'MIC standard library
+  cimg_use_curl  # libcurl: download filter data
+  cimg_use_png)  # libpng: HaldCLUTs
+if(MSVC)
+  target_compile_definitions(GMIC PRIVATE NOMINMAX)
+endif()
 
-  INSTALL(FILES Info.plist
-    DESTINATION GMIC.ofx.bundle/Contents
-  )
+# FFT library (FFT), for Fourier transforms of any image size: FFTW, multithreaded, or pocketfft
+# (header-only, patches/cimg-pocketfft.sh). COMMERCIAL: the parser does not report the curated
+# filters that its standard library leaves out.
+if(GMIC_FFT STREQUAL "fftw3")
+  target_compile_definitions(GMIC PRIVATE cimg_use_fftw3)
+  set(_fft_module fftw3)
+else()
+  target_compile_definitions(GMIC PRIVATE cimg_use_pocketfft)
+  set(_fft_module "")
+endif()
+if(OFX_LICENSE STREQUAL "COMMERCIAL")
+  target_compile_definitions(GMIC PRIVATE OFX_GMIC_COMMERCIAL)
+endif()
 
-  IF(OFX_LICENSE STREQUAL "GPL" AND ("${OFX_ARCH_NAME}" EQUAL "Win32" OR "${OFX_ARCH_NAME}" EQUAL "Win64"))
-    INSTALL(FILES libfftw3-3.dll
-      DESTINATION GMIC.ofx.bundle/Contents/${OFX_ARCH_NAME}
-    )
-  ENDIF()
+# The libraries of GMIC_OFX/Makefile, through pkg-config as it does (so that the same ones are
+# found, e.g. MacPorts' zlib and libcurl rather than the macOS SDK's), plus fftw3_threads
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GMIC_DEPS REQUIRED IMPORTED_TARGET ${_fft_module} zlib libcurl libpng)
+target_link_libraries(GMIC PRIVATE PkgConfig::GMIC_DEPS)
+if(GMIC_FFT STREQUAL "fftw3")
+  pkg_get_variable(_fftw3_libdir fftw3 libdir)
+  find_library(FFTW3_THREADS_LIBRARY fftw3_threads HINTS ${_fftw3_libdir} ${GMIC_DEPS_LIBRARY_DIRS})
+  if(NOT FFTW3_THREADS_LIBRARY)
+    message(FATAL_ERROR "fftw3_threads not found (in ${_fftw3_libdir})")
+  endif()
+  target_link_libraries(GMIC PRIVATE ${FFTW3_THREADS_LIBRARY})
+endif()
 
-ENDIF()
+# OpenMP (OFX_USE_OPENMP), except with MSVC, whose OpenMP 2.0 has issues with CImg
+# (https://github.com/dtschump/CImg/issues/208)
+if(OFX_USE_OPENMP AND NOT MSVC)
+  ofx_target_openmp(GMIC REQUIRED)
+  target_compile_definitions(GMIC PRIVATE cimg_use_openmp)
+endif()
+
+ofx_deploy_bundle(GMIC)
+
+message(STATUS "G'MIC ${GMICVER} (${_gmic_tarball}), ${OFX_LICENSE}, FFT: ${GMIC_FFT}, C++${OFX_CXX_STANDARD}, OpenMP: ${OFX_USE_OPENMP}, "
+  "bundle: ${OFX_PLUGIN_BUILD_DIR}/GMIC.ofx.bundle/Contents/${ARCHDIR}")

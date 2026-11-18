@@ -62,6 +62,16 @@ int main(int argc, char** argv)
         ImageEffect::Descriptor* d = context.empty() ? NULL : plugins[i]->getContext(context);
         if (d) {
             ++ok;
+            // for render_plugins.py: the context and the input clips, tab-separated
+            std::string clips;
+            const std::vector<ImageEffect::ClipDescriptor*>& byOrder = d->getClipsByOrder();
+            for (size_t c = 0; c < byOrder.size(); ++c) {
+                if (byOrder[c]->getName() == kOfxImageEffectOutputClipName) {
+                    continue;
+                }
+                clips += "\t" + byOrder[c]->getName();
+            }
+            fprintf(stderr, "RENDERINFO %s\t%s%s\n", id.c_str(), context.c_str(), clips.c_str());
         } else {
             ++failed;
             printf("DESCRIBE_FAILED %s (context: %s)\n", id.c_str(), context.empty() ? "no Filter or General context" : context.c_str());
