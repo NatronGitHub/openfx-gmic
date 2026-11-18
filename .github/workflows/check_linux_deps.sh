@@ -10,7 +10,10 @@
 # It also reports the highest GLIBC_, GLIBCXX_, CXXABI_, GCC_ and GOMP_ symbol versions required,
 # which must exist on the oldest supported system (Natron 2.6: Rocky Linux 9, glibc 2.34 and
 # GCC 11's libstdc++, GLIBCXX_3.4.29 and CXXABI_1.3.13): a build there can only require those.
-# Usage: check_linux_deps.sh <GMIC.ofx.bundle>
+# SHARED_DEPS=1: a GMIC_STATIC_DEPS=OFF build (Natron's release builds, distribution packages),
+# which may also need the shared zlib and libpng (libz.so.1, libpng16.so.16), still no libcurl or
+# FFTW.
+# Usage: [SHARED_DEPS=1] check_linux_deps.sh <GMIC.ofx.bundle>
 set -euo pipefail
 
 if [ $# != 1 ]; then
@@ -30,6 +33,9 @@ for lib in $needed; do
     case "$lib" in
         libc.so.6|libm.so.6|ld-linux*.so*|libstdc++.so.6|libgcc_s.so.1|libgomp.so.1) ;;
         libpthread.so.0|libdl.so.2|librt.so.1) ;; # glibc < 2.34
+        libz.so.1|libpng16.so.16)
+            [ "${SHARED_DEPS:-0}" = 1 ] ||
+                { echo "FAIL: $bin needs $lib, which GMIC_STATIC_DEPS links statically"; status=1; } ;;
         *) echo "FAIL: $bin needs $lib, which is not a system library (link it statically)"; status=1 ;;
     esac
 done

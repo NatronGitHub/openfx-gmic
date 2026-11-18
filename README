@@ -54,7 +54,8 @@ Requirements
   built with -fPIC (e.g. Ubuntu's libpng16.a), and then fail to link: build them with
   .github/workflows/build_static_deps.sh <prefix>, as CI does, and set
   PKG_CONFIG_PATH=<prefix>/lib/pkgconfig. GMIC_STATIC_DEPS=0 (CMake: -DGMIC_STATIC_DEPS=OFF) links
-  the shared libraries instead, e.g. for distribution packages.
+  the shared zlib and libpng instead (still no libcurl): distribution packages and Natron's
+  release builds use it (Natron's installer bundles these libraries).
 - Python 3, for the render test only.
 - Platforms: Linux, macOS (Apple clang; libraries from MacPorts or Homebrew) and Windows (MSYS2
   UCRT64, as in CI: see .github/workflows/ci.yml for the packages).

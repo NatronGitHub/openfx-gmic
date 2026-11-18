@@ -174,6 +174,21 @@ jobs:
           python3 .github/workflows/render_plugins.py --host build \
             --plugins build-fftw3/Plugins --list plugins-fftw3.txt --stdlib build-fftw3/gmic/gmic_stdlib_community.h \
             --subset pr --jobs 2
+      # GMIC_STATIC_DEPS=OFF, as Natron's release builds (whose SDK has only shared zlib and libpng,
+      # which the installer bundles) and distribution packages do: the system's shared zlib and
+      # libpng (without the static-deps prefix of PKG_CONFIG_PATH), still no libcurl or FFTW.
+      # Before the Makefile build, as FFT=fftw3 above.
+      - name: Build and describe (release, GMIC_STATIC_DEPS=OFF)
+        if: env.BUILD_VARIANTS == 'true'
+        run: |
+          env -u PKG_CONFIG_PATH cmake -S . -B build-shared -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 \
+            -DGMIC_DOWNLOAD_DIR="$PWD" -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h" -DGMIC_STATIC_DEPS=OFF
+          cmake --build build-shared -j4
+          .github/workflows/check_fft.sh build-shared/Plugins/GMIC.ofx.bundle pocketfft
+          SHARED_DEPS=1 .github/workflows/check_linux_deps.sh build-shared/Plugins/GMIC.ofx.bundle
+          readelf -d build-shared/Plugins/GMIC.ofx.bundle/Contents/Linux-x86-64/GMIC.ofx | grep -q 'NEEDED.*libpng16\.so' ||
+            { echo "FAIL: GMIC_STATIC_DEPS=OFF does not link the shared libpng"; exit 1; }
+          .github/workflows/describe_plugins.sh build-shared/Plugins $GMIC_PLUGIN_COUNT
       # the debug variant is built with the Makefile, as Natron's build-plugins.sh does (the
       # standard in CXX), and its bundle is compared with the installed CMake one
       - name: Build with the Makefile (debug), compare with CMake
