@@ -117,6 +117,8 @@ ifeq ($(OS),Linux)
   GMIC_STATIC_DEPS ?= 1
   # Makefile.master links OpenGL to every plug-in: G'MIC doesn't use it
   LINKFLAGS := $(filter-out -lGL,$(LINKFLAGS))
+  # (openfx >= #161 moves -lGL -pthread -ldl into SYSLIBS, at the end of the link line)
+  SYSLIBS := $(filter-out -lGL,$(SYSLIBS))
 else
   override GMIC_STATIC_DEPS = 0
   DEPS_MODULES += libcurl
