@@ -377,7 +377,7 @@ jobs:
           update: true
           install: >-
             git make diffutils
-            mingw-w64-ucrt-x86_64-cc mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-cc mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-libgomp
             mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-curl
             mingw-w64-ucrt-x86_64-libpng mingw-w64-ucrt-x86_64-expat mingw-w64-ucrt-x86_64-python
