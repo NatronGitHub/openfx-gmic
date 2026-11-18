@@ -1,6 +1,7 @@
 #!/bin/sh
 # Patch CImg.h, extracted from the G'MIC sources by the top-level Makefile, so that its FFTs don't
 # call fftw_cleanup_threads(). Usage: cimg-fftw-no-cleanup.sh <CImg.h>
+# Reported upstream: https://github.com/GreycLab/CImg/issues/500
 #
 # With multithreaded FFTW (cimg_use_fftw3 without cimg_use_fftw3_singlethread), both FFT()
 # functions of CImg call fftw_cleanup_threads() after each FFT, under CImg's own mutex only. That
