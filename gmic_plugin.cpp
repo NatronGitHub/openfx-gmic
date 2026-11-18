@@ -159,6 +159,9 @@ using namespace reduxfx;
 #include <condition_variable>
 #include <exception>
 #include <mutex>
+#if defined(cimg_use_fftw3) && !defined(cimg_use_fftw3_singlethread)
+#include <fftw3.h>
+#endif
 #include <system_error>
 #include <thread>
 #ifndef _WIN32
@@ -509,8 +512,24 @@ static string layerTimesNote(const EffectData& effectData)
 		"clips to the layer inputs and set their time offsets.";
 }
 
+#if defined(cimg_use_fftw3) && !defined(cimg_use_fftw3_singlethread)
+// FFTW is a shared library: other plug-ins of the host process (e.g. openfx-misc's CImg plug-ins)
+// share its planner, which isn't thread-safe, and each one only locks its own mutex around
+// planning. Make FFTW's planner thread-safe, once per process, at the first plug-in load (FFTW >=
+// 3.3.5, in libfftw3_threads; CImg calls fftw_init_threads at library initialisation, calling it
+// again is harmless).
+static void makeFftwThreadSafe()
+{
+	static std::once_flag once;
+	std::call_once(once, [] { fftw_init_threads(); fftw_make_planner_thread_safe(); });
+}
+#endif
+
 int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 {
+#if defined(cimg_use_fftw3) && !defined(cimg_use_fftw3_singlethread)
+	makeFftwThreadSafe();
+#endif
 	globalDataP->scale = 255.f;
 	globalDataP->buttonName = "Reload";
 

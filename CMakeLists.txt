@@ -610,7 +610,7 @@ endif()
 # filters that its standard library leaves out.
 if(GMIC_FFT STREQUAL "fftw3")
   target_compile_definitions(GMIC PRIVATE cimg_use_fftw3)
-  set(_fft_module fftw3)
+  set(_fft_module "fftw3>=3.3.5") # fftw_make_planner_thread_safe (gmic_plugin.cpp)
 else()
   target_compile_definitions(GMIC PRIVATE cimg_use_pocketfft)
   set(_fft_module "")
