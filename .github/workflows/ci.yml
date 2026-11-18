@@ -402,7 +402,6 @@ jobs:
           cmake -S . -B build-fftw3 $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DFFT=fftw3
           cmake --build build-fftw3 -j4
           .github/workflows/check_fft.sh build-fftw3/Plugins/GMIC.ofx.bundle fftw3
-          .github/workflows/check_linux_deps.sh build-fftw3/Plugins/GMIC.ofx.bundle
           CXX="/usr/bin/clang++ -I/opt/local/include" \
             HOST_LDFLAGS=-L/opt/local/lib PLUGIN_LIST=plugins-fftw3.txt \
             .github/workflows/describe_plugins.sh build-fftw3/Plugins $GMIC_PLUGIN_COUNT
@@ -488,7 +487,6 @@ jobs:
             -DGMIC_POCKETFFT="$(cygpath -m "$PWD")/pocketfft_hdronly.h" -DGMIC_BUILD_TESTS=ON
           cmake --build build -j4
           .github/workflows/check_fft.sh build/Plugins/GMIC.ofx.bundle pocketfft
-          .github/workflows/check_linux_deps.sh build/Plugins/GMIC.ofx.bundle
       - name: Describe all plug-ins
         run: |
           set -eo pipefail
