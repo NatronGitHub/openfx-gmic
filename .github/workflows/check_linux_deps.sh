@@ -1,9 +1,10 @@
 #!/bin/bash
 # Check that a Linux GMIC.ofx needs only system libraries, and exports only the OFX entry points:
-# - its NEEDED entries are all in the allowed set: libc, libm, libstdc++, libgcc_s, libgomp
-#   (OpenMP), zlib (a system library, though GMIC.ofx links it statically), and libpthread,
-#   libdl, librt and ld-linux, which are separate from libc only before glibc 2.34 (older systems
-#   than Natron's Rocky Linux 9 baseline); libpng and FFTW are linked statically;
+# - its NEEDED entries are all in the allowed set: libc, libm, ld-linux (glibc's dynamic loader),
+#   libstdc++, libgcc_s, libgomp (OpenMP), zlib (a system library, though GMIC.ofx links it
+#   statically), and libpthread, libdl and librt, which are separate from libc only before glibc
+#   2.34 (older systems than Natron's Rocky Linux 9 baseline); libpng and FFTW are linked
+#   statically;
 # - no libcurl (G'MIC downloads with the curl or wget command), checked through the NEEDED list;
 # - it exports only OfxGetNumberOfPlugins and OfxGetPlugin (the version script keeps the symbols
 #   of the static libraries local).
@@ -30,13 +31,14 @@ fi
 echo "NEEDED: $(echo $needed)"
 for lib in $needed; do
     case "$lib" in
-        libc.so.6|libm.so.6|libstdc++.so.6|libgcc_s.so.1|libgomp.so.1|libz.so.1) ;;
-        libpthread.so.0|libdl.so.2|librt.so.1|ld-linux*.so*) ;; # glibc < 2.34
+        libc.so.6|libm.so.6|ld-linux*.so*|libstdc++.so.6|libgcc_s.so.1|libgomp.so.1|libz.so.1) ;;
+        libpthread.so.0|libdl.so.2|librt.so.1) ;; # glibc < 2.34
         *) echo "FAIL: $bin needs $lib, which is not a system library (link it statically)"; status=1 ;;
     esac
 done
 
-exports=$(nm -D --defined-only "$bin" | awk '{ print $NF }' | LC_ALL=C sort | tr '\n' ' ')
+# (without the version node, type A, and the @@OFX_1.0 version suffixes of the version script)
+exports=$(nm -D --defined-only "$bin" | awk '$(NF-1) != "A" { sub(/@.*/, "", $NF); print $NF }' | LC_ALL=C sort | tr '\n' ' ')
 echo "Exported symbols: $exports"
 if [ "$exports" != "OfxGetNumberOfPlugins OfxGetPlugin " ]; then
     echo "FAIL: $bin exports other symbols than OfxGetNumberOfPlugins and OfxGetPlugin"
