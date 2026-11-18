@@ -129,6 +129,12 @@
 // the last Output Layer option, "Frame" (issue #65): see pluginProcess
 #define OUTPUT_LAYER_FRAME 11
 
+// G'MIC needs NaN and infinities (see GMIC_OFX/Makefile): with -ffinite-math-only, the compiler folds
+// its NaN tests to constants. The G'MIC sources are compiled with the same options as this file.
+#if defined(__FINITE_MATH_ONLY__) && __FINITE_MATH_ONLY__
+#error "-ffinite-math-only (in -ffast-math and -Ofast) breaks G'MIC: add -fno-finite-math-only after it"
+#endif
+
 #ifdef OFX_PLUGIN
     #include "RFX_OFX_Utils.h"
 #else
@@ -1202,8 +1208,11 @@ static size_t computeFrameCacheBudget()
 	double bytes = 0.;
 	const char* env = getenv("OFX_GMIC_FRAME_CACHE_MB");
 	char* end = NULL;
-	const double mb = (env && *env) ? strtod(env, &end) : -1.;
-	if (env && *env && end != env && *end == '\0' && mb >= 0.) {
+	// a decimal number: not "inf", "nan" or hexadecimal (with -ffinite-math-only, a NaN would pass
+	// the test below)
+	const bool valid = env && *env && strspn(env, "0123456789.eE+-") == strlen(env);
+	const double mb = valid ? strtod(env, &end) : -1.;
+	if (valid && end != env && *end == '\0' && mb >= 0.) {
 		bytes = mb * 1024. * 1024.;
 	} else {
 		// leave room for the host's own cache (Natron's RAM cache)
