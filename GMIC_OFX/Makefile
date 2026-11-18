@@ -5,7 +5,7 @@ PLUGINOBJECTS = $(PLUGINSOURCES:.cpp=.o)
 SRCDIR = ..
 PATHTOROOT = $(SRCDIR)/openfx/Examples
 include $(PATHTOROOT)/Makefile.master
-# LICENSE (GPL or COMMERCIAL) and FFT (fftw3 or pocketfft): see license.mk
+# LICENSE (GPL or COMMERCIAL) and FFT (pocketfft or fftw3): see license.mk
 include $(SRCDIR)/license.mk
 
 # the licences of the plug-in and G'MIC (COPYING: dual CeCILL-C / CeCILL v2; COMMERCIAL builds use
@@ -79,7 +79,7 @@ CXXFLAGS += \
 # FFT library, for Fourier transforms of any image size (CImg's own FFT fails on sizes that are
 # not powers of two), see license.mk:
 ifeq ($(FFT),fftw3)
-# FFTW (license: GPLv2), multithreaded
+# FFTW (license: GPLv2), multithreaded, opt-in (FFT=fftw3, GPL builds only)
 # fftw_make_planner_thread_safe (see gmic_plugin.cpp) needs FFTW 3.3.5 (not checked for clean)
 ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
 ifeq ($(shell pkg-config --atleast-version=3.3.5 fftw3 && echo ok),)
@@ -90,7 +90,7 @@ FFT_CXXFLAGS = `pkg-config --cflags fftw3` -Dcimg_use_fftw3
 FFT_LINKFLAGS = `pkg-config --libs fftw3` -lfftw3_threads
 endif
 ifeq ($(FFT),pocketfft)
-# pocketfft (BSD-3-Clause), header-only, multithreaded (patches/cimg-pocketfft.sh)
+# pocketfft (BSD-3-Clause, the default), header-only, multithreaded (patches/cimg-pocketfft.sh)
 FFT_CXXFLAGS = -Dcimg_use_pocketfft
 endif
 # COMMERCIAL: the parser does not report curated filters that its standard library leaves out

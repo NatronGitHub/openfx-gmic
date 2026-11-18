@@ -26,8 +26,8 @@
 # libomp, default MacPorts'), -DOFX_DEPLOY_BUNDLES=ON (macOS: the install step copies the MacPorts
 # libraries into the bundle, as the Makefile's release builds do), -DGMIC_TARBALL=<path> (a
 # downloaded gmic_<version>.tar.gz, for offline builds), -DGMICVER=... -DGMICSRC_SHA256=...,
-# -DOFX_LICENSE=COMMERCIAL (the Makefile's LICENSE=COMMERCIAL, see license.mk) and -DFFT=pocketfft
-# (the Makefile's FFT).
+# -DOFX_LICENSE=COMMERCIAL (the Makefile's LICENSE=COMMERCIAL, see license.mk) and -DFFT=fftw3
+# (the Makefile's FFT; default: pocketfft).
 
 cmake_minimum_required(VERSION 3.16)
 
@@ -64,20 +64,18 @@ endif()
 # FFT: the Makefile's FFT, the library of G'MIC's Fourier transforms (CImg's own FFT fails on image
 # sizes that are not powers of two): fftw3 (FFTW, GPL) or pocketfft (BSD-3-Clause, header-only,
 # downloaded at the Makefile's POCKETFFTCOMMIT, through patches/cimg-pocketfft.sh). Empty (default):
-# fftw3 for GPL builds, pocketfft for COMMERCIAL ones, which can't use FFTW.
+# pocketfft for every licence, as in openfx-misc; fftw3 is opt-in, for GPL builds only.
 set(OFX_LICENSE "GPL" CACHE STRING "GPL, or COMMERCIAL (no FFTW, no GPL or CeCILL-only filters)")
 set_property(CACHE OFX_LICENSE PROPERTY STRINGS GPL COMMERCIAL)
 if(NOT OFX_LICENSE MATCHES "^(GPL|COMMERCIAL)$")
   message(FATAL_ERROR "OFX_LICENSE must be GPL or COMMERCIAL, not \"${OFX_LICENSE}\"")
 endif()
-set(FFT "" CACHE STRING "FFT library: fftw3 or pocketfft (empty: fftw3 for GPL, pocketfft for COMMERCIAL)")
+set(FFT "" CACHE STRING "FFT library: pocketfft or fftw3 (GPL only); empty: pocketfft")
 set_property(CACHE FFT PROPERTY STRINGS "" fftw3 pocketfft)
 if(FFT)
   set(GMIC_FFT "${FFT}")
-elseif(OFX_LICENSE STREQUAL "COMMERCIAL")
-  set(GMIC_FFT pocketfft)
 else()
-  set(GMIC_FFT fftw3)
+  set(GMIC_FFT pocketfft)
 endif()
 if(NOT GMIC_FFT MATCHES "^(fftw3|pocketfft)$")
   message(FATAL_ERROR "FFT must be fftw3 or pocketfft, not \"${GMIC_FFT}\"")
@@ -620,7 +618,8 @@ if(OFX_LICENSE STREQUAL "COMMERCIAL")
 endif()
 
 # The libraries of GMIC_OFX/Makefile, through pkg-config as it does (so that the same ones are
-# found, e.g. MacPorts' zlib and libcurl rather than the macOS SDK's), plus fftw3_threads
+# found, e.g. MacPorts' zlib and libcurl rather than the macOS SDK's), plus fftw3 and fftw3_threads
+# with FFT=fftw3
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GMIC_DEPS REQUIRED IMPORTED_TARGET ${_fft_module} zlib libcurl libpng)
 target_link_libraries(GMIC PRIVATE PkgConfig::GMIC_DEPS)
