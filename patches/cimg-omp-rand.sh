@@ -33,12 +33,11 @@
 # are), G'MIC's 'parallel' command (threads of one render sharing the global generator), a team
 # size changed by OMP_DYNAMIC, and concurrent renders (they share the global generator).
 #
-# Running it again on a patched file does nothing, and so does running it on a
-# CImg.h where the patched code no longer seeds itself from the global generator (an upstream
-# fix). The script fails in any other case: some of the expected code missing (e.g. after a
-# GMICVER bump: then check what upstream changed, and update or remove this patch), or CRLF line
-# endings. Only
-# POSIX sh, awk and wc are used, for Linux, macOS and MSYS2.
+# Running it again on a patched file does nothing, and so does running it on a CImg.h where the
+# patched code no longer seeds itself from the global generator (an upstream fix). The script fails
+# in any other case: some of the expected code missing (e.g. after a GMICVER bump: then check what
+# upstream changed, and update or remove this patch), or CRLF line endings. Only POSIX sh, awk and
+# wc are used, for Linux, macOS and MSYS2.
 set -e
 f="$1"
 
