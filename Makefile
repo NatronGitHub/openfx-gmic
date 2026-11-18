@@ -171,9 +171,10 @@ Licence_pocketfft.txt: pocketfft_hdronly.h
 # - cimg-omp-rand.sh: the random numbers of rand, noise and the math parser in OpenMP loops do not
 #   depend on thread scheduling, so that most seeded filters give the same result at each render
 #   (https://github.com/NatronGitHub/openfx-gmic/issues/44)
-# - cimg-ij-boundary.sh: I()/J() read out of bounds with linear or cubic interpolation and periodic
-#   or Neumann boundaries when y or z is outside the image, which crashes "Spiral Distortion" on
-#   small inputs (https://github.com/GreycLab/CImg/issues/498, fixed differently after G'MIC 4.0.7)
+# - cimg-ij-boundary.sh: i(), j(), I() and J() read out of bounds with linear or cubic
+#   interpolation when an integer coordinate is outside the image, which crashes "Spiral
+#   Distortion" on small inputs (https://github.com/GreycLab/CImg/issues/498, backport of
+#   https://github.com/GreycLab/CImg/commit/41e121cf9047910a30d5f0336ca0edc0d8ed2473)
 # - cimg-symmetric-eigen.sh: eigen and eig() return NaN eigenvectors for rank-deficient symmetric
 #   matrices, e.g. in Smooth [Patch-PCA] (https://github.com/GreycLab/gmic/issues/221,
 #   https://github.com/NatronGitHub/openfx-gmic/issues/71, fixed after G'MIC 4.0.7)

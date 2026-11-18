@@ -19,8 +19,8 @@
 # then check whether upstream changed its pocketfft support, and update or remove this patch.
 # Running it again on a patched file does nothing, and so does running it on a CImg.h that already
 # supports cimg_use_pocketfft as this patch does, as upstream does: the include block below found
-# once, '#include "pocketfft_hdronly.h"' once, and an '#elif defined(cimg_use_pocketfft)' branch
-# right after the FFTW branch of both FFT() functions. Only POSIX sh, awk, grep and wc are used,
+# once, '#include "pocketfft_hdronly.h"' once, and a non-empty '#elif defined(cimg_use_pocketfft)'
+# branch right after the FFTW branch of both FFT() functions. Only POSIX sh, awk, grep and wc are used,
 # for Linux, macOS and MSYS2.
 set -e
 f="$1"
@@ -31,6 +31,7 @@ fail() {
   rm -f "$f.patched" "$f.block1" "$f.block2" "$f.block3"
   exit 1
 }
+trap 'rm -f "$f.patched" "$f.block1" "$f.block2" "$f.block3"' INT TERM HUP
 
 case "$f" in
   *CImg.h) ;;
@@ -119,7 +120,8 @@ EOF
 
 # supported <file>: the number of times the include block (block1 without its first, empty line)
 # occurs, then of the '#elif defined(cimg_use_pocketfft)' lines that follow the end of an FFTW
-# branch ('cimg::mutex(12,0);'), then of the '#include "pocketfft_hdronly.h"' lines
+# branch ('cimg::mutex(12,0);') and start a non-empty branch, then of the
+# '#include "pocketfft_hdronly.h"' lines
 supported() {
   awk -v blk="$f.block1" '
     function trim(s) { gsub(/^[ \t]+|[ \t\r]+$/, "", s); return s }
@@ -128,7 +130,8 @@ supported() {
     END {
       for (i = 1; i <= n; i++) {
         if (t[i] == "#include \"pocketfft_hdronly.h\"") ninc++
-        if (i > 1 && t[i] == "#elif defined(cimg_use_pocketfft)" && t[i-1] == "cimg::mutex(12,0);") nbr++
+        if (i > 1 && t[i] == "#elif defined(cimg_use_pocketfft)" && t[i-1] == "cimg::mutex(12,0);" &&
+            t[i+1] != "" && t[i+1] !~ /^#(else|elif|endif)/) nbr++
         if (t[i] != b[1]) continue
         for (j = 2; j <= m && t[i + j - 1] == b[j]; j++) ;
         if (j > m) nblk++
