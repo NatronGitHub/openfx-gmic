@@ -21,43 +21,55 @@ Dual-licensed, choose one of (see COPYING):
 - CeCILL v2.0, compatible with the GNU GPL (Licence_CeCILL_V2-en.txt,
   http://www.cecill.info/licences/Licence_CeCILL_V2-en.html).
 
-The default (GPL) build also links FFTW (GPL) and includes community filters under other
-licences (CeCILL v2 only, GPL, non-commercial: see gmic_stdlib_commercial.txt). COMMERCIAL builds
-(LICENSE=COMMERCIAL) use only code under the CeCILL-C option. The licence texts are installed in
-the bundle's Contents/Resources.
+COMMERCIAL builds (LICENSE=COMMERCIAL), made for Natron's COMMERCIAL builds, contain no GPL
+code: only code compatible with the CeCILL-C option (pocketfft is BSD-3-Clause, some filters
+CeCILL-B). The default (GPL) build also links FFTW (GPL) and includes community filters under
+other licences (CeCILL-only, GPL, non-commercial: see gmic_stdlib_commercial.txt). The licence
+texts are installed in the bundle's Contents/Resources.
+
+Getting the sources
+-------------------
+
+    git clone --recursive https://github.com/NatronGitHub/openfx-gmic.git
+    git submodule update -i    # in an existing clone: the openfx submodule is required
+
+The G'MIC sources (version GMICVER in the Makefile, 4.0.7) are downloaded at build time and are
+not in git: the release tarball gmic_<version>.tar.gz, from the GitHub release of GreycLab/gmic,
+gmic.eu or the MacPorts distfiles mirror, checked against GMICSRC_SHA256_<version>. They are then
+patched: the scripts in patches/ fix CImg and G'MIC bugs, and gmic_hotfixes.gmic replaces the
+definitions of broken filters (each fix is skipped once G'MIC has it).
 
 Requirements
 ------------
 
-- A C++17 compiler (C++20 for Qt6 builds of Natron), make or CMake >= 3.16, curl, pkg-config.
+- A C++17 compiler (C++20 for Qt6 builds of Natron), pkg-config, and make and curl, or CMake
+  >= 3.16 (with Ninja for the example below, or any other generator).
 - Libraries, found through pkg-config: fftw3 (and fftw3_threads; not needed for COMMERCIAL
   builds), zlib, libcurl, libpng.
-- The openfx submodule: git submodule update -i
+- Python 3, for the render test only.
 - Platforms: Linux, macOS (Apple clang; libraries from MacPorts or Homebrew) and Windows (MSYS2
   UCRT64, as in CI: see .github/workflows/ci.yml for the packages).
-
-The G'MIC sources (version GMICVER in the Makefile, 4.0.7) are downloaded at build time: the
-release tarball gmic_<version>.tar.gz, from the GitHub release of GreycLab/gmic, gmic.eu or the
-MacPorts distfiles mirror, and checked against GMICSRC_SHA256_<version>. They are then patched:
-the scripts in patches/ fix CImg and G'MIC bugs, and gmic_hotfixes.gmic replaces the definitions
-of broken filters (each fix is skipped once G'MIC has it). These files are not in git.
 
 Building with make
 ------------------
 
     make CONFIG=release OPENMP=1 CXXSTD=c++17
+    make CONFIG=release OPENMP=1 CXXSTD=c++17 install   # may need root
 
-The bundle is GMIC_OFX/<OS>-<BITS>-<CONFIG>/GMIC.ofx.bundle (e.g. GMIC_OFX/Linux-64-release);
-"make install" copies it to the system OFX folder. "make distclean" also removes the downloaded
-sources.
+The bundle is GMIC_OFX/<OS>-<BITS>-<CONFIG>/GMIC.ofx.bundle (e.g. GMIC_OFX/Linux-64-release).
+"make install", with the same options as the build, copies it to /usr/OFX/Plugins (macOS:
+/Library/OFX/Plugins; Windows: C:\Program Files\Common Files\OFX\Plugins). "make distclean"
+also removes the downloaded sources.
 
 Options:
-- CONFIG: debug (default), release or relwithdebinfo.
-- OPENMP=1: multithreaded G'MIC (off by default).
+- CONFIG: release or relwithdebinfo (default: an unoptimised -g build in <OS>-<BITS>-debug).
+- OPENMP=1: multithreaded G'MIC (off by default). On macOS, libomp is taken from LIBOMP_PREFIX
+  (default /opt/local, MacPorts' layout: include/libomp and lib/libomp); with Homebrew's libomp,
+  build with CMake and OFX_LIBOMP_ROOT.
 - CXXSTD: e.g. c++17 or c++20 (default: the compiler's).
-- LICENSE: GPL (default) or COMMERCIAL: no FFTW, and only the filters whose licence allows the
-  CeCILL-C option (gmic_stdlib_commercial.txt lists what is left out, and why).
-- FFT: fftw3 (default for GPL) or pocketfft (BSD-3-Clause, downloaded; required for COMMERCIAL).
+- LICENSE: GPL (default) or COMMERCIAL (see "Licence"; gmic_stdlib_commercial.txt lists the
+  filters left out, and why).
+- FFT: fftw3 (default for GPL) or pocketfft (downloaded; required for COMMERCIAL).
 
 Building with CMake
 -------------------
@@ -70,7 +82,7 @@ Options (the Makefile's equivalent in parentheses):
 - CMAKE_BUILD_TYPE: Release (default), Debug or RelWithDebInfo (CONFIG).
 - OFX_CXX_STANDARD: 17 (default) or 20 (CXXSTD).
 - OFX_USE_OPENMP: ON (default) (OPENMP=1); OFX_LIBOMP_ROOT: libomp for Apple clang (default:
-  MacPorts', set it e.g. to Homebrew's libomp prefix).
+  MacPorts'; Homebrew: -DOFX_LIBOMP_ROOT=$(brew --prefix libomp)).
 - OFX_LICENSE: GPL (default) or COMMERCIAL (LICENSE); FFT: fftw3 or pocketfft (FFT).
 - GMIC_TARBALL: a downloaded gmic_<version>.tar.gz, for offline builds; GMIC_DOWNLOAD_DIR: where
   to download it (default: the build directory).
