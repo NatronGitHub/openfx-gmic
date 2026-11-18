@@ -1667,7 +1667,11 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 #ifdef OFX_PLUGIN
 		// Frame: keep the results for the next frames (their buffers then belong to the cache)
 		if (result == 0 && useCache && runGmic && !selected) {
-			frameCacheStore(mySequenceDataP, cacheKey, images, nofImages, effectData.name);
+			// out of memory: the results not moved to the cache are freed below, as without cache
+			try {
+				frameCacheStore(mySequenceDataP, cacheKey, images, nofImages, effectData.name);
+			} catch (const std::bad_alloc&) {
+			}
 		} else if (result == 0 && useCache && selected && frameCacheUncacheable(cacheKey)) {
 			fprintf(stderr, "G'MIC: %s: the results are too large to keep (more than %d, or more than %.0f MB): "
 					"Output Layer Frame runs the filter on every frame\n", effectData.name.c_str(), kMaxFrameResults,
