@@ -173,12 +173,13 @@ Licence_pocketfft.txt: pocketfft_hdronly.h
 #   (https://github.com/NatronGitHub/openfx-gmic/issues/44)
 # - cimg-ij-boundary.sh: I()/J() read out of bounds with linear or cubic interpolation and periodic
 #   or Neumann boundaries when y or z is outside the image, which crashes "Spiral Distortion" on
-#   small inputs (https://github.com/GreycLab/CImg/issues/498, fix proposed in GreycLab/CImg#499)
+#   small inputs (https://github.com/GreycLab/CImg/issues/498, fixed differently after G'MIC 4.0.7)
 # - cimg-symmetric-eigen.sh: eigen and eig() return NaN eigenvectors for rank-deficient symmetric
 #   matrices, e.g. in Smooth [Patch-PCA] (https://github.com/GreycLab/gmic/issues/221,
 #   https://github.com/NatronGitHub/openfx-gmic/issues/71, fixed after G'MIC 4.0.7)
 # - cimg-pocketfft.sh: let CImg compute its FFTs with pocketfft (cimg_use_pocketfft), which
-#   COMMERCIAL builds use instead of FFTW (only applied for FFT=pocketfft)
+#   COMMERCIAL builds use instead of FFTW (only applied for FFT=pocketfft; merged upstream after
+#   G'MIC 4.0.7, https://github.com/GreycLab/CImg/pull/497)
 # CMakeLists.txt reads GMIC_PATCHES, CIMG_PATCHES and CIMG_PATCHES_POCKETFFT (plain one-line
 # assignments, see above), and applies them in the same order.
 GMIC_PATCHES = patches/gmic-apple-abort.sh

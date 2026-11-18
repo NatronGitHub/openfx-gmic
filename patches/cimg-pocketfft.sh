@@ -12,12 +12,16 @@
 # (along one axis, and n-D), with the same conventions as the FFTW branch (forward transform with
 # exp(-2i.pi.k.n/N), inverse transform divided by the number of samples), and includes
 # "pocketfft_hdronly.h" when cimg_use_pocketfft is defined. FFTW takes precedence when both are
-# defined. Written so that it can be proposed upstream (GreycLab/CImg).
+# defined. Upstream merged it after G'MIC 4.0.7 (https://github.com/GreycLab/CImg/pull/497), with
+# the same macro and header name (and cimg::info() reporting it).
 #
 # The script fails if the source does not contain the expected code (e.g. after a GMICVER bump):
-# then check whether upstream added pocketfft support, and update or remove this patch. Running it
-# again on a patched file does nothing, and so does running it on a CImg.h that already supports
-# cimg_use_pocketfft. Only POSIX sh, awk, grep and wc are used, for Linux, macOS and MSYS2.
+# then check whether upstream changed its pocketfft support, and update or remove this patch.
+# Running it again on a patched file does nothing, and so does running it on a CImg.h that already
+# supports cimg_use_pocketfft as this patch does, as upstream does: the include block below found
+# once, '#include "pocketfft_hdronly.h"' once, and an '#elif defined(cimg_use_pocketfft)' branch
+# right after the FFTW branch of both FFT() functions. Only POSIX sh, awk, grep and wc are used,
+# for Linux, macOS and MSYS2.
 set -e
 f="$1"
 
@@ -33,15 +37,6 @@ case "$f" in
   *) echo "Error: $0: unexpected file '$f'" >&2; exit 1;;
 esac
 [ -f "$f" ] || fail "file not found"
-
-# already patched, or supported upstream: nothing to do
-n=$(grep -c 'cimg_use_pocketfft' "$f" || true)
-if [ "$n" != 0 ]; then
-  [ "$(grep -c '^#elif defined(cimg_use_pocketfft)' "$f")" = 2 ] && [ "$(grep -c '^#include "pocketfft_hdronly.h"' "$f")" = 1 ] ||
-    fail "cimg_use_pocketfft is already used, but not as this patch does"
-  echo "$f: already supports cimg_use_pocketfft"
-  exit 0
-fi
 
 # Include pocketfft, after the FFTW3 include block.
 cat > "$f.block1" <<'EOF'
@@ -122,6 +117,36 @@ cat > "$f.block3" <<'EOF'
       }
 EOF
 
+# supported <file>: the number of times the include block (block1 without its first, empty line)
+# occurs, then of the '#elif defined(cimg_use_pocketfft)' lines that follow the end of an FFTW
+# branch ('cimg::mutex(12,0);'), then of the '#include "pocketfft_hdronly.h"' lines
+supported() {
+  awk -v blk="$f.block1" '
+    function trim(s) { gsub(/^[ \t]+|[ \t\r]+$/, "", s); return s }
+    BEGIN { while ((getline l < blk) > 0) if (++k > 1) b[++m] = trim(l) }
+    { t[++n] = trim($0) }
+    END {
+      for (i = 1; i <= n; i++) {
+        if (t[i] == "#include \"pocketfft_hdronly.h\"") ninc++
+        if (i > 1 && t[i] == "#elif defined(cimg_use_pocketfft)" && t[i-1] == "cimg::mutex(12,0);") nbr++
+        if (t[i] != b[1]) continue
+        for (j = 2; j <= m && t[i + j - 1] == b[j]; j++) ;
+        if (j > m) nblk++
+      }
+      print nblk + 0, nbr + 0, ninc + 0
+    }' "$1"
+}
+
+# already patched, or supported upstream: nothing to do
+if grep -q 'cimg_use_pocketfft' "$f"; then
+  found=$(supported "$f") || fail "awk failed"
+  [ "$found" = "1 2 1" ] ||
+    fail "cimg_use_pocketfft is already used, but not as this patch does (found: $found; expected the include block once, the FFT() branches twice, and the include line once)"
+  rm -f "$f.block1" "$f.block2" "$f.block3"
+  echo "$f: already supports cimg_use_pocketfft"
+  exit 0
+fi
+
 # Insert the blocks at their anchors (lines compared without their leading and trailing blanks):
 # block1 after the 5 lines '#ifdef cimg_use_fftw3' .. '#endif' that include fftw3.h; block2 and
 # block3 before the '#else' that follows 'cimg::mutex(12,0);' (end of the FFTW branch), when the
@@ -145,8 +170,8 @@ awk -v b1="$f.block1" -v b2="$f.block2" -v b3="$f.block3" '
     if (n1 != 1 || n2 != 1 || n3 != 1) { printf "anchors found: %d %d %d\n", n1, n2, n3 > "/dev/stderr"; exit 1 }
   }' "$f" > "$f.patched" || fail "expected the FFTW3 include block and the end of the FFTW branch of both CImg<T>::FFT() functions exactly once"
 blocks=$(cat "$f.block1" "$f.block2" "$f.block3" | wc -l)
+[ "$(supported "$f.patched")" = "1 2 1" ] || fail "the patch did not apply"
 rm -f "$f.block1" "$f.block2" "$f.block3"
-[ "$(grep -c '^#elif defined(cimg_use_pocketfft)' "$f.patched")" = 2 ] || fail "the patch did not apply"
 [ "$(wc -l < "$f.patched")" -eq "$(( $(wc -l < "$f") + blocks ))" ] || fail "the patch changed other lines"
 mv "$f.patched" "$f"
 echo "$f: patched for pocketfft support (cimg_use_pocketfft)"

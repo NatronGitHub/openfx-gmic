@@ -12,13 +12,18 @@
 # Upstream fixed it after G'MIC 4.0.7, in GreycLab/CImg e3de7b0 (develop): symmetric_eigen() uses
 # the cyclic Jacobi method instead of SVD(), and SVD() copies its input with assign() and clamps
 # a sum of squares to 0 before its square root. This script backports that commit verbatim: the
-# whole of symmetric_eigen() (with its comment), and the three changed lines of SVD().
+# whole of symmetric_eigen() (with its comment), and the three changed lines of SVD(). Upstream
+# then rewrote SVD() in double precision, in GreycLab/CImg c9eb6fa (develop,
+# https://github.com/GreycLab/CImg/commit/c9eb6fa661a1af948c6845dabaeaf0ebef101f96), which removes
+# these three lines; symmetric_eigen() is the same as in e3de7b0, and no longer calls SVD().
 #
 # "If the fix is already there, don't apply it": the script does nothing on a CImg.h that has the
-# fix (patched, or fixed upstream), applies it to the 4.0.7 code, and fails on anything else (e.g.
-# after a GMICVER bump that changed this code otherwise): then check what upstream did, and update
-# or remove this patch. Lines are compared without their leading and trailing blanks. Only POSIX
-# sh, awk and wc are used, for Linux, macOS and MSYS2.
+# fix (patched, fixed upstream as in e3de7b0, or as in c9eb6fa: the symmetric_eigen() of e3de7b0
+# and the SVD() of c9eb6fa, recognized by its first comment line, and none of the three old or
+# fixed lines), applies it to the 4.0.7 code, and fails on anything else (e.g. after a GMICVER
+# bump that changed this code otherwise): then check what upstream did, and update or remove this
+# patch. Lines are compared without their leading and trailing blanks. Only POSIX sh, awk and wc
+# are used, for Linux, macOS and MSYS2.
 set -e
 f="$1"
 
@@ -27,6 +32,8 @@ svd1_old='U = *this;'
 svd1_new='U.assign(*this,false);'
 svd2_old='g = (Ttfloat)((f>=0?-1:1)*std::sqrt(s));'
 svd2_new='g = (Ttfloat)((f>=0?-1:1)*std::sqrt(std::max((Tfloat)0,s)));'
+# the first comment line of SVD() as rewritten in GreycLab/CImg c9eb6fa
+svd_c9eb6fa='// Working copy in double (a will become U), V, singular values w and superdiagonal rv1.'
 
 fail() {
   echo "Error: $f: $1" >&2
@@ -203,21 +210,29 @@ count() {
 lines() {
   awk -v l="$2" '{ gsub(/^[ \t]+|[ \t\r]+$/, "") } $0 == l { ++c } END { print c + 0 }' "$1"
 }
-# state <file>: how many times the old symmetric_eigen() and SVD() lines occur, then the new ones
+# state <file>: how many times the old symmetric_eigen() and SVD() lines occur, then the new ones,
+# then the first comment line of the SVD() of c9eb6fa
 state() {
   echo "$(count "$1" "$f.eigen_old") $(lines "$1" "$svd1_old") $(lines "$1" "$svd2_old")" \
-    "$(count "$1" "$f.eigen_new") $(lines "$1" "$svd1_new") $(lines "$1" "$svd2_new")"
+    "$(count "$1" "$f.eigen_new") $(lines "$1" "$svd1_new") $(lines "$1" "$svd2_new")" \
+    "$(lines "$1" "$svd_c9eb6fa")"
 }
 
 found=$(state "$f")
-# already patched, or fixed upstream: nothing to do
-if [ "$found" = "0 0 0 1 1 2" ]; then
+# already patched, or fixed upstream as in e3de7b0: nothing to do
+if [ "$found" = "0 0 0 1 1 2 0" ]; then
   rm -f "$f.eigen_old" "$f.eigen_new"
   echo "$f: already patched (GreycLab/gmic#221)"
   exit 0
 fi
+# fixed upstream as in c9eb6fa: nothing to do
+if [ "$found" = "0 0 0 1 0 0 1" ]; then
+  rm -f "$f.eigen_old" "$f.eigen_new"
+  echo "$f: already fixed upstream (GreycLab/gmic#221, GreycLab/CImg c9eb6fa)"
+  exit 0
+fi
 # the code to patch must be found exactly
-[ "$found" = "1 1 2 0 0 0" ] || fail "expected symmetric_eigen() once and the lines '$svd1_old' once and '$svd2_old' twice, as in G'MIC 4.0.7, or the same as fixed in GreycLab/CImg e3de7b0 (found, old then fixed: $found)"
+[ "$found" = "1 1 2 0 0 0 0" ] || fail "expected symmetric_eigen() once and the lines '$svd1_old' once and '$svd2_old' twice, as in G'MIC 4.0.7, or the same as fixed in GreycLab/CImg e3de7b0, or the symmetric_eigen() of e3de7b0 with the SVD() of GreycLab/CImg c9eb6fa (found, old, fixed, then the SVD() of c9eb6fa: $found)"
 
 awk -v old="$f.eigen_old" -v new="$f.eigen_new" -v s1o="$svd1_old" -v s1n="$svd1_new" -v s2o="$svd2_old" -v s2n="$svd2_new" '
   function trim(s) { gsub(/^[ \t]+|[ \t\r]+$/, "", s); return s }
@@ -240,7 +255,7 @@ awk -v old="$f.eigen_old" -v new="$f.eigen_new" -v s1o="$svd1_old" -v s1n="$svd1
       print o[i]
     }
   }' "$f" > "$f.patched" || fail "awk failed"
-[ "$(state "$f.patched")" = "0 0 0 1 1 2" ] || fail "the patch did not apply"
+[ "$(state "$f.patched")" = "0 0 0 1 1 2 0" ] || fail "the patch did not apply"
 [ "$(wc -l < "$f.patched")" -eq $(($(wc -l < "$f") - $(wc -l < "$f.eigen_old") + $(wc -l < "$f.eigen_new"))) ] ||
   fail "the patch changed the number of lines unexpectedly"
 rm -f "$f.eigen_old" "$f.eigen_new"
