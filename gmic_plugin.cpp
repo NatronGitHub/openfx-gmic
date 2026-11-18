@@ -713,7 +713,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		"Frame: the result whose number is the frame number minus the first frame of Source, modulo the number of "
 		"results, for the filters that make several frames in one run (Fade Layers, Morph Layers, Tiles to Layers, "
 		"Spline Spirograph's Number of Output Frames...). The results are kept in memory, so that the next frames "
-		"don't run the filter again while its inputs and parameters stay the same (up to 1/8 of the memory, 1 to 4 GB, "
+		"don't run the filter again while its inputs and parameters stay the same (up to 1/8 of the memory, 1 to 4 GiB, "
 		"or OFX_GMIC_FRAME_CACHE_MB megabytes). Each run computes all the results before one is picked or kept, so "
 		"it needs the memory of all of them whatever that limit (e.g. 512 HD frames take about 17 GB): the filter's "
 		"own number of frames sets it. The node's frame range is Source's: for a still image, extend it "
@@ -1246,7 +1246,7 @@ struct FrameCache
 	std::map<const void*, std::string> ownerKey; // the key each instance (MySequenceData) refers to
 	std::set<std::string> running; // the keys G'MIC is running for (see frameCacheFind)
 	std::condition_variable runDone; // a key left running
-	std::string uncachedKey; // the last key whose results were too large to keep: not waited for
+	std::set<std::string> uncacheable; // keys whose results were not kept (too large, empty): not waited for
 	size_t bytes;
 	unsigned long long clock;
 	FrameCache() : bytes(0), clock(0) {}
@@ -1315,7 +1315,7 @@ static std::shared_ptr<const CachedFrame> frameCacheFind(const void* owner, cons
 		}
 		// not kept by the run waited for, or too large to keep anyway: run G'MIC (maybe alongside
 		// another render)
-		if (waited || key == c.uncachedKey) return std::shared_ptr<const CachedFrame>();
+		if (waited || c.uncacheable.count(key)) return std::shared_ptr<const CachedFrame>();
 		if (c.running.insert(key).second) {
 			*claimed = true;
 			return std::shared_ptr<const CachedFrame>();
@@ -1342,15 +1342,14 @@ static void frameCacheRunDone(const std::string& key)
 	c.runDone.notify_all();
 }
 
-// the results for key are too large to keep: the next renders don't wait for each other; true the
-// first time for key (to log it)
-static bool frameCacheTooLarge(const std::string& key)
+// the results for key can't be kept (too large, empty): the next renders don't wait for each
+// other; true the first time for key (to log it). At most 64 keys are remembered.
+static bool frameCacheUncacheable(const std::string& key)
 {
 	FrameCache& c = frameCache();
 	std::lock_guard<std::mutex> lock(c.mutex);
-	if (c.uncachedKey == key) return false;
-	c.uncachedKey = key;
-	return true;
+	if (c.uncacheable.size() >= 64 && !c.uncacheable.count(key)) c.uncacheable.clear();
+	return c.uncacheable.insert(key).second;
 }
 
 // the instance no longer refers to an entry (destroyed, or Output Layer is not Frame)
@@ -1375,7 +1374,7 @@ static void frameCacheStore(const void* owner, const std::string& key, gmic_inte
 	size_t bytes = 0;
 	for (unsigned int i = 0; i < nofImages; ++i) {
 		if (!images[i].data || images[i].spectrum == 0) {
-			fprintf(stderr, "G'MIC: %s: result %u is empty, the results are not kept (Output Layer Frame runs the filter on every frame)\n",
+			if (frameCacheUncacheable(key)) fprintf(stderr, "G'MIC: %s: result %u is empty, the results are not kept (Output Layer Frame runs the filter on every frame)\n",
 					filterName.c_str(), i);
 			return;
 		}
@@ -1550,7 +1549,8 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		explicit RunClaim(const string& k) : key(k), claimed(false) {}
 		~RunClaim() { if (claimed) frameCacheRunDone(key); }
 	} claim(cacheKey);
-	if (frameMode) {
+	const bool useCache = frameMode && frameCacheBudget() > 0; // OFX_GMIC_FRAME_CACHE_MB=0: no cache
+	if (useCache) {
 		cacheKey = frameCacheKey(globalDataP, cmd, sequenceDataP, nofImages);
 		cachedFrame = frameCacheFind(mySequenceDataP, cacheKey, frame, contextDataP->instance, &claim.claimed, &aborted);
 	} else {
@@ -1666,13 +1666,14 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		}
 #ifdef OFX_PLUGIN
 		// Frame: keep the results for the next frames (their buffers then belong to the cache)
-		if (result == 0 && frameMode && runGmic && !selected) {
+		if (result == 0 && useCache && runGmic && !selected) {
 			frameCacheStore(mySequenceDataP, cacheKey, images, nofImages, effectData.name);
-		} else if (result == 0 && selected && frameCacheTooLarge(cacheKey) && frameCacheBudget() > 0) {
+		} else if (result == 0 && useCache && selected && frameCacheUncacheable(cacheKey)) {
 			fprintf(stderr, "G'MIC: %s: the results are too large to keep (more than %d, or more than %.0f MB): "
 					"Output Layer Frame runs the filter on every frame\n", effectData.name.c_str(), kMaxFrameResults,
 					(double)frameCacheBudget() / (1024. * 1024.));
 		}
+		if (claim.claimed) { claim.claimed = false; frameCacheRunDone(cacheKey); } // the waiting renders go on
 #endif
 	}
 	if (result != 0 && !aborted) {
