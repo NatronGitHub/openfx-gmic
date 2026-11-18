@@ -662,7 +662,7 @@ else()
   target_compile_definitions(GMIC PRIVATE cimg_use_curl)
 endif()
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(GMIC_DEPS REQUIRED IMPORTED_TARGET ${_fft_module} libpng zlib ${_curl_module})
+pkg_check_modules(GMIC_DEPS REQUIRED IMPORTED_TARGET libpng zlib ${_fft_module} ${_curl_module})
 if(GMIC_FFT STREQUAL "fftw3")
   set(_fftw3_threads fftw3_threads)
 else()
@@ -671,15 +671,16 @@ endif()
 if(GMIC_STATIC_DEPS)
   target_include_directories(GMIC PRIVATE ${GMIC_DEPS_STATIC_INCLUDE_DIRS})
   target_compile_options(GMIC PRIVATE ${GMIC_DEPS_STATIC_CFLAGS_OTHER})
-  set(_dirs ${GMIC_DEPS_STATIC_LIBRARY_DIRS})
-  # in the order of the Makefile's STATIC_DEPS_DIRS: libpng and zlib first, so that their libdir
-  # (e.g. that of build_static_deps.sh) comes before FFTW's (e.g. /usr/lib/<arch>, which may also
+  # the libdirs of libpng and zlib first, then FFTW's, then the -L directories: the archives of
+  # build_static_deps.sh come before those of FFTW's libdir (e.g. /usr/lib/<arch>, which may also
   # have non-PIC libpng and zlib archives)
+  set(_dirs "")
   foreach(_module libpng zlib ${_fft_module})
     string(REGEX REPLACE "[<>=].*" "" _module "${_module}")
     pkg_get_variable(_libdir ${_module} libdir)
     list(APPEND _dirs ${_libdir})
   endforeach()
+  list(APPEND _dirs ${GMIC_DEPS_STATIC_LIBRARY_DIRS})
   foreach(_lib ${_fftw3_threads} ${GMIC_DEPS_STATIC_LIBRARIES})
     if(_lib MATCHES "^(m|dl|pthread|rt|c)$") # system libraries
       target_link_libraries(GMIC PRIVATE ${_lib})

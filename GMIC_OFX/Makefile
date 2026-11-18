@@ -127,8 +127,11 @@ ifeq ($(GMIC_STATIC_DEPS),1)
 STATIC_DEPS_SYSLIBS = -lm -ldl -lpthread -lrt -lc
 static_archive = $(or $(firstword $(wildcard $(addsuffix /lib$(1).a,$(STATIC_DEPS_DIRS)))),$(filter /%,$(shell $(CXX) -print-file-name=lib$(1).a)),$(error GMIC_STATIC_DEPS=1: lib$(1).a not found (in $(STATIC_DEPS_DIRS) or the compiler's library path): build them with -fPIC (.github/workflows/build_static_deps.sh <prefix> then PKG_CONFIG_PATH=<prefix>/lib/pkgconfig) or build with GMIC_STATIC_DEPS=0))
 ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
-  STATIC_DEPS_DIRS := $(patsubst -L%,%,$(shell pkg-config --static --libs-only-L $(DEPS_MODULES))) \
-    $(foreach m,$(DEPS_MODULES),$(shell pkg-config --variable=libdir $(m)))
+  # the libdirs of libpng, zlib, then FFTW, then the -L directories: the archives of
+  # build_static_deps.sh come before those of FFTW's libdir (e.g. /usr/lib/<arch>, which may also
+  # have non-PIC libpng and zlib archives)
+  STATIC_DEPS_DIRS := $(foreach m,$(DEPS_MODULES),$(shell pkg-config --variable=libdir $(m))) \
+    $(patsubst -L%,%,$(shell pkg-config --static --libs-only-L $(DEPS_MODULES)))
   STATIC_DEPS_L := $(FFT_LIBS) $(shell pkg-config --static --libs-only-l $(DEPS_MODULES))
   STATIC_DEPS_ARCHIVES := $(foreach l,$(filter-out $(STATIC_DEPS_SYSLIBS),$(STATIC_DEPS_L)),$(call static_archive,$(patsubst -l%,%,$(l))))
 endif
