@@ -13,9 +13,11 @@ name: Continuous Integration
 # and compare its bundle with the installed CMake one (compare_bundles.sh). The per-PR runs only
 # build with CMake.
 #
-# FFT: all builds use the default, pocketfft (header-only, downloaded), as Natron's builds do; the
-# nightly and on-demand runs also build FFT=fftw3 (FFTW, opt-in for GPL builds) on Linux and macOS,
-# and describe and render it (the pr subset, with the FFT filters).
+# FFT: all builds use the default, pocketfft (header-only, downloaded), as Natron's builds do; each
+# checks that its bundle doesn't link FFTW (check_fft.sh), and Linux renders FFT filters on a
+# non-power-of-two image (fft_smoke.sh). The nightly and on-demand runs also build FFT=fftw3 (FFTW,
+# opt-in for GPL builds) on Linux and macOS, check that it links FFTW, and describe and render it
+# (the pr subset, with the FFT filters).
 #
 # Render test (render_plugins.py, with openfx's hostDemo: GMIC_BUILD_TESTS=ON): per PR, a
 # representative subset of the plug-ins (the FFT and multi-layer filters, every 30th plug-in) on
@@ -107,26 +109,49 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build pkg-config zlib1g-dev libcurl4-openssl-dev \
             libpng-dev libexpat1-dev libgl-dev
-      # the tarball, downloaded into the source directory (GMIC_DOWNLOAD_DIR), where both the
-      # CMake and the Makefile builds find it
+      # the tarball and pocketfft_hdronly.h, downloaded into the source directory (GMIC_DOWNLOAD_DIR,
+      # GMIC_POCKETFFT), where both the CMake and the Makefile builds find them; the key hashes the
+      # Makefile, which pins both (GMICVER, POCKETFFTCOMMIT)
       - name: Cache G'MIC sources
         uses: actions/cache@v4
         with:
-          path: gmic_*.tar.gz
+          path: |
+            gmic_*.tar.gz
+            pocketfft_hdronly.h
           key: gmic-src-${{ hashFiles('Makefile') }}
       - name: Build (release, OpenMP)
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
-            -DGMIC_BUILD_TESTS=ON
+            -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h" -DGMIC_BUILD_TESTS=ON
           cmake --build build -j4
+          .github/workflows/check_fft.sh build/Plugins/GMIC.ofx.bundle pocketfft
       - name: Describe all plug-ins
         run: PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh build/Plugins $GMIC_PLUGIN_COUNT
+      # the default FFT (pocketfft) on a non-power-of-two image, with an interpreter built from the
+      # same sources
+      - name: Render FFT filters (720x576)
+        run: .github/workflows/fft_smoke.sh build/gmic
       # all the plug-ins on the nightly and on-demand runs, a subset per PR
       - name: Render plug-ins
         run: |
           python3 .github/workflows/render_plugins.py --host build \
             --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset "$([ "$BUILD_VARIANTS" = true ] && echo all || echo pr)" --jobs 2
+      # FFTW (opt-in, GPL builds only), rendered with the hostDemo of the default build; before the
+      # Makefile build, whose (pocketfft) G'MIC headers in the checkout would stop CMake's FFT=fftw3
+      # configure (CMakeLists.txt refuses headers that are not the build's own)
+      - name: Build, describe and render (release, FFT=fftw3)
+        if: env.BUILD_VARIANTS == 'true'
+        run: |
+          sudo apt-get install -y libfftw3-dev
+          cmake -S . -B build-fftw3 -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
+            -DFFT=fftw3
+          cmake --build build-fftw3 -j4
+          .github/workflows/check_fft.sh build-fftw3/Plugins/GMIC.ofx.bundle fftw3
+          PLUGIN_LIST=plugins-fftw3.txt .github/workflows/describe_plugins.sh build-fftw3/Plugins $GMIC_PLUGIN_COUNT
+          python3 .github/workflows/render_plugins.py --host build \
+            --plugins build-fftw3/Plugins --list plugins-fftw3.txt --stdlib build-fftw3/gmic/gmic_stdlib_community.h \
+            --subset pr --jobs 2
       # the debug variant is built with the Makefile, as Natron's build-plugins.sh does (the
       # standard in CXX), and its bundle is compared with the installed CMake one
       - name: Build with the Makefile (debug), compare with CMake
@@ -152,18 +177,6 @@ jobs:
           cmake -S . -B build-cxx20 -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=20 -DGMIC_DOWNLOAD_DIR="$PWD"
           cmake --build build-cxx20 -j4
           .github/workflows/describe_plugins.sh build-cxx20/Plugins $GMIC_PLUGIN_COUNT
-      # FFTW (opt-in, GPL builds only), rendered with the hostDemo of the default build
-      - name: Build, describe and render (release, FFT=fftw3)
-        if: env.BUILD_VARIANTS == 'true'
-        run: |
-          sudo apt-get install -y libfftw3-dev
-          cmake -S . -B build-fftw3 -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
-            -DFFT=fftw3
-          cmake --build build-fftw3 -j4
-          PLUGIN_LIST=plugins-fftw3.txt .github/workflows/describe_plugins.sh build-fftw3/Plugins $GMIC_PLUGIN_COUNT
-          python3 .github/workflows/render_plugins.py --host build \
-            --plugins build-fftw3/Plugins --list plugins-fftw3.txt --stdlib build-fftw3/gmic/gmic_stdlib_community.h \
-            --subset pr --jobs 2
 
   # Natron's COMMERCIAL builds (-DOFX_LICENSE=COMMERCIAL, make LICENSE=COMMERCIAL, see license.mk),
   # nightly or on demand: pocketfft (the default; FFTW is GPL), and a standard library without the
@@ -198,12 +211,14 @@ jobs:
       - name: Cache G'MIC sources
         uses: actions/cache@v4
         with:
-          path: gmic_*.tar.gz
+          path: |
+            gmic_*.tar.gz
+            pocketfft_hdronly.h
           key: gmic-src-${{ hashFiles('Makefile') }}
       - name: Build (release, OpenMP, OFX_LICENSE=COMMERCIAL)
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
-            -DOFX_LICENSE=COMMERCIAL -DGMIC_BUILD_TESTS=ON
+            -DOFX_LICENSE=COMMERCIAL -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h" -DGMIC_BUILD_TESTS=ON
           cmake --build build -j4
       - name: Describe and check
         run: |
@@ -267,6 +282,7 @@ jobs:
           cmake --build build -j4
           cmake --install build --prefix install
           codesign --verify --strict install/OFX/Plugins/GMIC.ofx.bundle
+          .github/workflows/check_fft.sh install/OFX/Plugins/GMIC.ofx.bundle pocketfft
       - name: Describe all plug-ins
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
@@ -284,6 +300,22 @@ jobs:
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
           cmake -S . -B build-debug $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Debug -DOFX_CXX_STANDARD=17
           cmake --build build-debug -j4
+      # FFTW (opt-in, GPL builds only; MacPorts' fftw-3, installed here only), rendered with the
+      # hostDemo of the default build; before the Makefile build (see the Linux job)
+      - name: Build, describe and render (release, FFT=fftw3)
+        if: env.BUILD_VARIANTS == 'true'
+        run: |
+          export PATH=/opt/local/bin:/opt/local/sbin:$PATH
+          sudo port -N install fftw-3 -gfortran
+          cmake -S . -B build-fftw3 $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DFFT=fftw3
+          cmake --build build-fftw3 -j4
+          .github/workflows/check_fft.sh build-fftw3/Plugins/GMIC.ofx.bundle fftw3
+          CXX="/usr/bin/clang++ -I/opt/local/include" \
+            HOST_LDFLAGS=-L/opt/local/lib PLUGIN_LIST=plugins-fftw3.txt \
+            .github/workflows/describe_plugins.sh build-fftw3/Plugins $GMIC_PLUGIN_COUNT
+          python3 .github/workflows/render_plugins.py --host build \
+            --plugins build-fftw3/Plugins --list plugins-fftw3.txt --stdlib build-fftw3/gmic/gmic_stdlib_community.h \
+            --subset pr --jobs 2
       # the Makefile, as Natron's build-plugins.sh builds it; its release build also runs
       # osxDeploy.sh, so it is compared with the installed (deployed) CMake bundle
       - name: Build with the Makefile (release), compare with CMake
@@ -324,20 +356,6 @@ jobs:
           CXX="/usr/bin/clang++ -I/opt/local/include" \
             HOST_LDFLAGS=-L/opt/local/lib \
             .github/workflows/describe_plugins.sh build-cxx20/Plugins $GMIC_PLUGIN_COUNT
-      # FFTW (opt-in, GPL builds only; setup-macports.yaml installs fftw-3 for it), rendered with
-      # the hostDemo of the default build
-      - name: Build, describe and render (release, FFT=fftw3)
-        if: env.BUILD_VARIANTS == 'true'
-        run: |
-          export PATH=/opt/local/bin:/opt/local/sbin:$PATH
-          cmake -S . -B build-fftw3 $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DFFT=fftw3
-          cmake --build build-fftw3 -j4
-          CXX="/usr/bin/clang++ -I/opt/local/include" \
-            HOST_LDFLAGS=-L/opt/local/lib PLUGIN_LIST=plugins-fftw3.txt \
-            .github/workflows/describe_plugins.sh build-fftw3/Plugins $GMIC_PLUGIN_COUNT
-          python3 .github/workflows/render_plugins.py --host build \
-            --plugins build-fftw3/Plugins --list plugins-fftw3.txt --stdlib build-fftw3/gmic/gmic_stdlib_community.h \
-            --subset pr --jobs 2
 
   windows:
     name: Windows (MSYS2 UCRT64)
@@ -366,14 +384,17 @@ jobs:
       - name: Cache G'MIC sources
         uses: actions/cache@v4
         with:
-          path: gmic_*.tar.gz
+          path: |
+            gmic_*.tar.gz
+            pocketfft_hdronly.h
           key: gmic-src-${{ hashFiles('Makefile') }}
       - name: Build (release, OpenMP)
         run: |
           set -eo pipefail
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$(cygpath -m "$PWD")" \
-            -DGMIC_BUILD_TESTS=ON
+            -DGMIC_POCKETFFT="$(cygpath -m "$PWD")/pocketfft_hdronly.h" -DGMIC_BUILD_TESTS=ON
           cmake --build build -j4
+          .github/workflows/check_fft.sh build/Plugins/GMIC.ofx.bundle pocketfft
       - name: Describe all plug-ins
         run: |
           set -eo pipefail
