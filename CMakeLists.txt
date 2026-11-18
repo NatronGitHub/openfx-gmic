@@ -635,6 +635,12 @@ if(GMIC_FFT STREQUAL "fftw3")
   set(_fft_module "fftw3>=3.3.5") # fftw_make_planner_thread_safe (gmic_plugin.cpp)
 else()
   target_compile_definitions(GMIC PRIVATE cimg_use_pocketfft)
+  # Windows: single-threaded pocketfft. Its static thread pool is destroyed when the host unloads
+  # the plug-in (FreeLibrary): the destructor joins the worker threads under the loader lock,
+  # which the exiting threads wait for (deadlock). G'MIC itself is still multithreaded (OpenMP).
+  if(WIN32)
+    target_compile_definitions(GMIC PRIVATE POCKETFFT_NO_MULTITHREADING)
+  endif()
   set(_fft_module "")
 endif()
 if(OFX_LICENSE STREQUAL "COMMERCIAL")
