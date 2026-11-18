@@ -26,8 +26,8 @@ name: Continuous Integration
 # Linux dependencies: GMIC.ofx may need only system libraries (glibc's, libstdc++, libgcc_s,
 # libgomp): no libcurl, static zlib and libpng (see GMIC_OFX/Makefile). Each Linux build checks it
 # (check_linux_deps.sh), and reports the highest symbol versions that it requires; the nightly and
-# on-demand runs also build with the Makefile on Rocky Linux 8 (GCC 8.5, glibc 2.28), the system of
-# Natron's release builds. The per-PR Linux build renders Color Presets, which downloads its CLUTs
+# on-demand runs also build with the Makefile on Rocky Linux 9 (GCC 11, glibc 2.34), Natron 2.6's
+# Linux baseline. The per-PR Linux build renders Color Presets, which downloads its CLUTs
 # with the curl command (no libcurl).
 #
 # Frugal CI (the NatronGitHub runners are shared by all repos): one run per change. Pushes run CI
@@ -191,7 +191,7 @@ jobs:
           .github/workflows/compare_sources.sh build
       # The Linux bundle is uploaded as is: it needs only system libraries (check_linux_deps.sh),
       # but the glibc and libstdc++ of Ubuntu 24.04. Natron's Linux releases build the plug-in on
-      # Rocky Linux 8 (see the linux-rocky8 job).
+      # Rocky Linux 9, Natron 2.6's Linux baseline (see the linux-rocky9 job).
       - name: Upload bundle
         if: env.UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@v4
@@ -279,14 +279,14 @@ jobs:
           .github/workflows/compare_bundles.sh GMIC_OFX/Linux-64-release/GMIC.ofx.bundle install/OFX/Plugins/GMIC.ofx.bundle
           .github/workflows/compare_sources.sh build
 
-  # The system of Natron's Linux release builds, nightly or on demand: Rocky Linux 8 (GCC 8.5,
-  # glibc 2.28), with the Makefile, as Natron's build-plugins.sh does. The plug-in must need only
-  # system libraries, and no GLIBC_ version newer than 2.28 (check_linux_deps.sh); the describe
-  # test runs there.
-  linux-rocky8:
-    name: Linux (Rocky Linux 8, GCC 8.5), Makefile
+  # Natron 2.6's Linux baseline, nightly or on demand: Rocky Linux 9 (GCC 11, glibc 2.34; VFX
+  # Reference Platform CY2027), with the Makefile, as Natron's build-plugins.sh does. The plug-in
+  # must need only system libraries, and no GLIBC_ or GLIBCXX_ version newer than glibc 2.34's and
+  # GCC 11's (check_linux_deps.sh); the describe test runs there.
+  linux-rocky9:
+    name: Linux (Rocky Linux 9, GCC 11), Makefile
     runs-on: ubuntu-24.04
-    container: rockylinux:8
+    container: rockylinux:9
     needs: changes
     if: >-
       needs.changes.outputs.run == 'true' &&
@@ -327,7 +327,7 @@ jobs:
         run: |
           git config --global --add safe.directory "$PWD"
           make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17
-          MAX_GLIBC=2.28 .github/workflows/check_linux_deps.sh GMIC_OFX/Linux-64-release/GMIC.ofx.bundle
+          MAX_GLIBC=2.34 MAX_GLIBCXX=3.4.29 .github/workflows/check_linux_deps.sh GMIC_OFX/Linux-64-release/GMIC.ofx.bundle
       - name: Describe all plug-ins
         run: CXX=g++ .github/workflows/describe_plugins.sh GMIC_OFX/Linux-64-release $GMIC_PLUGIN_COUNT
 

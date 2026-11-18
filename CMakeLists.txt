@@ -644,9 +644,9 @@ endif()
 # found, e.g. MacPorts' zlib and libcurl rather than the macOS SDK's): zlib, libpng, libcurl
 # (downloads of filter data, except on Linux), plus fftw3 and fftw3_threads with FFT=fftw3.
 #
-# Linux (as GMIC_OFX/Makefile): GMIC.ofx needs only system libraries (libc, libm, libpthread,
-# libdl, librt, libstdc++, libgcc_s, libgomp), so that one binary runs on every distribution
-# (Natron's release builds: Rocky Linux 8, glibc 2.28). No libcurl: G'MIC downloads with the
+# Linux (as GMIC_OFX/Makefile): GMIC.ofx needs only system libraries (libc, libm, libstdc++,
+# libgcc_s, libgomp), so that one binary runs on every distribution
+# (Natron 2.6's baseline: Rocky Linux 9, glibc 2.34, GCC 11). No libcurl: G'MIC downloads with the
 # external curl or wget command instead (cimg::load_network). zlib, libpng and FFTW are linked
 # statically with GMIC_STATIC_DEPS (ON by default on Linux): their static archives (libz.a,
 # libpng16.a, libfftw3.a, libfftw3_threads.a, built with -fPIC, which distributions' archives may

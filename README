@@ -59,10 +59,10 @@ Requirements
 - Platforms: Linux, macOS (Apple clang; libraries from MacPorts or Homebrew) and Windows (MSYS2
   UCRT64, as in CI: see .github/workflows/ci.yml for the packages).
 
-Runtime requirements on Linux: GMIC.ofx links only system libraries (libc, libm, libpthread,
-libdl, librt, libstdc++, libgcc_s and, with OpenMP, libgomp), and needs no other library at run
-time. Natron's release builds are made on Rocky Linux 8 (GCC 8.5, glibc 2.28) and run on newer
-distributions. Without libcurl, the filters that download data (CLUTs of Color Presets and
+Runtime requirements on Linux: GMIC.ofx links only system libraries (libc, libm, libstdc++,
+libgcc_s and, with OpenMP, libgomp; also libpthread, libdl and librt before glibc 2.34), and needs
+no other library at run time. Natron 2.6's Linux baseline is Rocky Linux 9 (glibc 2.34, GCC 11's
+libstdc++): a build there runs on newer distributions. Without libcurl, the filters that download data (CLUTs of Color Presets and
 Simulate Film, CNN networks, sample images...) run the curl command, or wget if curl fails: one of
 them must be installed (on macOS and Windows, the plug-in downloads with libcurl).
 
