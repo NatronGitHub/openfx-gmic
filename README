@@ -23,9 +23,10 @@ Dual-licensed, choose one of (see COPYING):
 
 COMMERCIAL builds (LICENSE=COMMERCIAL), made for Natron's COMMERCIAL builds, contain no GPL
 code: only code compatible with the CeCILL-C option (pocketfft is BSD-3-Clause, some filters
-CeCILL-B). The default (GPL) build also links FFTW (GPL) and includes community filters under
-other licences (CeCILL-only, GPL, non-commercial: see gmic_stdlib_commercial.txt). The licence
-texts are installed in the bundle's Contents/Resources.
+CeCILL-B). The default (GPL) build also includes community filters under other licences
+(CeCILL-only, GPL, non-commercial: see gmic_stdlib_commercial.txt), and GPL builds may link FFTW
+(GPL) instead of pocketfft (FFT=fftw3). The licence texts are installed in the bundle's
+Contents/Resources.
 
 Getting the sources
 -------------------
@@ -44,8 +45,8 @@ Requirements
 
 - A C++17 compiler (C++20 for Qt6 builds of Natron), pkg-config, and make and curl, or CMake
   >= 3.16 (with Ninja for the example below, or any other generator).
-- Libraries, found through pkg-config: fftw3 (and fftw3_threads; not needed for COMMERCIAL
-  builds), zlib, libcurl, libpng.
+- Libraries, found through pkg-config: zlib, libcurl, libpng; with FFT=fftw3 only, fftw3 >= 3.3.5
+  and fftw3_threads (the default FFT, pocketfft, is header-only and downloaded at build time).
 - Python 3, for the render test only.
 - Platforms: Linux, macOS (Apple clang; libraries from MacPorts or Homebrew) and Windows (MSYS2
   UCRT64, as in CI: see .github/workflows/ci.yml for the packages).
@@ -69,7 +70,8 @@ Options:
 - CXXSTD: e.g. c++17 or c++20 (default: the compiler's).
 - LICENSE: GPL (default) or COMMERCIAL (see "Licence"; gmic_stdlib_commercial.txt lists the
   filters left out, and why).
-- FFT: fftw3 (default for GPL) or pocketfft (downloaded; required for COMMERCIAL).
+- FFT: pocketfft (default, downloaded; BSD-3-Clause, as in openfx-misc) or fftw3 (FFTW, opt-in,
+  GPL builds only).
 
 Building with CMake
 -------------------
@@ -83,7 +85,7 @@ Options (the Makefile's equivalent in parentheses):
 - OFX_CXX_STANDARD: 17 (default) or 20 (CXXSTD).
 - OFX_USE_OPENMP: ON (default) (OPENMP=1); OFX_LIBOMP_ROOT: libomp for Apple clang (default:
   MacPorts'; Homebrew: -DOFX_LIBOMP_ROOT=$(brew --prefix libomp)).
-- OFX_LICENSE: GPL (default) or COMMERCIAL (LICENSE); FFT: fftw3 or pocketfft (FFT).
+- OFX_LICENSE: GPL (default) or COMMERCIAL (LICENSE); FFT: pocketfft (default) or fftw3 (FFT).
 - GMIC_TARBALL: a downloaded gmic_<version>.tar.gz, for offline builds; GMIC_DOWNLOAD_DIR: where
   to download it (default: the build directory).
 - OFX_DEPLOY_BUNDLES=ON: on macOS, the install step copies the libraries into the bundle.
