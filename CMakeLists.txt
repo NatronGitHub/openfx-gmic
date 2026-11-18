@@ -419,8 +419,10 @@ if(GMIC_FFT STREQUAL "pocketfft")
   if(NOT _licence MATCHES "Redistributions in binary form must reproduce")
     message(FATAL_ERROR "${_pocketfft}: the licence comment is not the expected one")
   endif()
+  # file(WRITE) writes CRLF line endings on Windows: configure_file(NEWLINE_STYLE UNIX) writes LF,
+  # as the Makefile's awk does (the licence has no @VAR@ for @ONLY to replace)
   file(WRITE "${GMIC_GENERATED_DIR}/Licence_pocketfft.txt.tmp" "${_licence}")
-  configure_file("${GMIC_GENERATED_DIR}/Licence_pocketfft.txt.tmp" "${GMIC_GENERATED_DIR}/Licence_pocketfft.txt" COPYONLY)
+  configure_file("${GMIC_GENERATED_DIR}/Licence_pocketfft.txt.tmp" "${GMIC_GENERATED_DIR}/Licence_pocketfft.txt" @ONLY NEWLINE_STYLE UNIX)
   file(REMOVE "${GMIC_GENERATED_DIR}/Licence_pocketfft.txt.tmp")
 endif()
 
