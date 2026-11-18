@@ -672,7 +672,10 @@ if(GMIC_STATIC_DEPS)
   target_include_directories(GMIC PRIVATE ${GMIC_DEPS_STATIC_INCLUDE_DIRS})
   target_compile_options(GMIC PRIVATE ${GMIC_DEPS_STATIC_CFLAGS_OTHER})
   set(_dirs ${GMIC_DEPS_STATIC_LIBRARY_DIRS})
-  foreach(_module ${_fft_module} libpng zlib)
+  # in the order of the Makefile's STATIC_DEPS_DIRS: libpng and zlib first, so that their libdir
+  # (e.g. that of build_static_deps.sh) comes before FFTW's (e.g. /usr/lib/<arch>, which may also
+  # have non-PIC libpng and zlib archives)
+  foreach(_module libpng zlib ${_fft_module})
     string(REGEX REPLACE "[<>=].*" "" _module "${_module}")
     pkg_get_variable(_libdir ${_module} libdir)
     list(APPEND _dirs ${_libdir})
