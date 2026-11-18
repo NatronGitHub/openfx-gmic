@@ -135,3 +135,7 @@ ifeq ($(OPENMP),1)
   endif
 endif
 
+# G'MIC needs NaN and infinities (nan, inf and isnan() in its math parser, points removed as
+# nan,nan...), which -ffinite-math-only (in -ffast-math and -Ofast) assumes never occur: keep
+# them with such an OPTFLAG, CXX or CXXFLAGS_EXTRA, which come before on the compile line.
+CXXFLAGS += -fno-finite-math-only

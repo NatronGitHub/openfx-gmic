@@ -572,10 +572,14 @@ ofx_plugin_resources(GMIC ${GMIC_RESOURCES})
 source_group("G'MIC" FILES ${GMIC_EXTRACTED_SOURCES})
 
 # Optimization: CMake's CMAKE_CXX_FLAGS_<CONFIG> (Release: -O3 -DNDEBUG; the Makefile uses -O2), which
-# the user may override. Not -Ofast: its -ffast-math breaks G'MIC's NaN tests. Debug builds also
-# get Makefile.master's -Wall -Wextra.
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  target_compile_options(GMIC PRIVATE $<$<CONFIG:Debug>:-Wall -Wextra>)
+# the user may override. Debug builds also get Makefile.master's -Wall -Wextra. G'MIC needs NaN and
+# infinities, which -ffinite-math-only (in -ffast-math and -Ofast), MSVC's /fp:fast and Intel icx's
+# default -fp-model=fast assume never occur: the options below come after CMAKE_CXX_FLAGS_<CONFIG>,
+# and keep them (see GMIC_OFX/Makefile).
+if(MSVC OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+  target_compile_options(GMIC PRIVATE /fp:precise)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|IntelLLVM")
+  target_compile_options(GMIC PRIVATE -fno-finite-math-only $<$<CONFIG:Debug>:-Wall -Wextra>)
 endif()
 
 target_include_directories(GMIC PRIVATE

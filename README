@@ -105,6 +105,9 @@ Environment
 
 - OFX_GMIC_FRAME_CACHE_MB: memory budget, in MB, of the cache of Output Layer "Frame" results
   (default: 1/8 of the physical memory, between 1 and 4 GiB; 0 disables the cache).
+  A decimal number >= 0 ("512", "0.5", "2e3"; '.' as decimal point whatever the locale,
+  surrounding whitespace allowed): a sign, inf, nan, hexadecimal, other text or an overflow give
+  the default, with a note on stderr.
 
 Tests
 -----
