@@ -49,10 +49,12 @@ Requirements
   fftw3 >= 3.3.5 and fftw3_threads (the default FFT, pocketfft, is header-only and downloaded at
   build time).
 - Linux: the static archives of these libraries (libz.a, libpng16.a; libfftw3.a and
-  libfftw3_threads.a with FFT=fftw3), built with -fPIC: e.g. zlib1g-dev and libpng-dev on
-  Debian/Ubuntu, zlib-static and libpng-static on RHEL/Rocky. They are linked statically, so that
-  GMIC.ofx needs only system libraries; GMIC_STATIC_DEPS=0 (CMake: -DGMIC_STATIC_DEPS=OFF) links
-  the shared ones instead, e.g. for distribution packages.
+  libfftw3_threads.a with FFT=fftw3), built with -fPIC, found through pkg-config. They are linked
+  statically, so that GMIC.ofx needs only system libraries. Distributions' archives are often not
+  built with -fPIC (e.g. Ubuntu's libpng16.a), and then fail to link: build them with
+  .github/workflows/build_static_deps.sh <prefix>, as CI does, and set
+  PKG_CONFIG_PATH=<prefix>/lib/pkgconfig. GMIC_STATIC_DEPS=0 (CMake: -DGMIC_STATIC_DEPS=OFF) links
+  the shared libraries instead, e.g. for distribution packages.
 - Python 3, for the render test only.
 - Platforms: Linux, macOS (Apple clang; libraries from MacPorts or Homebrew) and Windows (MSYS2
   UCRT64, as in CI: see .github/workflows/ci.yml for the packages).

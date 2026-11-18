@@ -106,7 +106,8 @@ endif
 # Rocky Linux 8, glibc 2.28). No libcurl: G'MIC downloads with the external curl or wget command
 # instead (cimg::load_network). zlib, libpng and FFTW are linked statically (GMIC_STATIC_DEPS=1,
 # the default on Linux): their static archives (libz.a, libpng16.a, libfftw3.a,
-# libfftw3_threads.a, built with -fPIC) must be in pkg-config's libdir or the compiler's library
+# libfftw3_threads.a, built with -fPIC, which distributions' archives may not be: see
+# .github/workflows/build_static_deps.sh) must be in pkg-config's libdir or the compiler's library
 # path. GMIC_STATIC_DEPS=0 links the shared libraries, e.g. for distribution packages. The
 # plug-in's version script (linuxSymbols) keeps the symbols of the static libraries local.
 # Other systems: shared libraries, with libcurl (macOS and Windows bundles copy them).
@@ -124,7 +125,7 @@ CXXFLAGS += $(FFT_CXXFLAGS) -Dcimg_use_zlib -Dcimg_use_png
 ifeq ($(GMIC_STATIC_DEPS),1)
 # the static archive lib<name>.a, in the libdirs of the modules or the compiler's library path
 STATIC_DEPS_SYSLIBS = -lm -ldl -lpthread -lrt -lc
-static_archive = $(or $(firstword $(wildcard $(addsuffix /lib$(1).a,$(STATIC_DEPS_DIRS)))),$(filter /%,$(shell $(CXX) -print-file-name=lib$(1).a)),$(error GMIC_STATIC_DEPS=1: lib$(1).a not found (in $(STATIC_DEPS_DIRS) or the compiler's library path): install the static libraries (e.g. zlib1g-dev and libpng-dev on Debian/Ubuntu, zlib-static and libpng-static on RHEL/Rocky), or build with GMIC_STATIC_DEPS=0))
+static_archive = $(or $(firstword $(wildcard $(addsuffix /lib$(1).a,$(STATIC_DEPS_DIRS)))),$(filter /%,$(shell $(CXX) -print-file-name=lib$(1).a)),$(error GMIC_STATIC_DEPS=1: lib$(1).a not found (in $(STATIC_DEPS_DIRS) or the compiler's library path): build them with -fPIC (.github/workflows/build_static_deps.sh <prefix> then PKG_CONFIG_PATH=<prefix>/lib/pkgconfig) or build with GMIC_STATIC_DEPS=0))
 ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
   STATIC_DEPS_DIRS := $(patsubst -L%,%,$(shell pkg-config --static --libs-only-L $(DEPS_MODULES))) \
     $(foreach m,$(DEPS_MODULES),$(shell pkg-config --variable=libdir $(m)))

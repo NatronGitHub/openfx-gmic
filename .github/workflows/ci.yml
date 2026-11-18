@@ -126,6 +126,17 @@ jobs:
             gmic_*.tar.gz
             pocketfft_hdronly.h
           key: gmic-src-${{ hashFiles('Makefile') }}
+      # static zlib and libpng built with -fPIC (distributions' archives may not be, e.g. Ubuntu's
+      # libpng16.a), linked into GMIC.ofx (GMIC_STATIC_DEPS, the default on Linux)
+      - name: Cache static zlib and libpng
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/static-deps
+          key: static-deps-${{ github.job }}-${{ hashFiles('.github/workflows/build_static_deps.sh') }}
+      - name: Static zlib and libpng (-fPIC)
+        run: |
+          [ -f "$RUNNER_TEMP/static-deps/lib/libpng16.a" ] || .github/workflows/build_static_deps.sh "$RUNNER_TEMP/static-deps"
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/static-deps/lib/pkgconfig" >> "$GITHUB_ENV"
       - name: Build (release, OpenMP)
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
@@ -231,6 +242,17 @@ jobs:
             gmic_*.tar.gz
             pocketfft_hdronly.h
           key: gmic-src-${{ hashFiles('Makefile') }}
+      # static zlib and libpng built with -fPIC (distributions' archives may not be, e.g. Ubuntu's
+      # libpng16.a), linked into GMIC.ofx (GMIC_STATIC_DEPS, the default on Linux)
+      - name: Cache static zlib and libpng
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/static-deps
+          key: static-deps-${{ github.job }}-${{ hashFiles('.github/workflows/build_static_deps.sh') }}
+      - name: Static zlib and libpng (-fPIC)
+        run: |
+          [ -f "$RUNNER_TEMP/static-deps/lib/libpng16.a" ] || .github/workflows/build_static_deps.sh "$RUNNER_TEMP/static-deps"
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/static-deps/lib/pkgconfig" >> "$GITHUB_ENV"
       - name: Build (release, OpenMP, OFX_LICENSE=COMMERCIAL)
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
@@ -274,13 +296,11 @@ jobs:
       run:
         shell: bash -eo pipefail {0}
     steps:
-      # git before the checkout, for the submodule; zlib-static and libpng-static are in PowerTools
+      # git before the checkout, for the submodule
       - name: Install packages
         run: |
-          dnf install -y dnf-plugins-core
-          dnf config-manager --set-enabled powertools
-          dnf install -y git gcc-c++ make pkgconf-pkg-config zlib-devel zlib-static libpng-devel \
-            libpng-static expat-devel perl binutils diffutils findutils which xz tar gzip
+          dnf install -y git gcc-c++ make pkgconf-pkg-config expat-devel perl binutils diffutils \
+            findutils which xz tar gzip
           gcc --version | head -n 1; ldd --version | head -n 1
       - uses: actions/checkout@v4
         with:
@@ -292,6 +312,17 @@ jobs:
             gmic_*.tar.gz
             pocketfft_hdronly.h
           key: gmic-src-${{ hashFiles('Makefile') }}
+      # static zlib and libpng built with -fPIC (distributions' archives may not be, e.g. Ubuntu's
+      # libpng16.a), linked into GMIC.ofx (GMIC_STATIC_DEPS, the default on Linux)
+      - name: Cache static zlib and libpng
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/static-deps
+          key: static-deps-${{ github.job }}-${{ hashFiles('.github/workflows/build_static_deps.sh') }}
+      - name: Static zlib and libpng (-fPIC)
+        run: |
+          [ -f "$RUNNER_TEMP/static-deps/lib/libpng16.a" ] || .github/workflows/build_static_deps.sh "$RUNNER_TEMP/static-deps"
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/static-deps/lib/pkgconfig" >> "$GITHUB_ENV"
       - name: Build with the Makefile (release, OpenMP, C++17)
         run: |
           git config --global --add safe.directory "$PWD"

@@ -649,8 +649,9 @@ endif()
 # (Natron's release builds: Rocky Linux 8, glibc 2.28). No libcurl: G'MIC downloads with the
 # external curl or wget command instead (cimg::load_network). zlib, libpng and FFTW are linked
 # statically with GMIC_STATIC_DEPS (ON by default on Linux): their static archives (libz.a,
-# libpng16.a, libfftw3.a, libfftw3_threads.a, built with -fPIC) must be in pkg-config's libdir
-# or the linker's search path. -DGMIC_STATIC_DEPS=OFF links the shared libraries, e.g. for
+# libpng16.a, libfftw3.a, libfftw3_threads.a, built with -fPIC, which distributions' archives may
+# not be: see .github/workflows/build_static_deps.sh) must be in pkg-config's libdir or the
+# linker's search path. -DGMIC_STATIC_DEPS=OFF links the shared libraries, e.g. for
 # distribution packages. The version script of add_ofx_plugin keeps their symbols local.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   option(GMIC_STATIC_DEPS "Linux: link zlib, libpng and FFTW statically (GMIC.ofx needs only system libraries)" ON)
@@ -684,8 +685,8 @@ if(GMIC_STATIC_DEPS)
     find_library(GMIC_STATIC_${_lib} NAMES lib${_lib}.a HINTS ${_dirs})
     if(NOT GMIC_STATIC_${_lib})
       message(FATAL_ERROR "GMIC_STATIC_DEPS: lib${_lib}.a not found (in ${_dirs} or the default paths): "
-        "install the static libraries (e.g. zlib1g-dev and libpng-dev on Debian/Ubuntu, zlib-static and "
-        "libpng-static on RHEL/Rocky), or configure with -DGMIC_STATIC_DEPS=OFF")
+        "build them with -fPIC (.github/workflows/build_static_deps.sh <prefix>, then "
+        "PKG_CONFIG_PATH=<prefix>/lib/pkgconfig), or configure with -DGMIC_STATIC_DEPS=OFF")
     endif()
     target_link_libraries(GMIC PRIVATE ${GMIC_STATIC_${_lib}})
   endforeach()
