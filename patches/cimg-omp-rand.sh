@@ -33,18 +33,15 @@
 # are), G'MIC's 'parallel' command (threads of one render sharing the global generator), a team
 # size changed by OMP_DYNAMIC, and concurrent renders (they share the global generator).
 #
-# Running it again on a file patched by this version does nothing, and so does running it on a
-# CImg.h where the patched code no longer seeds itself from the global generator (an upstream
-# fix). The script fails in any other case: some of the expected code missing (e.g. after a
-# GMICVER bump: then check what upstream changed, and update or remove this patch), a file
-# patched by an older version of this script (extract CImg.h again), or CRLF line endings. Only
-# POSIX sh, awk and wc are used, for Linux, macOS and MSYS2.
+# Running it again on a patched file does nothing, and so does running it on a CImg.h where the
+# patched code no longer seeds itself from the global generator (an upstream fix). The script fails
+# in any other case: some of the expected code missing (e.g. after a GMICVER bump: then check what
+# upstream changed, and update or remove this patch), or CRLF line endings. Only POSIX sh, awk and
+# wc are used, for Linux, macOS and MSYS2.
 set -e
 f="$1"
 
-# patch version, in the marker: a file patched by an older version is detected
-version=2
-marker="inline cimg_uint64 _rand_omp_begin() { // openfx-gmic patch (issue #44) v$version"
+marker="inline cimg_uint64 _rand_omp_begin() { // openfx-gmic patch (issue #44)"
 # expected number of parallel random loops (rand, noise) and of math parser copy constructors,
 # and number of occurrences of '_rand(),cimg::rng()' (spaces allowed) in CImg.h (G'MIC 4.0.7)
 nloops=8
@@ -60,7 +57,7 @@ fail() {
   exit 1
 }
 
-# counts <file>: "<markers> <older markers> <loops to patch> <patched loops> <copy constructors
+# counts <file>: "<markers> <loops to patch> <patched loops> <copy constructors
 # to patch> <'_rand(),cimg::rng()' in the places to patch> <'_rand(),cimg::rng()' anywhere>"
 counts() {
   awk -v marker="$marker" '
@@ -69,14 +66,13 @@ counts() {
       loop = (prev ~ /cimg_pragma_openmp\(parallel cimg_openmp_if_size\(size\(\),/)
       copy = (prev ~ /result_end\(mp\.result_end\?/) }
     t == marker { m++ }
-    t ~ /_rand_omp_begin\(\) \{/ && t != marker { mold++ }
     loop && t == "cimg_uint64 rng = (cimg::_rand(),cimg::rng());" { old++ }
     loop && t == "cimg_uint64 rng = cimg::_rand_omp_begin();" { new++ }
     copy && t == "rng((cimg::_rand(),cimg::rng())) {" { cp++ }
     loose && (loop || copy) { lt++ }
     loose { la++ }
     t != "" { prev = t }
-    END { print m + 0, mold + 0, old + 0, new + 0, cp + 0, lt + 0, la + 0 }' "$1"
+    END { print m + 0, old + 0, new + 0, cp + 0, lt + 0, la + 0 }' "$1"
 }
 
 case "$f" in
@@ -90,19 +86,18 @@ if awk -v cr="$cr" 'index($0, cr) { found = 1; exit } END { exit !found }' "$f";
 fi
 
 set -- `counts "$f"`
-[ "$2" = 0 ] || fail "patched by an older version of patches/cimg-omp-rand.sh: extract CImg.h again (e.g. make distclean, then make)"
-if [ "$1" = 1 ] && [ "$3" = 0 ] && [ "$4" = $nloops ] && [ "$5" = 0 ] && [ "$6" = 0 ] && [ "$7" = $((nloose - nloops - ncopies + 1)) ]; then
-  echo "$f: already patched (issue #44, v$version)"
+if [ "$1" = 1 ] && [ "$2" = 0 ] && [ "$3" = $nloops ] && [ "$4" = 0 ] && [ "$5" = 0 ] && [ "$6" = $((nloose - nloops - ncopies + 1)) ]; then
+  echo "$f: already patched (issue #44)"
   exit 0
 fi
 # fixed upstream: none of the places to patch seeds itself from the global generator, which is
 # used at most as often as in the other places of the 4.0.7 code
-if [ "$1" = 0 ] && [ "$4" = 0 ] && [ "$6" = 0 ] && [ "$7" -le $((nloose - nloops - ncopies)) ]; then
+if [ "$1" = 0 ] && [ "$3" = 0 ] && [ "$5" = 0 ] && [ "$6" -le $((nloose - nloops - ncopies)) ]; then
   echo "$f: the parallel loops of rand and noise and the math parser copies no longer seed themselves from the global generator: not patched (fixed upstream) (issue #44)"
   exit 0
 fi
-[ "$1" = 0 ] && [ "$3" = $nloops ] && [ "$4" = 0 ] && [ "$5" = $ncopies ] && [ "$6" = $((nloops + ncopies)) ] && [ "$7" = $nloose ] ||
-  fail "expected $nloops parallel random loops (rand, noise) and $ncopies math parser copy constructor seeded with '(cimg::_rand(),cimg::rng())', and that expression $nloose times in all; found $3 loops, $5 copy constructors, $6 occurrences in these places and $7 in all ($4 patched loops, $1 patch markers)"
+[ "$1" = 0 ] && [ "$2" = $nloops ] && [ "$3" = 0 ] && [ "$4" = $ncopies ] && [ "$5" = $((nloops + ncopies)) ] && [ "$6" = $nloose ] ||
+  fail "expected $nloops parallel random loops (rand, noise) and $ncopies math parser copy constructor seeded with '(cimg::_rand(),cimg::rng())', and that expression $nloose times in all; found $2 loops, $4 copy constructors, $5 occurrences in these places and $6 in all ($3 patched loops, $1 patch markers)"
 
 awk -v marker="$marker" '
 function bad(msg) { print "line " NR ": " msg > "/dev/stderr"; err = 1 }
@@ -162,7 +157,7 @@ END {
 }' "$f" > "$f.patched" || fail "the code to patch is not as expected"
 
 set -- `counts "$f.patched"`
-[ "$1" = 1 ] && [ "$3" = 0 ] && [ "$4" = $nloops ] && [ "$5" = 0 ] && [ "$6" = 0 ] && [ "$7" = $((nloose - nloops - ncopies + 1)) ] || fail "the patch did not apply"
+[ "$1" = 1 ] && [ "$2" = 0 ] && [ "$3" = $nloops ] && [ "$4" = 0 ] && [ "$5" = 0 ] && [ "$6" = $((nloose - nloops - ncopies + 1)) ] || fail "the patch did not apply"
 [ "`wc -l < "$f.patched"`" -eq $((`wc -l < "$f"` + nadded)) ] || fail "the patch did not add $nadded lines"
 # number of lines that differ (no diff: MSYS2 does not install it by default): the added lines
 # are skipped (a blank line, which the original also has after srand(seed), then nadded - 1 lines
@@ -175,4 +170,4 @@ changed=`awk -v nadded=$nadded '
   END { print n + 0 }' "$f" "$f.patched"`
 [ "$changed" = $((2 * nloops + ncopies)) ] || fail "the patch changed $changed lines, not $((2 * nloops + ncopies))"
 mv "$f.patched" "$f"
-echo "$f: patched for deterministic random numbers with OpenMP (issue #44, v$version)"
+echo "$f: patched for deterministic random numbers with OpenMP (issue #44)"
