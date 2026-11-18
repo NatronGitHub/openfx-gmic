@@ -126,6 +126,8 @@
 #define PARAM_SRAND (globalDataP->nofParams - 4)
 #define PARAM_ANIMSEED (globalDataP->nofParams - 3)
 #define PARAM_VERBOSITY (globalDataP->nofParams - 2)
+// the last Output Layer option, "Frame" (issue #65): see pluginProcess
+#define OUTPUT_LAYER_FRAME 11
 
 #ifdef OFX_PLUGIN
     #include "RFX_OFX_Utils.h"
@@ -145,6 +147,10 @@ using namespace reduxfx;
 #ifdef OFX_PLUGIN
 #include <sstream>
 #include <map>
+#include <atomic>
+#include <limits>
+#include <memory>
+#include <vector>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -429,11 +435,22 @@ public:
 	~MyGlobalData() {};
 };
 
+#ifdef OFX_PLUGIN
+// the results kept for Output Layer "Frame" (see frameCacheStore)
+static void frameCacheRelease(const void* owner);
+#endif
+
 class MySequenceData
 {
 public:
 	//string command;
 	gmic_interface_options options;
+#ifdef OFX_PLUGIN
+	// Output Layer "Frame": the instance refers to an entry of the frame cache (see frameCacheFind)
+	std::atomic<bool> usesFrameCache;
+	// the last key whose results were too large to keep (logged once)
+	std::string uncachedKey;
+#endif
 
 	MySequenceData() {
 		options.custom_commands = NULL;
@@ -445,8 +462,14 @@ public:
 		options.output_format = E_FORMAT_FLOAT;
 		options.interleave_output = false;
 		options.no_inplace_processing = false;
+#ifdef OFX_PLUGIN
+		usesFrameCache = false;
+#endif
 	};
 	~MySequenceData() {
+#ifdef OFX_PLUGIN
+		frameCacheRelease(this); // unconditionally: usesFrameCache may be reset by instanceChanged during a render
+#endif
 		delete[] options.error_message_buffer;
 	};
 };
@@ -686,7 +709,22 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 	globalDataP->param[p] = Parameter("Advanced Options", "", PT_TOPIC_START);
 	globalDataP->param[p].flags = 1;
 	++p;
+	// "Frame" is added at the end (issue #65): the choice is saved as its index (and label in
+	// Natron), so the other options keep their meaning in saved projects
+#ifdef OFX_PLUGIN
+	globalDataP->param[p] = Parameter("Output Layer", "", PT_SELECT, 0, OUTPUT_LAYER_FRAME, 1, 0, 0, 0, "Merged|Layer 0|Layer -1|Layer -2|Layer -3|Layer -4|Layer -5|Layer -6|Layer -7|Layer -8|Layer -9|Frame");
+#else
+	// no Frame in the AE build (its times are in time_scale ticks, and frameRangeStart is not set)
 	globalDataP->param[p] = Parameter("Output Layer", "", PT_SELECT, 0, 10, 1, 0, 0, 0, "Merged|Layer 0|Layer -1|Layer -2|Layer -3|Layer -4|Layer -5|Layer -6|Layer -7|Layer -8|Layer -9|");
+#endif
+	globalDataP->param[p].hint = "The image of the G'MIC results to output. Merged: all the results merged into one. "
+		"Layer 0, Layer -1...: one result, counted from the top of the stack as in G'MIC-Qt (Layer 0 is the first). "
+		"Frame: the result whose number is the frame number minus the first frame of Source, modulo the number of "
+		"results, for the filters that make several frames in one run (Fade Layers, Morph Layers, Tiles to Layers, "
+		"Spline Spirograph's Number of Output Frames...). The results are kept in memory, so that the next frames "
+		"don't run the filter again while its inputs and parameters stay the same (up to 25% of the memory, or "
+		"OFX_GMIC_FRAME_CACHE_MB megabytes). The node's frame range is Source's: for a still image, extend it "
+		"upstream to the number of results (e.g. with a FrameRange node).";
 	++p;
 	// "Fixed (Inplace)" (index 0) behaves like "Dynamic": the result is always resized to the input
 	// size. Its special path (a per-plug-in in-place flag, set from one instance by a parameter
@@ -837,6 +875,35 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, bool preview)
     return cmd;
 }
 
+// Output Layer "Frame" (issue #65): at most that many results (a frame per result, e.g. Spline
+// Spirograph makes up to 512 frames, Fade Layers up to 401); the other modes use at most
+// MAX_NOF_LAYERS (Layer -9 is the last one that can be picked)
+static const int kMaxFrameResults = 1024;
+#ifdef OFX_PLUGIN
+static size_t frameCacheBudget();
+#else
+static size_t frameCacheBudget() { return 0; }
+#endif
+
+static bool outputIsFrame(SequenceData* sequenceDataP, GlobalData* globalDataP)
+{
+	return PAR_VAL(PARAM_OUTPUT) == (float)OUTPUT_LAYER_FRAME;
+}
+
+static int maxResultsOf(SequenceData* sequenceDataP, GlobalData* globalDataP)
+{
+	return outputIsFrame(sequenceDataP, globalDataP) ? kMaxFrameResults : MAX_NOF_LAYERS;
+}
+
+// _openfx_gmic_frame_select frame,max_results,max_bytes: if there are more than max_results
+// results, or they take more than max_bytes, keeps only result [frame mod N], named
+// openfx_gmic_frame_selected (Output Layer "Frame": the results are then not kept, see
+// pluginProcess)
+static const char* const kFrameSelectCommand =
+	"\n_openfx_gmic_frame_select :\n"
+	"  b=0 repeat $! { b={$b+w#$>*h#$>*d#$>*s#$>*4} }\n"
+	"  if $!>$2||$b>$3 k[{(($1%$!)+$!)%$!}] nm openfx_gmic_frame_selected fi\n";
+
 // The whole command line: the filter's command (main or preview), with the variables G'MIC-Qt
 // defines, the output layer selection, Ignore Alpha, the Resize Mode, verbosity and seed. Sets the
 // custom commands of the options: customCommands (the filter's #@gui lines, the hot fixes for G'MIC
@@ -871,10 +938,15 @@ fullCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, unsigned int n
 		cmd += " -gui_merge_layers";
 	}
 
-	// images[] has MAX_NOF_LAYERS entries (gmic_plugin_call() fails with more results):
-	// keep at most that many, the first ones (Output Layer "Layer -k" is image [k], see pluginProcess).
-	// Some filters return more by default, e.g. Fade Layers, Morph Layers, Tiles to Layers.
-	cmd += " -if {$!>" + intToString(MAX_NOF_LAYERS) + "} -keep[0-" + intToString(MAX_NOF_LAYERS - 1) + "] -fi";
+	// images[] has maxResults() entries (gmic_plugin_call() fails with more results): keep at most
+	// that many, the first ones (Output Layer "Layer -k" is image [k], see pluginProcess). Some
+	// filters return more by default, e.g. Fade Layers, Morph Layers, Tiles to Layers.
+	// Output Layer "Frame": bounded by _openfx_gmic_frame_select, at the end (see pluginProcess)
+	if (outputIsFrame(sequenceDataP, globalDataP)) {
+		customCommands += kFrameSelectCommand;
+	} else {
+		cmd += " -if {$!>" + intToString(MAX_NOF_LAYERS) + "} -keep[0-" + intToString(MAX_NOF_LAYERS - 1) + "] -fi";
+	}
 
 	mySequenceDataP->options.custom_commands = customCommands.c_str();
 	
@@ -963,6 +1035,7 @@ struct GmicCallData
 	const char* cmd;
 	unsigned int* nofImages;
 	gmic_interface_image* images;
+	unsigned int maxImages;
 	gmic_interface_options* options;
 	int result;
 	std::exception_ptr exception; // an exception from G'MIC, rethrown in the render thread
@@ -975,7 +1048,7 @@ static void gmicCallRun(GmicCallData* d)
 {
 	int result = -1;
 	try {
-		result = gmic_plugin_call(d->cmd, d->nofImages, d->images, MAX_NOF_LAYERS, d->options);
+		result = gmic_plugin_call(d->cmd, d->nofImages, d->images, d->maxImages, d->options);
 	} catch (...) {
 		d->exception = std::current_exception();
 	}
@@ -995,11 +1068,11 @@ static void* gmicCallThread(void* arg)
 
 // gmic_plugin_call(), aborted when the host aborts the render: then *aborted is set to true, and
 // the result must be discarded.
-static int gmicCallAbortable(OfxImageEffectHandle instance, const char* cmd, unsigned int* nofImages, gmic_interface_image* images, gmic_interface_options* options, bool* aborted)
+static int gmicCallAbortable(OfxImageEffectHandle instance, const char* cmd, unsigned int* nofImages, gmic_interface_image* images, unsigned int maxImages, gmic_interface_options* options, bool* aborted)
 {
 	*aborted = false;
 	if (!gEffectHost || !gEffectHost->abort) {
-		return gmic_plugin_call(cmd, nofImages, images, MAX_NOF_LAYERS, options);
+		return gmic_plugin_call(cmd, nofImages, images, maxImages, options);
 	}
 	if (gEffectHost->abort(instance)) {
 		*aborted = true;
@@ -1016,6 +1089,7 @@ static int gmicCallAbortable(OfxImageEffectHandle instance, const char* cmd, uns
 	d.cmd = cmd;
 	d.nofImages = nofImages;
 	d.images = images;
+	d.maxImages = maxImages;
 	d.options = options;
 	d.result = -1;
 	d.done = false;
@@ -1043,7 +1117,7 @@ static int gmicCallAbortable(OfxImageEffectHandle instance, const char* cmd, uns
 	if (!started) {
 		// no thread: run G'MIC here, without abort
 		options->p_is_abort = NULL;
-		return gmic_plugin_call(cmd, nofImages, images, MAX_NOF_LAYERS, options);
+		return gmic_plugin_call(cmd, nofImages, images, maxImages, options);
 	}
 
 	// the worker uses d, isAbort and the images: always join it before returning
@@ -1090,6 +1164,283 @@ static int gmicCallAbortable(OfxImageEffectHandle instance, const char* cmd, uns
 }
 #endif
 
+// Output Layer "Frame" (issue #65). Filters such as Fade Layers, Morph Layers (Inter-Frames),
+// Tiles to Layers, Spline Spirograph (Number of Output Frames), 3D Conversion (Render Multiple
+// Frames) or Multiscale Operator (Interpolated Motion) make N frames in one run, which G'MIC-Qt
+// gives as N layers (an animation in GIMP). "Frame" outputs result [(t - start) mod N] at time t,
+// where start is the first frame of Source's frame range (0 if there is none, or an infinite
+// one): on a still input, the timeline plays the N results from the start of Source, then loops.
+// The node's frame range stays Source's (N is only known after a run): with a one-frame Source,
+// the host's range must be extended upstream (e.g. Natron's FrameRange node).
+//
+// Every render would run the filter to output one of its N results: the N results are kept, and
+// the next frames are copied from them while the key is the same. The key is the whole G'MIC
+// command line, which holds every parameter value at the render time (point positions in % of
+// Source, the seed, also when animated with the frame), Preview/Draft Mode, Ignore Alpha, the
+// Resize Mode, the verbosity and the image size, plus the size and a hash (four independent
+// 64-bit lanes) of the pixels of every input image given to G'MIC (after the conversion to float
+// and the unpremultiplication: whatever G'MIC sees, which covers the layer inputs, the frames of
+// Source given by the layer times, and upstream changes). The render scale and window only change
+// the output placement, done when copying. The cache is keyed by this content key, not by
+// instance: Natron renders through instance clones, and duplicated nodes get the same results;
+// each instance refers to the key of its last Frame render, and an entry that no instance refers
+// to any more is dropped (another key, another Output Layer, the instance destroyed). Nothing
+// is invalidated explicitly: another key gives another entry. A filter whose key changes from
+// frame to frame anyway (a varying input, an animated parameter, Animate Random Seed) runs on
+// every frame, as before.
+// Memory: the results stay in the buffers G'MIC returned (no copy), at most frameCacheBudget()
+// bytes for all the entries (25% of the physical memory, 1 to 16 GiB, or OFX_GMIC_FRAME_CACHE_MB
+// megabytes; 0 disables the cache); the least recently used entries are dropped to make room. A
+// set of results larger than the budget, or of more than kMaxFrameResults images, is reduced by
+// G'MIC to the one result needed (_openfx_gmic_frame_select), so that the memory held after a
+// run stays bounded: the filter then runs on every frame. The host purging its caches drops all
+// the entries. The host serialises the renders of an instance (kOfxImageEffectRenderInstanceSafe);
+// the cache, shared by all instances, is behind a mutex, and its frames are reference counted,
+// so that dropping an entry while another render copies one of its frames is safe.
+#ifdef OFX_PLUGIN
+static unsigned long long physicalMemoryBytes(); // at the end of the file (windows.h)
+
+static size_t computeFrameCacheBudget()
+{
+	const double GiB = 1024. * 1024. * 1024.;
+	double bytes = 0.;
+	const char* env = getenv("OFX_GMIC_FRAME_CACHE_MB");
+	char* end = NULL;
+	const double mb = (env && *env) ? strtod(env, &end) : -1.;
+	if (env && *env && end != env && *end == '\0' && mb >= 0.) {
+		bytes = mb * 1024. * 1024.;
+	} else {
+		bytes = (double)physicalMemoryBytes() / 4.;
+		bytes = std::min(std::max(bytes, 1. * GiB), 16. * GiB);
+	}
+	return (size_t)std::min(bytes, (double)(std::numeric_limits<size_t>::max() / 2));
+}
+
+static size_t frameCacheBudget()
+{
+	static const size_t budget = computeFrameCacheBudget();
+	return budget;
+}
+
+// a G'MIC result, owned (freed with gmic_delete_external)
+struct CachedFrame
+{
+	gmic_interface_image image;
+	CachedFrame() { memset(&image, 0, sizeof(image)); }
+	~CachedFrame() { if (image.data) gmic_delete_external((float*)image.data); }
+private:
+	CachedFrame(const CachedFrame&);
+	CachedFrame& operator=(const CachedFrame&);
+};
+
+typedef std::vector<std::shared_ptr<const CachedFrame> > CachedFrames;
+
+struct FrameCacheEntry
+{
+	CachedFrames frames;
+	size_t bytes;
+	unsigned long long lastUse;
+};
+
+struct FrameCache
+{
+	std::mutex mutex;
+	std::map<std::string, FrameCacheEntry> entries; // by key
+	std::map<const void*, std::string> ownerKey; // the key each instance (MySequenceData) refers to
+	size_t bytes;
+	unsigned long long clock;
+	FrameCache() : bytes(0), clock(0) {}
+};
+
+// Never destroyed: instances may still be destroyed after the static objects at unload.
+static FrameCache& frameCache()
+{
+	static FrameCache* cache = new FrameCache;
+	return *cache;
+}
+
+static size_t imageBytes(const gmic_interface_image& im)
+{
+	return (size_t)im.width * im.height * im.depth * im.spectrum * sizeof(float);
+}
+
+// With the mutex locked. Moves the frames of an entry to dropped (freed by the caller after
+// unlocking), then removes it: the total only changes once nothing can throw.
+static void frameCacheDrop(FrameCache& c, std::map<std::string, FrameCacheEntry>::iterator it, std::vector<CachedFrames>& dropped)
+{
+	dropped.push_back(CachedFrames()); // may throw: nothing changed yet
+	dropped.back().swap(it->second.frames);
+	c.bytes -= it->second.bytes;
+	c.entries.erase(it);
+}
+
+// With the mutex locked: drops the entry of key if no instance refers to it.
+static void frameCacheDropIfUnused(FrameCache& c, const std::string& key, std::vector<CachedFrames>& dropped)
+{
+	for (std::map<const void*, std::string>::const_iterator o = c.ownerKey.begin(); o != c.ownerKey.end(); ++o) {
+		if (o->second == key) return;
+	}
+	std::map<std::string, FrameCacheEntry>::iterator it = c.entries.find(key);
+	if (it != c.entries.end()) frameCacheDrop(c, it, dropped);
+}
+
+// With the mutex locked: the instance now refers to key (its previous entry may be dropped).
+static void frameCacheSetOwnerKey(FrameCache& c, const void* owner, const std::string& key, std::vector<CachedFrames>& dropped)
+{
+	std::map<const void*, std::string>::iterator o = c.ownerKey.find(owner);
+	if (o != c.ownerKey.end() && o->second == key) return;
+	std::string previous;
+	if (o != c.ownerKey.end()) previous.swap(o->second);
+	c.ownerKey[owner] = key;
+	if (!previous.empty()) frameCacheDropIfUnused(c, previous, dropped);
+}
+
+// result [frame mod N] of the entry of key (frame: any integer), or NULL if there is none; the
+// instance now refers to key
+static std::shared_ptr<const CachedFrame> frameCacheFind(const void* owner, const std::string& key, long long frame)
+{
+	std::vector<CachedFrames> dropped; // freed after unlocking
+	FrameCache& c = frameCache();
+	std::lock_guard<std::mutex> lock(c.mutex);
+	frameCacheSetOwnerKey(c, owner, key, dropped);
+	std::map<std::string, FrameCacheEntry>::iterator it = c.entries.find(key);
+	if (it == c.entries.end() || it->second.frames.empty()) {
+		return std::shared_ptr<const CachedFrame>();
+	}
+	it->second.lastUse = ++c.clock;
+	const long long n = (long long)it->second.frames.size();
+	return it->second.frames[(size_t)(((frame % n) + n) % n)];
+}
+
+// the instance no longer refers to an entry (destroyed, or Output Layer is not Frame)
+static void frameCacheRelease(const void* owner)
+{
+	std::vector<CachedFrames> dropped; // freed after unlocking
+	FrameCache& c = frameCache();
+	std::lock_guard<std::mutex> lock(c.mutex);
+	std::map<const void*, std::string>::iterator o = c.ownerKey.find(owner);
+	if (o == c.ownerKey.end()) return;
+	std::string key;
+	key.swap(o->second);
+	c.ownerKey.erase(o);
+	frameCacheDropIfUnused(c, key, dropped);
+}
+
+// keeps the results images[0..nofImages-1] under key, for the instance: their buffers now belong
+// to the cache, and their data pointers are set to NULL. Results that are not usable or don't fit
+// in the budget are left to the caller.
+static void frameCacheStore(const void* owner, const std::string& key, gmic_interface_image* images, unsigned int nofImages, const std::string& filterName)
+{
+	size_t bytes = 0;
+	for (unsigned int i = 0; i < nofImages; ++i) {
+		if (!images[i].data || images[i].spectrum == 0) {
+			fprintf(stderr, "G'MIC: %s: result %u is empty, the results are not kept (Output Layer Frame runs the filter on every frame)\n",
+					filterName.c_str(), i);
+			return;
+		}
+		bytes += imageBytes(images[i]);
+	}
+	if (nofImages == 0 || bytes > frameCacheBudget()) return;
+	FrameCacheEntry entry;
+	entry.bytes = bytes;
+	entry.lastUse = 0;
+	entry.frames.reserve(nofImages);
+	for (unsigned int i = 0; i < nofImages; ++i) {
+		std::shared_ptr<CachedFrame> f = std::make_shared<CachedFrame>();
+		entry.frames.push_back(f);
+		f->image = images[i]; // owned from here (nothing throws until the end)
+		images[i].data = NULL;
+	}
+	std::vector<CachedFrames> dropped; // freed after unlocking
+	FrameCache& c = frameCache();
+	std::lock_guard<std::mutex> lock(c.mutex);
+	frameCacheSetOwnerKey(c, owner, key, dropped);
+	std::map<std::string, FrameCacheEntry>::iterator it = c.entries.find(key);
+	if (it != c.entries.end()) frameCacheDrop(c, it, dropped); // stored meanwhile by another instance
+	// make room: drop the least recently used entries
+	while (c.bytes + bytes > frameCacheBudget() && !c.entries.empty()) {
+		std::map<std::string, FrameCacheEntry>::iterator lru = c.entries.begin();
+		for (it = c.entries.begin(); it != c.entries.end(); ++it) {
+			if (it->second.lastUse < lru->second.lastUse) lru = it;
+		}
+		frameCacheDrop(c, lru, dropped);
+	}
+	FrameCacheEntry& stored = c.entries[key]; // may throw: the total is updated after
+	stored.frames.swap(entry.frames);
+	stored.bytes = bytes;
+	stored.lastUse = ++c.clock;
+	c.bytes += bytes;
+}
+
+// a hash of a buffer, appended to key in hex: four independent 64-bit lanes (xxHash64 rounds),
+// each over every fourth 64-bit word
+static void appendHash(std::string& key, const void* data, size_t size)
+{
+	static const unsigned long long P1 = 11400714785074694791ULL, P2 = 14029467366897019727ULL;
+	unsigned long long acc[4] = { P1 + P2, P2, 0, 0 - P1 };
+	const unsigned char* p = (const unsigned char*)data;
+	size_t i = 0;
+	for (; i + 32 <= size; i += 32) {
+		for (int l = 0; l < 4; ++l) {
+			unsigned long long w;
+			memcpy(&w, p + i + 8 * l, 8);
+			acc[l] += w * P2;
+			acc[l] = (acc[l] << 31) | (acc[l] >> 33);
+			acc[l] *= P1;
+		}
+	}
+	for (; i < size; ++i) {
+		acc[i & 3] = (acc[i & 3] ^ p[i]) * P1;
+	}
+	char buf[96];
+	snprintf(buf, sizeof(buf), "%016llx%016llx%016llx%016llx", acc[0], acc[1], acc[2], acc[3]);
+	key += buf;
+}
+
+// the key of the results: the plug-in, the command line and the input images (see above)
+static std::string frameCacheKey(const GlobalData* globalDataP, const std::string& cmd, const SequenceData* sequenceDataP, unsigned int nofImages)
+{
+	std::string key = intToString(globalDataP->pluginIndex) + "\n" + cmd;
+	for (unsigned int i = 0; i < nofImages; ++i) {
+		const World& w = sequenceDataP->inWorld[i];
+		key += "\n" + intToString(w.width) + "x" + intToString(w.height) + "/" + intToString(w.bitDepth) + "/" + intToString(w.rowBytes) + ":";
+		appendHash(key, w.data, (size_t)w.height * (size_t)w.rowBytes);
+	}
+	return key;
+}
+
+// the host purges its caches (kOfxActionPurgeCaches): drop all the entries (Natron renders
+// through clones, so the instance purged is not the one that refers to the entries)
+int pluginPurgeCaches(SequenceData* /*sequenceDataP*/)
+{
+	std::vector<CachedFrames> dropped; // freed after unlocking
+	FrameCache& c = frameCache();
+	std::lock_guard<std::mutex> lock(c.mutex);
+	while (!c.entries.empty()) frameCacheDrop(c, c.entries.begin(), dropped);
+	return 0;
+}
+
+// Output Layer changed (any reason): not Frame, the instance's entry may be dropped now
+int pluginOutputLayerChanged(SequenceData* sequenceDataP, int outputLayer)
+{
+	if (outputLayer != OUTPUT_LAYER_FRAME && sequenceDataP && sequenceDataP->customSequenceDataP) {
+		MySequenceData* my = (MySequenceData*)sequenceDataP->customSequenceDataP;
+		if (my->usesFrameCache) {
+			my->usesFrameCache = false;
+			frameCacheRelease(my);
+		}
+	}
+	return 0;
+}
+#endif
+
+// the frame number of Output Layer "Frame": the render time minus the first frame of Source,
+// rounded to the nearest frame
+static long long frameNumberOf(const SequenceData* sequenceDataP)
+{
+	return (long long)std::floor(sequenceDataP->time - sequenceDataP->frameRangeStart + 0.5);
+}
+
 int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextData* contextDataP)
 {
 	int err = 0;
@@ -1098,7 +1449,11 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	MySequenceData* mySequenceDataP = (MySequenceData*)sequenceDataP->customSequenceDataP;
 	mySequenceDataP->options.no_inplace_processing = true; // the input buffers are not overwritten
 
-	gmic_interface_image images[MAX_NOF_LAYERS];
+	const bool frameMode = outputIsFrame(sequenceDataP, globalDataP);
+	// the inputs, then the results (more of them with Output Layer "Frame", see fullCommand)
+	std::vector<gmic_interface_image> imageBuffer((size_t)maxResultsOf(sequenceDataP, globalDataP));
+	gmic_interface_image* const images = &imageBuffer[0];
+	const unsigned int maxImages = (unsigned int)imageBuffer.size();
 	unsigned int nofImages = 0;
 	for (int i = 0; i < globalDataP->nofInputs; i++) {
 		if (!sequenceDataP->inWorld[i].data || !sequenceDataP->inputConnected[i]) break;
@@ -1144,26 +1499,51 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	} resetCustomCommands(mySequenceDataP->options);
 	string cmd = fullCommand(sequenceDataP, globalDataP, nofImages, preview, customCommands);
 	bool aborted = false;
+	int result = 0;
+	string errmsg;
+	// Output Layer "Frame": the results kept from a previous render, if the key is the same
+	const long long frame = frameNumberOf(sequenceDataP);
 #ifdef OFX_PLUGIN
-	int result = gmicCallAbortable(contextDataP->instance, cmd.c_str(), &nofImages, &images[0], &mySequenceDataP->options, &aborted);
+	string cacheKey;
+	std::shared_ptr<const CachedFrame> cachedFrame;
+	if (frameMode) {
+		cacheKey = frameCacheKey(globalDataP, cmd, sequenceDataP, nofImages);
+		mySequenceDataP->usesFrameCache = true;
+		cachedFrame = frameCacheFind(mySequenceDataP, cacheKey, frame);
+	} else if (mySequenceDataP->usesFrameCache) {
+		mySequenceDataP->usesFrameCache = false;
+		frameCacheRelease(mySequenceDataP);
+	}
+	const bool runGmic = !cachedFrame;
 #else
-	int result = gmic_plugin_call(cmd.c_str(), &nofImages, &images[0], MAX_NOF_LAYERS, &mySequenceDataP->options);
+	const bool runGmic = true;
 #endif
-	string errmsg = string(mySequenceDataP->options.error_message_buffer);
-	// The retry needs unchanged inputs: gmic_plugin_call() works on copies (no_inplace_processing)
-	// and leaves images[] unchanged on an error. Not after an abort.
-	if (result != 0 && !aborted && !preview && effectData.previewFallback && mySequenceDataP->options.no_inplace_processing) {
-		fprintf(stderr, "G'MIC: %s: the main command failed (%s), rendering with the preview command\n",
-				effectData.name.c_str(), errmsg.c_str());
-		preview = true;
-		cmd = fullCommand(sequenceDataP, globalDataP, nofImages, preview, customCommands);
+	// Frame: at most the results that can be kept (see kFrameSelectCommand), after the key
+	const string frameSelect = frameMode ? " -_openfx_gmic_frame_select " + std::to_string(frame) + "," +
+		intToString(kMaxFrameResults) + "," + std::to_string((unsigned long long)frameCacheBudget()) : string();
+	if (runGmic) {
+		cmd += frameSelect;
 #ifdef OFX_PLUGIN
-		result = gmicCallAbortable(contextDataP->instance, cmd.c_str(), &nofImages, &images[0], &mySequenceDataP->options, &aborted);
+		result = gmicCallAbortable(contextDataP->instance, cmd.c_str(), &nofImages, images, maxImages, &mySequenceDataP->options, &aborted);
 #else
-		result = gmic_plugin_call(cmd.c_str(), &nofImages, &images[0], MAX_NOF_LAYERS, &mySequenceDataP->options);
+		result = gmic_plugin_call(cmd.c_str(), &nofImages, images, maxImages, &mySequenceDataP->options);
 #endif
-		if (result != 0 && !aborted) {
-			errmsg += " (with the preview command: " + string(mySequenceDataP->options.error_message_buffer) + ")";
+		errmsg = string(mySequenceDataP->options.error_message_buffer);
+		// The retry needs unchanged inputs: gmic_plugin_call() works on copies (no_inplace_processing)
+		// and leaves images[] unchanged on an error. Not after an abort.
+		if (result != 0 && !aborted && !preview && effectData.previewFallback && mySequenceDataP->options.no_inplace_processing) {
+			fprintf(stderr, "G'MIC: %s: the main command failed (%s), rendering with the preview command\n",
+					effectData.name.c_str(), errmsg.c_str());
+			preview = true;
+			cmd = fullCommand(sequenceDataP, globalDataP, nofImages, preview, customCommands) + frameSelect;
+#ifdef OFX_PLUGIN
+			result = gmicCallAbortable(contextDataP->instance, cmd.c_str(), &nofImages, images, maxImages, &mySequenceDataP->options, &aborted);
+#else
+			result = gmic_plugin_call(cmd.c_str(), &nofImages, images, maxImages, &mySequenceDataP->options);
+#endif
+			if (result != 0 && !aborted) {
+				errmsg += " (with the preview command: " + string(mySequenceDataP->options.error_message_buffer) + ")";
+			}
 		}
 	}
 
@@ -1179,11 +1559,22 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		// Output Layer: 0 is Merged (a single image), k > 0 is "Layer -(k-1)", i.e. image [k-1],
 		// counted from the top of the stack like the inputs (Source = [0] = "Layer 0", the active
 		// layer in G'MIC-Qt, then the "Layer -1" input = [1]...). Past the last result: the last one.
-		int idx = (int)PAR_VAL(PARAM_OUTPUT) - 1;
-		if (idx < 0) idx = 0;
-		if (nofImages > 0 && (unsigned)idx >= nofImages) idx = (int)nofImages - 1;
+		// Frame: image [frame mod N] (see frameNumberOf), maybe from the kept results.
+		const gmic_interface_image* res = NULL;
+#ifdef OFX_PLUGIN
+		if (cachedFrame) res = &cachedFrame->image;
+#endif
+		// the result selected by G'MIC: too many or too large to keep
+		const bool selected = frameMode && nofImages == 1 && strcmp(images[0].name, "openfx_gmic_frame_selected") == 0;
+		if (!res && nofImages > 0) {
+			int idx = (int)PAR_VAL(PARAM_OUTPUT) - 1;
+			if (frameMode) idx = selected ? 0 : (int)(((frame % (long long)nofImages) + nofImages) % nofImages);
+			if (idx < 0) idx = 0;
+			if ((unsigned)idx >= nofImages) idx = (int)nofImages - 1;
+			res = &images[idx];
+		}
 
-		if (nofImages == 0 || (unsigned)idx >= nofImages || images[idx].spectrum == 0 || !images[idx].data) {
+		if (!res || res->spectrum == 0 || !res->data) {
 			result = -1;
 			errmsg = "The image produced by G'MIC is empty.";
 		} else {
@@ -1192,7 +1583,7 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 			// (both in pixels, rows top-down in the planar buffers): copy the overlap, clear the rest.
 			const World& out = sequenceDataP->outWorld;
 			const int dw = out.width, dh = out.height;
-			const int sw = (int)images[idx].width, sh = (int)images[idx].height;
+			const int sw = (int)res->width, sh = (int)res->height;
 			// G'MIC anchors images at their top-left corner: a result of another size than the first
 			// input keeps the input's left and top edges (pixel y goes up)
 			const int sx1 = sequenceDataP->inWorld[0].origin_x;
@@ -1200,8 +1591,8 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 			const int dx1 = out.origin_x, dy1 = out.origin_y;
 			const size_t dplane = (size_t)dw * (size_t)dh, splane = (size_t)sw * (size_t)sh;
 			float* const dst = (float*)out.data;
-			const float* const src = (const float*)images[idx].data;
-			const unsigned int spectrum = images[idx].spectrum;
+			const float* const src = (const float*)res->data;
+			const unsigned int spectrum = res->spectrum;
 			sequenceDataP->resultHasAlpha = (spectrum == 2 || spectrum >= 4);
 			// source plane for each output channel, or NULL for opaque alpha
 			const float* plane[4];
@@ -1231,6 +1622,17 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 				}
 			}
 		}
+#ifdef OFX_PLUGIN
+		// Frame: keep the results for the next frames (their buffers then belong to the cache)
+		if (result == 0 && frameMode && runGmic && !selected) {
+			frameCacheStore(mySequenceDataP, cacheKey, images, nofImages, effectData.name);
+		} else if (result == 0 && selected && frameCacheBudget() > 0 && mySequenceDataP->uncachedKey != cacheKey) {
+			mySequenceDataP->uncachedKey = cacheKey;
+			fprintf(stderr, "G'MIC: %s: the results are too large to keep (more than %d, or more than %.0f MB): "
+					"Output Layer Frame runs the filter on every frame\n", effectData.name.c_str(), kMaxFrameResults,
+					(double)frameCacheBudget() / (1024. * 1024.));
+		}
+#endif
 	}
 	if (result != 0 && !aborted) {
 #ifdef OFX_PLUGIN
@@ -1259,6 +1661,7 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 #endif
 
 	for (unsigned int i = 0; i < nofImages; i++) {
+		if (!images[i].data) continue; // kept by the cache
 		bool found = false;
 		for (int j = 0; j < globalDataP->nofInputs; j++) {
 			if (images[i].data == sequenceDataP->inWorld[j].data) {
@@ -1311,4 +1714,37 @@ extern "C" DllExport PF_Err EntryPointFunc(PF_Cmd cmd, PF_InData* in_data, PF_Ou
 
 #endif
 
+#endif
+
+#ifdef OFX_PLUGIN
+// the physical memory (frameCacheBudget), 0 if unknown; here because of windows.h's macros
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#elif defined(__APPLE__)
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#else
+#include <unistd.h>
+#endif
+static unsigned long long physicalMemoryBytes()
+{
+#if defined(_WIN32)
+	MEMORYSTATUSEX status;
+	status.dwLength = sizeof(status);
+	return GlobalMemoryStatusEx(&status) ? (unsigned long long)status.ullTotalPhys : 0ULL;
+#elif defined(__APPLE__)
+	unsigned long long mem = 0;
+	size_t len = sizeof(mem);
+	return sysctlbyname("hw.memsize", &mem, &len, NULL, 0) == 0 ? mem : 0ULL;
+#else
+	const long pages = sysconf(_SC_PHYS_PAGES), pageSize = sysconf(_SC_PAGESIZE);
+	return (pages > 0 && pageSize > 0) ? (unsigned long long)pages * (unsigned long long)pageSize : 0ULL;
+#endif
+}
 #endif

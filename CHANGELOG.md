@@ -29,6 +29,7 @@ Changes in openfx-gmic since Natron 2.5.0 (tag `Natron-2.5.0`). Natron 2.6 polic
 
 ### New
 - Renders can be aborted while G'MIC runs (#46, #56).
+- Output Layer "Frame" (#65): filters that make several frames in one run (Fade Layers, Morph Layers, Tiles to Layers, Spline Spirograph's Number of Output Frames…) play their results over the timeline, result *k* at frame *k* from the start of Source, looping. The results (up to 1024) are kept in memory, shared by the nodes and render clones with the same inputs and parameters (25% of the physical memory, 1 to 16 GiB; `OFX_GMIC_FRAME_CACHE_MB` overrides it, 0 disables it), so a still input costs one G'MIC run for the whole sequence; changing a parameter or an input runs the filter again, and results too large to keep run the filter on every frame. The node's frame range is still Source's: for a still image, extend it upstream (e.g. with a FrameRange node).
 
 ### Fixes
 - Renders where the input and output image bounds differ (e.g. partial render windows) no longer fail with "The image produced by G'MIC has the wrong size" (#40; likely fixes #2, waiting for a retest).

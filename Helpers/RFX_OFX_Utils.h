@@ -125,6 +125,10 @@ extern int pluginParamChange(int index, SequenceData* sequenceDataP, GlobalData*
 extern int pluginSetup(GlobalData* globalDataP, ContextData* contextDataP);
 extern int pluginSetdown(GlobalData* globalDataP, ContextData* contextDataP);
 extern int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextData* contextDataP);
+// kOfxActionPurgeCaches: free what the plug-in keeps for the instance
+extern int pluginPurgeCaches(SequenceData* sequenceDataP);
+// the Output Layer parameter changed (any reason), to that option index
+extern int pluginOutputLayerChanged(SequenceData* sequenceDataP, int outputLayer);
 
 extern int getNofPlugins();
 extern void getPluginInfo(int pluginIndex, PluginInfo& pluginInfo);
@@ -881,6 +885,10 @@ static OfxStatus getClipPreferences(int pluginIndex, OfxImageEffectHandle effect
 	int v = 0;
 	GlobalData* globalDataP = &globalData[pluginIndex];
 	gParamHost->paramGetValue(myData->param[PARAM_ANIMSEED], &v);
+	// Output Layer "Frame": the output changes with the frame, also for still inputs
+	int outputLayer = 0;
+	gParamHost->paramGetValue(myData->param[PARAM_OUTPUT], &outputLayer);
+	if (outputLayer == OUTPUT_LAYER_FRAME) v = 1;
 	// Not set for the layer times: a host keys the images by time when an input varies (inputs
 	// fetched at other frames), and a frame varying output would re-render still inputs every frame.
 	if (v) {
@@ -955,6 +963,20 @@ static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance,
 						gParamHost->paramSetValue(d->timeOffset[i], -k);
 					}
 				}
+			}
+		}
+	}
+
+	// Output Layer changed in any way: no longer Frame, the results kept for it can go
+	{
+		const char* name = NULL;
+		gPropHost->propGetString(inArgs, kOfxPropName, 0, &name);
+		MyInstanceData* d = getMyInstanceData(instance);
+		GlobalData* globalDataP = &globalData[pluginIndex]; // used by PARAM_OUTPUT
+		if (d && name && strcmp(name, "Output Layer") == 0 && d->param[PARAM_OUTPUT]) {
+			int v = 0;
+			if (gParamHost->paramGetValue(d->param[PARAM_OUTPUT], &v) == kOfxStatOK) {
+				pluginOutputLayerChanged(d->sequenceDataP, v);
 			}
 		}
 	}
@@ -1440,6 +1462,17 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 		gPropHost->propGetDoubleN(inArgs, kOfxImageEffectPropRenderScale, 2, &renderScale.x);
 
 		myData->sequenceDataP->time = time;
+		// Output Layer "Frame" counts frames from the start of Source (0 if none, or infinite)
+		{
+			double range[2] = { 0., 0. };
+			OfxPropertySetHandle props = NULL;
+			myData->sequenceDataP->frameRangeStart = 0.;
+			if (myData->input[0] && gEffectHost->clipGetPropertySet(myData->input[0], &props) == kOfxStatOK &&
+				gPropHost->propGetDoubleN(props, kOfxImageEffectPropFrameRange, 2, range) == kOfxStatOK &&
+				range[0] <= range[1] && std::fabs(range[0]) < 1e9) {
+				myData->sequenceDataP->frameRangeStart = range[0];
+			}
+		}
 		myData->sequenceDataP->downsample_x = (float)renderScale.x;
 		myData->sequenceDataP->downsample_y = (float)renderScale.y;
 		
@@ -2310,6 +2343,7 @@ static OfxStatus describe(int pluginIndex, OfxImageEffectHandle effect)
 	}
 
     gPropHost->propSetString(effectProps, kOfxImageEffectPropClipPreferencesSlaveParam, 0, "Animate Random Seed");
+    gPropHost->propSetString(effectProps, kOfxImageEffectPropClipPreferencesSlaveParam, 1, "Output Layer"); // Frame: frame varying
 	if (pluginHasLayerTimes(pluginIndex)) {
 		// layer times: inputs at other frames (getFramesNeeded)
 		gPropHost->propSetInt(effectProps, kOfxImageEffectPropTemporalClipAccess, 0, 1);
@@ -2372,7 +2406,12 @@ static OfxStatus pluginMain(int pluginIndex, const char *action, const void *han
 	}
 	else if (strcmp(action, kOfxImageEffectActionGetTimeDomain) == 0) {
 		return getTemporalDomain(pluginIndex, effect, inArgs, outArgs);
-	}	
+	}
+	else if (strcmp(action, kOfxActionPurgeCaches) == 0) {
+		MyInstanceData* myData = getMyInstanceData(effect);
+		if (myData) pluginPurgeCaches(myData->sequenceDataP);
+		return kOfxStatOK;
+	}
 	} catch (std::bad_alloc) {
 		// catch memory
 		//std::cout << "OFX Plugin Memory error." << std::endl;
