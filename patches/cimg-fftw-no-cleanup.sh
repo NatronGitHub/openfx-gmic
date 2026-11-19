@@ -12,18 +12,18 @@
 # against it: FFTW's cleanup functions don't take the planner lock. Not cleaning up is safe: the
 # planner and the threads are kept until the process exits, and fftw_init_threads() stays in
 # CImg's static initialisation.
-# Fixed upstream in G'MIC 4.0.8 (CImg 408): the FFTs no longer clean up, and the only
-# fftw_cleanup_threads() left is in the destructor of CImg's static FFTW3_static object, run when
-# the plug-in is unloaded (at exit), as proposed in GreycLab/CImg#500. This script then does
-# nothing.
+# Mitigated in G'MIC 4.0.8 (CImg 408), GreycLab/CImg#500 is still open: the FFTs no longer clean
+# up, and the only fftw_cleanup_threads() left is in the destructor of CImg's static FFTW3_static
+# object, run when the plug-in is unloaded (cleanup only at unload, as suggested in #500). This
+# script then does nothing.
 #
 # This script replaces each of the two blocks
 #   #ifndef cimg_use_fftw3_singlethread
 #         fftw_cleanup_threads();
 #   #endif
 # with a one-line comment. "If the fix is already there, don't apply it": the script does nothing
-# on a CImg.h that has the fix (patched, or fixed upstream: no fftw_cleanup* at all, or only the one
-# in ~FFTW3_static(), as in G'MIC 4.0.8), applies it
+# on a CImg.h that has the fix (patched, or fixed upstream: no fftw_cleanup* at all, or mitigated
+# as in G'MIC 4.0.8: only the one in ~FFTW3_static()), applies it
 # to the 4.0.7 or develop code (the two blocks, and no other fftw_cleanup*), and fails on anything
 # else (e.g. after a GMICVER bump that changed this code otherwise), leaving the file untouched:
 # then check what upstream did, and update or remove this patch. Lines are compared without their
@@ -56,7 +56,8 @@ if awk -v cr="$cr" 'index($0, cr) { found = 1; exit } END { exit !found }' "$f";
 fi
 
 # state <file>: number of blocks, of comment lines, of other lines that contain fftw_cleanup, and
-# of 'fftw_cleanup_threads();' lines right after '~FFTW3_static() {' (upstream's fix, G'MIC 4.0.8)
+# of 'fftw_cleanup_threads();' lines right after '~FFTW3_static() {' (upstream's mitigation, in
+# G'MIC 4.0.8)
 state() {
   awk -v b1="$blk1" -v b2="$blk2" -v b3="$blk3" -v cm="$comment" '
     function trim(s) { gsub(/^[ \t]+|[ \t\r]+$/, "", s); return s }
@@ -82,10 +83,10 @@ if [ "$found" = "0 0 0 0" ]; then
   exit 0
 fi
 if [ "$found" = "0 0 0 1" ]; then
-  echo "$f: already fixed upstream (fftw_cleanup_threads() only in ~FFTW3_static(), GreycLab/CImg#500)"
+  echo "$f: already mitigated upstream (fftw_cleanup_threads() only at unload, in ~FFTW3_static(), GreycLab/CImg#500)"
   exit 0
 fi
-[ "$found" = "2 0 0 0" ] || fail "expected the block '$blk1' '$blk2' '$blk3' twice and no other fftw_cleanup*, as in G'MIC 4.0.7, or the patched code, or upstream's fix of G'MIC 4.0.8 (found blocks, comments, other fftw_cleanup* lines, fftw_cleanup_threads() in ~FFTW3_static(): $found)"
+[ "$found" = "2 0 0 0" ] || fail "expected the block '$blk1' '$blk2' '$blk3' twice and no other fftw_cleanup*, as in G'MIC 4.0.7, or the patched code, or upstream's mitigation of G'MIC 4.0.8 (found blocks, comments, other fftw_cleanup* lines, fftw_cleanup_threads() in ~FFTW3_static(): $found)"
 
 awk -v b1="$blk1" -v b2="$blk2" -v b3="$blk3" -v cm="$comment" '
   function trim(s) { gsub(/^[ \t]+|[ \t\r]+$/, "", s); return s }

@@ -73,11 +73,12 @@ gmic_hotfixes_force:
 # COMMERCIAL builds only keep the fixes of commands of their standard library (the others fix
 # code under a licence that these builds leave out, see gmic_stdlib_commercial.txt): a block is
 # left out when its command, or one of its callees, is not in gmic_stdlib_community.h.commands
-# (in "#@hotfix <command> <original> <fixed> [callee:checksum...]", fields 2 and 5 onwards).
+# (in "#@hotfix <command> <original> <fixed> [callee:checksum...]", fields 2 and 5 onwards; not
+# the command when <original> is '-', a command that G'MIC no longer defines).
 ifeq ($(LICENSE),COMMERCIAL)
 HOTFIXES_FILTER = awk -v cmds=gmic_stdlib_community.h.commands ' \
   BEGIN { while ((getline c < cmds) > 0) def[c] = 1; keep = 1 } \
-  /^\#@hotfix / { keep = 1; for (i = 2; i <= NF; i++) if (i == 2 || i > 4) { c = $$i; sub(/:.*/, "", c); if (!(c in def)) keep = 0 } \
+  /^\#@hotfix / { keep = 1; for (i = 2; i <= NF; i++) if ((i == 2 && $$3 != "-") || i > 4) { c = $$i; sub(/:.*/, "", c); if (!(c in def)) keep = 0 } \
     if (!keep) print "gmic_hotfixes.h: leaving out the fix of " $$2 " (not in the COMMERCIAL standard library)" > "/dev/stderr" } \
   keep { print }'
 else
@@ -190,8 +191,8 @@ Licence_pocketfft.txt: pocketfft_hdronly.h
 # - cimg-fftw-no-cleanup.sh: CImg's FFTs no longer call fftw_cleanup_threads() after each FFT,
 #   which frees FFTW's process-wide planner and threads while another plug-in of the host (e.g.
 #   openfx-misc's CImg plug-ins, same shared libfftw3) may be using them
-#   (https://github.com/GreycLab/CImg/issues/500, fixed in G'MIC 4.0.8: CImg only cleans up when
-#   the plug-in is unloaded)
+#   (https://github.com/GreycLab/CImg/issues/500, still open; mitigated in G'MIC 4.0.8: cleanup
+#   only at unload, as suggested in #500)
 # - cimg-pocketfft.sh: let CImg compute its FFTs with pocketfft (cimg_use_pocketfft), which
 #   builds use by default instead of FFTW (only applied for FFT=pocketfft, last, so that CImg.h is
 #   the same as openfx-misc's; https://github.com/GreycLab/CImg/pull/497, in G'MIC 4.0.8)

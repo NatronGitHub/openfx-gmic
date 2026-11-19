@@ -509,7 +509,8 @@ endforeach()
 # built-in definitions at load, see the top of gmic_hotfixes.gmic).
 # COMMERCIAL builds only keep the fixes of the commands of their standard library, as the
 # Makefile does: a "#@hotfix <command> <original> <fixed> [callee:checksum...]" block is left out
-# when its command or a callee is not in GMIC_STDLIB_COMMANDS.
+# when its command (unless <original> is "-": G'MIC no longer defines it) or a callee is not in
+# GMIC_STDLIB_COMMANDS.
 set(GMIC_HOTFIXES "${PROJECT_SOURCE_DIR}/gmic_hotfixes.gmic")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${GMIC_HOTFIXES}")
 file(STRINGS "${GMIC_SRC_DIR}/gmic.h" _line REGEX "^#define gmic_version [0-9]+")
@@ -533,7 +534,7 @@ if(OFX_LICENSE STREQUAL "COMMERCIAL")
   execute_process(COMMAND "${GMIC_AWK}" -v "cmds=${GMIC_STDLIB_COMMANDS}" [=[
     BEGIN { while ((getline c < cmds) > 0) def[c] = 1; keep = 1 }
     { sub(/\r$/, "") }
-    /^#@hotfix / { keep = 1; for (i = 2; i <= NF; i++) if (i == 2 || i > 4) { c = $i; sub(/:.*/, "", c); if (!(c in def)) keep = 0 }
+    /^#@hotfix / { keep = 1; for (i = 2; i <= NF; i++) if ((i == 2 && $3 != "-") || i > 4) { c = $i; sub(/:.*/, "", c); if (!(c in def)) keep = 0 }
       if (!keep) print "gmic_hotfixes.h: leaving out the fix of " $2 " (not in the COMMERCIAL standard library)" > "/dev/stderr" }
     keep { print }]=] "${GMIC_HOTFIXES}"
     OUTPUT_FILE "${_hotfixes}" ERROR_VARIABLE _err RESULT_VARIABLE _r)

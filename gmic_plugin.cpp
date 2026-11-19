@@ -315,9 +315,11 @@ static string gmicChecksum(const string& def)
 // The hot fixes that apply to the G'MIC standard library stdlib. Each block of gmic_hotfixes.gmic
 // starts with '#@hotfix <command> <original> <fixed> [<callee>:<checksum>...]': the FNV-1a 64-bit
 // hashes of the built-in definition the fix was made from, of the fixed definition (the block's
-// own), and of the built-in definitions of the commands the fix relies on. A block is applied if
-// the built-in command is the original one and the callees are unchanged, skipped silently if the
-// built-in command already is the fixed one (fixed upstream), and otherwise skipped with a warning.
+// own), and of the built-in definitions of the commands the fix relies on; <original> is "-" for
+// a command that the built-in G'MIC no longer defines (but still calls). A block is applied if the
+// built-in command is the original one (or, for "-", is not defined) and the callees are
+// unchanged, skipped silently if the built-in command already is the fixed one (fixed upstream),
+// and otherwise skipped with a warning.
 static string gmicGetHotfixes(const string& stdlib)
 {
 	static const string marker = "#@hotfix ";
@@ -372,11 +374,13 @@ static string gmicGetHotfixes(const string& stdlib)
 			const string& expected = checks[i][k].second;
 			const string& def = defs[name];
 			const string found = gmicChecksum(def);
-			// a callee given without a checksum only has to exist
-			if (def.empty() || ((k == 0 || !expected.empty()) && expected != found)) {
+			// a callee given without a checksum only has to exist; a command whose original is "-"
+			// must not exist
+			const bool absent = (k == 0 && expected == "-");
+			if (absent ? !def.empty() : (def.empty() || ((k == 0 || !expected.empty()) && expected != found))) {
 				ok = false;
 				fprintf(stderr, "openfx-gmic: Warning: hot fix for the G'MIC command '%s' not applied: the built-in definition of '%s' %s (checksum %s, the fix is for %s), review it in gmic_hotfixes.gmic\n",
-				        command.c_str(), name.c_str(), def.empty() ? "is missing" : "changed", found.c_str(), expected.c_str());
+				        command.c_str(), name.c_str(), absent ? "exists" : def.empty() ? "is missing" : "changed", found.c_str(), expected.c_str());
 			}
 		}
 		if (ok) {
