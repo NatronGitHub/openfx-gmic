@@ -5,7 +5,6 @@ ports:
   - name: cmake
   - name: ninja
   - name: zlib
-  - name: curl
   - name: libpng
   - name: expat
   - name: gsed
