@@ -96,7 +96,6 @@ gmic_hotfixes.h: gmic_hotfixes.gmic gmic_hotfixes.version gmic_sources.request $
 # gmic.eu may refuse downloads (HTTP 403 seen in 2026): try each mirror in turn, use curl -f so
 # that an HTTP error page is never saved as the tarball, and verify the checksum.
 GMICSRC_SHA256_2.8.4=b2a279bdf981595b30d8d7828fabf9a620cde06eae8db345a8cddf2160c25379
-GMICSRC_SHA256_4.0.7=f84b215f40cb00de37bff5ec801103af211679794c3602d39c5430dab76005de
 GMICSRC_SHA256_4.0.8=de30b742c2c69526732ace3a413d4e81fc08d9cf770c3a7b197298b6ab830b0f
 GMICSRC_SHA256=$(GMICSRC_SHA256_$(GMICVER))
 # GreycLab/gmic on GitHub is the main G'MIC repository, and its releases (3.3.1 and later) attach

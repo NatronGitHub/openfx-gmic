@@ -43,32 +43,17 @@
 #
 #@openfx_gmic_hotfixes 4.0.8
 
-#@hotfix warp_perspective - 65fc5af1f0de72e0
-# G'MIC 4.0.8 removed warp_perspective from its standard library (src/gmic_stdlib.gmic): only
-# include/prawnsushi.gmic (gmic-community, CeCILL v2.0) still defines it, with the same code, so
-# this block is skipped on GPL builds. COMMERCIAL builds leave prawnsushi.gmic out: this block
-# restores the command there, for fx_warp_perspective below.
-# From src/gmic_stdlib.gmic of G'MIC 4.0.7 (CeCILL-C / CeCILL v2.1), unchanged.
-warp_perspective : skip ${1=1.5},${2=0},${3=1},${4=50},${5=50},${6=2}
-  e[^-1] "Apply perspective warp to image$?, with angles ($1 deg.,$2 deg.), zoom $3 and offsets ($4,$5)."
-  foreach {
-    (0,100) -. $4 /. 100 (0;100) -. $5 /. 100 r[-2,-1] ...,...,...,1,3
-    +*.. $2 +*.. $1 +[-2,-1] +. $3 /... . /[-2,-1]
-    *.. 100 +.. $4 /.. 100 *.. {-3,w}
-    *. 100 +. $5 /. 100 *. {-3,h}
-    a[-2,-1] c warp.. .,0,1,$6 rm.
-  }
-
-#@hotfix fx_warp_perspective - ecff3251b9731b36
+#@hotfix fx_warp_perspective - ecff3251b9731b36 warp_perspective
 # G'MIC 4.0.8 replaced the filter Perspective (fx_warp_perspective) with a new one
 # (fx_perspective), and removed fx_warp_perspective, which three filters of
 # include/sylvie_alexandre.gmic (gmic-community) still call with their "Perspective - Param A"
 # shape: Degrades HSL TSL (samj_Degrades_HSL_TSL), Formes Couleurs Variees Dans Image
 # (samj_Formes_Couleurs_Variees_Dans_Image) and Motifs Degrades CIE (samj_Degrades_XYZ_CIE)
 # fail with "Unknown command 'fx_warp_perspective'". Upstream: https://github.com/GreycLab/gmic-community/issues/312.
-# From src/gmic_stdlib.gmic of G'MIC 4.0.7, unchanged. It calls warp_perspective, restored
-# above when the built-in G'MIC doesn't define it (not listed as a callee: the block above
-# checks it, and COMMERCIAL builds would otherwise leave this block out).
+# From src/gmic_stdlib.gmic of G'MIC 4.0.7, unchanged. It calls warp_perspective, which G'MIC
+# 4.0.8 only defines in include/prawnsushi.gmic: a callee without a checksum, which only has to
+# exist. COMMERCIAL builds leave prawnsushi.gmic out, so they leave this block out too (their
+# "Perspective - Param A" shape of these filters fails until upstream fixes it).
 fx_warp_perspective :
   if !$8 to_a fi
   shift $6%,$7%,0,0,2 warp_perspective $1,$2,$3,$4,$5,$8
