@@ -8,10 +8,10 @@
 # licence allows it, the way G'MIC builds its update file ('parse_gui update'). Then the filters
 # and commands listed below are removed.
 #
-# gmic-community commit: the last one before G'MIC 4.0.7's update file was generated (2026/10/28);
+# gmic-community commit: the last one before G'MIC 4.0.8's update file was generated (2026/11/19);
 # with all its include/*.gmic files (but template.gmic), 'parse_gui update' gives the same filters
-# and code as the gmic_stdlib_community.h of the G'MIC 4.0.7 tarball. Update it with GMICVER.
-commit 5147ed545971d22c52bb8039554eb33e1cedde6a
+# and code as the gmic_stdlib_community.h of the G'MIC 4.0.8 tarball. Update it with GMICVER.
+commit 89786fe3cf5f9d71a18ec32e186a2c0ffb638996
 
 # community <file> <sha256> <licence, from the file header>
 # Files without a licence in their header are under CeCILL-B (BSD-like), see include/COPYING
@@ -20,8 +20,8 @@ commit 5147ed545971d22c52bb8039554eb33e1cedde6a
 # "Same licence as G'MIC" (arto_huotari, sylvie_alexandre) is taken as G'MIC's dual CeCILL-C /
 # CeCILL v2.1 licence (maintainer's decision).
 community andreas_pahlsson d68d0a58282ae5a1baddd7b61959d9e6c66d97cbc7d296e5040a11e452f1528e CeCILL-B (no licence in the header)
-community andy_kelday 006c73b50339488e3adf5448f46d76db5008fa786014abfded2a50c8d3d80306 dual CeCILL-C / CeCILL v2.1
-community arto_huotari e5b793c35b6457dc9c01bc21a2b01cecffe327a8c13e8cb064fa03f05a20bf33 "lisenced under the same Cecill lisence as G'MIC"
+community andy_kelday 0b13b852251d00f057ec881794919bb67520931df4e78d0dc82b2a17e8fc990a dual CeCILL-C / CeCILL v2.1
+community arto_huotari 2c200844f0b93fc7d4792ae71aec40ab6516883d3038e310e873bcbe97ca3a3e "lisenced under the same Cecill lisence as G'MIC"
 community gentlemanbeggar c44ea6b5522f226ea4e6dab6c02f59e318b6a7609e3f2970a452188fd4ed3157 CeCILL-B (no licence in the header)
 community giniart 3e2329734d1b41a76d63b9df2517296078963eb93e862a34cab3b22155a6daac CeCILL-B (no licence in the header)
 community jerome_boulanger 5d5ddbdc66b2d6da3eeb3c68fb6fb870dcf6f22849a07487f4a23cd849295c83 dual CeCILL-C / CeCILL v2.1
@@ -29,8 +29,8 @@ community jerome_ferrari bc16e63e3e1bef68a76da52489390dbeaf8867b1b4773cd5dd1c50a
 community marcos_capelini 89f205a5ec41174388bc5f8d15d5ecfad8a641ab5964a4fea3970b26e3aa4c4d CeCILL-B (no licence in the header)
 community photocomix aae69fcec7696c204dcef3b9a5d8a23516ed04a68456456f7fc4d89011f44f9b CeCILL-B (no licence in the header)
 community stanislav_paskalev 5d08b87167153aa5120f63b4157340cdffb2f0425c2c8287b80fc4fdb4962a49 public domain
-community sylvie_alexandre 1cd2df5e6413e3076e1b0be4c300d87feb5e6504a022392bea83cc8f798c2878 "La licence des filtres est la même que celle de G'MIC"
-community tom_keil d31ec1e24c462b9e3bbf5d71a8834cc2302f38f7548aa5e78a926444a02544d9 CeCILL-B (no licence in the header)
+community sylvie_alexandre f819b0eeb43f14a0bed54703378c33d64e046f4d1d1dee8d008366869584815d "La licence des filtres est la même que celle de G'MIC"
+community tom_keil a340032e54e3c1b313787c88a76fb010749c027a26f4d48e89d0562c0d3ffff9 CeCILL-B (no licence in the header)
 
 # Community files left out:
 #  CeCILL v2.0 or v2.1 only (no CeCILL-C option): afre, claude_lion (header: CeCILL v2.1, text:

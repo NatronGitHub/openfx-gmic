@@ -67,7 +67,7 @@ SKIP = {
     'eu.gmic.ReverseEngineerGradientMap': "export-only (G'MIC-Qt's Export button): fails on purpose with "
                                           "'This filter does nothing on host!'",
 }
-# Plug-ins that fail with their default parameters, checked with G'MIC 4.0.7 and the hot fixes of
+# Plug-ins that fail with their default parameters, checked with G'MIC 4.0.8 and the hot fixes of
 # gmic_hotfixes.gmic: in G'MIC itself (also with the gmic command line), in the plug-in
 # ("plug-in:"), or because of this test ("test:", e.g. every layer input is connected). Each entry
 # is (the error that the plug-in's log must contain, the reason). An expected failure only counts

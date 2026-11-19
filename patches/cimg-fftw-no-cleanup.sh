@@ -11,14 +11,19 @@
 # and then uses freed memory. fftw_make_planner_thread_safe() (gmic_plugin.cpp) doesn't protect
 # against it: FFTW's cleanup functions don't take the planner lock. Not cleaning up is safe: the
 # planner and the threads are kept until the process exits, and fftw_init_threads() stays in
-# CImg's static initialisation. Same in GreycLab/CImg develop.
+# CImg's static initialisation.
+# Fixed upstream in G'MIC 4.0.8 (CImg 408): the FFTs no longer clean up, and the only
+# fftw_cleanup_threads() left is in the destructor of CImg's static FFTW3_static object, run when
+# the plug-in is unloaded (at exit), as proposed in GreycLab/CImg#500. This script then does
+# nothing.
 #
 # This script replaces each of the two blocks
 #   #ifndef cimg_use_fftw3_singlethread
 #         fftw_cleanup_threads();
 #   #endif
 # with a one-line comment. "If the fix is already there, don't apply it": the script does nothing
-# on a CImg.h that has the fix (patched, or fixed upstream: no fftw_cleanup* at all), applies it
+# on a CImg.h that has the fix (patched, or fixed upstream: no fftw_cleanup* at all, or only the one
+# in ~FFTW3_static(), as in G'MIC 4.0.8), applies it
 # to the 4.0.7 or develop code (the two blocks, and no other fftw_cleanup*), and fails on anything
 # else (e.g. after a GMICVER bump that changed this code otherwise), leaving the file untouched:
 # then check what upstream did, and update or remove this patch. Lines are compared without their
@@ -50,7 +55,8 @@ if awk -v cr="$cr" 'index($0, cr) { found = 1; exit } END { exit !found }' "$f";
   fail "CRLF line endings are not supported (extract CImg.h with LF line endings)"
 fi
 
-# state <file>: number of blocks, of comment lines, and of other lines that contain fftw_cleanup
+# state <file>: number of blocks, of comment lines, of other lines that contain fftw_cleanup, and
+# of 'fftw_cleanup_threads();' lines right after '~FFTW3_static() {' (upstream's fix, G'MIC 4.0.8)
 state() {
   awk -v b1="$blk1" -v b2="$blk2" -v b3="$blk3" -v cm="$comment" '
     function trim(s) { gsub(/^[ \t]+|[ \t\r]+$/, "", s); return s }
@@ -59,22 +65,27 @@ state() {
       for (i = 1; i <= n; ++i) {
         if (i + 2 <= n && t[i] == b1 && t[i + 1] == b2 && t[i + 2] == b3) { ++blocks; i += 2; continue }
         if (t[i] == cm) ++comments
+        else if (i > 1 && t[i - 1] == "~FFTW3_static() {" && t[i] == b2) ++dtor
         else if (t[i] ~ /fftw[fl]?_cleanup/) ++others
       }
-      print blocks + 0, comments + 0, others + 0
+      print blocks + 0, comments + 0, others + 0, dtor + 0
     }' "$1"
 }
 
 found=$(state "$f")
-if [ "$found" = "0 2 0" ]; then
+if [ "$found" = "0 2 0 0" ]; then
   echo "$f: already patched (no fftw_cleanup_threads() after each FFT)"
   exit 0
 fi
-if [ "$found" = "0 0 0" ]; then
+if [ "$found" = "0 0 0 0" ]; then
   echo "$f: already fixed upstream (no fftw_cleanup* call)"
   exit 0
 fi
-[ "$found" = "2 0 0" ] || fail "expected the block '$blk1' '$blk2' '$blk3' twice and no other fftw_cleanup*, as in G'MIC 4.0.7 and GreycLab/CImg develop, or the patched code (found blocks, comments, other fftw_cleanup* lines: $found)"
+if [ "$found" = "0 0 0 1" ]; then
+  echo "$f: already fixed upstream (fftw_cleanup_threads() only in ~FFTW3_static(), GreycLab/CImg#500)"
+  exit 0
+fi
+[ "$found" = "2 0 0 0" ] || fail "expected the block '$blk1' '$blk2' '$blk3' twice and no other fftw_cleanup*, as in G'MIC 4.0.7, or the patched code, or upstream's fix of G'MIC 4.0.8 (found blocks, comments, other fftw_cleanup* lines, fftw_cleanup_threads() in ~FFTW3_static(): $found)"
 
 awk -v b1="$blk1" -v b2="$blk2" -v b3="$blk3" -v cm="$comment" '
   function trim(s) { gsub(/^[ \t]+|[ \t\r]+$/, "", s); return s }
@@ -90,7 +101,7 @@ awk -v b1="$blk1" -v b2="$blk2" -v b3="$blk3" -v cm="$comment" '
       print o[i]
     }
   }' "$f" > "$f.patched" || fail "awk failed"
-[ "$(state "$f.patched")" = "0 2 0" ] || fail "the patch did not apply"
+[ "$(state "$f.patched")" = "0 2 0 0" ] || fail "the patch did not apply"
 [ "$(wc -l < "$f.patched")" -eq $(($(wc -l < "$f") - 4)) ] || fail "the patch changed the number of lines unexpectedly"
 # nothing else changed: without the blocks and the comments, both files are the same
 awk -v b1="$blk1" -v b2="$blk2" -v b3="$blk3" '
