@@ -36,6 +36,14 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
   message(FATAL_ERROR "Prevented in-tree build: use a build directory (cmake -B build).")
 endif()
 
+# macOS: the minimum macOS version is 14.0 (VFX Reference Platform CY2027), as openfx's
+# Makefile.master; set before project(). An explicit CMAKE_OSX_DEPLOYMENT_TARGET,
+# MACOSX_DEPLOYMENT_TARGET or toolchain file wins.
+if(CMAKE_HOST_APPLE AND NOT CMAKE_TOOLCHAIN_FILE AND (NOT CMAKE_SYSTEM_NAME OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+   AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET AND "$ENV{MACOSX_DEPLOYMENT_TARGET}" STREQUAL "")
+  set(CMAKE_OSX_DEPLOYMENT_TARGET 14.0 CACHE STRING "Minimum macOS version")
+endif()
+
 project(OpenFXGMIC CXX)
 
 if(NOT EXISTS "${PROJECT_SOURCE_DIR}/openfx/include")
