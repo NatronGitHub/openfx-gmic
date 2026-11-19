@@ -69,8 +69,11 @@ Downloads: the plug-in doesn't use libcurl, on any system. The filters that down
 of Color Presets and Simulate Film, CNN networks, sample images...) run the system's curl command:
 /usr/bin/curl on macOS, curl.exe from the system directory (System32, part of Windows 10 1803 and
 later; then PowerShell) on Windows, and curl, or wget if curl fails, from PATH on Linux. The
-command is never looked up in the host's current directory. Without it, these filters fail with
-"Unreachable network file".
+plug-in sets these paths, so that CImg doesn't look for the commands in the host's current
+directory first (a PATH that contains "." or an empty entry still does). Without them, these
+filters fail with "Unreachable network file". Unlike the libcurl code of earlier builds, the curl
+command verifies TLS certificates: downloads may fail behind a proxy that intercepts TLS with a
+certificate that the system doesn't trust.
 
 Building with make
 ------------------

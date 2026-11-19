@@ -173,12 +173,14 @@ jobs:
             --subset pr --jobs 2 --work render-ofx14
       # no libcurl: G'MIC downloads with the curl command (cimg::load_network). Add Grain
       # downloads its grain images (gmic_grain.gmz, from gmic.eu) into G'MIC's cache, here an empty
-      # GMIC_CACHE_PATH (Color Presets downloads only for a preset other than the default)
+      # GMIC_CACHE_PATH (Color Presets downloads only for a preset other than the default).
+      # OFX_GMIC_TEST_CURL_ONLY (gmic_plugin_call.cpp): no wget or PowerShell fallback, so the
+      # download succeeds only through the curl command
       - name: Download filter data with the curl command (Add Grain)
         if: env.BUILD_VARIANTS == 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/gmic-cache"
-          GMIC_CACHE_PATH="$RUNNER_TEMP/gmic-cache/" python3 .github/workflows/render_plugins.py --host build \
+          OFX_GMIC_TEST_CURL_ONLY=1 GMIC_CACHE_PATH="$RUNNER_TEMP/gmic-cache/" python3 .github/workflows/render_plugins.py --host build \
             --plugins build/Plugins --list plugins.txt --only eu.gmic.AddGrain --work render-download
           find "$RUNNER_TEMP/gmic-cache" -name 'gmic_grain*' -size +0 -exec ls -l {} + | grep . ||
             { echo "FAIL: gmic_grain.gmz was not downloaded"; exit 1; }
@@ -423,7 +425,7 @@ jobs:
         if: env.BUILD_VARIANTS == 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/gmic-cache"
-          GMIC_CACHE_PATH="$RUNNER_TEMP/gmic-cache/" python3 .github/workflows/render_plugins.py --host build \
+          OFX_GMIC_TEST_CURL_ONLY=1 GMIC_CACHE_PATH="$RUNNER_TEMP/gmic-cache/" python3 .github/workflows/render_plugins.py --host build \
             --plugins install/OFX/Plugins --list plugins.txt --only eu.gmic.AddGrain --work render-download
           find "$RUNNER_TEMP/gmic-cache" -name 'gmic_grain*' -size +0 -exec ls -l {} + | grep . ||
             { echo "FAIL: gmic_grain.gmz was not downloaded"; exit 1; }
@@ -542,6 +544,22 @@ jobs:
           python3 .github/workflows/render_plugins.py --host build \
             --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset pr --jobs 2
+      # Windows' own curl.exe (System32), which the plug-in runs: its version and features, and the
+      # command line of CImg's cimg::load_network() (with and without --compressed, which
+      # patches/cimg-curl-compressed.sh leaves out on Windows), on gmic.eu's gmic_grain.gmz
+      - name: System curl.exe (diagnostic)
+        if: env.BUILD_VARIANTS == 'true'
+        run: |
+          curl_exe="$(cygpath -u "$SYSTEMROOT")/System32/curl.exe"
+          "$curl_exe" -V
+          for opt in --compressed ""; do
+            rm -f curl-test.gmz
+            rc=0
+            "$curl_exe" -L --max-redirs 20 -A "CImg" -f --silent $opt -o curl-test.gmz \
+              "https://gmic.eu/gmic_grain.gmz" || rc=$?
+            echo "curl.exe ${opt:-(no --compressed)}: exit status $rc, $(wc -c < curl-test.gmz 2>/dev/null || echo 0) bytes"
+          done
+          rm -f curl-test.gmz
       # with System32's curl.exe (see the Linux job)
       - name: Download filter data with the curl command (Add Grain)
         if: env.BUILD_VARIANTS == 'true'
@@ -549,7 +567,7 @@ jobs:
           set -eo pipefail
           cache="$(cygpath -u "$RUNNER_TEMP")/gmic-cache"
           mkdir -p "$cache"
-          GMIC_CACHE_PATH="$(cygpath -m "$cache")/" python3 .github/workflows/render_plugins.py --host build \
+          OFX_GMIC_TEST_CURL_ONLY=1 GMIC_CACHE_PATH="$(cygpath -m "$cache")/" python3 .github/workflows/render_plugins.py --host build \
             --plugins build/Plugins --list plugins.txt --only eu.gmic.AddGrain --work render-download
           find "$cache" -name 'gmic_grain*' -size +0 -exec ls -l {} + | grep . ||
             { echo "FAIL: gmic_grain.gmz was not downloaded"; exit 1; }

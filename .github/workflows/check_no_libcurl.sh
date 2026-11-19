@@ -1,9 +1,9 @@
 #!/bin/bash
-# Check that a GMIC.ofx.bundle doesn't use libcurl, on any system: G'MIC downloads filter data with
-# the system's curl command (see gmic_plugin_call.cpp). GMIC.ofx must not link libcurl (macOS:
-# otool -L, Windows: objdump -p; Linux: check_linux_deps.sh also checks it), and the bundle must not
-# contain a libcurl library (macOS Contents/Libraries, Windows Contents/Win64, after osxDeploy.sh
-# or bundle_libs.sh).
+# Check that a macOS or Windows GMIC.ofx.bundle doesn't use libcurl (Linux: check_linux_deps.sh).
+# G'MIC downloads filter data with the system's curl command (see gmic_plugin_call.cpp): GMIC.ofx
+# must not link libcurl (macOS: otool -L, Windows: objdump -p), and the bundle must not contain a
+# libcurl library (macOS Contents/Libraries, Windows Contents/Win64, after osxDeploy.sh or
+# bundle_libs.sh).
 # Usage: check_no_libcurl.sh <GMIC.ofx.bundle>
 set -euo pipefail
 bundle=${1:?usage: $0 <GMIC.ofx.bundle>}
@@ -11,7 +11,6 @@ ofx=$(find "$bundle/Contents" -type f -name GMIC.ofx | head -1)
 [ -n "$ofx" ] || { echo "Error: no GMIC.ofx in $bundle"; exit 1; }
 case $(uname -s) in
     Darwin) libs=$(otool -L "$ofx" | tail -n +2 | awk '{print $1}') ;;
-    Linux) libs=$(readelf -d "$ofx" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p') ;;
     *) libs=$(objdump -p "$ofx" | sed -n 's/.*DLL Name: //p') ;;
 esac
 status=0
