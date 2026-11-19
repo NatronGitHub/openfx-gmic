@@ -8,8 +8,8 @@
 # FFT: the library that computes G'MIC's Fourier transforms (CImg's own FFT only handles
 # power-of-two image sizes, and fails on others):
 # - pocketfft (default): pocketfft (BSD-3-Clause, header-only, downloaded at a pinned commit),
-#   through patches/cimg-pocketfft.sh (applied only for FFT=pocketfft), for every LICENSE, as in
-#   openfx-misc (https://github.com/NatronGitHub/openfx-misc/pull/171);
+#   through CImg's cimg_use_pocketfft (https://github.com/GreycLab/CImg/pull/497, in G'MIC 4.0.8),
+#   for every LICENSE, as in openfx-misc (https://github.com/NatronGitHub/openfx-misc/pull/171);
 # - fftw3: FFTW (GPL, needs FFTW >= 3.3.5 and fftw3_threads), opt-in, for GPL builds only.
 # Empty (also LICENSE= or FFT= on the command line): the default. override, so that it also
 # replaces an empty command-line value, which would otherwise build with CImg's own FFT.

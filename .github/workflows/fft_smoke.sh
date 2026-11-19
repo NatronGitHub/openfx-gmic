@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build a G'MIC command-line interpreter from the sources of a build ('make sources' or CMake:
-# CImg.h patched for pocketfft, the standard library of the build), with the default FFT
+# CImg.h with cimg_use_pocketfft, the standard library of the build), with the default FFT
 # (pocketfft, cimg_use_pocketfft), and render FFT-based filters on a 720x576 image (not a power of
 # two, which CImg's own FFT rejects): FFT round trip, Fourier Transform, Bandpass.
 # Usage (from the top-level directory, where gmic_<version>.tar.gz is): fft_smoke.sh [<sources dir>]

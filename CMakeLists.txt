@@ -72,7 +72,7 @@ endif()
 # the hot fixes of its commands only.
 # FFT: the Makefile's FFT, the library of G'MIC's Fourier transforms (CImg's own FFT fails on image
 # sizes that are not powers of two): fftw3 (FFTW, GPL) or pocketfft (BSD-3-Clause, header-only,
-# downloaded at the Makefile's POCKETFFTCOMMIT, through patches/cimg-pocketfft.sh). Empty (default):
+# downloaded at the Makefile's POCKETFFTCOMMIT, through CImg's cimg_use_pocketfft). Empty (default):
 # pocketfft for every licence, as in openfx-misc; fftw3 is opt-in, for GPL builds only.
 set(OFX_LICENSE "GPL" CACHE STRING "GPL, or COMMERCIAL (no FFTW, no GPL or CeCILL-only filters)")
 set_property(CACHE OFX_LICENSE PROPERTY STRINGS GPL COMMERCIAL)
@@ -266,26 +266,21 @@ if(OFX_LICENSE STREQUAL "GPL")
 endif()
 
 # Local patches to the extracted G'MIC sources, read from the Makefile, so that both builds apply
-# the same scripts in the same order (see patches/): GMIC_PATCHES on gmic.h and gmic.cpp,
-# CIMG_PATCHES on CImg.h, then CIMG_PATCHES_POCKETFFT with FFT=pocketfft. Each runs as
+# the same scripts in the same order (see patches/): CIMG_PATCHES on CImg.h. Each runs as
 # "sh patches/<script> <file>" on the fresh copy, and fails if the source doesn't contain the
 # expected code (e.g. after a GMICVER bump).
 # The patches need a POSIX sh (Linux, macOS, MSYS2; with MSVC, e.g. Git for Windows' sh.exe in the
 # PATH, or -DGMIC_PATCH_SH=<path>). Without one, only the patches that don't change this platform's
 # code are skipped (with a warning): those listed in _gmic_patch_platform (<script>:<CMake
-# condition variable>); any other patch (e.g. a CImg.h fix) makes sh required everywhere.
-set(_gmic_patch_platform gmic-apple-abort.sh:APPLE) # abort support, only compiled on macOS (#41)
-gmic_makefile_var(GMIC_PATCHES _mk_gmic_patches)
+# condition variable>, none at the moment); any other patch (e.g. a CImg.h fix) makes sh required
+# everywhere.
+set(_gmic_patch_platform "")
 gmic_makefile_var(CIMG_PATCHES _mk_cimg_patches)
-gmic_makefile_var(CIMG_PATCHES_POCKETFFT _mk_cimg_patches_pocketfft)
-if(NOT _mk_gmic_patches OR NOT _mk_cimg_patches OR NOT _mk_cimg_patches_pocketfft)
-  message(FATAL_ERROR "Could not read GMIC_PATCHES, CIMG_PATCHES and CIMG_PATCHES_POCKETFFT from ${GMIC_MAKEFILE}")
+if(NOT _mk_cimg_patches)
+  message(FATAL_ERROR "Could not read CIMG_PATCHES from ${GMIC_MAKEFILE}")
 endif()
 set(_patches "")
-set(_gmic_patch_lists "_mk_gmic_patches:gmic.h" "_mk_gmic_patches:gmic.cpp" "_mk_cimg_patches:CImg.h")
-if(GMIC_FFT STREQUAL "pocketfft")
-  list(APPEND _gmic_patch_lists "_mk_cimg_patches_pocketfft:CImg.h")
-endif()
+set(_gmic_patch_lists "_mk_cimg_patches:CImg.h")
 find_program(GMIC_PATCH_SH sh)
 set(_gmic_patch_key "${GMICVER} ${GMICSRC_SHA256} ${_gmic_extract} sh=${GMIC_PATCH_SH}")
 foreach(_entry IN LISTS _gmic_patch_lists)
@@ -638,7 +633,7 @@ if(MSVC)
 endif()
 
 # FFT library (FFT), for Fourier transforms of any image size: FFTW, multithreaded, or pocketfft
-# (header-only, patches/cimg-pocketfft.sh). COMMERCIAL: the parser does not report the curated
+# (header-only, CImg's cimg_use_pocketfft). COMMERCIAL: the parser does not report the curated
 # filters that its standard library leaves out.
 if(GMIC_FFT STREQUAL "fftw3")
   target_compile_definitions(GMIC PRIVATE cimg_use_fftw3)

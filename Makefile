@@ -49,8 +49,8 @@ sources: $(GMICSOURCES) gmic_stdlib_community.h gmic_hotfixes.h $(if $(filter po
 	@printf '%s\nFFT=%s\n' '$(LICENSE)' '$(FFT)' | cmp -s - gmic_sources.license || \
 	  { printf '%s\nFFT=%s\n' '$(LICENSE)' '$(FFT)' > gmic_sources.license.tmp && mv gmic_sources.license.tmp gmic_sources.license; }
 
-# The LICENSE and FFT the sources are made for (CImg.h is only patched for pocketfft;
-# gmic_stdlib_community.h and gmic_hotfixes.h depend on LICENSE): they are made again when these
+# The LICENSE and FFT the sources are made for (gmic_stdlib_community.h and gmic_hotfixes.h
+# depend on LICENSE; CImg.h is the same for every LICENSE and FFT): they are made again when these
 # change.
 gmic_sources.request: gmic_hotfixes_force
 	@printf '%s %s\n' '$(LICENSE)' '$(FFT)' | cmp -s - $@ || \
@@ -133,7 +133,6 @@ $(GMICSRC):
 # compiled from older sources (GMIC_OFX/Makefile rebuilds them when the G'MIC headers change).
 $(GMICSOURCES): $(GMICSRC)
 	tar -m --strip-components 2 -zxvf $< $(patsubst %,$(GMICSRCDIR)/src/%, $@)
-	@case $@ in gmic.h|gmic.cpp) for p in $(GMIC_PATCHES); do sh $$p $@ || { rm -f $@; exit 1; }; done;; esac
 	@case $@ in CImg.h) for p in $(CIMG_PATCHES); do sh $$p $@ || { rm -f $@; exit 1; }; done;; esac
 
 # G'MIC's standard library with the community filters: from the tarball (GPL builds), or, for
@@ -169,42 +168,15 @@ Licence_pocketfft.txt: pocketfft_hdronly.h
 	grep -q 'Redistributions in binary form must reproduce' $@.tmp
 	mv $@.tmp $@
 
-# Local patches to the extracted G'MIC sources (re-extracted when a patch changes). Each one does
-# nothing on sources that already have its fix: with G'MIC 4.0.8, only cimg-omp-rand.sh changes
-# CImg.h, the others are kept for the CImg.h of other versions (openfx-misc copies these scripts):
-# - gmic-apple-abort.sh: enable G'MIC's abort support on macOS too, without which an error inside
-#   an OpenMP loop terminates the host (https://github.com/NatronGitHub/openfx-gmic/issues/41,
-#   reported upstream as https://github.com/GreycLab/gmic/issues/219, fixed in G'MIC 4.0.8)
-# - cimg-math-macro-overread.sh: the math parser reads past the end of a macro body ending with an
-#   argument name (https://github.com/GreycLab/CImg/issues/496, fixed in G'MIC 4.0.8)
+# Local patch to CImg.h, extracted from the G'MIC sources (re-extracted when the patch changes):
 # - cimg-omp-rand.sh: the random numbers of rand, noise and the math parser in OpenMP loops do not
 #   depend on thread scheduling, so that most seeded filters give the same result at each render
 #   (https://github.com/NatronGitHub/openfx-gmic/issues/44)
-# - cimg-ij-boundary.sh: i(), j(), I() and J() read out of bounds with linear or cubic
-#   interpolation when an integer coordinate is outside the image, which crashes "Spiral
-#   Distortion" on small inputs (https://github.com/GreycLab/CImg/issues/498, backport of
-#   https://github.com/GreycLab/CImg/commit/41e121cf9047910a30d5f0336ca0edc0d8ed2473, fixed in
-#   G'MIC 4.0.8)
-# - cimg-symmetric-eigen.sh: eigen and eig() return NaN eigenvectors for rank-deficient symmetric
-#   matrices, e.g. in Smooth [Patch-PCA] (https://github.com/GreycLab/gmic/issues/221,
-#   https://github.com/NatronGitHub/openfx-gmic/issues/71, fixed in G'MIC 4.0.8)
-# - cimg-fftw-no-cleanup.sh: CImg's FFTs no longer call fftw_cleanup_threads() after each FFT,
-#   which frees FFTW's process-wide planner and threads while another plug-in of the host (e.g.
-#   openfx-misc's CImg plug-ins, same shared libfftw3) may be using them
-#   (https://github.com/GreycLab/CImg/issues/500, still open; mitigated in G'MIC 4.0.8: cleanup
-#   only at unload, as suggested in #500)
-# - cimg-pocketfft.sh: let CImg compute its FFTs with pocketfft (cimg_use_pocketfft), which
-#   builds use by default instead of FFTW (only applied for FFT=pocketfft, last, so that CImg.h is
-#   the same as openfx-misc's; https://github.com/GreycLab/CImg/pull/497, in G'MIC 4.0.8)
-# CMakeLists.txt reads GMIC_PATCHES, CIMG_PATCHES and CIMG_PATCHES_POCKETFFT (plain one-line
-# assignments, see above), and applies them in the same order.
-GMIC_PATCHES = patches/gmic-apple-abort.sh
-gmic.h gmic.cpp: $(GMIC_PATCHES)
-CIMG_PATCHES_POCKETFFT = patches/cimg-pocketfft.sh
-CIMG_PATCHES = patches/cimg-math-macro-overread.sh patches/cimg-omp-rand.sh patches/cimg-ij-boundary.sh patches/cimg-symmetric-eigen.sh patches/cimg-fftw-no-cleanup.sh
-ifeq ($(FFT),pocketfft)
-CIMG_PATCHES += $(CIMG_PATCHES_POCKETFFT)
-endif
+# G'MIC 4.0.8 has the fixes of the other patches that 4.0.7 needed (see CHANGELOG.md), and CImg's
+# pocketfft support (cimg_use_pocketfft, https://github.com/GreycLab/CImg/pull/497).
+# CMakeLists.txt reads CIMG_PATCHES (a plain one-line assignment, see above), and applies the
+# scripts in the same order.
+CIMG_PATCHES = patches/cimg-omp-rand.sh
 CImg.h: gmic_sources.request $(CIMG_PATCHES)
 
 distclean: clean

@@ -90,7 +90,7 @@ FFT_MODULES = fftw3
 FFT_LIBS = -lfftw3_threads
 endif
 ifeq ($(FFT),pocketfft)
-# pocketfft (BSD-3-Clause, the default), header-only, multithreaded (patches/cimg-pocketfft.sh)
+# pocketfft (BSD-3-Clause, the default), header-only, multithreaded (CImg's cimg_use_pocketfft)
 FFT_CXXFLAGS = -Dcimg_use_pocketfft
 # Windows: single-threaded pocketfft. Its static thread pool is destroyed when the host unloads
 # the plug-in (FreeLibrary): the destructor joins the worker threads under the loader lock, which
