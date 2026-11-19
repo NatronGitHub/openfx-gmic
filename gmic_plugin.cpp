@@ -315,9 +315,11 @@ static string gmicChecksum(const string& def)
 // The hot fixes that apply to the G'MIC standard library stdlib. Each block of gmic_hotfixes.gmic
 // starts with '#@hotfix <command> <original> <fixed> [<callee>:<checksum>...]': the FNV-1a 64-bit
 // hashes of the built-in definition the fix was made from, of the fixed definition (the block's
-// own), and of the built-in definitions of the commands the fix relies on. A block is applied if
-// the built-in command is the original one and the callees are unchanged, skipped silently if the
-// built-in command already is the fixed one (fixed upstream), and otherwise skipped with a warning.
+// own), and of the built-in definitions of the commands the fix relies on; <original> is "-" for
+// a command that the built-in G'MIC no longer defines (but still calls). A block is applied if the
+// built-in command is the original one (or, for "-", is not defined) and the callees are
+// unchanged, skipped silently if the built-in command already is the fixed one (fixed upstream),
+// and otherwise skipped with a warning.
 static string gmicGetHotfixes(const string& stdlib)
 {
 	static const string marker = "#@hotfix ";
@@ -372,11 +374,13 @@ static string gmicGetHotfixes(const string& stdlib)
 			const string& expected = checks[i][k].second;
 			const string& def = defs[name];
 			const string found = gmicChecksum(def);
-			// a callee given without a checksum only has to exist
-			if (def.empty() || ((k == 0 || !expected.empty()) && expected != found)) {
+			// a callee given without a checksum only has to exist; a command whose original is "-"
+			// must not exist
+			const bool absent = (k == 0 && expected == "-");
+			if (absent ? !def.empty() : (def.empty() || ((k == 0 || !expected.empty()) && expected != found))) {
 				ok = false;
 				fprintf(stderr, "openfx-gmic: Warning: hot fix for the G'MIC command '%s' not applied: the built-in definition of '%s' %s (checksum %s, the fix is for %s), review it in gmic_hotfixes.gmic\n",
-				        command.c_str(), name.c_str(), def.empty() ? "is missing" : "changed", found.c_str(), expected.c_str());
+				        command.c_str(), name.c_str(), absent ? "exists" : def.empty() ? "is missing" : "changed", found.c_str(), expected.c_str());
 			}
 		}
 		if (ok) {
@@ -529,9 +533,10 @@ static string layerTimesNote(const EffectData& effectData)
 // - FFTW's planner is made thread-safe, once per process, at the first plug-in load (FFTW >=
 //   3.3.5, in libfftw3_threads; CImg calls fftw_init_threads at library initialisation, calling
 //   it again is harmless);
-// - CImg no longer calls fftw_cleanup_threads() after each FFT (patches/cimg-fftw-no-cleanup.sh):
-//   that frees the planner and the threads without the planner lock, while another plug-in may
-//   be planning or executing an FFT.
+// - CImg no longer calls fftw_cleanup_threads() after each FFT (since G'MIC 4.0.8: only when the
+//   plug-in is unloaded, https://github.com/GreycLab/CImg/issues/500): that freed the planner and
+//   the threads without the planner lock, while another plug-in may be planning or executing an
+//   FFT.
 // fftw_plan_with_nthreads(), called by CImg before each plan, remains a process-wide setting: a
 // plug-in may plan with another one's thread count (performance only, results are the same).
 static void makeFftwThreadSafe()
