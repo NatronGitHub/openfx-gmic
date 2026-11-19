@@ -31,9 +31,13 @@ name: Continuous Integration
 # allowed) and with
 # check_linux_deps.sh (what linuxCheckBundle.sh doesn't check); the nightly and on-demand runs also
 # build with the Makefile on Rocky Linux 9 (GCC 11, glibc 2.34), Natron 2.6's Linux baseline,
-# checked with linuxCheckBundle.sh's defaults (EL9). The Linux build renders Add Grain, which
-# downloads its grain images with the curl command (no libcurl), on the nightly and on-demand runs
-# (gmic.eu may refuse downloads).
+# checked with linuxCheckBundle.sh's defaults (EL9).
+#
+# Downloads: no libcurl on any system (macOS and Windows check it with check_no_libcurl.sh): G'MIC
+# downloads filter data with the system's curl command (macOS /usr/bin/curl, Windows System32's
+# curl.exe, Linux curl or wget from PATH; see gmic_plugin_call.cpp). The nightly and on-demand runs
+# render Add Grain on the three systems, which downloads its grain images that way (gmic.eu may
+# refuse downloads).
 #
 # Frugal CI (the NatronGitHub runners are shared by all repos): one run per change. Pushes run CI
 # only on master and tags; feature branches run through their pull request. Draft pull requests
@@ -167,7 +171,7 @@ jobs:
           python3 .github/workflows/render_plugins.py --host build --host-arg=--ofx14 \
             --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset pr --jobs 2 --work render-ofx14
-      # no libcurl on Linux: G'MIC downloads with the curl command (cimg::load_network). Add Grain
+      # no libcurl: G'MIC downloads with the curl command (cimg::load_network). Add Grain
       # downloads its grain images (gmic_grain.gmz, from gmic.eu) into G'MIC's cache, here an empty
       # GMIC_CACHE_PATH (Color Presets downloads only for a preset other than the default)
       - name: Download filter data with the curl command (Add Grain)
@@ -401,6 +405,7 @@ jobs:
           cmake --install build --prefix install
           codesign --verify --strict install/OFX/Plugins/GMIC.ofx.bundle
           .github/workflows/check_fft.sh install/OFX/Plugins/GMIC.ofx.bundle pocketfft
+          .github/workflows/check_no_libcurl.sh install/OFX/Plugins/GMIC.ofx.bundle
           .github/workflows/check_macos_minos.sh install/OFX/Plugins/GMIC.ofx.bundle
       - name: Describe all plug-ins
         run: |
@@ -413,6 +418,15 @@ jobs:
           python3 .github/workflows/render_plugins.py --host build \
             --plugins install/OFX/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset pr --jobs 2
+      # with /usr/bin/curl (see the Linux job)
+      - name: Download filter data with the curl command (Add Grain)
+        if: env.BUILD_VARIANTS == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/gmic-cache"
+          GMIC_CACHE_PATH="$RUNNER_TEMP/gmic-cache/" python3 .github/workflows/render_plugins.py --host build \
+            --plugins install/OFX/Plugins --list plugins.txt --only eu.gmic.AddGrain --work render-download
+          find "$RUNNER_TEMP/gmic-cache" -name 'gmic_grain*' -size +0 -exec ls -l {} + | grep . ||
+            { echo "FAIL: gmic_grain.gmz was not downloaded"; exit 1; }
       - name: Build (debug)
         if: env.BUILD_VARIANTS == 'true'
         run: |
@@ -459,6 +473,7 @@ jobs:
           rm -rf Bundle && mkdir Bundle
           cp -R install/OFX/Plugins/GMIC.ofx.bundle Bundle/
           .github/workflows/bundle_libs.sh Bundle/GMIC.ofx.bundle
+          .github/workflows/check_no_libcurl.sh Bundle/GMIC.ofx.bundle
           CXX="/usr/bin/clang++ -I/opt/local/include" \
             HOST_LDFLAGS=-L/opt/local/lib \
             .github/workflows/describe_plugins.sh Bundle $GMIC_PLUGIN_COUNT
@@ -500,7 +515,7 @@ jobs:
             git make diffutils
             mingw-w64-ucrt-x86_64-cc mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-libgomp
             mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-curl
+            mingw-w64-ucrt-x86_64-zlib
             mingw-w64-ucrt-x86_64-libpng mingw-w64-ucrt-x86_64-expat mingw-w64-ucrt-x86_64-python
       - name: Cache G'MIC sources
         uses: actions/cache@v4
@@ -516,6 +531,7 @@ jobs:
             -DGMIC_POCKETFFT="$(cygpath -m "$PWD")/pocketfft_hdronly.h" -DGMIC_BUILD_TESTS=ON
           cmake --build build -j4
           .github/workflows/check_fft.sh build/Plugins/GMIC.ofx.bundle pocketfft
+          .github/workflows/check_no_libcurl.sh build/Plugins/GMIC.ofx.bundle
       - name: Describe all plug-ins
         run: |
           set -eo pipefail
@@ -526,6 +542,17 @@ jobs:
           python3 .github/workflows/render_plugins.py --host build \
             --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset pr --jobs 2
+      # with System32's curl.exe (see the Linux job)
+      - name: Download filter data with the curl command (Add Grain)
+        if: env.BUILD_VARIANTS == 'true'
+        run: |
+          set -eo pipefail
+          cache="$(cygpath -u "$RUNNER_TEMP")/gmic-cache"
+          mkdir -p "$cache"
+          GMIC_CACHE_PATH="$(cygpath -m "$cache")/" python3 .github/workflows/render_plugins.py --host build \
+            --plugins build/Plugins --list plugins.txt --only eu.gmic.AddGrain --work render-download
+          find "$cache" -name 'gmic_grain*' -size +0 -exec ls -l {} + | grep . ||
+            { echo "FAIL: gmic_grain.gmz was not downloaded"; exit 1; }
       - name: Build (debug)
         if: env.BUILD_VARIANTS == 'true'
         run: |
@@ -557,6 +584,7 @@ jobs:
           rm -rf Bundle && mkdir -p Bundle
           cp -R build/Plugins/GMIC.ofx.bundle Bundle/
           .github/workflows/bundle_libs.sh Bundle/GMIC.ofx.bundle
+          .github/workflows/check_no_libcurl.sh Bundle/GMIC.ofx.bundle
           CXX="c++ -DXML_STATIC" HOST_LDFLAGS=-static HOST_RUN_PATH=/c/Windows/System32:/c/Windows \
             .github/workflows/describe_plugins.sh Bundle $GMIC_PLUGIN_COUNT
       - name: Upload bundle

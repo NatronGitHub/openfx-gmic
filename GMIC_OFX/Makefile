@@ -9,9 +9,8 @@ include $(PATHTOROOT)/Makefile.master
 include $(SRCDIR)/license.mk
 
 # the licences of the plug-in and G'MIC (COPYING: dual CeCILL-C / CeCILL v2; COMMERCIAL builds use
-# CeCILL-C), and a note on the LGPL libraries that libcurl uses (bundled on macOS and Windows)
-RESOURCES = GMIC.png $(SRCDIR)/COPYING $(SRCDIR)/Licence_CeCILL-C_V1-en.txt $(SRCDIR)/Licence_CeCILL_V2-en.txt \
-  $(SRCDIR)/LGPL-libraries.txt
+# CeCILL-C)
+RESOURCES = GMIC.png $(SRCDIR)/COPYING $(SRCDIR)/Licence_CeCILL-C_V1-en.txt $(SRCDIR)/Licence_CeCILL_V2-en.txt
 # COMMERCIAL: the CeCILL-B licence of the community files without a licence in their header
 # (gmic-community's include/COPYING, see gmic_stdlib_commercial.txt)
 ifeq ($(LICENSE),COMMERCIAL)
@@ -106,18 +105,19 @@ CXXFLAGS += -DOFX_GMIC_COMMERCIAL
 endif
 
 # The libraries, through pkg-config: zlib (to decompress the G'MIC standard library), libpng
-# (HaldCLUTs), libcurl (downloads of filter data, except on Linux) and FFTW (FFT=fftw3).
+# (HaldCLUTs) and FFTW (FFT=fftw3). No libcurl, on any system: G'MIC downloads filter data with
+# the system's curl command (cimg::load_network; gmic_plugin_call.cpp sets its path: macOS
+# /usr/bin/curl, Windows 10 1803 and later System32\curl.exe, other systems curl or wget from PATH).
 #
 # Linux: GMIC.ofx needs only system libraries (libc, libm, libstdc++, libgcc_s, libgomp), so
 # that one binary runs on every distribution (Natron 2.6's baseline: Rocky Linux 9, glibc 2.34,
-# GCC 11). No libcurl: G'MIC downloads with the external curl or wget command instead
-# (cimg::load_network). zlib, libpng and FFTW are linked statically (GMIC_STATIC_DEPS=1,
+# GCC 11). zlib, libpng and FFTW are linked statically (GMIC_STATIC_DEPS=1,
 # the default on Linux): their static archives (libz.a, libpng16.a, libfftw3.a,
 # libfftw3_threads.a, built with -fPIC, which distributions' archives may not be: see
 # .github/workflows/build_static_deps.sh) must be in pkg-config's libdir or the compiler's library
 # path. GMIC_STATIC_DEPS=0 links the shared libraries, e.g. for distribution packages. The
 # plug-in's version script (linuxSymbols) keeps the symbols of the static libraries local.
-# Other systems: shared libraries, with libcurl (macOS and Windows bundles copy them).
+# Other systems: shared libraries (macOS and Windows bundles copy them).
 DEPS_MODULES = libpng zlib $(FFT_MODULES)
 ifeq ($(OS),Linux)
   GMIC_STATIC_DEPS ?= 1
@@ -127,8 +127,6 @@ ifeq ($(OS),Linux)
   SYSLIBS := $(filter-out -lGL,$(SYSLIBS))
 else
   override GMIC_STATIC_DEPS = 0
-  DEPS_MODULES += libcurl
-  CXXFLAGS += -Dcimg_use_curl
 endif
 CXXFLAGS += $(FFT_CXXFLAGS) -Dcimg_use_zlib -Dcimg_use_png
 ifeq ($(GMIC_STATIC_DEPS),1)

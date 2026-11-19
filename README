@@ -45,7 +45,7 @@ Requirements
 
 - A C++17 compiler (C++20 for Qt6 builds of Natron), pkg-config, and make and curl, or CMake
   >= 3.16 (with Ninja for the example below, or any other generator).
-- Libraries, found through pkg-config: zlib, libpng, libcurl (not on Linux); with FFT=fftw3 only,
+- Libraries, found through pkg-config: zlib, libpng; with FFT=fftw3 only,
   fftw3 >= 3.3.5 and fftw3_threads (the default FFT, pocketfft, is header-only and downloaded at
   build time).
 - Linux: the static archives of these libraries (libz.a, libpng16.a; libfftw3.a and
@@ -54,7 +54,7 @@ Requirements
   built with -fPIC (e.g. Ubuntu's libpng16.a), and then fail to link: build them with
   .github/workflows/build_static_deps.sh <prefix>, as CI does, and set
   PKG_CONFIG_PATH=<prefix>/lib/pkgconfig. GMIC_STATIC_DEPS=0 (CMake: -DGMIC_STATIC_DEPS=OFF) links
-  the shared zlib and libpng instead (still no libcurl): distribution packages and Natron's
+  the shared zlib and libpng instead: distribution packages and Natron's
   release builds use it (Natron's installer bundles these libraries).
 - Python 3, for the render test only.
 - Platforms: Linux, macOS (Apple clang; libraries from MacPorts or Homebrew) and Windows (MSYS2
@@ -63,10 +63,14 @@ Requirements
 Runtime requirements on Linux: GMIC.ofx needs only the system libraries libc, libm, libstdc++,
 libgcc_s and libgomp (OpenMP builds; libgomp is a separate package, which minimal systems may not
 have), plus libpthread, libdl and librt before glibc 2.34. Natron 2.6's Linux baseline is Rocky
-Linux 9 (glibc 2.34, GCC 11's libstdc++): a build there runs on newer distributions. Without
-libcurl, the filters that download data (CLUTs of Color Presets and Simulate Film, CNN networks,
-sample images...) run the curl command, or wget if curl fails, from PATH: without either, they
-fail with "Unreachable network file". On macOS and Windows, the plug-in downloads with libcurl.
+Linux 9 (glibc 2.34, GCC 11's libstdc++): a build there runs on newer distributions.
+
+Downloads: the plug-in doesn't use libcurl, on any system. The filters that download data (CLUTs
+of Color Presets and Simulate Film, CNN networks, sample images...) run the system's curl command:
+/usr/bin/curl on macOS, curl.exe from the system directory (System32, part of Windows 10 1803 and
+later; then PowerShell) on Windows, and curl, or wget if curl fails, from PATH on Linux. The
+command is never looked up in the host's current directory. Without it, these filters fail with
+"Unreachable network file".
 
 Building with make
 ------------------

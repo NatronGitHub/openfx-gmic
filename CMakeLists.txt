@@ -579,11 +579,10 @@ add_ofx_plugin(GMIC
     Helpers/RFX_FileUtils.cpp
     Helpers/RFX_StringUtils.cpp)
 # The resources of GMIC_OFX/Makefile, before ofx_deploy_bundle (below): the icon, the licences of
-# the plug-in and G'MIC (COPYING: dual CeCILL-C / CeCILL v2; COMMERCIAL builds use CeCILL-C), and
-# a note on the LGPL libraries that libcurl uses (bundled on macOS and Windows); COMMERCIAL: the
-# CeCILL-B licence of the community files without a licence in their header; pocketfft's licence.
-set(GMIC_RESOURCES GMIC_OFX/GMIC.png COPYING Licence_CeCILL-C_V1-en.txt Licence_CeCILL_V2-en.txt
-  LGPL-libraries.txt)
+# the plug-in and G'MIC (COPYING: dual CeCILL-C / CeCILL v2; COMMERCIAL builds use CeCILL-C);
+# COMMERCIAL: the CeCILL-B licence of the community files without a licence in their header;
+# pocketfft's licence.
+set(GMIC_RESOURCES GMIC_OFX/GMIC.png COPYING Licence_CeCILL-C_V1-en.txt Licence_CeCILL_V2-en.txt)
 if(OFX_LICENSE STREQUAL "COMMERCIAL")
   list(APPEND GMIC_RESOURCES Licence_CeCILL-B_V1-en.txt)
 endif()
@@ -658,13 +657,14 @@ if(OFX_LICENSE STREQUAL "COMMERCIAL")
 endif()
 
 # The libraries of GMIC_OFX/Makefile, through pkg-config as it does (so that the same ones are
-# found, e.g. MacPorts' zlib and libcurl rather than the macOS SDK's): zlib, libpng, libcurl
-# (downloads of filter data, except on Linux), plus fftw3 and fftw3_threads with FFT=fftw3.
+# found, e.g. MacPorts' zlib rather than the macOS SDK's): zlib, libpng, plus fftw3 and
+# fftw3_threads with FFT=fftw3. No libcurl, on any system: G'MIC downloads filter data with the
+# system's curl command (cimg::load_network; gmic_plugin_call.cpp sets its path: macOS
+# /usr/bin/curl, Windows 10 1803 and later System32\curl.exe, other systems curl or wget from PATH).
 #
 # Linux (as GMIC_OFX/Makefile): GMIC.ofx needs only system libraries (libc, libm, libstdc++,
 # libgcc_s, libgomp), so that one binary runs on every distribution
-# (Natron 2.6's baseline: Rocky Linux 9, glibc 2.34, GCC 11). No libcurl: G'MIC downloads with the
-# external curl or wget command instead (cimg::load_network). zlib, libpng and FFTW are linked
+# (Natron 2.6's baseline: Rocky Linux 9, glibc 2.34, GCC 11). zlib, libpng and FFTW are linked
 # statically with GMIC_STATIC_DEPS (ON by default on Linux): their static archives (libz.a,
 # libpng16.a, libfftw3.a, libfftw3_threads.a, built with -fPIC, which distributions' archives may
 # not be: see .github/workflows/build_static_deps.sh) must be in pkg-config's libdir or the
@@ -672,14 +672,11 @@ endif()
 # distribution packages. The version script of add_ofx_plugin keeps their symbols local.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   option(GMIC_STATIC_DEPS "Linux: link zlib, libpng and FFTW statically (GMIC.ofx needs only system libraries)" ON)
-  set(_curl_module "")
 else()
   set(GMIC_STATIC_DEPS OFF)
-  set(_curl_module libcurl)
-  target_compile_definitions(GMIC PRIVATE cimg_use_curl)
 endif()
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(GMIC_DEPS REQUIRED IMPORTED_TARGET libpng zlib ${_fft_module} ${_curl_module})
+pkg_check_modules(GMIC_DEPS REQUIRED IMPORTED_TARGET libpng zlib ${_fft_module})
 if(GMIC_FFT STREQUAL "fftw3")
   set(_fftw3_threads fftw3_threads)
 else()

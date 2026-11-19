@@ -21,7 +21,7 @@ if nm -D --defined-only "$ofx" | grep -i fftw; then
     echo "Error: the COMMERCIAL build defines FFTW symbols (see above)"; status=1
 fi
 for f in COPYING Licence_CeCILL-C_V1-en.txt Licence_CeCILL_V2-en.txt Licence_CeCILL-B_V1-en.txt \
-         Licence_pocketfft.txt LGPL-libraries.txt; do
+         Licence_pocketfft.txt; do
     [ -f "$B/Contents/Resources/$f" ] || { echo "Error: $f is not in $B/Contents/Resources"; status=1; }
 done
 # some plug-ins of left-out community files (GPL v3, CC BY-NC-SA, CeCILL v2 only) and of

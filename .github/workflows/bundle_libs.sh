@@ -25,9 +25,6 @@
 # Linux: nothing to do (see ci.yml).
 #
 # Limitations of the resulting bundles:
-# - libcurl and OpenSSL keep their build-time configuration paths (CA certificates, openssl.cnf in
-#   /opt/local or the MSYS2 prefix). G'MIC's downloads (CImg's cimg::load_network) disable TLS
-#   certificate verification, so they don't need the CA file; a missing openssl.cnf is ignored.
 # - macOS: the binaries require the macOS version of the build machine or newer (their minos),
 #   and a downloaded bundle must be unquarantined: xattr -dr com.apple.quarantine GMIC.ofx.bundle
 # - Windows: the bundled libstdc++/libgcc_s/libgomp/libwinpthread DLLs have the same names as the

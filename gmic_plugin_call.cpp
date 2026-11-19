@@ -17,24 +17,48 @@ GMIC_DLLINTERFACE int GMIC_CALLCONV gmic_delete_external(float* p)
 	return 0;
 }
 
-#if !defined(cimg_use_curl) && cimg_OS == 1
-// Without libcurl (Linux builds), CImg downloads by running the curl or wget command, then
-// gunzip (cimg::load_network). By default it runs ./curl, ./wget or ./gunzip if the host's current
-// directory has such a file: set the commands once, when the plug-in is loaded, so that they are
-// always looked up in PATH (these functions only store the given string).
+// The plug-in doesn't use libcurl: CImg downloads filter data by running the curl command
+// (cimg::load_network), then wget (and gunzip) if curl fails, and on Windows PowerShell's
+// Invoke-WebRequest before wget. By default, CImg runs ./curl (Windows: SearchPath, which also
+// looks in the current directory, else .\curl.exe) if the host's current directory has such a
+// file: set the commands once, when the plug-in is loaded, so that they never depend on the current
+// directory (these functions only store the given string).
+// - macOS: the system's /usr/bin/curl and /usr/bin/gunzip; wget (not part of macOS) from PATH.
+// - Linux and other Unix systems: curl, wget and gunzip from PATH (run through /bin/sh).
+// - Windows: the curl.exe of Windows 10 (1803) and later, and PowerShell, in the system directory
+//   (System32), by full path: cimg::system() starts them with CreateProcess(module, ...), which
+//   doesn't search PATH and resolves a bare name in the current directory. Windows has no wget or
+//   gunzip: they are pinned to the system directory too (where they normally don't exist), so that
+//   the fallback never runs a wget.exe from the current directory.
 namespace {
 struct DownloadCommands
 {
 	DownloadCommands()
 	{
+#if cimg_OS == 2
+		char dir[MAX_PATH];
+		const UINT len = GetSystemDirectoryA(dir, MAX_PATH);
+		if (len == 0 || len >= MAX_PATH) {
+			std::strcpy(dir, "C:\\Windows\\System32");
+		}
+		const std::string sysdir = dir;
+		cimg::curl_path((sysdir + "\\curl.exe").c_str());
+		cimg::powershell_path((sysdir + "\\WindowsPowerShell\\v1.0\\powershell.exe").c_str());
+		cimg::wget_path((sysdir + "\\wget.exe").c_str());
+		cimg::gunzip_path((sysdir + "\\gunzip.exe").c_str());
+#elif defined(__APPLE__)
+		cimg::curl_path("/usr/bin/curl");
+		cimg::wget_path("wget");
+		cimg::gunzip_path("/usr/bin/gunzip");
+#else
 		cimg::curl_path("curl");
 		cimg::wget_path("wget");
 		cimg::gunzip_path("gunzip");
+#endif
 	}
 };
 const DownloadCommands downloadCommands;
 }
-#endif
 
 // as in gmic_libc.cpp: the decompressed G'MIC stdlib (free it with gmic_delete_external)
 GMIC_DLLINTERFACE const char* GMIC_CALLCONV gmic_get_stdlib()
