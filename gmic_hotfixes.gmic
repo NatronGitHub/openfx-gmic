@@ -19,7 +19,8 @@
 #                command that the built-in G'MIC no longer defines, but that some of its
 #                commands still call. The optional callees are
 #                built-in commands that the fix relies on (e.g. one it calls instead of a
-#                misspelt one), with their checksums. At load, the plug-in compares the
+#                misspelt one), with their checksums (a callee without ':<checksum>' only
+#                has to exist). At load, the plug-in compares the
 #                built-in definition of <command> with both ("if the fix is already there,
 #                don't apply it"):
 #                - it is <original> (for '-': there is none): the block is applied if
