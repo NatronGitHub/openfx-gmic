@@ -17,6 +17,25 @@ GMIC_DLLINTERFACE int GMIC_CALLCONV gmic_delete_external(float* p)
 	return 0;
 }
 
+#if !defined(cimg_use_curl) && cimg_OS == 1
+// Without libcurl (Linux builds), CImg downloads by running the curl or wget command, then
+// gunzip (cimg::load_network). By default it runs ./curl, ./wget or ./gunzip if the host's current
+// directory has such a file: set the commands once, when the plug-in is loaded, so that they are
+// always looked up in PATH (these functions only store the given string).
+namespace {
+struct DownloadCommands
+{
+	DownloadCommands()
+	{
+		cimg::curl_path("curl");
+		cimg::wget_path("wget");
+		cimg::gunzip_path("gunzip");
+	}
+};
+const DownloadCommands downloadCommands;
+}
+#endif
+
 // as in gmic_libc.cpp: the decompressed G'MIC stdlib (free it with gmic_delete_external)
 GMIC_DLLINTERFACE const char* GMIC_CALLCONV gmic_get_stdlib()
 {

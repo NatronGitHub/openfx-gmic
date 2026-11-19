@@ -1,0 +1,19 @@
+name: Static zlib and libpng (-fPIC)
+description: >-
+  Build (or restore from the cache) static zlib and libpng archives built with -fPIC
+  (build_static_deps.sh), which distributions' archives may not be (e.g. Ubuntu's libpng16.a), for
+  linking into GMIC.ofx on Linux (GMIC_STATIC_DEPS), and set PKG_CONFIG_PATH to them. The prefix
+  is static-deps in the workspace, the same path inside and outside containers.
+runs:
+  using: composite
+  steps:
+    - name: Cache static zlib and libpng
+      uses: actions/cache@v4
+      with:
+        path: static-deps
+        key: static-deps-${{ github.job }}-${{ hashFiles('.github/workflows/build_static_deps.sh') }}
+    - name: Build static zlib and libpng
+      shell: bash
+      run: |
+        [ -f static-deps/lib/libpng16.a ] || .github/workflows/build_static_deps.sh static-deps
+        echo "PKG_CONFIG_PATH=$PWD/static-deps/lib/pkgconfig" >> "$GITHUB_ENV"

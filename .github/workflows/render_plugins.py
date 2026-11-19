@@ -15,12 +15,15 @@ usage: render_plugins.py --host <hostDemo, or the CMake build directory> [--conf
                          --plugins <dir with GMIC.ofx.bundle>
                          --list <plug-in list> [--subset pr|all] [--stdlib <gmic_stdlib_community.h>]
                          [--jobs N] [--timeout S] [--min-rendered N] [--work <dir>]
+                         [--only <id>[,<id>...]]
 --host <build dir> reads hostDemo-path.txt there (written by CMake with GMIC_BUILD_TESTS=ON), or
 hostDemo-path-<config>.txt with a multi-config generator (--config, default Release).
 The plug-in list (one line per plug-in: id, context and input clips, tab-separated) is written
 by describe_plugins.sh with PLUGIN_LIST=<file>. --subset pr (the default) renders a
 representative subset: the filters whose command uses the FFT (found in the G'MIC standard
 library given by --stdlib), the multi-layer filters, and every 30th plug-in (sorted by id).
+--only renders just the given plug-ins, also those in SKIP (e.g. the ones that download data),
+and fails unless they all render.
 """
 import argparse
 import concurrent.futures
@@ -204,6 +207,7 @@ def main():
     ap.add_argument('--timeout', type=int, default=300)
     ap.add_argument('--min-rendered', type=int)
     ap.add_argument('--work')
+    ap.add_argument('--only')
     a = ap.parse_args()
 
     host = os.path.abspath(a.host)
@@ -236,7 +240,13 @@ def main():
     for pid in sorted(set(SKIP) | set(EXPECTED_FAIL) | set(TIMEOUT)):
         if pid not in allp and not commercial:
             print('WARNING: %s is in the skip or expected-failure list, but is not a plug-in' % pid)
-    if a.subset == 'all':
+    if a.only:
+        sel = sorted(set(a.only.split(',')))
+        missing = [p for p in sel if p not in allp]
+        if missing:
+            ap.error('--only: not in the plug-in list: ' + ' '.join(missing))
+        min_rendered = len(sel)
+    elif a.subset == 'all':
         sel = ids
     else:
         if not a.stdlib:
@@ -247,7 +257,7 @@ def main():
         sel = sorted(((fft & set(ids)) | multi | every) - set(TIMEOUT))  # slow ones: --subset all only
         print('subset: %d plug-ins (%d using the FFT, %d multi-layer, every %dth of %d)' % (
             len(sel), len(fft & set(ids)), len(multi), EVERY, len(ids)))
-    todo = [allp[p] for p in sel if p not in SKIP]
+    todo = [allp[p] for p in sel if a.only or p not in SKIP]
     print('rendering %d plug-ins (%d skipped), %d at a time, in %s' % (len(todo), len(sel) - len(todo), a.jobs, work))
     sys.stdout.flush()
 

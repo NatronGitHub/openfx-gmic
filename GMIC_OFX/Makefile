@@ -22,9 +22,10 @@ ifeq ($(FFT),pocketfft)
 RESOURCES += $(SRCDIR)/Licence_pocketfft.txt
 endif
 
-# LICENSE, FFT and OPENMP change the compiled code and the bundled files: when they change, rebuild
-# the objects and the bundle (whose Contents/Libraries and Resources would keep stale files).
-BUILD_KEY = LICENSE=$(LICENSE) FFT=$(FFT) OPENMP=$(OPENMP)
+# LICENSE, FFT, OPENMP and GMIC_STATIC_DEPS change the compiled code, the linked libraries and the
+# bundled files: when they change, rebuild the objects and the bundle (whose Contents/Libraries
+# and Resources would keep stale files).
+BUILD_KEY = LICENSE=$(LICENSE) FFT=$(FFT) OPENMP=$(OPENMP) GMIC_STATIC_DEPS=$(GMIC_STATIC_DEPS)
 $(OBJECTPATH)/build.license: gmic_sources
 	@mkdir -p $(OBJECTPATH)
 	@echo '$(BUILD_KEY)' | cmp -s - $@ || { echo '$(BUILD_KEY)' > $@; rm -rf $(OBJECTPATH)/$(PLUGINNAME).ofx.bundle; }
@@ -58,7 +59,6 @@ $(OBJECTPATH)/gmic.o: $(GMIC_HEADERS) $(SRCDIR)/gmic_stdlib_community.h
 $(OBJECTPATH)/gmic_plugin_call.o: $(GMIC_HEADERS) $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h
 $(OBJECTPATH)/gmic_plugin.o: $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h
 
-# we need zlib to decompress the G'MIC standard library, and an FFT library (FFT) for the effects that use the FFT
 CXXFLAGS += \
 -DOFX_EXTENSIONS_NATRON \
 -DOFX_EXTENSIONS_NUKE \
@@ -87,7 +87,8 @@ ifeq ($(shell pkg-config --atleast-version=3.3.5 fftw3 && echo ok),)
 endif
 endif
 FFT_CXXFLAGS = `pkg-config --cflags fftw3` -Dcimg_use_fftw3
-FFT_LINKFLAGS = `pkg-config --libs fftw3` -lfftw3_threads
+FFT_MODULES = fftw3
+FFT_LIBS = -lfftw3_threads
 endif
 ifeq ($(FFT),pocketfft)
 # pocketfft (BSD-3-Clause, the default), header-only, multithreaded (patches/cimg-pocketfft.sh)
@@ -104,20 +105,51 @@ ifeq ($(LICENSE),COMMERCIAL)
 CXXFLAGS += -DOFX_GMIC_COMMERCIAL
 endif
 
-# Zlib, necessary to uncompress the glic stdlib
-ZLIB_CXXFLAGS=`pkg-config --cflags zlib` -Dcimg_use_zlib
-ZLIB_LINKFLAGS=`pkg-config --libs zlib`
-
-# libcurl, necessary to download presets:
-LIBCURL_CXXFLAGS=`pkg-config --cflags libcurl` -Dcimg_use_curl
-LIBCURL_LINKFLAGS=`pkg-config --libs libcurl`
-
-# libpng, necessary for HaldCLUTs:
-LIBPNG_CXXFLAGS=`pkg-config --cflags libpng` -Dcimg_use_png
-LIBPNG_LINKFLAGS=`pkg-config --libs libpng`
-
-CXXFLAGS += $(FFT_CXXFLAGS) $(ZLIB_CXXFLAGS) $(LIBCURL_CXXFLAGS) $(LIBPNG_CXXFLAGS)
-LINKFLAGS += $(FFT_LINKFLAGS) $(ZLIB_LINKFLAGS) $(LIBCURL_LINKFLAGS) $(LIBPNG_LINKFLAGS)
+# The libraries, through pkg-config: zlib (to decompress the G'MIC standard library), libpng
+# (HaldCLUTs), libcurl (downloads of filter data, except on Linux) and FFTW (FFT=fftw3).
+#
+# Linux: GMIC.ofx needs only system libraries (libc, libm, libstdc++, libgcc_s, libgomp), so
+# that one binary runs on every distribution (Natron 2.6's baseline: Rocky Linux 9, glibc 2.34,
+# GCC 11). No libcurl: G'MIC downloads with the external curl or wget command instead
+# (cimg::load_network). zlib, libpng and FFTW are linked statically (GMIC_STATIC_DEPS=1,
+# the default on Linux): their static archives (libz.a, libpng16.a, libfftw3.a,
+# libfftw3_threads.a, built with -fPIC, which distributions' archives may not be: see
+# .github/workflows/build_static_deps.sh) must be in pkg-config's libdir or the compiler's library
+# path. GMIC_STATIC_DEPS=0 links the shared libraries, e.g. for distribution packages. The
+# plug-in's version script (linuxSymbols) keeps the symbols of the static libraries local.
+# Other systems: shared libraries, with libcurl (macOS and Windows bundles copy them).
+DEPS_MODULES = libpng zlib $(FFT_MODULES)
+ifeq ($(OS),Linux)
+  GMIC_STATIC_DEPS ?= 1
+  # Makefile.master links OpenGL to every plug-in: G'MIC doesn't use it
+  LINKFLAGS := $(filter-out -lGL,$(LINKFLAGS))
+  # (openfx >= #161 moves -lGL -pthread -ldl into SYSLIBS, at the end of the link line)
+  SYSLIBS := $(filter-out -lGL,$(SYSLIBS))
+else
+  override GMIC_STATIC_DEPS = 0
+  DEPS_MODULES += libcurl
+  CXXFLAGS += -Dcimg_use_curl
+endif
+CXXFLAGS += $(FFT_CXXFLAGS) -Dcimg_use_zlib -Dcimg_use_png
+ifeq ($(GMIC_STATIC_DEPS),1)
+# the static archive lib<name>.a, in the libdirs of the modules or the compiler's library path
+STATIC_DEPS_SYSLIBS = -lm -ldl -lpthread -lrt -lc
+static_archive = $(or $(firstword $(wildcard $(addsuffix /lib$(1).a,$(STATIC_DEPS_DIRS)))),$(filter /%,$(shell $(CXX) -print-file-name=lib$(1).a)),$(error GMIC_STATIC_DEPS=1: lib$(1).a not found (in $(STATIC_DEPS_DIRS) or the compiler's library path): build them with -fPIC (.github/workflows/build_static_deps.sh <prefix> then PKG_CONFIG_PATH=<prefix>/lib/pkgconfig) or build with GMIC_STATIC_DEPS=0))
+ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
+  # the libdirs of libpng, zlib, then FFTW, then the -L directories: the archives of
+  # build_static_deps.sh come before those of FFTW's libdir (e.g. /usr/lib/<arch>, which may also
+  # have non-PIC libpng and zlib archives)
+  STATIC_DEPS_DIRS := $(foreach m,$(DEPS_MODULES),$(shell pkg-config --variable=libdir $(m))) \
+    $(patsubst -L%,%,$(shell pkg-config --static --libs-only-L $(DEPS_MODULES)))
+  STATIC_DEPS_L := $(FFT_LIBS) $(shell pkg-config --static --libs-only-l $(DEPS_MODULES))
+  STATIC_DEPS_ARCHIVES := $(foreach l,$(filter-out $(STATIC_DEPS_SYSLIBS),$(STATIC_DEPS_L)),$(call static_archive,$(patsubst -l%,%,$(l))))
+endif
+CXXFLAGS += `pkg-config --cflags $(DEPS_MODULES)`
+LINKFLAGS += $(STATIC_DEPS_ARCHIVES) $(filter $(STATIC_DEPS_SYSLIBS),$(STATIC_DEPS_L))
+else
+CXXFLAGS += `pkg-config --cflags $(DEPS_MODULES)`
+LINKFLAGS += `pkg-config --libs $(DEPS_MODULES)` $(FFT_LIBS)
+endif
 
 VPATH = $(SRCDIR):$(SRCDIR)/Helpers
 
