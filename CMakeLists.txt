@@ -25,9 +25,10 @@
 # -DOFX_USE_OPENMP=OFF (default ON, the Makefile's OPENMP=1), -DOFX_LIBOMP_ROOT=<dir> (Apple clang:
 # libomp, default MacPorts'), -DOFX_DEPLOY_BUNDLES=ON (macOS: the install step copies the MacPorts
 # libraries into the bundle, as the Makefile's release builds do), -DGMIC_TARBALL=<path> (a
-# downloaded gmic_<version>.tar.gz, for offline builds), -DGMICVER=... -DGMICSRC_SHA256=...,
-# -DOFX_LICENSE=COMMERCIAL (the Makefile's LICENSE=COMMERCIAL, see license.mk) and -DFFT=pocketfft
-# (the Makefile's FFT).
+# downloaded gmic_<version>.tar.gz, for offline builds), -DGMIC_POCKETFFT=<path> (a downloaded
+# pocketfft_hdronly.h, likewise), -DGMICVER=... -DGMICSRC_SHA256=...,
+# -DOFX_LICENSE=COMMERCIAL (the Makefile's LICENSE=COMMERCIAL, see license.mk) and -DFFT=fftw3
+# (the Makefile's FFT; default: pocketfft).
 
 cmake_minimum_required(VERSION 3.16)
 
@@ -64,20 +65,18 @@ endif()
 # FFT: the Makefile's FFT, the library of G'MIC's Fourier transforms (CImg's own FFT fails on image
 # sizes that are not powers of two): fftw3 (FFTW, GPL) or pocketfft (BSD-3-Clause, header-only,
 # downloaded at the Makefile's POCKETFFTCOMMIT, through patches/cimg-pocketfft.sh). Empty (default):
-# fftw3 for GPL builds, pocketfft for COMMERCIAL ones, which can't use FFTW.
+# pocketfft for every licence, as in openfx-misc; fftw3 is opt-in, for GPL builds only.
 set(OFX_LICENSE "GPL" CACHE STRING "GPL, or COMMERCIAL (no FFTW, no GPL or CeCILL-only filters)")
 set_property(CACHE OFX_LICENSE PROPERTY STRINGS GPL COMMERCIAL)
 if(NOT OFX_LICENSE MATCHES "^(GPL|COMMERCIAL)$")
   message(FATAL_ERROR "OFX_LICENSE must be GPL or COMMERCIAL, not \"${OFX_LICENSE}\"")
 endif()
-set(FFT "" CACHE STRING "FFT library: fftw3 or pocketfft (empty: fftw3 for GPL, pocketfft for COMMERCIAL)")
+set(FFT "" CACHE STRING "FFT library: pocketfft or fftw3 (GPL only); empty: pocketfft")
 set_property(CACHE FFT PROPERTY STRINGS "" fftw3 pocketfft)
 if(FFT)
   set(GMIC_FFT "${FFT}")
-elseif(OFX_LICENSE STREQUAL "COMMERCIAL")
-  set(GMIC_FFT pocketfft)
 else()
-  set(GMIC_FFT fftw3)
+  set(GMIC_FFT pocketfft)
 endif()
 if(NOT GMIC_FFT MATCHES "^(fftw3|pocketfft)$")
   message(FATAL_ERROR "FFT must be fftw3 or pocketfft, not \"${GMIC_FFT}\"")
@@ -371,24 +370,43 @@ if(GMIC_FFT STREQUAL "pocketfft")
   if(NOT _pocketfft_commit OR NOT _pocketfft_sha256)
     message(FATAL_ERROR "Could not read POCKETFFTCOMMIT and POCKETFFT_SHA256 from ${GMIC_MAKEFILE}")
   endif()
+  # The header: GMIC_POCKETFFT if given (downloaded there if missing, as GMIC_TARBALL), else one
+  # left in the source directory by the Makefile, else downloaded into GMIC_SRC_DIR. Each is
+  # checked against POCKETFFT_SHA256, then copied into GMIC_SRC_DIR.
+  set(GMIC_POCKETFFT "" CACHE FILEPATH "pocketfft_hdronly.h (at the Makefile's POCKETFFTCOMMIT), downloaded there if missing")
   set(_pocketfft "${GMIC_SRC_DIR}/pocketfft_hdronly.h")
+  if(GMIC_POCKETFFT)
+    set(_pocketfft_src "${GMIC_POCKETFFT}")
+  elseif(EXISTS "${PROJECT_SOURCE_DIR}/pocketfft_hdronly.h")
+    set(_pocketfft_src "${PROJECT_SOURCE_DIR}/pocketfft_hdronly.h")
+  else()
+    set(_pocketfft_src "${_pocketfft}")
+  endif()
   set(_sum "")
-  if(EXISTS "${_pocketfft}")
-    file(SHA256 "${_pocketfft}" _sum)
+  if(EXISTS "${_pocketfft_src}")
+    file(SHA256 "${_pocketfft_src}" _sum)
+    if(NOT _sum STREQUAL _pocketfft_sha256 AND NOT _pocketfft_src STREQUAL _pocketfft)
+      message(FATAL_ERROR "${_pocketfft_src}: checksum mismatch (got ${_sum}, expected ${_pocketfft_sha256}): remove it")
+    endif()
   endif()
   if(NOT _sum STREQUAL _pocketfft_sha256)
     set(_url "https://raw.githubusercontent.com/mreineck/pocketfft/${_pocketfft_commit}/pocketfft_hdronly.h")
     message(STATUS "Fetching ${_url}")
-    file(DOWNLOAD "${_url}" "${_pocketfft}.tmp" STATUS _status TLS_VERIFY ON INACTIVITY_TIMEOUT 60)
+    file(DOWNLOAD "${_url}" "${_pocketfft_src}.tmp" STATUS _status TLS_VERIFY ON INACTIVITY_TIMEOUT 60)
     list(GET _status 0 _code)
     if(_code EQUAL 0)
-      file(SHA256 "${_pocketfft}.tmp" _sum)
+      file(SHA256 "${_pocketfft_src}.tmp" _sum)
     endif()
     if(NOT _code EQUAL 0 OR NOT _sum STREQUAL _pocketfft_sha256)
-      file(REMOVE "${_pocketfft}.tmp")
-      message(FATAL_ERROR "Could not download a valid ${_url} (${_status}, sha256 ${_sum})")
+      file(REMOVE "${_pocketfft_src}.tmp")
+      message(FATAL_ERROR "Could not download a valid ${_url} (${_status}, sha256 ${_sum}): download it "
+        "and configure with -DGMIC_POCKETFFT=<path>")
     endif()
-    file(RENAME "${_pocketfft}.tmp" "${_pocketfft}")
+    file(RENAME "${_pocketfft_src}.tmp" "${_pocketfft_src}")
+  endif()
+  if(NOT _pocketfft_src STREQUAL _pocketfft)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_pocketfft_src}")
+    configure_file("${_pocketfft_src}" "${_pocketfft}" COPYONLY)
   endif()
   file(READ "${_pocketfft}" _text)
   string(FIND "${_text}" "\n*/\n" _end)
@@ -401,9 +419,12 @@ if(GMIC_FFT STREQUAL "pocketfft")
   if(NOT _licence MATCHES "Redistributions in binary form must reproduce")
     message(FATAL_ERROR "${_pocketfft}: the licence comment is not the expected one")
   endif()
-  file(WRITE "${GMIC_GENERATED_DIR}/Licence_pocketfft.txt.tmp" "${_licence}")
-  configure_file("${GMIC_GENERATED_DIR}/Licence_pocketfft.txt.tmp" "${GMIC_GENERATED_DIR}/Licence_pocketfft.txt" COPYONLY)
-  file(REMOVE "${GMIC_GENERATED_DIR}/Licence_pocketfft.txt.tmp")
+  # file(WRITE) writes CRLF line endings on Windows: configure_file(NEWLINE_STYLE UNIX) writes LF,
+  # as the Makefile does (the licence has no @VAR@ for @ONLY to replace). The input is kept (a
+  # configure dependency) and is not <output>.tmp, through which configure_file writes.
+  file(WRITE "${GMIC_GENERATED_DIR}/Licence_pocketfft.txt.in" "${_licence}")
+  configure_file("${GMIC_GENERATED_DIR}/Licence_pocketfft.txt.in" "${GMIC_GENERATED_DIR}/Licence_pocketfft.txt"
+    @ONLY NEWLINE_STYLE UNIX)
 endif()
 
 # COMMERCIAL: gmic_stdlib_community.h is generated by gmic_stdlib_commercial.sh, as the Makefile
@@ -617,6 +638,12 @@ if(GMIC_FFT STREQUAL "fftw3")
   set(_fft_module "fftw3>=3.3.5") # fftw_make_planner_thread_safe (gmic_plugin.cpp)
 else()
   target_compile_definitions(GMIC PRIVATE cimg_use_pocketfft)
+  # Windows: single-threaded pocketfft. Its static thread pool is destroyed when the host unloads
+  # the plug-in (FreeLibrary): the destructor joins the worker threads under the loader lock,
+  # which the exiting threads wait for (deadlock). G'MIC itself is still multithreaded (OpenMP).
+  if(WIN32)
+    target_compile_definitions(GMIC PRIVATE POCKETFFT_NO_MULTITHREADING)
+  endif()
   set(_fft_module "")
 endif()
 if(OFX_LICENSE STREQUAL "COMMERCIAL")
@@ -624,7 +651,8 @@ if(OFX_LICENSE STREQUAL "COMMERCIAL")
 endif()
 
 # The libraries of GMIC_OFX/Makefile, through pkg-config as it does (so that the same ones are
-# found, e.g. MacPorts' zlib and libcurl rather than the macOS SDK's), plus fftw3_threads
+# found, e.g. MacPorts' zlib and libcurl rather than the macOS SDK's), plus fftw3 and fftw3_threads
+# with FFT=fftw3
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GMIC_DEPS REQUIRED IMPORTED_TARGET ${_fft_module} zlib libcurl libpng)
 target_link_libraries(GMIC PRIVATE PkgConfig::GMIC_DEPS)

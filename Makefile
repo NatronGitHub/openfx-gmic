@@ -1,6 +1,6 @@
 SUBDIRS = GMIC_OFX
 
-# LICENSE (GPL or COMMERCIAL) and FFT (fftw3 or pocketfft): see license.mk
+# LICENSE (GPL or COMMERCIAL) and FFT (pocketfft or fftw3): see license.mk
 include license.mk
 
 # All G'MIC sources come from the release tarball: since G'MIC 3, it includes the C API
@@ -147,11 +147,16 @@ else
 	tar -m --strip-components 2 -zxf $< -O $(GMICSRCDIR)/src/$@ > $@.tmp && mv $@.tmp $@
 endif
 
-# pocketfft (FFT=pocketfft), C++ header-only version, at a pinned commit of its 'cpp' branch
+# pocketfft (FFT=pocketfft, the default), C++ header-only version, at a pinned commit of its 'cpp' branch,
+# downloaded, or copied from POCKETFFT_HEADER=<path> (offline builds); checked against POCKETFFT_SHA256
 POCKETFFTCOMMIT=4d865cba24359b05b37da4e75aee24498c3b78e7
 POCKETFFT_SHA256=518a95c552aeaee352aa30122137cd9e135d23c91e2863d9272aaa758744c86d
 pocketfft_hdronly.h:
+ifneq ($(POCKETFFT_HEADER),)
+	cp "$(POCKETFFT_HEADER)" $@.tmp
+else
 	curl -f --retry 5 --retry-all-errors -L -s -S -o $@.tmp https://raw.githubusercontent.com/mreineck/pocketfft/$(POCKETFFTCOMMIT)/pocketfft_hdronly.h
+endif
 	@if command -v sha256sum >/dev/null 2>&1; then sum=`sha256sum $@.tmp | cut -d' ' -f1`; \
 	else sum=`shasum -a 256 $@.tmp | cut -d' ' -f1`; fi; \
 	if [ "$$sum" != "$(POCKETFFT_SHA256)" ]; then rm -f $@.tmp; echo "Error: checksum mismatch for $@ (got $$sum)"; exit 1; fi
@@ -183,7 +188,8 @@ Licence_pocketfft.txt: pocketfft_hdronly.h
 #   openfx-misc's CImg plug-ins, same shared libfftw3) may be using them (also in CImg develop,
 #   https://github.com/GreycLab/CImg/issues/500)
 # - cimg-pocketfft.sh: let CImg compute its FFTs with pocketfft (cimg_use_pocketfft), which
-#   COMMERCIAL builds use instead of FFTW (only applied for FFT=pocketfft; merged upstream after
+#   builds use by default instead of FFTW (only applied for FFT=pocketfft, last, so that CImg.h is
+#   the same as openfx-misc's; merged upstream after
 #   G'MIC 4.0.7, https://github.com/GreycLab/CImg/pull/497)
 # CMakeLists.txt reads GMIC_PATCHES, CIMG_PATCHES and CIMG_PATCHES_POCKETFFT (plain one-line
 # assignments, see above), and applies them in the same order.

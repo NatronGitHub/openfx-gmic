@@ -1,11 +1,11 @@
 #!/bin/bash
 # Build a G'MIC command-line interpreter from the sources of a build ('make sources' or CMake:
-# CImg.h patched for pocketfft, the standard library of the build), with the FFT of a COMMERCIAL build
-# (cimg_use_pocketfft), and render FFT-based filters on a 720x576 image (not a power of two,
-# which CImg's own FFT rejects): FFT round trip, Fourier Transform, Bandpass.
+# CImg.h patched for pocketfft, the standard library of the build), with the default FFT
+# (pocketfft, cimg_use_pocketfft), and render FFT-based filters on a 720x576 image (not a power of
+# two, which CImg's own FFT rejects): FFT round trip, Fourier Transform, Bandpass.
 # Usage (from the top-level directory, where gmic_<version>.tar.gz is): fft_smoke.sh [<sources dir>]
-# <sources dir>: where the G'MIC sources are, "." (default) after make LICENSE=COMMERCIAL, or
-# <build>/gmic after a CMake build with -DOFX_LICENSE=COMMERCIAL.
+# <sources dir>: where the G'MIC sources are, "." (default) after make (any LICENSE, FFT=pocketfft),
+# or <build>/gmic after a CMake build with FFT=pocketfft.
 # Uses $CXX (default c++), and pkg-config for zlib.
 set -euo pipefail
 CXX=${CXX:-c++}
