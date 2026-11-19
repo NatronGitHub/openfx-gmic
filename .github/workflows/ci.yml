@@ -27,7 +27,8 @@ name: Continuous Integration
 # Linux dependencies: GMIC.ofx may need only system libraries (glibc's, libstdc++, libgcc_s,
 # libgomp): no libcurl, static zlib and libpng (see GMIC_OFX/Makefile). Each Linux build checks it
 # with openfx's linuxCheckBundle.sh on the installed bundle (Ubuntu builds: with Ubuntu 24.04's
-# glibc and libstdc++ versions as the limits; GMIC_STATIC_DEPS=OFF: --no-needed) and with
+# glibc and libstdc++ versions as the limits; GMIC_STATIC_DEPS=OFF: shared zlib and libpng
+# allowed) and with
 # check_linux_deps.sh (what linuxCheckBundle.sh doesn't check); the nightly and on-demand runs also
 # build with the Makefile on Rocky Linux 9 (GCC 11, glibc 2.34), Natron 2.6's Linux baseline,
 # checked with linuxCheckBundle.sh's defaults (EL9). The Linux build renders Add Grain, which
@@ -115,8 +116,8 @@ jobs:
       # linuxCheckBundle.sh: the Ubuntu 24.04 bundles need its glibc and libstdc++; the
       # EL9 limits (the defaults) are checked on Rocky Linux 9 (linux-rocky9)
       OFX_ABI_GLIBC: '2.39'
-      OFX_ABI_GLIBCXX: 3.4.33
-      OFX_ABI_CXXABI: 1.3.15
+      OFX_ABI_GLIBCXX: '3.4.33'
+      OFX_ABI_CXXABI: '1.3.15'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -207,8 +208,9 @@ jobs:
           cmake --build build-shared -j4
           cmake --install build-shared --prefix install-shared
           .github/workflows/check_fft.sh build-shared/Plugins/GMIC.ofx.bundle pocketfft
-          # the shared zlib and libpng come from the system (or Natron's installer bundles them)
-          openfx/Support/include/linuxCheckBundle.sh --no-needed install-shared/OFX/Plugins
+          # the shared zlib and libpng may come from the system (or Natron's installer bundles them);
+          # any other non-system library must be bundled
+          OFX_ABI_OPTIONAL_LIBS="libz.so.1 libpng16.so.16" openfx/Support/include/linuxCheckBundle.sh install-shared/OFX/Plugins
           SHARED_DEPS=1 .github/workflows/check_linux_deps.sh install-shared/OFX/Plugins/GMIC.ofx.bundle
           readelf -d build-shared/Plugins/GMIC.ofx.bundle/Contents/Linux-x86-64/GMIC.ofx | grep -q 'NEEDED.*libpng16\.so' ||
             { echo "FAIL: GMIC_STATIC_DEPS=OFF does not link the shared libpng"; exit 1; }
@@ -263,8 +265,8 @@ jobs:
       # linuxCheckBundle.sh: the Ubuntu 24.04 bundles need its glibc and libstdc++; the
       # EL9 limits (the defaults) are checked on Rocky Linux 9 (linux-rocky9)
       OFX_ABI_GLIBC: '2.39'
-      OFX_ABI_GLIBCXX: 3.4.33
-      OFX_ABI_CXXABI: 1.3.15
+      OFX_ABI_GLIBCXX: '3.4.33'
+      OFX_ABI_CXXABI: '1.3.15'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -446,9 +448,10 @@ jobs:
       # step's osxDeploy.sh (OFX_DEPLOY_BUNDLES) already copied the MacPorts dylibs into
       # Contents/Libraries; bundle_libs.sh copies any that's missing, removes the rpaths into
       # /opt/local, signs the bundle ad hoc, and fails if a dependency is neither a system library
-      # nor bundled. The artifact requires the
-      # runner's macOS version or newer, and must be unquarantined after download
-      # (xattr -dr com.apple.quarantine GMIC.ofx.bundle); see the header of bundle_libs.sh.
+      # nor bundled. GMIC.ofx targets macOS 14.0, but the bundled MacPorts dylibs are built for the
+      # runner (minos 15.0, reported by check_macos_minos.sh): the artifact needs macOS 15 or newer
+      # (Natron's release builds, with its SDK, target 14.0). It must be unquarantined after
+      # download (xattr -dr com.apple.quarantine GMIC.ofx.bundle); see the header of bundle_libs.sh.
       - name: Bundle libraries
         if: env.UPLOAD_ARTIFACTS == 'true'
         run: |

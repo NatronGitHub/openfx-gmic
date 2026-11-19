@@ -1,10 +1,11 @@
 #!/bin/bash
 # What openfx's Support/include/linuxCheckBundle.sh (run on the same bundles in ci.yml) doesn't
 # check in a Linux GMIC.ofx:
-# - it doesn't need libcurl (G'MIC downloads with the curl or wget command) or FFTW (linked
-#   statically with FFT=fftw3), nor, unless SHARED_DEPS=1, the shared zlib or libpng
-#   (GMIC_STATIC_DEPS links them statically; linuxCheckBundle.sh allows a system libz.so.1, and
-#   with --no-needed doesn't check the NEEDED entries);
+# - it doesn't need libcurl (G'MIC downloads with the curl or wget command), FFTW (linked
+#   statically with FFT=fftw3) or OpenGL (libGL, libOpenGL..., which linuxCheckBundle.sh accepts as
+#   system libraries: GMIC_OFX/Makefile filters out -lGL), nor, unless SHARED_DEPS=1, the shared
+#   zlib or libpng (GMIC_STATIC_DEPS links them statically; linuxCheckBundle.sh allows a system
+#   libz.so.1);
 # - it exports only OfxGetNumberOfPlugins and OfxGetPlugin (the version script keeps the symbols
 #   of the static libraries local).
 # SHARED_DEPS=1: a GMIC_STATIC_DEPS=OFF build (Natron's release builds, distribution packages),
@@ -23,7 +24,7 @@ needed=$(readelf -d "$bin" | sed -n -e 's/.*(NEEDED).*\[\(.*\)\]/\1/p')
 echo "NEEDED: $(echo $needed)"
 for lib in $needed; do
     case "$lib" in
-        libcurl*|libfftw3*) echo "FAIL: $bin needs $lib"; status=1 ;;
+        libcurl*|libfftw3*|libGL*|libOpenGL*|libEGL*) echo "FAIL: $bin needs $lib"; status=1 ;;
         libz.so.*|libpng*)
             [ "${SHARED_DEPS:-0}" = 1 ] ||
                 { echo "FAIL: $bin needs $lib, which GMIC_STATIC_DEPS links statically"; status=1; } ;;
