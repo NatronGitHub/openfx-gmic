@@ -65,7 +65,7 @@ warp_perspective : skip ${1=1.5},${2=0},${3=1},${4=50},${5=50},${6=2}
 # include/sylvie_alexandre.gmic (gmic-community) still call with their "Perspective - Param A"
 # shape: Degrades HSL TSL (samj_Degrades_HSL_TSL), Formes Couleurs Variees Dans Image
 # (samj_Formes_Couleurs_Variees_Dans_Image) and Motifs Degrades CIE (samj_Degrades_XYZ_CIE)
-# fail with "Unknown command 'fx_warp_perspective'". Upstream: <URL>.
+# fail with "Unknown command 'fx_warp_perspective'". Upstream: https://github.com/GreycLab/gmic-community/issues/312.
 # From src/gmic_stdlib.gmic of G'MIC 4.0.7, unchanged. It calls warp_perspective, restored
 # above when the built-in G'MIC doesn't define it (not listed as a callee: the block above
 # checks it, and COMMERCIAL builds would otherwise leave this block out).
