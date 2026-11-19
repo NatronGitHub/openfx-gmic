@@ -545,8 +545,8 @@ jobs:
             --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset pr --jobs 2
       # Windows' own curl.exe (System32), which the plug-in runs: its version and features, and the
-      # command line of CImg's cimg::load_network() (with and without --compressed, which
-      # patches/cimg-curl-compressed.sh leaves out on Windows), on gmic.eu's gmic_grain.gmz
+      # command line of CImg's cimg::load_network() (with and without --compressed: a curl.exe
+      # without libz refuses it, and CImg then falls back to PowerShell), on gmic.eu's gmic_grain.gmz
       - name: System curl.exe (diagnostic)
         if: env.BUILD_VARIANTS == 'true'
         run: |

@@ -187,9 +187,6 @@ Licence_pocketfft.txt: pocketfft_hdronly.h
 #   which frees FFTW's process-wide planner and threads while another plug-in of the host (e.g.
 #   openfx-misc's CImg plug-ins, same shared libfftw3) may be using them (also in CImg develop,
 #   https://github.com/GreycLab/CImg/issues/500)
-# - cimg-curl-compressed.sh: on Windows, cimg::load_network() runs the curl command without
-#   --compressed, which the curl.exe of Windows (built without zlib) refuses: downloads (no
-#   libcurl, see gmic_plugin_call.cpp) would always fall back to PowerShell
 # - cimg-pocketfft.sh: let CImg compute its FFTs with pocketfft (cimg_use_pocketfft), which
 #   builds use by default instead of FFTW (only applied for FFT=pocketfft, last, so that CImg.h is
 #   the same as openfx-misc's; merged upstream after
@@ -199,7 +196,7 @@ Licence_pocketfft.txt: pocketfft_hdronly.h
 GMIC_PATCHES = patches/gmic-apple-abort.sh
 gmic.h gmic.cpp: $(GMIC_PATCHES)
 CIMG_PATCHES_POCKETFFT = patches/cimg-pocketfft.sh
-CIMG_PATCHES = patches/cimg-math-macro-overread.sh patches/cimg-omp-rand.sh patches/cimg-ij-boundary.sh patches/cimg-symmetric-eigen.sh patches/cimg-fftw-no-cleanup.sh patches/cimg-curl-compressed.sh
+CIMG_PATCHES = patches/cimg-math-macro-overread.sh patches/cimg-omp-rand.sh patches/cimg-ij-boundary.sh patches/cimg-symmetric-eigen.sh patches/cimg-fftw-no-cleanup.sh
 ifeq ($(FFT),pocketfft)
 CIMG_PATCHES += $(CIMG_PATCHES_POCKETFFT)
 endif
