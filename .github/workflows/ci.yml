@@ -21,14 +21,18 @@ name: Continuous Integration
 #
 # Render test (render_plugins.py, with openfx's hostDemo: GMIC_BUILD_TESTS=ON): per PR, a
 # representative subset of the plug-ins (the FFT and multi-layer filters, every 30th plug-in) on
-# the three systems; nightly and on demand, all the plug-ins on Linux.
+# the three systems; nightly and on demand, all the plug-ins on Linux. Linux also renders the pr
+# subset with hostDemo --ofx14 (an OFX 1.4-only host: the plug-ins must work in OFX 1.4 hosts).
 #
 # Linux dependencies: GMIC.ofx may need only system libraries (glibc's, libstdc++, libgcc_s,
 # libgomp): no libcurl, static zlib and libpng (see GMIC_OFX/Makefile). Each Linux build checks it
-# (check_linux_deps.sh), and reports the highest symbol versions that it requires; the nightly and
-# on-demand runs also build with the Makefile on Rocky Linux 9 (GCC 11, glibc 2.34), Natron 2.6's
-# Linux baseline. The Linux build renders Add Grain, which downloads its grain images with
-# the curl command (no libcurl), on the nightly and on-demand runs (gmic.eu may refuse downloads).
+# with openfx's linuxCheckBundle.sh on the installed bundle (Ubuntu builds: with Ubuntu 24.04's
+# glibc and libstdc++ versions as the limits; GMIC_STATIC_DEPS=OFF: --no-needed) and with
+# check_linux_deps.sh (what linuxCheckBundle.sh doesn't check); the nightly and on-demand runs also
+# build with the Makefile on Rocky Linux 9 (GCC 11, glibc 2.34), Natron 2.6's Linux baseline,
+# checked with linuxCheckBundle.sh's defaults (EL9). The Linux build renders Add Grain, which
+# downloads its grain images with the curl command (no libcurl), on the nightly and on-demand runs
+# (gmic.eu may refuse downloads).
 #
 # Frugal CI (the NatronGitHub runners are shared by all repos): one run per change. Pushes run CI
 # only on master and tags; feature branches run through their pull request. Draft pull requests
@@ -107,6 +111,12 @@ jobs:
     defaults:
       run:
         shell: bash -eo pipefail {0}
+    env:
+      # linuxCheckBundle.sh: the Ubuntu 24.04 bundles need its glibc and libstdc++; the
+      # EL9 limits (the defaults) are checked on Rocky Linux 9 (linux-rocky9)
+      OFX_ABI_GLIBC: '2.39'
+      OFX_ABI_GLIBCXX: 3.4.33
+      OFX_ABI_CXXABI: 1.3.15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -133,8 +143,10 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
             -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h" -DGMIC_BUILD_TESTS=ON
           cmake --build build -j4
+          cmake --install build --prefix install
           .github/workflows/check_fft.sh build/Plugins/GMIC.ofx.bundle pocketfft
-          .github/workflows/check_linux_deps.sh build/Plugins/GMIC.ofx.bundle
+          openfx/Support/include/linuxCheckBundle.sh install/OFX/Plugins
+          .github/workflows/check_linux_deps.sh install/OFX/Plugins/GMIC.ofx.bundle
       - name: Describe all plug-ins
         run: PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh build/Plugins $GMIC_PLUGIN_COUNT
       # the default FFT (pocketfft) on a non-power-of-two image, with an interpreter built from the
@@ -147,6 +159,13 @@ jobs:
           python3 .github/workflows/render_plugins.py --host build \
             --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset "$([ "$BUILD_VARIANTS" = true ] && echo all || echo pr)" --jobs 2
+      # an OFX 1.4-only host (hostDemo --ofx14, openfx#170): only the OFX 1.4 host properties and
+      # suites
+      - name: Render plug-ins (subset, OFX 1.4 host)
+        run: |
+          python3 .github/workflows/render_plugins.py --host build --host-arg=--ofx14 \
+            --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
+            --subset pr --jobs 2 --work render-ofx14
       # no libcurl on Linux: G'MIC downloads with the curl command (cimg::load_network). Add Grain
       # downloads its grain images (gmic_grain.gmz, from gmic.eu) into G'MIC's cache, here an empty
       # GMIC_CACHE_PATH (Color Presets downloads only for a preset other than the default)
@@ -168,8 +187,10 @@ jobs:
           cmake -S . -B build-fftw3 -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
             -DFFT=fftw3
           cmake --build build-fftw3 -j4
+          cmake --install build-fftw3 --prefix install-fftw3
           .github/workflows/check_fft.sh build-fftw3/Plugins/GMIC.ofx.bundle fftw3
-          .github/workflows/check_linux_deps.sh build-fftw3/Plugins/GMIC.ofx.bundle
+          openfx/Support/include/linuxCheckBundle.sh install-fftw3/OFX/Plugins
+          .github/workflows/check_linux_deps.sh install-fftw3/OFX/Plugins/GMIC.ofx.bundle
           PLUGIN_LIST=plugins-fftw3.txt .github/workflows/describe_plugins.sh build-fftw3/Plugins $GMIC_PLUGIN_COUNT
           python3 .github/workflows/render_plugins.py --host build \
             --plugins build-fftw3/Plugins --list plugins-fftw3.txt --stdlib build-fftw3/gmic/gmic_stdlib_community.h \
@@ -184,8 +205,11 @@ jobs:
           env -u PKG_CONFIG_PATH cmake -S . -B build-shared -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 \
             -DGMIC_DOWNLOAD_DIR="$PWD" -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h" -DGMIC_STATIC_DEPS=OFF
           cmake --build build-shared -j4
+          cmake --install build-shared --prefix install-shared
           .github/workflows/check_fft.sh build-shared/Plugins/GMIC.ofx.bundle pocketfft
-          SHARED_DEPS=1 .github/workflows/check_linux_deps.sh build-shared/Plugins/GMIC.ofx.bundle
+          # the shared zlib and libpng come from the system (or Natron's installer bundles them)
+          openfx/Support/include/linuxCheckBundle.sh --no-needed install-shared/OFX/Plugins
+          SHARED_DEPS=1 .github/workflows/check_linux_deps.sh install-shared/OFX/Plugins/GMIC.ofx.bundle
           readelf -d build-shared/Plugins/GMIC.ofx.bundle/Contents/Linux-x86-64/GMIC.ofx | grep -q 'NEEDED.*libpng16\.so' ||
             { echo "FAIL: GMIC_STATIC_DEPS=OFF does not link the shared libpng"; exit 1; }
           .github/workflows/describe_plugins.sh build-shared/Plugins $GMIC_PLUGIN_COUNT
@@ -195,11 +219,11 @@ jobs:
         if: env.BUILD_VARIANTS == 'true'
         run: |
           make -j4 CONFIG=debug OPENMP=1 CXX="g++ -std=c++17"
+          openfx/Support/include/linuxCheckBundle.sh GMIC_OFX/Linux-64-debug/GMIC.ofx.bundle
           .github/workflows/check_linux_deps.sh GMIC_OFX/Linux-64-debug/GMIC.ofx.bundle
-          cmake --install build --prefix install
           .github/workflows/compare_bundles.sh GMIC_OFX/Linux-64-debug/GMIC.ofx.bundle install/OFX/Plugins/GMIC.ofx.bundle
           .github/workflows/compare_sources.sh build
-      # The Linux bundle is uploaded as is: it needs only system libraries (check_linux_deps.sh),
+      # The Linux bundle is uploaded as is: it needs only system libraries (linuxCheckBundle.sh),
       # but the glibc and libstdc++ of Ubuntu 24.04. Natron's Linux releases build the plug-in on
       # Rocky Linux 9, Natron 2.6's Linux baseline (see the linux-rocky9 job).
       - name: Upload bundle
@@ -236,6 +260,11 @@ jobs:
     env:
       # number of plug-ins of COMMERCIAL builds: update with gmic_stdlib_commercial.txt or G'MIC
       GMIC_PLUGIN_COUNT_COMMERCIAL: 808
+      # linuxCheckBundle.sh: the Ubuntu 24.04 bundles need its glibc and libstdc++; the
+      # EL9 limits (the defaults) are checked on Rocky Linux 9 (linux-rocky9)
+      OFX_ABI_GLIBC: '2.39'
+      OFX_ABI_GLIBCXX: 3.4.33
+      OFX_ABI_CXXABI: 1.3.15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -259,7 +288,9 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
             -DOFX_LICENSE=COMMERCIAL -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h" -DGMIC_BUILD_TESTS=ON
           cmake --build build -j4
-          .github/workflows/check_linux_deps.sh build/Plugins/GMIC.ofx.bundle
+          cmake --install build --prefix install
+          openfx/Support/include/linuxCheckBundle.sh install/OFX/Plugins
+          .github/workflows/check_linux_deps.sh install/OFX/Plugins/GMIC.ofx.bundle
       - name: Describe and check
         run: |
           DESCRIBE_LOG=$PWD/describe-commercial.log PLUGIN_LIST=plugins.txt \
@@ -275,15 +306,15 @@ jobs:
       - name: Build with the Makefile (release, LICENSE=COMMERCIAL), compare with CMake
         run: |
           make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17 LICENSE=COMMERCIAL
+          openfx/Support/include/linuxCheckBundle.sh GMIC_OFX/Linux-64-release/GMIC.ofx.bundle
           .github/workflows/check_linux_deps.sh GMIC_OFX/Linux-64-release/GMIC.ofx.bundle
-          cmake --install build --prefix install
           .github/workflows/compare_bundles.sh GMIC_OFX/Linux-64-release/GMIC.ofx.bundle install/OFX/Plugins/GMIC.ofx.bundle
           .github/workflows/compare_sources.sh build
 
   # Natron 2.6's Linux baseline, nightly or on demand: Rocky Linux 9 (GCC 11, glibc 2.34; VFX
   # Reference Platform CY2027), with the Makefile, as Natron's build-plugins.sh does. The plug-in
-  # must need only system libraries (check_linux_deps.sh, which reports the GLIBC_ and GLIBCXX_
-  # versions required: at most glibc 2.34's and GCC 11's there); the describe test runs there.
+  # must need only system libraries and the symbol versions of EL9 (linuxCheckBundle.sh's
+  # defaults: glibc 2.34, GCC 11's libstdc++), and check_linux_deps.sh; the describe test runs there.
   linux-rocky9:
     name: Linux (Rocky Linux 9, GCC 11), Makefile
     runs-on: ubuntu-24.04
@@ -319,6 +350,7 @@ jobs:
         run: |
           git config --global --add safe.directory "$PWD"
           make -j4 CONFIG=release OPENMP=1 CXXSTD=c++17
+          openfx/Support/include/linuxCheckBundle.sh GMIC_OFX/Linux-64-release/GMIC.ofx.bundle
           .github/workflows/check_linux_deps.sh GMIC_OFX/Linux-64-release/GMIC.ofx.bundle
       - name: Describe all plug-ins
         run: CXX=g++ .github/workflows/describe_plugins.sh GMIC_OFX/Linux-64-release $GMIC_PLUGIN_COUNT
@@ -367,6 +399,7 @@ jobs:
           cmake --install build --prefix install
           codesign --verify --strict install/OFX/Plugins/GMIC.ofx.bundle
           .github/workflows/check_fft.sh install/OFX/Plugins/GMIC.ofx.bundle pocketfft
+          .github/workflows/check_macos_minos.sh install/OFX/Plugins/GMIC.ofx.bundle
       - name: Describe all plug-ins
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
@@ -407,6 +440,7 @@ jobs:
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
           make -j4 CONFIG=release CC=/usr/bin/clang CXX=/usr/bin/clang++ OPENMP=1 CXXSTD=c++17
+          .github/workflows/check_macos_minos.sh GMIC_OFX/Darwin-64-release/GMIC.ofx.bundle
           .github/workflows/compare_bundles.sh GMIC_OFX/Darwin-64-release/GMIC.ofx.bundle install/OFX/Plugins/GMIC.ofx.bundle
       # self-contained artifact (on a copy, the install directory is left as is): the install
       # step's osxDeploy.sh (OFX_DEPLOY_BUNDLES) already copied the MacPorts dylibs into

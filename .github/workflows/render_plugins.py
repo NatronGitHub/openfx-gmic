@@ -15,7 +15,7 @@ usage: render_plugins.py --host <hostDemo, or the CMake build directory> [--conf
                          --plugins <dir with GMIC.ofx.bundle>
                          --list <plug-in list> [--subset pr|all] [--stdlib <gmic_stdlib_community.h>]
                          [--jobs N] [--timeout S] [--min-rendered N] [--work <dir>]
-                         [--only <id>[,<id>...]]
+                         [--only <id>[,<id>...]] [--host-arg <arg>]...
 --host <build dir> reads hostDemo-path.txt there (written by CMake with GMIC_BUILD_TESTS=ON), or
 hostDemo-path-<config>.txt with a multi-config generator (--config, default Release).
 The plug-in list (one line per plug-in: id, context and input clips, tab-separated) is written
@@ -23,7 +23,8 @@ by describe_plugins.sh with PLUGIN_LIST=<file>. --subset pr (the default) render
 representative subset: the filters whose command uses the FFT (found in the G'MIC standard
 library given by --stdlib), the multi-layer filters, and every 30th plug-in (sorted by id).
 --only renders just the given plug-ins, also those in SKIP (e.g. the ones that download data),
-and fails unless they all render.
+and fails unless they all render. --host-arg passes an extra argument to hostDemo (repeatable),
+e.g. --host-arg=--ofx14 (an OFX 1.4-only host).
 """
 import argparse
 import concurrent.futures
@@ -147,12 +148,12 @@ def fft_plugins(stdlib_header):
     return ids
 
 
-def render(host, plugins, work, timeout, plugin):
+def render(host, host_args, plugins, work, timeout, plugin):
     pid, context, clips = plugin
     d = os.path.join(work, pid[len('eu.gmic.'):])
     shutil.rmtree(d, ignore_errors=True)
     os.makedirs(d)
-    cmd = [host, '--no-std-paths', '--no-cache', '--quiet', '--allow-unwritten', '--format', 'pfm',
+    cmd = [host] + host_args + ['--no-std-paths', '--no-cache', '--quiet', '--allow-unwritten', '--format', 'pfm',
            '-d', 'float', '-p', pid, '-c', 'general' if 'General' in context else 'filter',
            '--frames', '0', '-o', 'out',
            '--report', 'report.json']
@@ -208,6 +209,7 @@ def main():
     ap.add_argument('--min-rendered', type=int)
     ap.add_argument('--work')
     ap.add_argument('--only')
+    ap.add_argument('--host-arg', action='append', default=[])
     a = ap.parse_args()
 
     host = os.path.abspath(a.host)
@@ -265,7 +267,7 @@ def main():
     fails, xfails, xpasses, nans, times = [], [], [], [], []
     rendered = 0
     with concurrent.futures.ThreadPoolExecutor(a.jobs) as ex:
-        run = lambda p: render(host, plugins_dir, work, TIMEOUT.get(p[0], a.timeout), p)
+        run = lambda p: render(host, a.host_arg, plugins_dir, work, TIMEOUT.get(p[0], a.timeout), p)
         for pid, rc, problem, nan, t, errors, log in ex.map(run, todo):
             times.append((t, pid))
             if len(times) % 25 == 0:
