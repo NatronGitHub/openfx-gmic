@@ -93,6 +93,12 @@ endif
 ifeq ($(FFT),pocketfft)
 # pocketfft (BSD-3-Clause, the default), header-only, multithreaded (patches/cimg-pocketfft.sh)
 FFT_CXXFLAGS = -Dcimg_use_pocketfft
+# Windows: single-threaded pocketfft. Its static thread pool is destroyed when the host unloads
+# the plug-in (FreeLibrary): the destructor joins the worker threads under the loader lock, which
+# the exiting threads wait for (deadlock). The rest of G'MIC is still multithreaded (OpenMP).
+ifneq ($(MINGW_OS),)
+FFT_CXXFLAGS += -DPOCKETFFT_NO_MULTITHREADING
+endif
 endif
 # COMMERCIAL: the parser does not report curated filters that its standard library leaves out
 ifeq ($(LICENSE),COMMERCIAL)
