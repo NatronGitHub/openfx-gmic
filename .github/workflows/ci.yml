@@ -1,10 +1,10 @@
 name: Continuous Integration
 
 # Natron CI policy: per PR/push, exactly three full builds plus tests (macOS 15 arm64 with the
-# system clang and MacPorts libraries, Ubuntu 24.04, Windows MSYS2 UCRT64). Extra variants (debug
+# system clang and MacPorts libraries, Ubuntu 24.04, Windows x64 with MSVC). Extra variants (debug
 # builds, a C++20 build, LICENSE=COMMERCIAL builds on Linux) run nightly or on demand; the per-PR
 # builds use C++17 (Natron RB-2.6 policy: Qt5 builds C++17, Qt6 builds C++20); build artifacts
-# are uploaded only on demand or for pre-release tags.
+# are uploaded only on demand or for pre-release tags, and the Windows bundle also nightly.
 #
 # CI builds with CMake (NatronGitHub/Natron#1181), as Natron's build-plugins.sh does by default.
 # The top-level Makefile is a fallback (build-plugins.sh's PLUGINS_BUILD_SYSTEM=make), kept tested
@@ -34,7 +34,8 @@ name: Continuous Integration
 # build with CMake on Rocky Linux 9 (GCC 11, glibc 2.34), Natron 2.6's Linux baseline, checked
 # with linuxCheckBundle.sh's defaults (EL9).
 #
-# Downloads: no libcurl on any system (macOS and Windows check it with check_no_libcurl.sh): G'MIC
+# Downloads: no libcurl on any system (macOS checks it with check_no_libcurl.sh, Windows with the
+# list of DLLs that GMIC.ofx may import): G'MIC
 # downloads filter data with the system's curl command (macOS /usr/bin/curl, Windows System32's
 # curl.exe, Linux curl or wget from PATH; see gmic_plugin_call.cpp). The nightly and on-demand runs
 # render Add Grain on the three systems, which downloads its grain images that way (gmic.eu may
@@ -510,30 +511,35 @@ jobs:
             HOST_LDFLAGS=-L/opt/local/lib \
             .github/workflows/describe_plugins.sh build-cxx20/Plugins $GMIC_PLUGIN_COUNT
 
+  # Windows x64 with MSVC (Visual Studio's cl.exe, Ninja, from Git for Windows' bash, whose sh and awk
+  # apply the patches): static zlib, libpng (and expat, for the test hosts) from vcpkg's
+  # x64-windows-static triplet, pinned by vcpkg.json's builtin-baseline, and the static C runtime
+  # (/MT). OpenMP is MSVC's /openmp: the bundle ships the redistributable vcomp140.dll next to
+  # GMIC.ofx. GMIC.ofx may only import KERNEL32, SHELL32 and VCOMP140.
   windows:
-    name: Windows (MSYS2 UCRT64)
-    runs-on: windows-2022
+    name: Windows x64 (MSVC)
+    runs-on: windows-2025
     needs: changes
     if: needs.changes.outputs.run == 'true'
     timeout-minutes: 60
     defaults:
       run:
-        shell: msys2 {0}
+        shell: bash -eo pipefail {0}
+    env:
+      VCPKG_TRIPLET: x64-windows-static
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Set up MSYS2
-        uses: msys2/setup-msys2@v2
+      - name: Set up MSVC (x64)
+        uses: ilammy/msvc-dev-cmd@v1
         with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            git
-            mingw-w64-ucrt-x86_64-cc mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-libgomp
-            mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-zlib
-            mingw-w64-ucrt-x86_64-libpng mingw-w64-ucrt-x86_64-expat mingw-w64-ucrt-x86_64-python
+          arch: x64
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-cache
+          key: vcpkg-${{ env.VCPKG_TRIPLET }}-${{ hashFiles('vcpkg.json') }}
       - name: Cache G'MIC sources
         uses: actions/cache@v4
         with:
@@ -541,23 +547,64 @@ jobs:
             gmic_*.tar.gz
             pocketfft_hdronly.h
           key: gmic-src-${{ hashFiles('Makefile') }}
+      # the runner's vcpkg (VCPKG_INSTALLATION_ROOT) must have vcpkg.json's baseline commit
+      - name: vcpkg
+        run: |
+          baseline=$(python -c "import json; print(json.load(open('vcpkg.json'))['builtin-baseline'])")
+          if ! git -C "$VCPKG_INSTALLATION_ROOT" cat-file -e "$baseline^{commit}" 2>/dev/null; then
+            git -C "$VCPKG_INSTALLATION_ROOT" fetch --quiet origin
+          fi
+          git -C "$VCPKG_INSTALLATION_ROOT" log -1 --format='vcpkg baseline: %h %cs %s' "$baseline"
+          mkdir -p "$RUNNER_TEMP/vcpkg-cache"
+          echo "VCPKG_BINARY_SOURCES=clear;files,$(cygpath -w "$RUNNER_TEMP/vcpkg-cache"),readwrite" >> "$GITHUB_ENV"
+          echo "VCPKG_TOOLCHAIN=$(cygpath -m "$VCPKG_INSTALLATION_ROOT")/scripts/buildsystems/vcpkg.cmake" >> "$GITHUB_ENV"
       - name: Build (release, OpenMP)
         run: |
-          set -eo pipefail
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$(cygpath -m "$PWD")" \
-            -DGMIC_POCKETFFT="$(cygpath -m "$PWD")/pocketfft_hdronly.h" -DGMIC_BUILD_TESTS=ON
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 \
+            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=$VCPKG_TRIPLET \
+            -DGMIC_DOWNLOAD_DIR="$(cygpath -m "$PWD")" -DGMIC_POCKETFFT="$(cygpath -m "$PWD")/pocketfft_hdronly.h" \
+            -DGMIC_BUILD_TESTS=ON
           cmake --build build -j4
-          .github/workflows/check_fft.sh build/Plugins/GMIC.ofx.bundle pocketfft
-          .github/workflows/check_no_libcurl.sh build/Plugins/GMIC.ofx.bundle
+          cmake --install build --prefix install
+          find install -type f | sort
+      # The DLLs that GMIC.ofx imports (no C++ runtime, zlib, libpng, FFTW or libcurl DLL), the
+      # redistributable vcomp140.dll next to it, listed in GMIC.ofx's embedded manifest, and
+      # actually loaded from there (by a process that also finds System32's copy)
+      - name: Check the bundle's dependencies
+        run: |
+          dir=install/OFX/Plugins/GMIC.ofx.bundle/Contents/Win64
+          ofx=$dir/GMIC.ofx
+          deps=$(MSYS2_ARG_CONV_EXCL='*' dumpbin -nologo -dependents "$(cygpath -w "$ofx")" |
+                 sed -n '/has the following dependencies/,/Summary/p' | grep -iE '^ +[^ ]+\.dll$' | tr -d ' \r' | tr 'a-z' 'A-Z' | sort | tr '\n' ' ')
+          echo "GMIC.ofx imports: $deps"
+          [ "$deps" = "KERNEL32.DLL SHELL32.DLL VCOMP140.DLL " ] ||
+            { echo "FAIL: GMIC.ofx must import only KERNEL32, SHELL32 and VCOMP140"; exit 1; }
+          ls -l "$dir"
+          [ "$(ls "$dir" | tr '\n' ' ')" = "GMIC.ofx vcomp140.dll " ] ||
+            { echo "FAIL: Contents/Win64 must have GMIC.ofx and vcomp140.dll only"; exit 1; }
+          MSYS2_ARG_CONV_EXCL='*' mt -nologo "-inputresource:$(cygpath -w "$ofx");#2" -out:GMIC.ofx.manifest
+          cat GMIC.ofx.manifest; echo
+          grep -q 'file name="vcomp140.dll"' GMIC.ofx.manifest || { echo "FAIL: no vcomp140.dll in the manifest"; exit 1; }
+      - name: Check that vcomp140.dll is loaded from the bundle
+        shell: pwsh
+        run: |
+          $dir = (Resolve-Path install/OFX/Plugins/GMIC.ofx.bundle/Contents/Win64).Path
+          (Get-Item "$dir\vcomp140.dll").VersionInfo | Format-List FileDescription,FileVersion,ProductVersion
+          Add-Type -Namespace W -Name K -MemberDefinition '[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern System.IntPtr LoadLibraryW(string f);'
+          if ([W.K]::LoadLibraryW("$dir\GMIC.ofx") -eq [System.IntPtr]::Zero) { throw "LoadLibrary failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())" }
+          $vcomp = (Get-Process -Id $PID).Modules | Where-Object ModuleName -ieq 'vcomp140.dll'
+          Write-Host "vcomp140.dll loaded from: $($vcomp.FileName)"
+          if ($vcomp.FileName -ine "$dir\vcomp140.dll") { throw "vcomp140.dll is not the bundle's" }
       - name: Describe all plug-ins
         run: |
-          set -eo pipefail
-          PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh build/Plugins $GMIC_PLUGIN_COUNT
+          export DESCRIBE_MSVC_EXPAT_LIB=$(ls build/vcpkg_installed/$VCPKG_TRIPLET/lib/libexpat*MT.lib | head -1)
+          export DESCRIBE_MSVC_CFLAGS="-I$(cygpath -m "$PWD/build/vcpkg_installed/$VCPKG_TRIPLET/include")"
+          PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
       - name: Render plug-ins (subset)
         run: |
-          set -eo pipefail
-          python3 .github/workflows/render_plugins.py --host build \
-            --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
+          python .github/workflows/render_plugins.py --host build \
+            --plugins install/OFX/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset pr --jobs 2
       # Windows' own curl.exe (System32), which the plug-in runs: its version and features, and the
       # command line of CImg's cimg::load_network() (with and without --compressed: a curl.exe
@@ -579,46 +626,38 @@ jobs:
       - name: Download filter data with the curl command (Add Grain)
         if: env.BUILD_VARIANTS == 'true'
         run: |
-          set -eo pipefail
           cache="$(cygpath -u "$RUNNER_TEMP")/gmic-cache"
           mkdir -p "$cache"
-          OFX_GMIC_TEST_CURL_ONLY=1 GMIC_CACHE_PATH="$(cygpath -m "$cache")/" python3 .github/workflows/render_plugins.py --host build \
-            --plugins build/Plugins --list plugins.txt --only eu.gmic.AddGrain --work render-download
+          OFX_GMIC_TEST_CURL_ONLY=1 GMIC_CACHE_PATH="$(cygpath -m "$cache")/" python .github/workflows/render_plugins.py --host build \
+            --plugins install/OFX/Plugins --list plugins.txt --only eu.gmic.AddGrain --work render-download
           find "$cache" -name 'gmic_grain*' -size +0 -exec ls -l {} + | grep . ||
             { echo "FAIL: gmic_grain.gmz was not downloaded"; exit 1; }
       - name: Build (debug)
         if: env.BUILD_VARIANTS == 'true'
         run: |
-          set -eo pipefail
-          cmake -S . -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DOFX_CXX_STANDARD=17
+          cmake -S . -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DOFX_CXX_STANDARD=17 \
+            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>' \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=$VCPKG_TRIPLET \
+            -DGMIC_DOWNLOAD_DIR="$(cygpath -m "$PWD")" -DGMIC_POCKETFFT="$(cygpath -m "$PWD")/pocketfft_hdronly.h"
           cmake --build build-debug -j4
-      # self-contained artifact: the UCRT64 DLLs that GMIC.ofx imports (recursively, objdump -p) are
-      # copied next to it, and a manifest listing them is embedded with the Windows SDK's mt.exe.
-      # The describe test then runs a statically linked host with a PATH without /ucrt64/bin, so
-      # that the plug-in loads only if it finds its DLLs in the bundle. The plug-in itself links
-      # libstdc++/libgcc/libgomp dynamically, as the per-PR build does (see bundle_libs.sh for
-      # the clash with a host's DLLs of the same names). Limitations of the artifacts: see the
-      # header of bundle_libs.sh.
-      - name: Collect bundle and libraries
-        if: env.UPLOAD_ARTIFACTS == 'true'
-        run: |
-          set -eo pipefail
-          rm -rf Bundle && mkdir -p Bundle
-          cp -R build/Plugins/GMIC.ofx.bundle Bundle/
-          .github/workflows/bundle_libs.sh Bundle/GMIC.ofx.bundle
-          .github/workflows/check_no_libcurl.sh Bundle/GMIC.ofx.bundle
-          CXX="c++ -DXML_STATIC" HOST_LDFLAGS=-static HOST_RUN_PATH=/c/Windows/System32:/c/Windows \
-            .github/workflows/describe_plugins.sh Bundle $GMIC_PLUGIN_COUNT
-      - name: Upload bundle
-        if: env.UPLOAD_ARTIFACTS == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: openfx-gmic-windows-release
-          path: Bundle/GMIC.ofx.bundle
       - name: Build and describe (release, C++20)
         if: env.BUILD_VARIANTS == 'true'
         run: |
-          set -eo pipefail
-          cmake -S . -B build-cxx20 -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=20
+          cmake -S . -B build-cxx20 -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=20 \
+            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=$VCPKG_TRIPLET \
+            -DGMIC_DOWNLOAD_DIR="$(cygpath -m "$PWD")" -DGMIC_POCKETFFT="$(cygpath -m "$PWD")/pocketfft_hdronly.h"
           cmake --build build-cxx20 -j4
+          export DESCRIBE_MSVC_EXPAT_LIB=$(ls build/vcpkg_installed/$VCPKG_TRIPLET/lib/libexpat*MT.lib | head -1)
+          export DESCRIBE_MSVC_CFLAGS="-I$(cygpath -m "$PWD/build/vcpkg_installed/$VCPKG_TRIPLET/include")"
           .github/workflows/describe_plugins.sh build-cxx20/Plugins $GMIC_PLUGIN_COUNT
+      # the bundle that users download: nightly, on demand and for pre-release tags (small, kept
+      # for a week)
+      - name: Upload bundle
+        if: env.UPLOAD_ARTIFACTS == 'true' || github.event_name == 'schedule'
+        uses: actions/upload-artifact@v4
+        with:
+          name: openfx-gmic-windows-x64-msvc
+          path: install/OFX/Plugins
+          retention-days: 7
+          compression-level: 9
