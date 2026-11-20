@@ -617,8 +617,9 @@ jobs:
         with:
           name: openfx-gmic-windows-x64-msvc
           path: install/OFX/Plugins
-          # (the merged openfx-gmic-windows-msvc bundle, below, is kept 7 days)
-          retention-days: 1
+          # 1 day nightly and on demand, when the merged openfx-gmic-windows-msvc bundle (below,
+          # 7 days) has it; 7 days for pre-release tags, which build no Arm bundle
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/') && 7 || 1 }}
           compression-level: 9
 
   # Nightly and on demand only: MSYS2 UCRT64 (MinGW-w64 GCC, libgomp, pkg-config, CMake), the other
