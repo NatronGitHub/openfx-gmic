@@ -9,7 +9,9 @@ name: Continuous Integration
 # CI builds with CMake (NatronGitHub/Natron#1181), as Natron's build-plugins.sh does by default.
 # The top-level Makefile is a fallback (build-plugins.sh's PLUGINS_BUILD_SYSTEM=make), kept tested
 # by one nightly Linux release build whose bundle and sources are compared with the CMake ones
-# (compare_bundles.sh, compare_sources.sh). CMakeLists.txt also reads GMICVER, the checksums,
+# (compare_bundles.sh, compare_sources.sh), and by a nightly comparison of its COMMERCIAL sources
+# (make sources LICENSE=COMMERCIAL, no compile) with the CMake COMMERCIAL build's. Not tested: the
+# Makefile's COMMERCIAL, debug, macOS and Windows builds. CMakeLists.txt also reads GMICVER, the checksums,
 # POCKETFFTCOMMIT and CIMG_PATCHES from the Makefile, hence the cache keys on hashFiles('Makefile').
 #
 # FFT: all builds use the default, pocketfft (header-only, downloaded), as Natron's builds do; each
@@ -262,7 +264,8 @@ jobs:
   # community filters under the GPL or a CeCILL-only licence. The bundle is checked
   # (check_commercial.sh: no FFTW, licence texts, left-out plug-ins), described and rendered (the pr
   # subset, with the FFT filters), and FFT-based filters are rendered on a 720x576 image with an
-  # interpreter built from the same sources (fft_smoke.sh).
+  # interpreter built from the same sources (fft_smoke.sh). The Makefile's COMMERCIAL sources (make
+  # sources, no compile) are compared with the CMake build's (compare_sources.sh).
   linux-commercial:
     name: Linux (Ubuntu 24.04), LICENSE=COMMERCIAL
     runs-on: ubuntu-24.04
@@ -320,6 +323,13 @@ jobs:
             --subset pr --jobs 2
       - name: Render FFT filters (720x576)
         run: .github/workflows/fft_smoke.sh build/gmic
+      # the Makefile's COMMERCIAL sources (no compile): its G'MIC sources, generated standard library
+      # and hot-fix selection must be the CMake build's (compare_sources.sh), so that the Makefile
+      # fallback's copies of the COMMERCIAL stdlib generation and hot-fix selection can't drift
+      - name: Makefile sources (LICENSE=COMMERCIAL), compare with CMake
+        run: |
+          make sources LICENSE=COMMERCIAL
+          .github/workflows/compare_sources.sh build
 
   # Natron 2.6's Linux baseline, nightly or on demand: Rocky Linux 9 (GCC 11, glibc 2.34; VFX
   # Reference Platform CY2027), with CMake (EL9's cmake; the Unix Makefiles generator, since

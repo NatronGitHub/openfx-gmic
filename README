@@ -82,7 +82,7 @@ Building with make
 CI builds with CMake (https://github.com/NatronGitHub/Natron/issues/1181), as Natron's
 build-plugins.sh does by default. The Makefile is a fallback (build-plugins.sh's
 PLUGINS_BUILD_SYSTEM=make), tested only by one nightly Linux release build compared with the CMake
-one. CMakeLists.txt reads the G'MIC version, the checksums, POCKETFFTCOMMIT and CIMG_PATCHES from
+one, and a nightly comparison of its COMMERCIAL sources (no compile). CMakeLists.txt reads the G'MIC version, the checksums, POCKETFFTCOMMIT and CIMG_PATCHES from
 it.
 
     make CONFIG=release OPENMP=1 CXXSTD=c++17
