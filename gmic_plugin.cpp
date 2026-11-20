@@ -1853,8 +1853,10 @@ extern "C" DllExport PF_Err EntryPointFunc(PF_Cmd cmd, PF_InData* in_data, PF_Ou
 #endif
 
 #ifdef OFX_PLUGIN
-// the physical memory (frameCacheBudget), 0 if unknown (Windows: windows.h, included at the top)
-#if defined(__APPLE__)
+// the physical memory (frameCacheBudget), 0 if unknown
+#if defined(_WIN32)
+// (windows.h: included at the top)
+#elif defined(__APPLE__)
 #include <sys/types.h>
 #include <sys/sysctl.h>
 #else
