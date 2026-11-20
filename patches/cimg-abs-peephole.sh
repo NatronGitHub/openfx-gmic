@@ -18,7 +18,8 @@
 # 'if (code) {'.
 #
 # Running it again on a patched file does nothing, and so does running it on a CImg.h whose abs()
-# handler has no such peephole, or tests is_comp_scalar(arg1) (an upstream fix: a
+# handler has no such peephole (it mentions neither mp_absmaxabs nor mp_absminabs, and has no
+# line to patch), or tests is_comp_scalar(arg1) (an upstream fix: a
 # 'code.size()>p3' guard alone is not enough). The script fails in any other case: the expected
 # code missing or partly fixed (e.g. after a GMICVER bump: then check what upstream changed, and
 # update or remove this patch), an abs() handler that doesn't end with
@@ -43,8 +44,8 @@ fail() {
 
 # counts <file>: "<abs() handlers> <markers> <argument compilations> <unguarded tests> <guarded
 # tests> <absmaxabs/absminabs rewrites> <is_comp_scalar(arg1) tests> <handler ends> <other
-# handlers before the end>", inside the abs() handler, from its first line to its last one
-# ('_cimg_mp_scalar1(abs,arg1);')
+# handlers before the end> <lines mentioning mp_absmaxabs or mp_absminabs>", inside the abs()
+# handler, from its first line to its last one ('_cimg_mp_scalar1(abs,arg1);')
 counts() {
   awk -v head="$head" -v end="$end" -v comp="$comp" -v old="$old" -v marker="$marker" -v new="$new" '
     { t = $0; gsub(/^[ \t]+|[ \t]+$/, "", t) }
@@ -57,8 +58,9 @@ counts() {
     t == old { o++ }
     t == new { n++ }
     index(t, "pop[0] = (ulongT)mp_absmaxabs;") || index(t, "pop[0] = (ulongT)mp_absminabs;") { r++ }
+    index(t, "mp_absmaxabs") || index(t, "mp_absminabs") { a++ }
     index(t, "is_comp_scalar(arg1)") { g++ }
-    END { print h + 0, m + 0, c + 0, o + 0, n + 0, r + 0, g + 0, e + 0, x + 0 }' "$1"
+    END { print h + 0, m + 0, c + 0, o + 0, n + 0, r + 0, g + 0, e + 0, x + 0, a + 0 }' "$1"
 }
 
 case "$f" in
@@ -78,7 +80,7 @@ if [ "$2" = 1 ] && [ "$3" = 1 ] && [ "$4" = 0 ] && [ "$5" = 1 ] && [ "$6" = 2 ];
   echo "$f: already patched (abs(maxabs()) peephole, CImg#502)"
   exit 0
 fi
-if [ "$2" = 0 ] && [ "$6" = 0 ]; then
+if [ "$2" = 0 ] && [ "${10}" = 0 ] && [ "$4" = 0 ] && [ "$5" = 0 ]; then
   echo "$f: the abs() handler has no abs(maxabs()) peephole: nothing to patch (CImg#502)"
   exit 0
 fi

@@ -18,7 +18,8 @@
 # and is_comp_vector(arg1) / is_comp_scalar(arg1) in the vector and scalar rewrites.
 #
 # Running it again on a patched file does nothing, and so does running it on a CImg.h whose log()
-# handler has no log1p peephole (e.g. CImg 4.0.7), or tests both is_comp_scalar(arg1) and
+# handler has no log1p peephole (it mentions neither mp_log1p nor mp_vector_log1p, and has none of
+# the lines to patch, e.g. CImg 4.0.7), or tests both is_comp_scalar(arg1) and
 # is_comp_vector(arg1) (an upstream fix: a 'code.size()>p3' guard alone is not enough). The
 # script fails in any other case: the expected code missing or partly fixed (e.g. after a GMICVER
 # bump: then check what upstream changed, and update or remove this patch), a log() handler that
@@ -48,8 +49,8 @@ fail() {
 
 # counts <file>: "<log() handlers> <markers> <argument compilations> <lines to patch> <patched
 # lines> <log1p rewrites> <is_comp_scalar(arg1) tests> <is_comp_vector(arg1) tests> <handler
-# ends> <other handlers before the end>", inside the log() handler, from its first line to its
-# last one ('_cimg_mp_scalar1(log,arg1);')
+# ends> <other handlers before the end> <lines mentioning mp_log1p or mp_vector_log1p>", inside the
+# log() handler, from its first line to its last one ('_cimg_mp_scalar1(log,arg1);')
 counts() {
   awk -v head="$head" -v end="$end" -v comp="$comp" -v marker="$marker" \
       -v o1="$old1" -v o2="$old2" -v o3="$old3" -v n1="$new1" -v n2="$new2" -v n3="$new3" '
@@ -63,9 +64,10 @@ counts() {
     t == o1 || t == o2 || t == o3 { o++ }
     t == n1 || t == n2 || t == n3 { n++ }
     index(t, "pop[0]") && (index(t, "mp_log1p") || index(t, "mp_vector_log1p")) { r++ }
+    index(t, "mp_log1p") || index(t, "mp_vector_log1p") { a++ }
     index(t, "is_comp_scalar(arg1)") { gs++ }
     index(t, "is_comp_vector(arg1)") { gv++ }
-    END { print h + 0, m + 0, c + 0, o + 0, n + 0, r + 0, gs + 0, gv + 0, e + 0, x + 0 }' "$1"
+    END { print h + 0, m + 0, c + 0, o + 0, n + 0, r + 0, gs + 0, gv + 0, e + 0, x + 0, a + 0 }' "$1"
 }
 
 case "$f" in
@@ -85,7 +87,7 @@ if [ "$2" = 1 ] && [ "$3" = 1 ] && [ "$4" = 0 ] && [ "$5" = 3 ] && [ "$6" = 2 ];
   echo "$f: already patched (log1p peephole, CImg#502)"
   exit 0
 fi
-if [ "$2" = 0 ] && [ "$6" = 0 ]; then
+if [ "$2" = 0 ] && [ "${11}" = 0 ] && [ "$4" = 0 ] && [ "$5" = 0 ]; then
   echo "$f: the log() handler has no log1p peephole: nothing to patch (CImg#502)"
   exit 0
 fi
