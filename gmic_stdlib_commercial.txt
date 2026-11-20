@@ -39,6 +39,10 @@ community tom_keil a340032e54e3c1b313787c88a76fb010749c027a26f4d48e89d0562c0d3ff
 #  mathew_callaghan, mccap, prawnsushi, reptorian, reptorian_b64_repository, template.
 #  Creative Commons BY-NC-SA 3.0 NZ (non-commercial): iain_fergusson.
 #  GPL v3: zarir_madon (Dream Smoothing Enhanced, Dream Smoothing Enhanced V2).
+# Hot fix left out: fx_warp_perspective (it needs warp_perspective, only in prawnsushi): the
+# "Perspective - Param A" shape of three sylvie_alexandre filters fails (Degrades HSL TSL,
+# Formes Couleurs Variees Dans Image, Motifs Degrades CIE), until upstream fixes
+# https://github.com/GreycLab/gmic-community/issues/312.
 
 # command <name> <reason>: remove the definition of the command and the filters that run it.
 command samj_SVG_Symetries_A writes an SVG drop shadow filter under CC BY-SA 3.0 (comment in the code)
