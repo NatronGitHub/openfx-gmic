@@ -177,6 +177,8 @@ using namespace reduxfx;
 #ifndef _WIN32
 #include <pthread.h>
 #else
+// CreateThread (the render thread) and GlobalMemoryStatusEx (physicalMemoryBytes), without the
+// min/max macros (RFX_Utils.h, included above, already includes windows.h)
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -1251,7 +1253,7 @@ static int gmicCallAbortable(OfxImageEffectHandle instance, const char* cmd, uns
 // for the same key waits for that run, then takes its result from the cache; if there is none
 // (the run failed or was aborted, or its results were not kept), it runs G'MIC itself.
 #ifdef OFX_PLUGIN
-static unsigned long long physicalMemoryBytes(); // at the end of the file (windows.h)
+static unsigned long long physicalMemoryBytes(); // at the end of the file
 
 // OFX_GMIC_FRAME_CACHE_MB: a decimal number >= 0, with '.' as decimal point whatever the locale
 // and an optional exponent ("512", "0.5", "2e3"), surrounding whitespace allowed. Anything else
@@ -1851,16 +1853,8 @@ extern "C" DllExport PF_Err EntryPointFunc(PF_Cmd cmd, PF_InData* in_data, PF_Ou
 #endif
 
 #ifdef OFX_PLUGIN
-// the physical memory (frameCacheBudget), 0 if unknown; here because of windows.h's macros
-#if defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#elif defined(__APPLE__)
+// the physical memory (frameCacheBudget), 0 if unknown (Windows: windows.h, included at the top)
+#if defined(__APPLE__)
 #include <sys/types.h>
 #include <sys/sysctl.h>
 #else
