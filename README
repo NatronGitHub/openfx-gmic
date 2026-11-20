@@ -41,7 +41,8 @@ patched: patches/cimg-omp-rand.sh makes CImg's random numbers in OpenMP loops re
 patches/cimg-vvar2.sh, patches/cimg-vargkth2.sh, patches/cimg-log1p-peephole.sh and
 patches/cimg-abs-peephole.sh fix math parser bugs,
 patches/cimg-fftw-no-cleanup-at-unload.sh keeps FFTW's threads when the plug-in is unloaded
-(FFT=fftw3), and gmic_hotfixes.gmic replaces the
+(FFT=fftw3), patches/gmic-win-thread-stack.sh gives the threads of G'MIC's "parallel" command an
+8 MiB stack on Windows, and gmic_hotfixes.gmic replaces the
 definitions of broken filters (each fix is skipped once G'MIC has it).
 
 Requirements
@@ -61,8 +62,9 @@ Requirements
   the shared zlib and libpng instead: distribution packages and Natron's
   release builds use it (Natron's installer bundles these libraries).
 - Python 3, for the render test only.
-- Platforms: Linux, macOS (Apple clang; libraries from MacPorts or Homebrew) and Windows (MSYS2
-  UCRT64, as in CI: see .github/workflows/ci.yml for the packages).
+- Platforms: Linux, macOS (Apple clang; libraries from MacPorts or Homebrew) and Windows: MSVC
+  x64 with CMake, as in CI (see "Building with MSVC" below), or MSYS2 (UCRT64, tested nightly; with make or CMake;
+  libraries from its packages: mingw-w64-ucrt-x86_64-zlib, -libpng, -libgomp and -pkgconf).
 
 Runtime requirements on Linux: GMIC.ofx needs only the system libraries libc, libm, libstdc++,
 libgcc_s and libgomp (OpenMP builds; libgomp is a separate package, which minimal systems may not
@@ -85,7 +87,7 @@ Building with make
 CI builds with CMake (https://github.com/NatronGitHub/Natron/issues/1181), as Natron's
 build-plugins.sh does by default. The Makefile is a fallback (build-plugins.sh's
 PLUGINS_BUILD_SYSTEM=make), tested only by one nightly Linux release build compared with the CMake
-one. CMakeLists.txt reads the G'MIC version, the checksums, POCKETFFTCOMMIT and CIMG_PATCHES from
+one. CMakeLists.txt reads the G'MIC version, the checksums, POCKETFFTCOMMIT, CIMG_PATCHES and GMIC_PATCHES from
 it.
 
     make CONFIG=release OPENMP=1 CXXSTD=c++17
@@ -138,6 +140,32 @@ Options (the Makefile's equivalent in parentheses):
   MacPorts libraries built for the runner (macOS 15), so they need macOS 15; Natron's release
   builds (its SDK) target 14.0.
 - GMIC_BUILD_TESTS=ON: also build openfx's hostDemo, for the render test.
+- GMIC_VCOMP_DLL: MSVC with OpenMP: the vcomp140.dll copied into the bundle (default: the
+  redistributable one of the compiler, see below).
+
+Building with MSVC
+------------------
+
+CI builds the Windows x64 bundle with Visual Studio's compiler (cl.exe), from a "x64 Native Tools"
+environment (vcvars64.bat), with CMake and Ninja, from Git for Windows' bash: the patches of the
+G'MIC sources need its sh and awk in PATH (or -DGMIC_PATCH_SH=<path to sh.exe>). zlib and libpng
+(and expat, for the test hosts of GMIC_BUILD_TESTS) come from vcpkg, at the versions pinned by
+vcpkg.json (its builtin-baseline), as static libraries with the static C runtime:
+
+    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
+      -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static
+    cmake --build build
+    cmake --install build --prefix <dir>
+
+OpenMP uses MSVC's /openmp (OpenMP 2.0): the bundle ships the compiler's redistributable
+vcomp140.dll (VC/Redist/MSVC/<version>/x64/Microsoft.VC<nnn>.OpenMP) next to GMIC.ofx, and a
+manifest embedded into GMIC.ofx makes the loader use that copy. GMIC.ofx then imports only
+KERNEL32, SHELL32 and VCOMP140 (no C++ runtime, zlib or libpng DLL). The plug-in keeps vcomp140.dll
+loaded once it has rendered (unloading it under its idle threads crashed hosts that unload
+plug-ins). Debug builds link the same vcomp140.dll (vcomp140d.dll is not redistributable).
+Contents/Resources/vcomp140-NOTICE.txt says that vcomp140.dll is Microsoft's redistributable, not
+under the plug-in's licence. /openmp:llvm is not supported.
 
 Filters
 -------

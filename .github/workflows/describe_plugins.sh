@@ -6,6 +6,9 @@
 # If $HOST_RUN_PATH is set, the host runs with PATH=$HOST_RUN_PATH (the build still uses the
 # current PATH): on Windows, with a statically linked host and a PATH without the MSYS2 bin
 # directory, this checks that the plug-in finds the DLLs bundled with it.
+# MSVC (Git for Windows' bash with cl.exe in PATH, e.g. after vcvars): DESCRIBE_MSVC_EXPAT_LIB=<a
+# static expat .lib built with /MT> builds the host with cl.exe instead of $CXX, and
+# DESCRIBE_MSVC_CFLAGS adds compile flags (e.g. -I<expat's include directory>).
 set -euo pipefail
 
 BUNDLE_DIR=$(cd "$1" && pwd)
@@ -33,16 +36,29 @@ if [ "$(grep -c DUPLICATE_PARAM "$WORK/src/ofxhParam.cpp")" != 1 ] || [ "$(grep 
     exit 1
 fi
 
-# shellcheck disable=SC2086
-$CXX -std=c++11 -O1 -w -DOFX_EXTENSIONS_NUKE -DOFX_EXTENSIONS_NATRON \
-    -I"$WORK/include" -I"$WORK/ofxinclude" \
-    "$WORK"/src/*.cpp "$SRC/.github/workflows/describe_plugins.cpp" \
-    ${HOST_LDFLAGS:-} -lexpat ${HOST_LIBS:-} -o "$WORK/describe_plugins"
+if [ -n "${DESCRIBE_MSVC_EXPAT_LIB:-}" ]; then
+    # "-" options, not "/": MSYS would convert those as paths; shell32: SHGetFolderPathW
+    w() { cygpath -m "$1"; }
+    # absolute: cl.exe runs in $WORK
+    DESCRIBE_MSVC_EXPAT_LIB="$(cd "$(dirname "$DESCRIBE_MSVC_EXPAT_LIB")" && pwd)/$(basename "$DESCRIBE_MSVC_EXPAT_LIB")"
+    (cd "$WORK" && MSYS2_ARG_CONV_EXCL='*' cl -nologo -std:c++17 -O1 -EHsc -MT -w -DOFX_EXTENSIONS_NUKE -DOFX_EXTENSIONS_NATRON \
+        -DXML_STATIC -I"$(w "$WORK/include")" -I"$(w "$WORK/ofxinclude")" ${DESCRIBE_MSVC_CFLAGS:-} \
+        $(for f in "$WORK"/src/*.cpp; do w "$f"; done) "$(w "$SRC/.github/workflows/describe_plugins.cpp")" \
+        -Fe:describe_plugins.exe -link "$(w "$DESCRIBE_MSVC_EXPAT_LIB")" shell32.lib) > "$WORK/cl.log" 2>&1 ||
+        { tail -n 50 "$WORK/cl.log"; exit 1; }
+else
+    # shellcheck disable=SC2086
+    $CXX -std=c++11 -O1 -w -DOFX_EXTENSIONS_NUKE -DOFX_EXTENSIONS_NATRON \
+        -I"$WORK/include" -I"$WORK/ofxinclude" \
+        "$WORK"/src/*.cpp "$SRC/.github/workflows/describe_plugins.cpp" \
+        ${HOST_LDFLAGS:-} -lexpat ${HOST_LIBS:-} -o "$WORK/describe_plugins"
+fi
 
 # run with an empty HOME, so that no user G'MIC configuration (~/.config/gmic) is picked up
 mkdir -p "$WORK/home"
 cd "$WORK"
 status=0
+if [ -n "${DESCRIBE_MSVC_EXPAT_LIB:-}" ]; then BUNDLE_DIR=$(cygpath -m "$BUNDLE_DIR"); fi
 HOME="$WORK/home" OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
     ./describe_plugins "$MIN_PLUGINS" 2> describe.log || status=$?
 # $DESCRIBE_LOG (an absolute path): keep a copy of the log (PLUGIN <id> lines, ...)

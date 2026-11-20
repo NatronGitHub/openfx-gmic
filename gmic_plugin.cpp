@@ -176,6 +176,13 @@ using namespace reduxfx;
 #include <thread>
 #ifndef _WIN32
 #include <pthread.h>
+#else
+// CreateThread (the render thread) and GlobalMemoryStatusEx (physicalMemoryBytes), without the
+// min/max macros (RFX_Utils.h, included above, already includes windows.h)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #endif
 #ifdef DEBUG
 #include <iostream>
@@ -1102,6 +1109,12 @@ static void* gmicCallThread(void* arg)
 	gmicCallRun((GmicCallData*)arg);
 	return NULL;
 }
+#else
+static DWORD WINAPI gmicCallThread(LPVOID arg)
+{
+	gmicCallRun((GmicCallData*)arg);
+	return 0;
+}
 #endif
 
 // gmic_plugin_call(), aborted when the host aborts the render: then *aborted is set to true, and
@@ -1145,12 +1158,11 @@ static int gmicCallAbortable(OfxImageEffectHandle instance, const char* cmd, uns
 		pthread_attr_destroy(&attr);
 	}
 #else
-	std::thread thread;
-	try {
-		thread = std::thread(gmicCallRun, &d);
-		started = true;
-	} catch (const std::system_error&) {
-	}
+	// the same 8 MiB, reserved (committed on demand): std::thread can't set the stack size, and its
+	// default is the host executable's reserve (1 MiB with MSVC's linker, 2 MiB with MinGW's)
+	HANDLE thread = CreateThread(NULL, (SIZE_T)8 * 1024 * 1024, gmicCallThread, &d,
+	                             STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
+	started = (thread != NULL);
 #endif
 	if (!started) {
 		// no thread: run G'MIC here, without abort
@@ -1178,7 +1190,8 @@ static int gmicCallAbortable(OfxImageEffectHandle instance, const char* cmd, uns
 #ifndef _WIN32
 		pthread_join(thread, NULL);
 #else
-		thread.join();
+		WaitForSingleObject(thread, INFINITE);
+		CloseHandle(thread);
 #endif
 		options->p_is_abort = NULL;
 		throw;
@@ -1186,7 +1199,8 @@ static int gmicCallAbortable(OfxImageEffectHandle instance, const char* cmd, uns
 #ifndef _WIN32
 	pthread_join(thread, NULL);
 #else
-	thread.join();
+	WaitForSingleObject(thread, INFINITE);
+	CloseHandle(thread);
 #endif
 	options->p_is_abort = NULL;
 	if (!*aborted && gEffectHost->abort(instance)) {
@@ -1239,7 +1253,7 @@ static int gmicCallAbortable(OfxImageEffectHandle instance, const char* cmd, uns
 // for the same key waits for that run, then takes its result from the cache; if there is none
 // (the run failed or was aborted, or its results were not kept), it runs G'MIC itself.
 #ifdef OFX_PLUGIN
-static unsigned long long physicalMemoryBytes(); // at the end of the file (windows.h)
+static unsigned long long physicalMemoryBytes(); // at the end of the file
 
 // OFX_GMIC_FRAME_CACHE_MB: a decimal number >= 0, with '.' as decimal point whatever the locale
 // and an optional exponent ("512", "0.5", "2e3"), surrounding whitespace allowed. Anything else
@@ -1839,15 +1853,9 @@ extern "C" DllExport PF_Err EntryPointFunc(PF_Cmd cmd, PF_InData* in_data, PF_Ou
 #endif
 
 #ifdef OFX_PLUGIN
-// the physical memory (frameCacheBudget), 0 if unknown; here because of windows.h's macros
+// the physical memory (frameCacheBudget), 0 if unknown
 #if defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
+// (windows.h: included at the top)
 #elif defined(__APPLE__)
 #include <sys/types.h>
 #include <sys/sysctl.h>

@@ -271,7 +271,8 @@ if(OFX_LICENSE STREQUAL "GPL")
 endif()
 
 # Local patches to the extracted G'MIC sources, read from the Makefile, so that both builds apply
-# the same scripts in the same order (see patches/): CIMG_PATCHES on CImg.h. Each runs as
+# the same scripts in the same order (see patches/): CIMG_PATCHES on CImg.h, GMIC_PATCHES on
+# gmic.cpp. Each runs as
 # "sh patches/<script> <file>" on the fresh copy, and fails if the source doesn't contain the
 # expected code (e.g. after a GMICVER bump).
 # The patches need a POSIX sh (Linux, macOS, MSYS2; with MSVC, e.g. Git for Windows' sh.exe in the
@@ -284,8 +285,12 @@ gmic_makefile_var(CIMG_PATCHES _mk_cimg_patches)
 if(NOT _mk_cimg_patches)
   message(FATAL_ERROR "Could not read CIMG_PATCHES from ${GMIC_MAKEFILE}")
 endif()
+gmic_makefile_var(GMIC_PATCHES _mk_gmic_patches)
+if(NOT _mk_gmic_patches)
+  message(FATAL_ERROR "Could not read GMIC_PATCHES from ${GMIC_MAKEFILE}")
+endif()
 set(_patches "")
-set(_gmic_patch_lists "_mk_cimg_patches:CImg.h")
+set(_gmic_patch_lists "_mk_cimg_patches:CImg.h" "_mk_gmic_patches:gmic.cpp")
 find_program(GMIC_PATCH_SH sh)
 set(_gmic_patch_key "${GMICVER} ${GMICSRC_SHA256} ${_gmic_extract} sh=${GMIC_PATCH_SH}")
 foreach(_entry IN LISTS _gmic_patch_lists)
@@ -676,6 +681,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 else()
   set(GMIC_STATIC_DEPS OFF)
 endif()
+# MSVC: zlib and libpng through CMake's FindZLIB and FindPNG, with no pkg-config: e.g. vcpkg's
+# x64-windows-static triplet (static libraries built with /MT), with the vcpkg.json manifest and
+# vcpkg's toolchain file (see README). FFT=fftw3 still uses pkg-config.
+if(MSVC AND NOT GMIC_FFT STREQUAL "fftw3")
+  find_package(ZLIB REQUIRED)
+  find_package(PNG REQUIRED)
+  target_link_libraries(GMIC PRIVATE PNG::PNG ZLIB::ZLIB)
+else()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GMIC_DEPS REQUIRED IMPORTED_TARGET libpng zlib ${_fft_module})
 if(GMIC_FFT STREQUAL "fftw3")
@@ -723,12 +736,85 @@ else()
     target_link_libraries(GMIC PRIVATE ${FFTW3_THREADS_LIBRARY})
   endif()
 endif()
+endif() # MSVC
 
-# OpenMP (OFX_USE_OPENMP), except with MSVC, whose OpenMP 2.0 has issues with CImg
-# (https://github.com/dtschump/CImg/issues/208)
-if(OFX_USE_OPENMP AND NOT MSVC)
+# OpenMP (OFX_USE_OPENMP). MSVC: /openmp (OpenMP 2.0, which CImg supports: it drops collapse()
+# with MSVC), whose runtime, vcomp140.dll, is copied next to GMIC.ofx (below). (CMake's FindOpenMP
+# is not used with MSVC: it may pick /openmp:llvm or /openmp:experimental, and its check failed with
+# the static C runtime. /openmp:llvm is not usable: its libomp140 DLL isn't redistributable, and it
+# aborts in CImg's nested parallel regions.)
+if(OFX_USE_OPENMP AND MSVC)
+  target_compile_options(GMIC PRIVATE /openmp)
+  target_compile_definitions(GMIC PRIVATE cimg_use_openmp)
+  # Debug builds (/MTd, /MDd) link the release OpenMP runtime too, vcomp140.dll (not
+  # vcomp140d.dll, which is not redistributable), so that the bundle and its manifest are the same
+  # in every configuration. (vcomp's API is C: it doesn't depend on the C runtime of GMIC.ofx.)
+  target_link_options(GMIC PRIVATE /NODEFAULTLIB:vcompd.lib)
+  target_link_libraries(GMIC PRIVATE vcomp.lib)
+elseif(OFX_USE_OPENMP)
   ofx_target_openmp(GMIC REQUIRED)
   target_compile_definitions(GMIC PRIVATE cimg_use_openmp)
+endif()
+
+# MSVC with OpenMP: vcomp140.dll, from the redistributable files of this compiler
+# (VC/Redist/MSVC/<version>/<arch>/Microsoft.VC<nnn>.OpenMP/vcomp140.dll: not the debug_nonredist,
+# onecore or OpenMP.LLVM copies), is copied app-local into Contents/<ARCHDIR> next to GMIC.ofx, in
+# the build tree and at install. Hosts load the plug-in with LoadLibrary(<path>), which doesn't
+# look for its dependencies in its directory: a manifest embedded into GMIC.ofx lists vcomp140.dll
+# as a file of the plug-in's private assembly, so that the loader takes the bundled copy (as the
+# MSYS2 artifacts' bundle_libs.sh does). -DGMIC_VCOMP_DLL=<path> chooses another copy.
+if(OFX_USE_OPENMP AND MSVC)
+  string(TOLOWER "${CMAKE_CXX_COMPILER_ARCHITECTURE_ID}" _vcomp_arch)
+  if(_vcomp_arch STREQUAL "x64")
+    set(_manifest_arch amd64)
+  elseif(_vcomp_arch STREQUAL "arm64")
+    set(_manifest_arch arm64)
+  elseif(_vcomp_arch STREQUAL "x86")
+    set(_manifest_arch x86)
+  else()
+    message(FATAL_ERROR "OpenMP with MSVC: no vcomp140.dll for the architecture '${CMAKE_CXX_COMPILER_ARCHITECTURE_ID}' "
+      "(configure with -DOFX_USE_OPENMP=OFF)")
+  endif()
+  if(NOT GMIC_VCOMP_DLL)
+    # VCToolsRedistDir (set by vcvars), else the Redist directory next to the compiler's Tools
+    # directory (<VC>/Tools/MSVC/<version>/bin/Host<arch>/<arch>/cl.exe)
+    set(_redist_dirs "")
+    if(DEFINED ENV{VCToolsRedistDir})
+      file(TO_CMAKE_PATH "$ENV{VCToolsRedistDir}" _dir)
+      list(APPEND _redist_dirs "${_dir}")
+    endif()
+    get_filename_component(_vc "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    get_filename_component(_vc "${_vc}/../../../../../.." ABSOLUTE)
+    file(GLOB _dirs LIST_DIRECTORIES true "${_vc}/Redist/MSVC/*")
+    list(SORT _dirs COMPARE NATURAL ORDER DESCENDING)
+    list(APPEND _redist_dirs ${_dirs})
+    foreach(_dir IN LISTS _redist_dirs)
+      file(GLOB _dll "${_dir}/${_vcomp_arch}/Microsoft.VC*.OpenMP/vcomp140.dll")
+      if(_dll)
+        list(GET _dll 0 _dll)
+        set(GMIC_VCOMP_DLL "${_dll}" CACHE FILEPATH "MSVC's OpenMP runtime, copied next to GMIC.ofx")
+        break()
+      endif()
+    endforeach()
+  endif()
+  if(NOT GMIC_VCOMP_DLL OR NOT EXISTS "${GMIC_VCOMP_DLL}")
+    message(FATAL_ERROR "OpenMP with MSVC: vcomp140.dll not found in the redistributable files of the compiler "
+      "(VC/Redist/MSVC/<version>/${_vcomp_arch}/Microsoft.VC<nnn>.OpenMP): configure with "
+      "-DGMIC_VCOMP_DLL=<path>, or -DOFX_USE_OPENMP=OFF")
+  endif()
+  if(GMIC_VCOMP_DLL MATCHES "debug_nonredist|/onecore/|OpenMP\\.LLVM|DebugOpenMP|vcomp140d")
+    message(FATAL_ERROR "GMIC_VCOMP_DLL=${GMIC_VCOMP_DLL} is not the redistributable vcomp140.dll")
+  endif()
+  message(STATUS "OpenMP (MSVC /openmp): ${GMIC_VCOMP_DLL} is copied next to GMIC.ofx")
+  # its notice: vcomp140.dll is Microsoft's, not under the plug-in's licence
+  ofx_plugin_resources(GMIC GMIC_OFX/vcomp140-NOTICE.txt)
+  configure_file(GMIC_OFX/GMIC.ofx.manifest.in "${GMIC_GENERATED_DIR}/GMIC.ofx.manifest" @ONLY)
+  target_sources(GMIC PRIVATE "${GMIC_GENERATED_DIR}/GMIC.ofx.manifest")
+  add_custom_command(TARGET GMIC POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${GMIC_VCOMP_DLL}" "$<TARGET_FILE_DIR:GMIC>/vcomp140.dll"
+    VERBATIM)
+  install(FILES "${GMIC_VCOMP_DLL}" RENAME vcomp140.dll
+    DESTINATION "${PLUGIN_INSTALLDIR}/GMIC.ofx.bundle/Contents/${ARCHDIR}")
 endif()
 
 ofx_deploy_bundle(GMIC)

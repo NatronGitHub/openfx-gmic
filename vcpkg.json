@@ -1,0 +1,6 @@
+{
+  "$comment": "MSVC builds (see README): zlib and libpng for the plug-in, expat for openfx's HostSupport (GMIC_BUILD_TESTS). CI uses the x64-windows-static triplet (static libraries, static C runtime /MT).",
+  "name": "openfx-gmic",
+  "dependencies": [ "zlib", "libpng", "expat" ],
+  "builtin-baseline": "9eec002df1cd109f8f104cd966a763daf9751489"
+}

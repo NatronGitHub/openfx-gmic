@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- MSVC builds with OpenMP (see CMakeLists.txt): GMIC.ofx and the vcomp140.dll next to it form a
+     private assembly, so that the loader uses that copy of vcomp140.dll -->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity name="GMIC.ofx" version="1.0.0.0" type="win32" processorArchitecture="@_manifest_arch@"/>
+  <file name="vcomp140.dll"/>
+</assembly>
