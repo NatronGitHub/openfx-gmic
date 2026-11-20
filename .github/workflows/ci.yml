@@ -2,16 +2,16 @@ name: Continuous Integration
 
 # Natron CI policy: per PR/push, exactly three full builds plus tests (macOS 15 arm64 with the
 # system clang and MacPorts libraries, Ubuntu 24.04, Windows MSYS2 UCRT64). Extra variants (debug
-# builds, a C++20 build, LICENSE=COMMERCIAL builds on Linux) run nightly or on demand; the per-PR
+# builds, a C++20 build) run nightly or on demand; the per-PR
 # builds use C++17 (Natron RB-2.6 policy: Qt5 builds C++17, Qt6 builds C++20); build artifacts
 # are uploaded only on demand or for pre-release tags.
 #
 # CI builds with CMake (NatronGitHub/Natron#1181), as Natron's build-plugins.sh does by default.
 # The top-level Makefile is a fallback (build-plugins.sh's PLUGINS_BUILD_SYSTEM=make), kept tested
 # by one nightly Linux release build whose bundle and sources are compared with the CMake ones
-# (compare_bundles.sh, compare_sources.sh), and by a nightly comparison of its COMMERCIAL sources
-# (make sources LICENSE=COMMERCIAL, no compile) with the CMake COMMERCIAL build's. Not tested: the
-# Makefile's COMMERCIAL, debug, macOS and Windows builds. CMakeLists.txt also reads GMICVER, the checksums,
+# (compare_bundles.sh, compare_sources.sh). Not tested: the Makefile's debug, macOS and Windows
+# builds. COMMERCIAL builds (LICENSE=COMMERCIAL, -DOFX_LICENSE=COMMERCIAL) are not CI-tested at
+# all (low priority). CMakeLists.txt also reads GMICVER, the checksums,
 # POCKETFFTCOMMIT and CIMG_PATCHES from the Makefile, hence the cache keys on hashFiles('Makefile').
 #
 # FFT: all builds use the default, pocketfft (header-only, downloaded), as Natron's builds do; each
@@ -257,78 +257,6 @@ jobs:
           openfx/Support/include/linuxCheckBundle.sh GMIC_OFX/Linux-64-release/GMIC.ofx.bundle
           .github/workflows/check_linux_deps.sh GMIC_OFX/Linux-64-release/GMIC.ofx.bundle
           .github/workflows/compare_bundles.sh GMIC_OFX/Linux-64-release/GMIC.ofx.bundle install/OFX/Plugins/GMIC.ofx.bundle
-          .github/workflows/compare_sources.sh build
-
-  # Natron's COMMERCIAL builds (-DOFX_LICENSE=COMMERCIAL, see license.mk),
-  # nightly or on demand: pocketfft (the default; FFTW is GPL), and a standard library without the
-  # community filters under the GPL or a CeCILL-only licence. The bundle is checked
-  # (check_commercial.sh: no FFTW, licence texts, left-out plug-ins), described and rendered (the pr
-  # subset, with the FFT filters), and FFT-based filters are rendered on a 720x576 image with an
-  # interpreter built from the same sources (fft_smoke.sh). The Makefile's COMMERCIAL sources (make
-  # sources, no compile) are compared with the CMake build's (compare_sources.sh).
-  linux-commercial:
-    name: Linux (Ubuntu 24.04), LICENSE=COMMERCIAL
-    runs-on: ubuntu-24.04
-    needs: changes
-    if: >-
-      needs.changes.outputs.run == 'true' &&
-      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-    timeout-minutes: 90
-    defaults:
-      run:
-        shell: bash -eo pipefail {0}
-    env:
-      # number of plug-ins of COMMERCIAL builds: update with gmic_stdlib_commercial.txt or G'MIC
-      GMIC_PLUGIN_COUNT_COMMERCIAL: 810
-      # linuxCheckBundle.sh: the Ubuntu 24.04 bundles need its glibc and libstdc++; the
-      # EL9 limits (the defaults) are checked on Rocky Linux 9 (linux-rocky9)
-      OFX_ABI_GLIBC: '2.39'
-      OFX_ABI_GLIBCXX: '3.4.33'
-      OFX_ABI_CXXABI: '1.3.15'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Install packages
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build pkg-config zlib1g-dev libpng-dev libexpat1-dev \
-            libgl-dev
-      - name: Cache G'MIC sources
-        uses: actions/cache@v4
-        with:
-          path: |
-            gmic_*.tar.gz
-            pocketfft_hdronly.h
-          key: gmic-src-${{ hashFiles('Makefile') }}
-      # static zlib and libpng built with -fPIC, linked into GMIC.ofx (GMIC_STATIC_DEPS)
-      - uses: ./.github/actions/static-deps
-      - name: Build (release, OpenMP, OFX_LICENSE=COMMERCIAL)
-        run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
-            -DOFX_LICENSE=COMMERCIAL -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h" -DGMIC_BUILD_TESTS=ON
-          cmake --build build -j4
-          cmake --install build --prefix install
-          openfx/Support/include/linuxCheckBundle.sh install/OFX/Plugins
-          .github/workflows/check_linux_deps.sh install/OFX/Plugins/GMIC.ofx.bundle
-      - name: Describe and check
-        run: |
-          DESCRIBE_LOG=$PWD/describe-commercial.log PLUGIN_LIST=plugins.txt \
-            .github/workflows/describe_plugins.sh build/Plugins $GMIC_PLUGIN_COUNT_COMMERCIAL
-          .github/workflows/check_commercial.sh build/Plugins describe-commercial.log
-      - name: Render plug-ins (subset)
-        run: |
-          python3 .github/workflows/render_plugins.py --host build \
-            --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
-            --subset pr --jobs 2
-      - name: Render FFT filters (720x576)
-        run: .github/workflows/fft_smoke.sh build/gmic
-      # the Makefile's COMMERCIAL sources (no compile): its G'MIC sources, generated standard library
-      # and hot-fix selection must be the CMake build's (compare_sources.sh), so that the Makefile
-      # fallback's copies of the COMMERCIAL stdlib generation and hot-fix selection can't drift
-      - name: Makefile sources (LICENSE=COMMERCIAL), compare with CMake
-        run: |
-          make sources LICENSE=COMMERCIAL
           .github/workflows/compare_sources.sh build
 
   # Natron 2.6's Linux baseline, nightly or on demand: Rocky Linux 9 (GCC 11, glibc 2.34; VFX

@@ -26,7 +26,7 @@ code: only code compatible with the CeCILL-C option (pocketfft is BSD-3-Clause, 
 CeCILL-B). The default (GPL) build also includes community filters under other licences
 (CeCILL-only, GPL, non-commercial: see gmic_stdlib_commercial.txt), and GPL builds may link FFTW
 (GPL) instead of pocketfft (FFT=fftw3). The licence texts are installed in the bundle's
-Contents/Resources.
+Contents/Resources. COMMERCIAL builds are no longer CI-tested, and are low priority.
 
 Getting the sources
 -------------------
@@ -85,7 +85,7 @@ Building with make
 CI builds with CMake (https://github.com/NatronGitHub/Natron/issues/1181), as Natron's
 build-plugins.sh does by default. The Makefile is a fallback (build-plugins.sh's
 PLUGINS_BUILD_SYSTEM=make), tested only by one nightly Linux release build compared with the CMake
-one, and a nightly comparison of its COMMERCIAL sources (no compile). CMakeLists.txt reads the G'MIC version, the checksums, POCKETFFTCOMMIT and CIMG_PATCHES from
+one. CMakeLists.txt reads the G'MIC version, the checksums, POCKETFFTCOMMIT and CIMG_PATCHES from
 it.
 
     make CONFIG=release OPENMP=1 CXXSTD=c++17
