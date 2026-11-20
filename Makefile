@@ -174,6 +174,8 @@ Licence_pocketfft.txt: pocketfft_hdronly.h
 #   (https://github.com/NatronGitHub/openfx-gmic/issues/44)
 # - cimg-vvar2.sh: the math parser's vvar() with two arguments no longer calls a NULL function
 #   pointer (crash) (https://github.com/GreycLab/CImg/issues/501)
+# - cimg-vargkth2.sh: the math parser's vargkth() with two arguments gives 0, as with more
+#   arguments and in CImg 4.0.7, instead of 1 (https://github.com/GreycLab/CImg/issues/501)
 # - cimg-log1p-peephole.sh: the math parser's log(1 + x) -> log1p(x) optimization no longer
 #   rewrites the code that computed a variable, e.g. 'y=1+x;log(y);y' gave log(1 + x)
 #   (https://github.com/GreycLab/CImg/issues/502)
@@ -183,7 +185,7 @@ Licence_pocketfft.txt: pocketfft_hdronly.h
 # pocketfft support (cimg_use_pocketfft, https://github.com/GreycLab/CImg/pull/497).
 # CMakeLists.txt reads CIMG_PATCHES (a plain one-line assignment, see above), and applies the
 # scripts in the same order.
-CIMG_PATCHES = patches/cimg-omp-rand.sh patches/cimg-vvar2.sh patches/cimg-log1p-peephole.sh patches/cimg-abs-peephole.sh
+CIMG_PATCHES = patches/cimg-omp-rand.sh patches/cimg-vvar2.sh patches/cimg-vargkth2.sh patches/cimg-log1p-peephole.sh patches/cimg-abs-peephole.sh
 CImg.h: gmic_sources.request $(CIMG_PATCHES)
 
 distclean: clean
