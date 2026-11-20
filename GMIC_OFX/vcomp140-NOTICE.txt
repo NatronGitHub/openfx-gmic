@@ -1,0 +1,3 @@
+vcomp140.dll: Microsoft Visual C++ OpenMP runtime, © Microsoft Corporation, redistributed
+unmodified under the Visual Studio license terms for Distributable Code; it is not covered by the
+plug-in's licence.

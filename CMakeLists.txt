@@ -746,6 +746,11 @@ endif() # MSVC
 if(OFX_USE_OPENMP AND MSVC)
   target_compile_options(GMIC PRIVATE /openmp)
   target_compile_definitions(GMIC PRIVATE cimg_use_openmp)
+  # Debug builds (/MTd, /MDd) link the release OpenMP runtime too, vcomp140.dll (not
+  # vcomp140d.dll, which is not redistributable), so that the bundle and its manifest are the same
+  # in every configuration. (vcomp's API is C: it doesn't depend on the C runtime of GMIC.ofx.)
+  target_link_options(GMIC PRIVATE /NODEFAULTLIB:vcompd.lib)
+  target_link_libraries(GMIC PRIVATE vcomp.lib)
 elseif(OFX_USE_OPENMP)
   ofx_target_openmp(GMIC REQUIRED)
   target_compile_definitions(GMIC PRIVATE cimg_use_openmp)
@@ -797,11 +802,12 @@ if(OFX_USE_OPENMP AND MSVC)
       "(VC/Redist/MSVC/<version>/${_vcomp_arch}/Microsoft.VC<nnn>.OpenMP): configure with "
       "-DGMIC_VCOMP_DLL=<path>, or -DOFX_USE_OPENMP=OFF")
   endif()
-  if(GMIC_VCOMP_DLL MATCHES "debug_nonredist|/onecore/|OpenMP\\.LLVM|vcompd")
+  if(GMIC_VCOMP_DLL MATCHES "debug_nonredist|/onecore/|OpenMP\\.LLVM|DebugOpenMP|vcomp140d")
     message(FATAL_ERROR "GMIC_VCOMP_DLL=${GMIC_VCOMP_DLL} is not the redistributable vcomp140.dll")
   endif()
   message(STATUS "OpenMP (MSVC /openmp): ${GMIC_VCOMP_DLL} is copied next to GMIC.ofx")
-  set(GMIC_PLUGIN_DLLS "${GMIC_VCOMP_DLL}")
+  # its notice: vcomp140.dll is Microsoft's, not under the plug-in's licence
+  ofx_plugin_resources(GMIC GMIC_OFX/vcomp140-NOTICE.txt)
   configure_file(GMIC_OFX/GMIC.ofx.manifest.in "${GMIC_GENERATED_DIR}/GMIC.ofx.manifest" @ONLY)
   target_sources(GMIC PRIVATE "${GMIC_GENERATED_DIR}/GMIC.ofx.manifest")
   add_custom_command(TARGET GMIC POST_BUILD

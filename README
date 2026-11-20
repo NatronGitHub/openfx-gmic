@@ -63,7 +63,7 @@ Requirements
   release builds use it (Natron's installer bundles these libraries).
 - Python 3, for the render test only.
 - Platforms: Linux, macOS (Apple clang; libraries from MacPorts or Homebrew) and Windows: MSVC
-  x64 with CMake, as in CI (see "Building with MSVC" below), or MSYS2 (UCRT64, with make or CMake;
+  x64 with CMake, as in CI (see "Building with MSVC" below), or MSYS2 (UCRT64, tested nightly; with make or CMake;
   libraries from its packages: mingw-w64-ucrt-x86_64-zlib, -libpng, -libgomp and -pkgconf).
 
 Runtime requirements on Linux: GMIC.ofx needs only the system libraries libc, libm, libstdc++,
@@ -163,7 +163,9 @@ vcomp140.dll (VC/Redist/MSVC/<version>/x64/Microsoft.VC<nnn>.OpenMP) next to GMI
 manifest embedded into GMIC.ofx makes the loader use that copy. GMIC.ofx then imports only
 KERNEL32, SHELL32 and VCOMP140 (no C++ runtime, zlib or libpng DLL). The plug-in keeps vcomp140.dll
 loaded once it has rendered (unloading it under its idle threads crashed hosts that unload
-plug-ins). /openmp:llvm is not supported.
+plug-ins). Debug builds link the same vcomp140.dll (vcomp140d.dll is not redistributable).
+Contents/Resources/vcomp140-NOTICE.txt says that vcomp140.dll is Microsoft's redistributable, not
+under the plug-in's licence. /openmp:llvm is not supported.
 
 Filters
 -------
