@@ -2,7 +2,8 @@ name: Continuous Integration
 
 # Natron CI policy: per PR/push, exactly three full builds plus tests (macOS 15 arm64 with the
 # system clang and MacPorts libraries, Ubuntu 24.04, Windows x64 with MSVC). Extra variants (debug
-# builds, a C++20 build, LICENSE=COMMERCIAL builds on Linux) run nightly or on demand; the per-PR
+# builds, a C++20 build, LICENSE=COMMERCIAL builds on Linux, an MSYS2 UCRT64 Windows build) run
+# nightly or on demand; the per-PR
 # builds use C++17 (Natron RB-2.6 policy: Qt5 builds C++17, Qt6 builds C++20); build artifacts
 # are uploaded only on demand or for pre-release tags, and the Windows bundle also nightly.
 #
@@ -230,6 +231,12 @@ jobs:
           cmake -S . -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
             -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h"
           cmake --build build-debug -j4
+          # Debug builds link the release OpenMP runtime (vcomp140.dll, bundled), not vcomp140d.dll
+          deps=$(MSYS2_ARG_CONV_EXCL='*' dumpbin -nologo -dependents "$(cygpath -w build-debug/Plugins/GMIC.ofx.bundle/Contents/Win64/GMIC.ofx)" |
+                 sed -n '/has the following dependencies/,/Summary/p' | grep -iE '^ +[^ ]+\.dll$' | tr -d ' \r' | tr 'a-z' 'A-Z' | sort | tr '\n' ' ')
+          echo "GMIC.ofx (debug) imports: $deps"
+          [ "$deps" = "KERNEL32.DLL SHELL32.DLL VCOMP140.DLL " ] ||
+            { echo "FAIL: the debug GMIC.ofx must import only KERNEL32, SHELL32 and VCOMP140"; exit 1; }
           .github/workflows/check_linux_deps.sh build-debug/Plugins/GMIC.ofx.bundle
           .github/workflows/describe_plugins.sh build-debug/Plugins $GMIC_PLUGIN_COUNT
       # The Linux bundle is uploaded as is: it needs only system libraries (linuxCheckBundle.sh),
@@ -535,11 +542,19 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+      # the runner image and MSVC version are part of the key (vcpkg's ABI hashes include the
+      # compiler, so an older cache from the prefix is still safe to restore)
+      - name: Toolchain id
+        id: toolchain
+        run: echo "id=$ImageOS-$ImageVersion-msvc$VCToolsVersion" >> "$GITHUB_OUTPUT"
       - name: Cache vcpkg packages
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/vcpkg-cache
-          key: vcpkg-${{ env.VCPKG_TRIPLET }}-${{ hashFiles('vcpkg.json') }}
+          key: vcpkg-${{ env.VCPKG_TRIPLET }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ env.VCPKG_TRIPLET }}-${{ steps.toolchain.outputs.id }}-
+            vcpkg-${{ env.VCPKG_TRIPLET }}-
       - name: Cache G'MIC sources
         uses: actions/cache@v4
         with:
@@ -586,6 +601,8 @@ jobs:
           MSYS2_ARG_CONV_EXCL='*' mt -nologo "-inputresource:$(cygpath -w "$ofx");#2" -out:GMIC.ofx.manifest
           cat GMIC.ofx.manifest; echo
           grep -q 'file name="vcomp140.dll"' GMIC.ofx.manifest || { echo "FAIL: no vcomp140.dll in the manifest"; exit 1; }
+          cat install/OFX/Plugins/GMIC.ofx.bundle/Contents/Resources/vcomp140-NOTICE.txt ||
+            { echo "FAIL: no vcomp140-NOTICE.txt in Contents/Resources"; exit 1; }
       - name: Check that vcomp140.dll is loaded from the bundle
         shell: pwsh
         run: |
@@ -661,3 +678,69 @@ jobs:
           path: install/OFX/Plugins
           retention-days: 7
           compression-level: 9
+
+  # Nightly and on demand only: MSYS2 UCRT64 (MinGW-w64 GCC, libgomp, pkg-config), the other way to
+  # build on Windows, with make (Natron's build-plugins.sh) or CMake. Built, described and rendered
+  # (pr subset); bundle_libs.sh then makes the bundle self-contained, and the describe test runs a
+  # statically linked host with a PATH without /ucrt64/bin, so that the plug-in loads only if it
+  # finds its DLLs in the bundle (see bundle_libs.sh for its limits). No artifact.
+  windows-ucrt64:
+    name: Windows (MSYS2 UCRT64, nightly)
+    runs-on: windows-2025
+    needs: changes
+    if: >-
+      needs.changes.outputs.run == 'true' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-cc mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-libgomp
+            mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-zlib
+            mingw-w64-ucrt-x86_64-libpng mingw-w64-ucrt-x86_64-expat mingw-w64-ucrt-x86_64-python
+      - name: Cache G'MIC sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            gmic_*.tar.gz
+            pocketfft_hdronly.h
+          key: gmic-src-${{ hashFiles('Makefile') }}
+      - name: Build (release, OpenMP)
+        run: |
+          set -eo pipefail
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$(cygpath -m "$PWD")" \
+            -DGMIC_POCKETFFT="$(cygpath -m "$PWD")/pocketfft_hdronly.h" -DGMIC_BUILD_TESTS=ON
+          cmake --build build -j4
+          .github/workflows/check_fft.sh build/Plugins/GMIC.ofx.bundle pocketfft
+          .github/workflows/check_no_libcurl.sh build/Plugins/GMIC.ofx.bundle
+      - name: Describe all plug-ins
+        run: |
+          set -eo pipefail
+          PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh build/Plugins $GMIC_PLUGIN_COUNT
+      - name: Render plug-ins (subset)
+        run: |
+          set -eo pipefail
+          python3 .github/workflows/render_plugins.py --host build \
+            --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
+            --subset pr --jobs 2
+      - name: Self-contained bundle (bundle_libs.sh), described without /ucrt64/bin
+        run: |
+          set -eo pipefail
+          rm -rf Bundle && mkdir -p Bundle
+          cp -R build/Plugins/GMIC.ofx.bundle Bundle/
+          .github/workflows/bundle_libs.sh Bundle/GMIC.ofx.bundle
+          .github/workflows/check_no_libcurl.sh Bundle/GMIC.ofx.bundle
+          CXX="c++ -DXML_STATIC" HOST_LDFLAGS=-static HOST_RUN_PATH=/c/Windows/System32:/c/Windows \
+            .github/workflows/describe_plugins.sh Bundle $GMIC_PLUGIN_COUNT
