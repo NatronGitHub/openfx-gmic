@@ -14,20 +14,19 @@
 # and the other compilers use std::snprintf and are not affected.
 #
 # The patch declares cimg::_vsnprintf just before cimg::_snprintf, so that the call finds it.
-# Running it again on a patched file does nothing, and so does running it on a CImg.h where the call
-# no longer resolves to the CRT's function (cimg::_vsnprintf already declared before
-# cimg::_snprintf, or another call: an upstream fix). The script fails in any other case (MSVC's
-# cimg::_snprintf or cimg::_vsnprintf not found: e.g. after a GMICVER bump, then check what
+# Running it again on a patched file does nothing (it says so), and so does running it on a CImg.h
+# where the call no longer resolves to the CRT's function: cimg::_vsnprintf declared or defined
+# before cimg::_snprintf, or no unqualified _vsnprintf( call left in its body (an upstream fix,
+# https://github.com/GreycLab/CImg/issues/507; the script says so too). A whitespace change in the
+# call still gets the patch. The script fails in any other case (MSVC's cimg::_snprintf or
+# cimg::_vsnprintf not found, or more than one call: e.g. after a GMICVER bump, then check what
 # upstream changed, and update or remove this patch), or with CRLF line endings. Only POSIX sh,
-# awk and wc are used, for Linux, macOS, MSYS2 and Git for Windows.
+# awk, head, tr and wc are used, for Linux, macOS, MSYS2 and Git for Windows.
 set -e
 f="$1"
 
 decl='inline int _vsnprintf(char *const s, const size_t size, const char *const format, va_list ap);'
 marker="$decl // openfx-gmic patch: not the CRT's _vsnprintf (#111)"
-first='inline int _snprintf(char *const s, const size_t size, const char *const format, ...) {'
-call='const int result = _vsnprintf(s,size,format,ap);'
-def='inline int _vsnprintf(char *const s, const size_t size, const char *const format, va_list ap) {'
 
 fail() {
   echo "Error: $f: $1" >&2
@@ -40,40 +39,52 @@ if [ "$(head -c 4096 "$f" | tr -d '\n' | wc -c)" != "$(head -c 4096 "$f" | tr -d
   fail "CRLF line endings"
 fi
 
-# state <file>: "<markers> <MSVC _snprintf> <unqualified calls in it> <declarations before it>
-# <MSVC _vsnprintf definitions>" (the MSVC versions: the first ones, in '#if cimg_OS==2 &&
-# defined(_MSC_VER)', before the macOS ones of the same names)
+# state <file>: "<markers> <MSVC _snprintf> <unqualified _vsnprintf calls in its body>
+# <_vsnprintf declarations or definitions before it, other than the marker>
+# <_vsnprintf definitions after it>". The MSVC cimg::_snprintf is the one in an
+# '#if cimg_OS==2 && defined(_MSC_VER)' block (not the macOS one, in the #elif); its body ends
+# where its braces balance. An unqualified call is '_vsnprintf(' not preceded by '::' or an identifier character.
 state() {
-  awk -v marker="$marker" -v decl="$decl" -v first="$first" -v call="$call" -v def="$def" '
+  awk -v marker="$marker" '
     { t = $0; sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t) }
-    t == marker { m++ }
-    !seen && (t == decl || index(t, decl " ") == 1) { d++ }
-    !seen && t == first { seen = 1; fn++; infn = 1; next }
-    infn && t == call { c++ }
-    infn && t == "}" { infn = 0 }
-    seen && t == def { v++ }
+    # the MSVC block: from "#if cimg_OS==2 && defined(_MSC_VER)" to its #elif, #else or #endif
+    t ~ /^#[ \t]*if/ { if (msvc) nest++; else if (t ~ /cimg_OS[ \t]*==[ \t]*2[ \t]*&&[ \t]*defined[ \t]*\([ \t]*_MSC_VER[ \t]*\)/) msvc = 1 }
+    t ~ /^#[ \t]*(elif|else|endif)/ { if (nest) { if (t ~ /^#[ \t]*endif/) nest-- } else msvc = 0 }
+    t == marker { m++; next }
+    !seen && t ~ /^inline[ \t]+int[ \t]+_vsnprintf[ \t]*\(/ { d++ }
+    !seen && msvc && t ~ /^inline[ \t]+int[ \t]+_snprintf[ \t]*\(/ { seen = 1; fn = 1; infn = 1; depth = 0 }
+    infn {
+      if (match(t, /(^|[^:_A-Za-z0-9])_vsnprintf[ \t]*\(/)) c++
+      u = t; o = gsub(/\{/, "", u); u = t; cl = gsub(/\}/, "", u)
+      depth += o - cl; if (o) opened = 1
+      if (opened && depth <= 0) infn = 0
+      next
+    }
+    seen && msvc && t ~ /^inline[ \t]+int[ \t]+_vsnprintf[ \t]*\(/ && t ~ /\{$/ { v++ }
     END { printf "%d %d %d %d %d\n", m, fn, c, d, v }' "$1"
 }
 
 set -- $(state "$f")
 markers=$1 fns=$2 calls=$3 decls=$4 defs=$5
-if [ "$markers" = 1 ] && [ "$fns" = 1 ] && [ "$decls" = 1 ]; then
+[ "$fns" = 1 ] || fail "MSVC's cimg::_snprintf not found"
+if [ "$markers" = 1 ] && [ "$decls" = 0 ]; then
   echo "$f: already patched (cimg_snprintf with MSVC, #111)"
   exit 0
 fi
-[ "$fns" = 1 ] || fail "MSVC's cimg::_snprintf not found ($fns)"
-[ "$defs" -ge 1 ] || fail "MSVC's cimg::_vsnprintf not found after cimg::_snprintf"
+[ "$markers" = 0 ] || fail "$markers patch markers"
 if [ "$decls" != 0 ] || [ "$calls" = 0 ]; then
-  echo "$f: not patched: cimg::_snprintf no longer calls the CRT's _vsnprintf (fixed upstream?), check and remove patches/cimg-msvc-snprintf.sh"
+  echo "$f: not patched: cimg::_vsnprintf is declared before cimg::_snprintf, or cimg::_snprintf no longer calls _vsnprintf unqualified (fixed upstream?): check and remove patches/cimg-msvc-snprintf.sh"
   exit 0
 fi
-[ "$calls" = 1 ] || fail "$calls calls of _vsnprintf in cimg::_snprintf, expected one"
+[ "$defs" -ge 1 ] || fail "MSVC's cimg::_vsnprintf not found after cimg::_snprintf"
+[ "$calls" = 1 ] || fail "$calls unqualified calls of _vsnprintf in cimg::_snprintf, expected one"
 
-awk -v marker="$marker" -v first="$first" '
+# the forward declaration, just before cimg::_snprintf, with its indentation
+awk -v marker="$marker" '
   { t = $0; sub(/^[ \t]+/, "", t); ind = substr($0, 1, length($0) - length(t)) }
-  !done && t == first { print ind marker; done = 1 }
+  !done && t ~ /^inline[ \t]+int[ \t]+_snprintf[ \t]*\(/ { print ind marker; done = 1 }
   { print }' "$f" > "$f.patched"
 set -- $(state "$f.patched")
-[ "$1" = 1 ] && [ "$4" = 1 ] && [ "$3" = 1 ] || fail "the patched file is not as expected ($*)"
+[ "$1 $2 $3 $4" = "1 1 1 0" ] || fail "the patched file is not as expected ($*)"
 mv "$f.patched" "$f"
 printf '%s: patched so that cimg_snprintf() always ends its output with a null character with MSVC (#111)\n' "$f"
