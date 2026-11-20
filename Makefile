@@ -173,8 +173,8 @@ Licence_pocketfft.txt: pocketfft_hdronly.h
 #   (https://github.com/NatronGitHub/openfx-gmic/issues/44)
 # - cimg-vvar2.sh: the math parser's vvar() with two arguments no longer calls a NULL function
 #   pointer (crash) (https://github.com/GreycLab/CImg/issues/501)
-# - cimg-vargkth2.sh: the math parser's vargkth() with two arguments gives the same index as with
-#   more arguments and in CImg 4.0.7 (0, or 1 for NaN), instead of 1
+# - cimg-vargkth2.sh: the math parser's vargkth() with two arguments gives 0, the index that it
+#   gives with more arguments and in CImg 4.0.7 (except for NaN input, see the script), instead of 1
 #   (https://github.com/GreycLab/CImg/issues/501)
 # - cimg-log1p-peephole.sh: the math parser's log(1 + x) -> log1p(x) optimization no longer
 #   rewrites the code that computed a variable, e.g. 'y=1+x;log(y);y' and 'log(y=x+1);y' gave
