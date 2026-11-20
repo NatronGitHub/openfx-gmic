@@ -818,6 +818,13 @@ jobs:
           New-ItemProperty -Force -Path $k -Name DumpFolder -PropertyType ExpandString -Value $dumps | Out-Null
           New-ItemProperty -Force -Path $k -Name DumpType -PropertyType DWord -Value 2 | Out-Null
           New-ItemProperty -Force -Path $k -Name DumpCount -PropertyType DWord -Value 10 | Out-Null
+          # (the runner image disables WER: no dumps were written in earlier runs)
+          $wer = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
+          New-ItemProperty -Force -Path $wer -Name Disabled -PropertyType DWord -Value 0 | Out-Null
+          New-ItemProperty -Force -Path $wer -Name DontShowUI -PropertyType DWord -Value 1 | Out-Null
+          Set-Service WerSvc -StartupType Manual
+          Start-Service WerSvc
+          Get-Service WerSvc | Format-List Name,Status,StartType
       - name: Describe and render (pr subset)
         run: |
           test_one() { # <name> <host build> <plug-in dir> <vcpkg triplet> <cflags> <ldflags>
