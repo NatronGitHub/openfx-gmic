@@ -97,6 +97,10 @@ int gmic_plugin_call(const char* cmd, unsigned int* nofImages, gmic_interface_im
 	// workers, and the process crashes (0xC0000005) after rendering. Pin it, once, before the first
 	// G'MIC run. Found with openfx's hostDemo, which unloads the plug-in before exiting: every
 	// multithreaded render then crashed at exit; pinning VCOMP140.DLL (or GMIC.ofx) fixed them all.
+	// This is the pattern of FFTW's unload crash on Linux (see makeFftwThreadSafe() in
+	// gmic_plugin.cpp and patches/cimg-fftw-no-cleanup-at-unload.sh): a thread pool whose idle
+	// threads outlive the code they run once the host unloads the plug-in; both keep the pool
+	// until the process exits.
 	// The module is found from the address of one of its functions, not by name: GMIC.ofx's
 	// manifest loads the vcomp140.dll of the bundle, which a lookup by name, outside of the
 	// plug-in's activation context, doesn't find (it looks for System32's). (Should the address be

@@ -39,9 +39,10 @@ not in git: the release tarball gmic_<version>.tar.gz, from the GitHub release o
 gmic.eu or the MacPorts distfiles mirror, checked against GMICSRC_SHA256_<version>. They are then
 patched: patches/cimg-omp-rand.sh makes CImg's random numbers in OpenMP loops reproducible,
 patches/cimg-vvar2.sh, patches/cimg-vargkth2.sh, patches/cimg-log1p-peephole.sh and
-patches/cimg-abs-peephole.sh fix math parser bugs, patches/gmic-win-thread-stack.sh gives the
-threads of G'MIC's "parallel" command an 8 MiB stack on Windows, and
-gmic_hotfixes.gmic replaces the
+patches/cimg-abs-peephole.sh fix math parser bugs,
+patches/cimg-fftw-no-cleanup-at-unload.sh keeps FFTW's threads when the plug-in is unloaded
+(FFT=fftw3), patches/gmic-win-thread-stack.sh gives the threads of G'MIC's "parallel" command an
+8 MiB stack on Windows, and gmic_hotfixes.gmic replaces the
 definitions of broken filters (each fix is skipped once G'MIC has it).
 
 Requirements

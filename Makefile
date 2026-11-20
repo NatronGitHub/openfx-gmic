@@ -182,11 +182,15 @@ Licence_pocketfft.txt: pocketfft_hdronly.h
 #   (https://github.com/GreycLab/CImg/issues/502)
 # - cimg-abs-peephole.sh: the same for the abs(maxabs()) -> absmaxabs() optimization, e.g.
 #   'm=maxabs(a,b,c);abs(a)' gave abs(maxabs(a,b,c)) (https://github.com/GreycLab/CImg/issues/502)
+# - cimg-fftw-no-cleanup-at-unload.sh (FFT=fftw3): no fftw_cleanup_threads() in the destructor of
+#   CImg's static FFTW3_static, run by the host's dlclose(): FFTW's worker threads were still
+#   exiting when the plug-in was unmapped (crash after the render, e.g. ABN Filigrees on Linux)
+#   (https://github.com/GreycLab/CImg/issues/500)
 # G'MIC 4.0.8 has the fixes of the other patches that 4.0.7 needed (see CHANGELOG.md), and CImg's
 # pocketfft support (cimg_use_pocketfft, https://github.com/GreycLab/CImg/pull/497).
 # CMakeLists.txt reads CIMG_PATCHES (a plain one-line assignment, see above), and applies the
 # scripts in the same order.
-CIMG_PATCHES = patches/cimg-omp-rand.sh patches/cimg-vvar2.sh patches/cimg-vargkth2.sh patches/cimg-log1p-peephole.sh patches/cimg-abs-peephole.sh
+CIMG_PATCHES = patches/cimg-omp-rand.sh patches/cimg-vvar2.sh patches/cimg-vargkth2.sh patches/cimg-log1p-peephole.sh patches/cimg-abs-peephole.sh patches/cimg-fftw-no-cleanup-at-unload.sh
 CImg.h: gmic_sources.request $(CIMG_PATCHES)
 # GMIC_PATCHES: the same for gmic.cpp (read by CMakeLists.txt too). gmic-win-thread-stack.sh: an
 # 8 MiB stack for the threads of G'MIC's 'parallel' command on Windows

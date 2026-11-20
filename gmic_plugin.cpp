@@ -538,10 +538,15 @@ static string layerTimesNote(const EffectData& effectData)
 // - FFTW's planner is made thread-safe, once per process, at the first plug-in load (FFTW >=
 //   3.3.5, in libfftw3_threads; CImg calls fftw_init_threads at library initialisation, calling
 //   it again is harmless);
-// - CImg no longer calls fftw_cleanup_threads() after each FFT (since G'MIC 4.0.8: only when the
-//   plug-in is unloaded, https://github.com/GreycLab/CImg/issues/500): that freed the planner and
-//   the threads without the planner lock, while another plug-in may be planning or executing an
-//   FFT.
+// - CImg never calls fftw_cleanup_threads(). G'MIC 4.0.8 no longer calls it after each FFT, which
+//   freed the planner and the threads without the planner lock while another plug-in may be
+//   planning or executing an FFT, but still calls it in the destructor of its static FFTW3_static,
+//   which patches/cimg-fftw-no-cleanup-at-unload.sh removes
+//   (https://github.com/GreycLab/CImg/issues/500): that destructor runs inside the host's
+//   dlclose(), and FFTW returns from the cleanup while its detached worker threads are still
+//   exiting through FFTW's code, which crashed once the plug-in was unmapped (FFTW linked
+//   statically, on Linux, or a shared libfftw3 unloaded with the plug-in). The idle threads and
+//   the planner are kept until the process exits.
 // fftw_plan_with_nthreads(), called by CImg before each plan, remains a process-wide setting: a
 // plug-in may plan with another one's thread count (performance only, results are the same).
 static void makeFftwThreadSafe()
