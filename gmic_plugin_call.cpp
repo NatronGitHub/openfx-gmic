@@ -10,6 +10,9 @@
 #include <string>
 #include "gmic.h"
 #include "gmic_plugin_call.h"
+#if defined(_WIN32) && defined(_OPENMP)
+#include <omp.h>
+#endif
 
 // as in gmic_libc.cpp
 GMIC_DLLINTERFACE int GMIC_CALLCONV gmic_delete_external(float* p)
@@ -92,12 +95,17 @@ int gmic_plugin_call(const char* cmd, unsigned int* nofImages, gmic_interface_im
 	// MSVC's OpenMP runtime (vcomp140.dll) must never be unloaded once its worker threads exist:
 	// when the host unloads the plug-in (FreeLibrary), the loader unmaps VCOMP140.DLL under the idle
 	// workers, and the process crashes (0xC0000005) after rendering. Pin it, once, before the first
-	// G'MIC run (a no-op if VCOMP140.DLL isn't loaded, e.g. with MinGW's libgomp). Found with
-	// openfx's hostDemo, which unloads the plug-in before exiting: every multithreaded render then
-	// crashed at exit; pinning VCOMP140.DLL (or GMIC.ofx) fixed all of them.
+	// G'MIC run. Found with openfx's hostDemo, which unloads the plug-in before exiting: every
+	// multithreaded render then crashed at exit; pinning VCOMP140.DLL (or GMIC.ofx) fixed them all.
+	// The module is found from the address of one of its functions, not by name: GMIC.ofx's
+	// manifest loads the vcomp140.dll of the bundle, which a lookup by name, outside of the
+	// plug-in's activation context, doesn't find (it looks for System32's). (Should the address be
+	// an import thunk of GMIC.ofx, GMIC.ofx is pinned, which also keeps vcomp140.dll; with MinGW,
+	// libgomp is pinned, which is harmless.)
 	static const bool vcompPinned = [] {
 		HMODULE h;
-		return GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, L"VCOMP140.DLL", &h) != 0;
+		return GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+		                          (LPCWSTR)(void*)&omp_get_max_threads, &h) != 0;
 	}();
 	(void)vcompPinned;
 #endif
