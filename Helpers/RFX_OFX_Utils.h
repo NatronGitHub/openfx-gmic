@@ -134,14 +134,6 @@ extern int pluginOutputLayerChanged(SequenceData* sequenceDataP, int outputLayer
 extern int getNofPlugins();
 extern void getPluginInfo(int pluginIndex, PluginInfo& pluginInfo);
 
-#if defined __APPLE__ || defined __linux__ || defined __FreeBSD__
-#define EXPORT __attribute__((visibility("default")))
-#elif defined _WIN32
-#define EXPORT OfxExport
-#else
-#error Not building on your operating system quite yet
-#endif
-
 template <class T> inline T Maximum(T a, T b) {return a > b ? a : b;}
 template <class T> inline T Minimum(T a, T b) {return a < b ? a : b;}
 
@@ -2493,7 +2485,7 @@ void initPlugins()
 }
 
 // the two mandated functions
-EXPORT OfxPlugin* OfxGetPlugin(int nth)
+OfxExport OfxPlugin* OfxGetPlugin(int nth)
 {
 	if ((int)gPlugins.size() == 0) {
 		initPlugins();
@@ -2502,7 +2494,7 @@ EXPORT OfxPlugin* OfxGetPlugin(int nth)
 	return NULL;
 }
  
-EXPORT int OfxGetNumberOfPlugins(void)
+OfxExport int OfxGetNumberOfPlugins(void)
 {
 	initPlugins();
 	int n = (int)gPlugins.size();

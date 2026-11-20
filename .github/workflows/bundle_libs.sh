@@ -1,8 +1,10 @@
 #!/bin/bash
 # Make an OFX plug-in bundle self-contained: copy the non-system shared libraries it depends on
 # (recursively) into the bundle, so that it loads on a machine without the build dependencies.
-# Usage: bundle_libs.sh <path to GMIC.ofx.bundle>   (the bundle is modified in place; running it
-# again on the same bundle is harmless)
+# Usage: bundle_libs.sh <path to GMIC.ofx.bundle> [Win64|Win-arm64]   (the bundle is modified in
+# place; running it again on the same bundle is harmless). Windows: the plug-in is in Contents/Win64
+# (x64, e.g. MSYS2 UCRT64) or Contents/Win-arm64 (ARM64, MSYS2 CLANGARM64), the one the bundle has,
+# or the one given as the second argument.
 #
 # macOS: release builds already run openfx's Examples/include/osxDeploy.sh at link time, which
 #   copies the MacPorts dylibs into Contents/Libraries and rewrites their install names to
@@ -13,8 +15,9 @@
 #   rpaths into $PREFIX, signs the bundle ad hoc (arm64 requires valid signatures; the dylibs
 #   first, then the bundle, which seals them), and fails if a dependency is neither a system
 #   library (/usr/lib, /System) nor bundled.
-# Windows (MSYS2): the DLLs from $MINGW_PREFIX/bin (e.g. /ucrt64/bin) imported by the plug-in,
-#   directly or through these DLLs (objdump -p), are copied next to the plug-in in Contents/Win64,
+# Windows (MSYS2): the DLLs from $MINGW_PREFIX/bin (e.g. /ucrt64/bin, /clangarm64/bin) imported by
+#   the plug-in, directly or through these DLLs (objdump -p, or llvm-objdump -p), are copied next
+#   to the plug-in in Contents/Win64 or Contents/Win-arm64,
 #   the plug-in is stripped, and a manifest listing the DLLs is embedded into it with mt.exe from
 #   the Windows SDK, as in Natron's tools/jenkins/build-Windows-installer.sh: hosts load the
 #   plug-in with LoadLibrary(path), which does not search the plug-in's directory for its
@@ -165,9 +168,28 @@ Darwin)
 
 MINGW*|MSYS*)
     PREFIX=${MINGW_PREFIX:-/ucrt64}
-    BINDIR=$(find "$BUNDLE/Contents" -maxdepth 1 -type d -name 'Win*' | head -1)
+    # the architecture directory: Win64 (x64) or Win-arm64 (ARM64), the one the bundle has, or the
+    # second argument (e.g. if the bundle has both); the manifest's processorArchitecture follows
+    ARCHDIR=${2:-}
+    if [ -z "$ARCHDIR" ]; then
+        for d in Win64 Win-arm64; do
+            [ -d "$BUNDLE/Contents/$d" ] || continue
+            [ -z "$ARCHDIR" ] || { echo "Error: $BUNDLE has both Contents/Win64 and Contents/Win-arm64: give the one to bundle as the second argument"; exit 1; }
+            ARCHDIR=$d
+        done
+        [ -n "$ARCHDIR" ] || { echo "Error: $BUNDLE has neither Contents/Win64 nor Contents/Win-arm64"; exit 1; }
+    fi
+    case "$ARCHDIR" in
+    Win64) ARCH=amd64 ;;
+    Win-arm64) ARCH=arm64 ;;
+    *) echo "Error: unknown architecture directory '$ARCHDIR' (Win64 or Win-arm64)"; exit 1 ;;
+    esac
+    BINDIR="$BUNDLE/Contents/$ARCHDIR"
     BIN="$BINDIR/$NAME.ofx"
-    [ -f "$BIN" ] || { echo "Error: $NAME.ofx not found in $BUNDLE/Contents/Win*"; exit 1; }
+    [ -f "$BIN" ] || { echo "Error: $NAME.ofx not found in $BINDIR"; exit 1; }
+    # binutils (UCRT64) or LLVM (CLANG* environments, which may only have llvm-objdump, llvm-strip)
+    OBJDUMP=${OBJDUMP:-$(command -v objdump || command -v llvm-objdump || echo objdump)}
+    STRIP=${STRIP:-$(command -v strip || command -v llvm-strip || echo strip)}
     lower() { tr '[:upper:]' '[:lower:]'; }
     # DLL names are case-insensitive: the lists are "lowercase-name actual-name"
     list_dlls() { find "$1" -maxdepth 1 -type f -iname '*.dll' -printf '%f\n' | awk '{print tolower($0), $0}'; }
@@ -205,7 +227,7 @@ MINGW*|MSYS*)
     status=0
     while [ ${#todo[@]} -gt 0 ]; do
         f=${todo[0]}; todo=( "${todo[@]:1}" )
-        imports=$(objdump -p "$f") || { echo "Error: objdump failed on $f"; exit 1; }
+        imports=$("$OBJDUMP" -p "$f") || { echo "Error: $OBJDUMP failed on $f"; exit 1; }
         for dll in $(printf '%s\n' "$imports" | awk '/DLL Name:/ {print $3}' | tr -d '\r' | lower | sort -u); do
             case "$dll" in api-ms-*|ext-ms-*) continue ;; esac
             grep -qxF "$dll" "$TMPD/scanned" && continue
@@ -243,7 +265,7 @@ MINGW*|MSYS*)
 
     # strip, then embed a manifest that lists the DLLs (resource 2:
     # ISOLATIONAWARE_MANIFEST_RESOURCE_ID); stripping after embedding would remove it
-    strip -s "$BIN"
+    "$STRIP" -s "$BIN"
     MT=$(command -v mt.exe || true)
     if [ -z "$MT" ]; then
         MT=$(find "/c/Program Files (x86)/Windows Kits/10/bin" -name mt.exe 2>/dev/null | grep -i '/x64/' | sort -V | tail -1 || true)
@@ -253,7 +275,7 @@ MINGW*|MSYS*)
     {
         echo '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         echo '<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">'
-        echo "<assemblyIdentity name=\"$NAME.ofx\" version=\"1.0.0.0\" type=\"win32\" processorArchitecture=\"amd64\"/>"
+        echo "<assemblyIdentity name=\"$NAME.ofx\" version=\"1.0.0.0\" type=\"win32\" processorArchitecture=\"$ARCH\"/>"
         for dll in "${dlls[@]}"; do
             echo "<file name=\"$(basename "$dll")\"></file>"
         done
