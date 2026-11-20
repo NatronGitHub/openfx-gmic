@@ -231,12 +231,6 @@ jobs:
           cmake -S . -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
             -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h"
           cmake --build build-debug -j4
-          # Debug builds link the release OpenMP runtime (vcomp140.dll, bundled), not vcomp140d.dll
-          deps=$(MSYS2_ARG_CONV_EXCL='*' dumpbin -nologo -dependents "$(cygpath -w build-debug/Plugins/GMIC.ofx.bundle/Contents/Win64/GMIC.ofx)" |
-                 sed -n '/has the following dependencies/,/Summary/p' | grep -iE '^ +[^ ]+\.dll$' | tr -d ' \r' | tr 'a-z' 'A-Z' | sort | tr '\n' ' ')
-          echo "GMIC.ofx (debug) imports: $deps"
-          [ "$deps" = "KERNEL32.DLL SHELL32.DLL VCOMP140.DLL " ] ||
-            { echo "FAIL: the debug GMIC.ofx must import only KERNEL32, SHELL32 and VCOMP140"; exit 1; }
           .github/workflows/check_linux_deps.sh build-debug/Plugins/GMIC.ofx.bundle
           .github/workflows/describe_plugins.sh build-debug/Plugins $GMIC_PLUGIN_COUNT
       # The Linux bundle is uploaded as is: it needs only system libraries (linuxCheckBundle.sh),
@@ -657,6 +651,12 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=$VCPKG_TRIPLET \
             -DGMIC_DOWNLOAD_DIR="$(cygpath -m "$PWD")" -DGMIC_POCKETFFT="$(cygpath -m "$PWD")/pocketfft_hdronly.h"
           cmake --build build-debug -j4
+          # Debug builds link the release OpenMP runtime (vcomp140.dll, bundled), not vcomp140d.dll
+          deps=$(MSYS2_ARG_CONV_EXCL='*' dumpbin -nologo -dependents "$(cygpath -w build-debug/Plugins/GMIC.ofx.bundle/Contents/Win64/GMIC.ofx)" |
+                 sed -n '/has the following dependencies/,/Summary/p' | grep -iE '^ +[^ ]+\.dll$' | tr -d ' \r' | tr 'a-z' 'A-Z' | sort | tr '\n' ' ')
+          echo "GMIC.ofx (debug) imports: $deps"
+          [ "$deps" = "KERNEL32.DLL SHELL32.DLL VCOMP140.DLL " ] ||
+            { echo "FAIL: the debug GMIC.ofx must import only KERNEL32, SHELL32 and VCOMP140"; exit 1; }
       - name: Build and describe (release, C++20)
         if: env.BUILD_VARIANTS == 'true'
         run: |
