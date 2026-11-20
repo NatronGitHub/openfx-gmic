@@ -88,6 +88,19 @@ static void setError(gmic_interface_options* options, const std::string& message
 
 int gmic_plugin_call(const char* cmd, unsigned int* nofImages, gmic_interface_image* images, unsigned int maxImages, gmic_interface_options* options)
 {
+#if defined(_WIN32) && defined(_OPENMP)
+	// MSVC's OpenMP runtime (vcomp140.dll) must never be unloaded once its worker threads exist:
+	// when the host unloads the plug-in (FreeLibrary), the loader unmaps VCOMP140.DLL under the idle
+	// workers, and the process crashes (0xC0000005) after rendering. Pin it, once, before the first
+	// G'MIC run (a no-op if VCOMP140.DLL isn't loaded, e.g. with MinGW's libgomp). Found with
+	// openfx's hostDemo, which unloads the plug-in before exiting: every multithreaded render then
+	// crashed at exit; pinning VCOMP140.DLL (or GMIC.ofx) fixed all of them.
+	static const bool vcompPinned = [] {
+		HMODULE h;
+		return GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, L"VCOMP140.DLL", &h) != 0;
+	}();
+	(void)vcompPinned;
+#endif
 	const unsigned int nofInputs = *nofImages;
 	gmic_list<float> list(nofInputs);
 	gmic_list<char> names(nofInputs);

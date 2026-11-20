@@ -61,8 +61,9 @@ Requirements
   the shared zlib and libpng instead: distribution packages and Natron's
   release builds use it (Natron's installer bundles these libraries).
 - Python 3, for the render test only.
-- Platforms: Linux, macOS (Apple clang; libraries from MacPorts or Homebrew) and Windows (MSYS2
-  UCRT64, as in CI: see .github/workflows/ci.yml for the packages).
+- Platforms: Linux, macOS (Apple clang; libraries from MacPorts or Homebrew) and Windows: MSVC
+  x64 with CMake, as in CI (see "Building with MSVC" below), or MSYS2 (UCRT64, with make or CMake;
+  libraries from its packages: mingw-w64-ucrt-x86_64-zlib, -libpng, -libgomp and -pkgconf).
 
 Runtime requirements on Linux: GMIC.ofx needs only the system libraries libc, libm, libstdc++,
 libgcc_s and libgomp (OpenMP builds; libgomp is a separate package, which minimal systems may not
@@ -138,6 +139,30 @@ Options (the Makefile's equivalent in parentheses):
   MacPorts libraries built for the runner (macOS 15), so they need macOS 15; Natron's release
   builds (its SDK) target 14.0.
 - GMIC_BUILD_TESTS=ON: also build openfx's hostDemo, for the render test.
+- GMIC_VCOMP_DLL: MSVC with OpenMP: the vcomp140.dll copied into the bundle (default: the
+  redistributable one of the compiler, see below).
+
+Building with MSVC
+------------------
+
+CI builds the Windows x64 bundle with Visual Studio's compiler (cl.exe), from a "x64 Native Tools"
+environment (vcvars64.bat), with CMake and Ninja, from Git for Windows' bash: the patches of the
+G'MIC sources need its sh and awk in PATH (or -DGMIC_PATCH_SH=<path to sh.exe>). zlib and libpng
+(and expat, for the test hosts of GMIC_BUILD_TESTS) come from vcpkg, at the versions pinned by
+vcpkg.json (its builtin-baseline), as static libraries with the static C runtime:
+
+    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
+      -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static
+    cmake --build build
+    cmake --install build --prefix <dir>
+
+OpenMP uses MSVC's /openmp (OpenMP 2.0): the bundle ships the compiler's redistributable
+vcomp140.dll (VC/Redist/MSVC/<version>/x64/Microsoft.VC<nnn>.OpenMP) next to GMIC.ofx, and a
+manifest embedded into GMIC.ofx makes the loader use that copy. GMIC.ofx then imports only
+KERNEL32, SHELL32 and VCOMP140 (no C++ runtime, zlib or libpng DLL). The plug-in keeps vcomp140.dll
+loaded once it has rendered (unloading it under its idle threads crashed hosts that unload
+plug-ins). /openmp:llvm is not supported.
 
 Filters
 -------
