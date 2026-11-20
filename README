@@ -47,7 +47,7 @@ Requirements
 ------------
 
 - A C++17 compiler (C++20 for Qt6 builds of Natron), pkg-config, and make and curl, or CMake
-  >= 3.16 (with Ninja for the example below, or any other generator).
+  >= 3.21 (with Ninja for the example below, or any other generator).
 - Libraries, found through pkg-config: zlib, libpng; with FFT=fftw3 only,
   fftw3 >= 3.3.5 and fftw3_threads (the default FFT, pocketfft, is header-only and downloaded at
   build time).

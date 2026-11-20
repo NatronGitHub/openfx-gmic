@@ -30,7 +30,12 @@
 # -DOFX_LICENSE=COMMERCIAL (the Makefile's LICENSE=COMMERCIAL, see license.mk) and -DFFT=fftw3
 # (the Makefile's FFT; default: pocketfft).
 
-cmake_minimum_required(VERSION 3.16)
+# CMake 3.21, as openfx's modules need; the policies up to 3.31 are NEW (later ones stay OLD: raise
+# the upper bound after testing a newer CMake)
+cmake_minimum_required(VERSION 3.21...3.31)
+# no C++20 module scanning (CMP0155, CMake 3.28: scans C++20 targets with GCC 14+ or Clang with
+# clang-scan-deps): G'MIC and the plug-in have no modules
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
   message(FATAL_ERROR "Prevented in-tree build: use a build directory (cmake -B build).")
@@ -696,8 +701,9 @@ if(GMIC_STATIC_DEPS)
       target_link_libraries(GMIC PRIVATE ${_lib})
       continue()
     endif()
-    # cached (find_library's NO_CACHE needs CMake 3.21): after changing PKG_CONFIG_PATH or the
-    # archives' location, configure a new build directory, or with -U 'GMIC_STATIC_*'
+    # cached (so that -DGMIC_STATIC_<lib>=<archive> can choose another one): after changing
+    # PKG_CONFIG_PATH or the archives' location, configure a new build directory, or with
+    # -U 'GMIC_STATIC_*'
     find_library(GMIC_STATIC_${_lib} NAMES lib${_lib}.a HINTS ${_dirs})
     if(NOT GMIC_STATIC_${_lib})
       message(FATAL_ERROR "GMIC_STATIC_DEPS: lib${_lib}.a not found (in ${_dirs} or the default paths): "
