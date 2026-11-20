@@ -9,11 +9,13 @@
 # 0-based index of the k-th smallest value among the arguments after k: vargkth(1,5,3) is 1,
 # vargkth(1,3,5) is 0, and with a single value, vargkth(1,5), the index is 0 (as in 4.0.7), not 1.
 # mp_vargkth returns 1 only when no value equals the k-th smallest, i.e. when the value is NaN:
-# the patch makes mp_vargkth2 return 'e1==e1?0:1' (e1: the value, e0 being k), which matches it
-# exactly.
+# the patch makes mp_vargkth2 return 'cimg::type<double>::is_nan(e1)?1:0' (e1: the value, e0
+# being k), which matches it exactly (CImg's is_nan() also works with -ffinite-math-only, where
+# 'e1==e1' could be folded to true).
 #
 # Running it again on a patched file does nothing, and so does running it on a CImg.h whose
-# mp_vargkth2 already returns 'e1==e1?0:1' or 0 (an upstream fix). The script fails in any other case: mp_vargkth2
+# mp_vargkth2 already returns 0, 'e1==e1?0:1' or 'cimg::type<double>::is_nan(e1)?1:0' (an
+# upstream fix). The script fails in any other case: mp_vargkth2
 # missing or with another body (e.g. after a GMICVER bump: then check what upstream changed, and
 # update or remove this patch), or CRLF line endings. Only POSIX sh, awk and wc are used, for
 # Linux, macOS and MSYS2.
@@ -24,7 +26,8 @@ head="static double mp_vargkth2(_cimg_math_parser& mp) {"
 old="_cimg_mp_vfunc2(1);"
 fixed0="_cimg_mp_vfunc2(0);"
 fixed1="_cimg_mp_vfunc2(e1==e1?0:1);"
-marker="_cimg_mp_vfunc2(e1==e1?0:1); // openfx-gmic patch: 0-based index, as mp_vargkth"
+fixed2="_cimg_mp_vfunc2(cimg::type<double>::is_nan(e1)?1:0);"
+marker="_cimg_mp_vfunc2(cimg::type<double>::is_nan(e1)?1:0); // openfx-gmic patch: 0-based index, as mp_vargkth"
 
 fail() {
   echo "Error: $f: $1" >&2
@@ -35,9 +38,9 @@ fail() {
 
 # counts <file>: "<mp_vargkth2 definitions> <bodies returning 1> <fixed bodies> <markers>"
 counts() {
-  awk -v head="$head" -v old="$old" -v fixed0="$fixed0" -v fixed1="$fixed1" -v marker="$marker" '
+  awk -v head="$head" -v old="$old" -v fixed0="$fixed0" -v fixed1="$fixed1" -v fixed2="$fixed2" -v marker="$marker" '
     { t = $0; gsub(/^[ \t]+|[ \t]+$/, "", t) }
-    infn { if (t == old) o++; else if (t == fixed0 || t == fixed1) z++; else if (t == marker) m++; infn = 0 }
+    infn { if (t == old) o++; else if (t == fixed0 || t == fixed1 || t == fixed2) z++; else if (t == marker) m++; infn = 0 }
     t == head { h++; infn = 1 }
     END { print h + 0, o + 0, z + 0, m + 0 }' "$1"
 }
