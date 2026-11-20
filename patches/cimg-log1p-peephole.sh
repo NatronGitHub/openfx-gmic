@@ -1,54 +1,66 @@
 #!/bin/sh
 # Patch CImg.h, extracted from the G'MIC sources by the top-level Makefile, so that the math
 # parser's log(1 + x) -> log1p(x) optimization only rewrites code compiled for log()'s own
-# argument. Usage: cimg-log1p-peephole.sh <CImg.h>
+# argument, into a temporary. Usage: cimg-log1p-peephole.sh <CImg.h>
 # https://github.com/GreycLab/CImg/issues/502
 #
 # CImg 4.0.8's log() handler rewrites the last compiled opcode (code.back()) into log1p (or
 # vector_log1p) when it is an increment (mp_increment, mp_vector_increment) that writes log()'s
-# argument. Unlike the older peepholes of the '+', '-', '*' and '/' operators, which first save
-# p3 = code.size() and then check code.size()>p3, it doesn't check that this opcode was emitted
-# while compiling the argument. When the argument is a variable, which compiles to no code, the
-# opcode is the one that computed the variable earlier, and the variable itself is overwritten:
-# 'y=1+x;log(y);y' gives log(1 + x) instead of 1 + x, and 'Y=[x,x]+1;Z=log(Y);Y[0]' gives
-# log(1 + x) instead of x + 1 (and Z gets the same values).
-# The patch adds the same guard: 'p3 = code.size();' before compiling the argument, and
-# 'is_sth = code.size()>p3;' instead of 'is_sth = code.size()?true:false;'.
+# argument. It doesn't check that this opcode was emitted while compiling the argument, nor that
+# it writes a temporary:
+# - when the argument is a variable, which compiles to no code, the opcode is the one that
+#   computed the variable earlier, and the variable is overwritten: 'y=1+x;log(y);y' gives
+#   log(1 + x) instead of 1 + x, and 'Y=[x,x]+1;Z=log(Y);Y[0]' gives log(1 + x) instead of x + 1;
+# - when the argument is an assignment, the increment writes the variable directly (the
+#   assignment takes the temporary's slot): 'log(y=x+1);y' gives log(1 + x) instead of x + 1.
+# The patch adds both guards: 'p3 = code.size();' before compiling the argument and
+# 'is_sth = code.size()>p3;', as in the older peepholes of the '+', '-', '*' and '/' operators,
+# and is_comp_vector(arg1) / is_comp_scalar(arg1) in the vector and scalar rewrites.
 #
 # Running it again on a patched file does nothing, and so does running it on a CImg.h whose log()
-# handler already has the guard or no longer has the peephole (an upstream fix). The script fails
-# in any other case: the expected code missing (e.g. after a GMICVER bump: then check what
-# upstream changed, and update or remove this patch), or CRLF line endings. Only POSIX sh, awk and
-# wc are used, for Linux, macOS and MSYS2.
+# handler has no log1p peephole (e.g. CImg 4.0.7), or already guards it with a 'code.size()>p3'
+# or an 'is_comp_scalar(arg1)'/'is_comp_vector(arg1)' test (an upstream fix). The script fails in
+# any other case: the expected code missing (e.g. after a GMICVER bump: then check what upstream
+# changed, and update or remove this patch), or CRLF line endings. Only POSIX sh, awk and wc are
+# used, for Linux, macOS and MSYS2.
 set -e
 f="$1"
 
 head='if (!std::strncmp(ss,"log(",4)) { // Natural logarithm'
 comp="arg1 = compile(ss4,se1,depth1,0,block_flags);"
-old="is_sth = code.size()?true:false;"
-marker="p3 = code.size(); // openfx-gmic patch: log1p peephole only on the code of log()'s argument"
-new="is_sth = code.size()>p3;"
+marker="p3 = code.size(); // openfx-gmic patch: log1p peephole only on a temporary computed by log()'s argument"
+# the lines to replace (old1..old3) and their replacements (new1..new3), trimmed
+old1="is_sth = code.size()?true:false;"
+new1="is_sth = code.size()>p3;"
+old2="if (is_sth && fn==mp_vector_increment && pop[1]==arg1) { // Spot case 'log(1 + X)'"
+new2="if (is_sth && fn==mp_vector_increment && pop[1]==arg1 && is_comp_vector(arg1)) { // Spot case 'log(1 + X)'"
+old3="if (is_sth && fn==mp_increment && pop[1]==arg1) { // Spot case 'log(1 + x)'"
+new3="if (is_sth && fn==mp_increment && pop[1]==arg1 && is_comp_scalar(arg1)) { // Spot case 'log(1 + x)'"
 
 fail() {
   echo "Error: $f: $1" >&2
-  echo "Error: the CImg sources changed: update or remove patches/cimg-log1p-peephole.sh" >&2
+  echo "Error: the CImg sources changed: update or remove patches/cimg-log1p-peephole.sh (https://github.com/GreycLab/CImg/issues/502)" >&2
   rm -f "$f.patched"
   exit 1
 }
 
-# counts <file>: "<log() handlers> <markers> <argument compilations> <unguarded is_sth>
-# <guarded is_sth> <log1p rewrites>", inside the log() handler (up to the log10() one)
+# counts <file>: "<log() handlers> <markers> <argument compilations> <lines to patch> <patched
+# lines> <log1p rewrites> <guards>", inside the log() handler (up to the log10() one); a guard is
+# a line with 'code.size()>p3', 'is_comp_scalar(arg1)' or 'is_comp_vector(arg1)'
 counts() {
-  awk -v head="$head" -v comp="$comp" -v old="$old" -v marker="$marker" -v new="$new" '
+  awk -v head="$head" -v comp="$comp" -v marker="$marker" \
+      -v o1="$old1" -v o2="$old2" -v o3="$old3" -v n1="$new1" -v n2="$new2" -v n3="$new3" '
     { t = $0; gsub(/^[ \t]+|[ \t]+$/, "", t) }
     t == head { h++; inlog = 1; next }
     inlog && index(t, "if (!std::strncmp(ss,\"log10(\",6))") { inlog = 0 }
-    inlog && t == marker { m++ }
-    inlog && t == comp { c++ }
-    inlog && t == old { o++ }
-    inlog && t == new { n++ }
-    inlog && (t == "pop[0] = (ulongT)mp_log1p;" || t == "pop[0] = (ulongT)mp_vector_log1p;") { r++ }
-    END { print h + 0, m + 0, c + 0, o + 0, n + 0, r + 0 }' "$1"
+    !inlog { next }
+    t == marker { m++ }
+    t == comp { c++ }
+    t == o1 || t == o2 || t == o3 { o++ }
+    t == n1 || t == n2 || t == n3 { n++ }
+    t == "pop[0] = (ulongT)mp_log1p;" || t == "pop[0] = (ulongT)mp_vector_log1p;" { r++ }
+    index(t, "code.size()>p3") || index(t, "is_comp_scalar(arg1)") || index(t, "is_comp_vector(arg1)") { g++ }
+    END { print h + 0, m + 0, c + 0, o + 0, n + 0, r + 0, g + 0 }' "$1"
 }
 
 case "$f" in
@@ -62,29 +74,36 @@ if awk -v cr="$cr" 'index($0, cr) { found = 1; exit } END { exit !found }' "$f";
 fi
 
 set -- `counts "$f"`
-if [ "$1" = 1 ] && [ "$2" = 1 ] && [ "$3" = 1 ] && [ "$4" = 0 ] && [ "$5" = 1 ] && [ "$6" = 2 ]; then
-  echo "$f: already patched (log1p peephole)"
+[ "$1" = 1 ] || fail "expected one log() handler, found $1"
+if [ "$2" = 1 ] && [ "$3" = 1 ] && [ "$4" = 0 ] && [ "$5" = 3 ] && [ "$6" = 2 ]; then
+  echo "$f: already patched (log1p peephole, CImg#502)"
   exit 0
 fi
-if [ "$1" = 1 ] && [ "$2" = 0 ] && [ "$4" = 0 ] && { [ "$5" = 1 ] || [ "$6" = 0 ]; }; then
-  echo "$f: the log() handler has no unguarded log1p peephole: not patched (fixed upstream)"
+if [ "$2" = 0 ] && [ "$6" = 0 ]; then
+  echo "$f: the log() handler has no log1p peephole: nothing to patch (CImg#502)"
   exit 0
 fi
-[ "$1" = 1 ] && [ "$2" = 0 ] && [ "$3" = 1 ] && [ "$4" = 1 ] && [ "$5" = 0 ] && [ "$6" = 2 ] ||
-  fail "expected one log() handler with '$comp', then '$old' and 2 log1p rewrites; found $1 handlers, $3 argument compilations, $4 unguarded and $5 guarded is_sth, $6 rewrites ($2 patch markers)"
+if [ "$2" = 0 ] && [ "$7" -ge 1 ]; then
+  echo "$f: the log() handler's log1p peephole is already guarded: not patched (fixed upstream, CImg#502)"
+  exit 0
+fi
+[ "$2" = 0 ] && [ "$3" = 1 ] && [ "$4" = 3 ] && [ "$5" = 0 ] && [ "$6" = 2 ] && [ "$7" = 0 ] ||
+  fail "expected one log() handler with '$comp', the 3 lines to patch and 2 log1p rewrites; found $3 argument compilations, $4 lines to patch, $5 patched lines, $6 rewrites, $7 guards ($2 patch markers)"
 
-awk -v head="$head" -v comp="$comp" -v old="$old" -v marker="$marker" -v new="$new" '
+awk -v head="$head" -v comp="$comp" -v marker="$marker" \
+    -v o1="$old1" -v o2="$old2" -v o3="$old3" -v n1="$new1" -v n2="$new2" -v n3="$new3" '
 { line = $0; t = line; gsub(/^[ \t]+|[ \t]+$/, "", t); ind = line; sub(/[^ \t].*$/, "", ind) }
 t == head { inlog = 1; print; next }
+inlog && index(t, "if (!std::strncmp(ss,\"log10(\",6))") { inlog = 0 }
 inlog && t == comp { print ind marker; print; sawcomp = 1; next }
-inlog && t == old {
-  if (!sawcomp) { print "line " NR ": is_sth before the argument is compiled" > "/dev/stderr"; exit 1 }
-  print ind new; inlog = 0; next
+inlog && (t == o1 || t == o2 || t == o3) {
+  if (!sawcomp) { print "line " NR ": peephole before the argument is compiled" > "/dev/stderr"; exit 1 }
+  print ind (t == o1 ? n1 : t == o2 ? n2 : n3); next
 }
 { print }' "$f" > "$f.patched" || fail "the code to patch is not as expected"
 
 set -- `counts "$f.patched"`
-[ "$1" = 1 ] && [ "$2" = 1 ] && [ "$3" = 1 ] && [ "$4" = 0 ] && [ "$5" = 1 ] && [ "$6" = 2 ] || fail "the patch did not apply"
+[ "$1" = 1 ] && [ "$2" = 1 ] && [ "$3" = 1 ] && [ "$4" = 0 ] && [ "$5" = 3 ] && [ "$6" = 2 ] || fail "the patch did not apply"
 [ "`wc -l < "$f.patched"`" -eq $((`wc -l < "$f"` + 1)) ] || fail "the patch did not add 1 line"
 mv "$f.patched" "$f"
-echo "$f: patched so that log(y) no longer rewrites the code that computed a variable y"
+echo "$f: patched so that log() no longer rewrites the code that computed a variable (CImg#502)"
