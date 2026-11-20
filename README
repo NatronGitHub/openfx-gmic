@@ -37,7 +37,9 @@ Getting the sources
 The G'MIC sources (version GMICVER in the Makefile, 4.0.8) are downloaded at build time and are
 not in git: the release tarball gmic_<version>.tar.gz, from the GitHub release of GreycLab/gmic,
 gmic.eu or the MacPorts distfiles mirror, checked against GMICSRC_SHA256_<version>. They are then
-patched: patches/cimg-omp-rand.sh makes CImg's random numbers in OpenMP loops reproducible, and
+patched: patches/cimg-omp-rand.sh makes CImg's random numbers in OpenMP loops reproducible,
+patches/cimg-vvar2.sh, patches/cimg-vargkth2.sh, patches/cimg-log1p-peephole.sh and
+patches/cimg-abs-peephole.sh fix math parser bugs, and
 gmic_hotfixes.gmic replaces the
 definitions of broken filters (each fix is skipped once G'MIC has it).
 
