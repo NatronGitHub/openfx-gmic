@@ -1,0 +1,4 @@
+{
+  "$comment": "vcpkg-triplets/: arm64ec-windows-static, for the Arm64EC and Arm64X MSVC builds (see README)",
+  "overlay-triplets": [ "./vcpkg-triplets" ]
+}
