@@ -764,9 +764,10 @@ endif()
 # as a file of the plug-in's private assembly, so that the loader takes the bundled copy (as the
 # MSYS2 artifacts' bundle_libs.sh does). -DGMIC_VCOMP_DLL=<path> chooses another copy.
 if(OFX_USE_OPENMP AND MSVC)
-  # the Redist folders to look in, and the manifest's processorArchitecture (GMIC_MANIFEST_ARCH
-  # overrides it). Arm64EC (and Arm64X) code uses the arm64 folder's vcomp140.dll, an Arm64X image
-  # that loads in Arm64EC/x64 and in ARM64 processes, unless an arm64ec folder exists.
+  # the Redist folders to look in, and the manifest's processorArchitecture. Arm64EC (and Arm64X)
+  # code uses the arm64 folder's vcomp140.dll, an Arm64X image that loads in Arm64EC and in ARM64
+  # processes, unless an arm64ec folder exists. (An Arm64X GMIC.ofx gets the Arm64EC build's amd64
+  # manifest, which ARM64 processes also accept.)
   string(TOLOWER "${CMAKE_CXX_COMPILER_ARCHITECTURE_ID}" _vcomp_arch)
   set(_vcomp_arches "${_vcomp_arch}")
   if(_vcomp_arch STREQUAL "x64")
@@ -816,10 +817,6 @@ if(OFX_USE_OPENMP AND MSVC)
   endif()
   if(GMIC_VCOMP_DLL MATCHES "debug_nonredist|/onecore/|OpenMP\\.LLVM|DebugOpenMP|vcomp140d")
     message(FATAL_ERROR "GMIC_VCOMP_DLL=${GMIC_VCOMP_DLL} is not the redistributable vcomp140.dll")
-  endif()
-  set(GMIC_MANIFEST_ARCH "" CACHE STRING "processorArchitecture of GMIC.ofx's manifest (default: from the target architecture)")
-  if(GMIC_MANIFEST_ARCH)
-    set(_manifest_arch "${GMIC_MANIFEST_ARCH}")
   endif()
   message(STATUS "OpenMP (MSVC /openmp): ${GMIC_VCOMP_DLL} is copied next to GMIC.ofx (manifest: ${_manifest_arch})")
   # its notice: vcomp140.dll is Microsoft's, not under the plug-in's licence
