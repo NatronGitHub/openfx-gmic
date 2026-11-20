@@ -271,7 +271,8 @@ if(OFX_LICENSE STREQUAL "GPL")
 endif()
 
 # Local patches to the extracted G'MIC sources, read from the Makefile, so that both builds apply
-# the same scripts in the same order (see patches/): CIMG_PATCHES on CImg.h. Each runs as
+# the same scripts in the same order (see patches/): CIMG_PATCHES on CImg.h, GMIC_PATCHES on
+# gmic.cpp. Each runs as
 # "sh patches/<script> <file>" on the fresh copy, and fails if the source doesn't contain the
 # expected code (e.g. after a GMICVER bump).
 # The patches need a POSIX sh (Linux, macOS, MSYS2; with MSVC, e.g. Git for Windows' sh.exe in the
@@ -284,8 +285,12 @@ gmic_makefile_var(CIMG_PATCHES _mk_cimg_patches)
 if(NOT _mk_cimg_patches)
   message(FATAL_ERROR "Could not read CIMG_PATCHES from ${GMIC_MAKEFILE}")
 endif()
+gmic_makefile_var(GMIC_PATCHES _mk_gmic_patches)
+if(NOT _mk_gmic_patches)
+  message(FATAL_ERROR "Could not read GMIC_PATCHES from ${GMIC_MAKEFILE}")
+endif()
 set(_patches "")
-set(_gmic_patch_lists "_mk_cimg_patches:CImg.h")
+set(_gmic_patch_lists "_mk_cimg_patches:CImg.h" "_mk_gmic_patches:gmic.cpp")
 find_program(GMIC_PATCH_SH sh)
 set(_gmic_patch_key "${GMICVER} ${GMICSRC_SHA256} ${_gmic_extract} sh=${GMIC_PATCH_SH}")
 foreach(_entry IN LISTS _gmic_patch_lists)

@@ -39,7 +39,8 @@ not in git: the release tarball gmic_<version>.tar.gz, from the GitHub release o
 gmic.eu or the MacPorts distfiles mirror, checked against GMICSRC_SHA256_<version>. They are then
 patched: patches/cimg-omp-rand.sh makes CImg's random numbers in OpenMP loops reproducible,
 patches/cimg-vvar2.sh, patches/cimg-vargkth2.sh, patches/cimg-log1p-peephole.sh and
-patches/cimg-abs-peephole.sh fix math parser bugs, and
+patches/cimg-abs-peephole.sh fix math parser bugs, patches/gmic-win-thread-stack.sh gives the
+threads of G'MIC's "parallel" command an 8 MiB stack on Windows, and
 gmic_hotfixes.gmic replaces the
 definitions of broken filters (each fix is skipped once G'MIC has it).
 
@@ -84,7 +85,7 @@ Building with make
 CI builds with CMake (https://github.com/NatronGitHub/Natron/issues/1181), as Natron's
 build-plugins.sh does by default. The Makefile is a fallback (build-plugins.sh's
 PLUGINS_BUILD_SYSTEM=make), tested only by one nightly Linux release build compared with the CMake
-one, and a nightly comparison of its COMMERCIAL sources (no compile). CMakeLists.txt reads the G'MIC version, the checksums, POCKETFFTCOMMIT and CIMG_PATCHES from
+one, and a nightly comparison of its COMMERCIAL sources (no compile). CMakeLists.txt reads the G'MIC version, the checksums, POCKETFFTCOMMIT, CIMG_PATCHES and GMIC_PATCHES from
 it.
 
     make CONFIG=release OPENMP=1 CXXSTD=c++17
