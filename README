@@ -180,9 +180,11 @@ environment, vcvarsall.bat arm64):
   or later); an Arm64EC build configured afterwards with -DGMIC_ARM64X=ARM64EC and the same
   GMIC_ARM64X_RSP links them into an Arm64X GMIC.ofx, installed into Contents/Win-arm64ec.
 OpenMP works on both (the ARM64 Redist vcomp140.dll is an Arm64X image, bundled as on x64).
-The CI bundle has Contents/Win-arm64ec (the Arm64X GMIC.ofx) and Contents/Win-arm64 (the ARM64
-one), each with its vcomp140.dll: copy them into the x64 bundle's Contents for one bundle that
-loads in x64, Arm64EC and ARM64 hosts.
+The nightly CI artifact openfx-gmic-windows-msvc is one bundle for x64, Arm64EC and ARM64 hosts:
+Contents/Win64 (x64), Contents/Win-arm64ec (the Arm64X GMIC.ofx) and Contents/Win-arm64 (the
+ARM64 one), each with its vcomp140.dll.
+Arm64EC with a CMake that doesn't report ARM64EC as the compiler's architecture: -arm64EC (or
+/arm64EC) in CMAKE_CXX_FLAGS is enough for the choice of vcomp140.dll.
 
 Filters
 -------
