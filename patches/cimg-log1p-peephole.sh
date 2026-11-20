@@ -2,7 +2,7 @@
 # Patch CImg.h, extracted from the G'MIC sources by the top-level Makefile, so that the math
 # parser's log(1 + x) -> log1p(x) optimization only rewrites code compiled for log()'s own
 # argument. Usage: cimg-log1p-peephole.sh <CImg.h>
-# Upstream: TBD (https://github.com/GreycLab/CImg/issues)
+# https://github.com/GreycLab/CImg/issues/502
 #
 # CImg 4.0.8's log() handler rewrites the last compiled opcode (code.back()) into log1p (or
 # vector_log1p) when it is an increment (mp_increment, mp_vector_increment) that writes log()'s

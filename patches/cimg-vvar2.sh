@@ -1,7 +1,7 @@
 #!/bin/sh
 # Patch CImg.h, extracted from the G'MIC sources by the top-level Makefile, so that the math
 # parser's vvar() with exactly two arguments no longer crashes. Usage: cimg-vvar2.sh <CImg.h>
-# Upstream: TBD (https://github.com/GreycLab/CImg/issues)
+# https://github.com/GreycLab/CImg/issues/501
 #
 # CImg 4.0.8 compiles the multi-argument vector functions (vavg, vmax, vstd, vvar...) with two
 # arguments to an optimized variant (mp_vavg2, mp_vmax2...), chosen by a ternary chain after the
