@@ -1,7 +1,7 @@
 #!/bin/sh
 # Patch CImg.h, extracted from the G'MIC sources by the top-level Makefile, so that cimg_snprintf()
 # always ends its output with a '\0' with MSVC. Usage: cimg-msvc-snprintf.sh <CImg.h>
-# https://github.com/NatronGitHub/openfx-gmic/issues/111
+# https://github.com/GreycLab/CImg/issues/507 (https://github.com/NatronGitHub/openfx-gmic/issues/111)
 #
 # With MSVC (and clang-cl), cimg_snprintf is cimg::_snprintf, whose body calls
 # _vsnprintf(s,size,format,ap), meant to be cimg::_vsnprintf (_vsnprintf_s with _TRUNCATE, which

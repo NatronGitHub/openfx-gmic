@@ -188,7 +188,8 @@ Licence_pocketfft.txt: pocketfft_hdronly.h
 #   (https://github.com/GreycLab/CImg/issues/500)
 # - cimg-msvc-snprintf.sh (MSVC): cimg_snprintf() always ends its output with a '\0' (it called
 #   the CRT's _vsnprintf, which doesn't when it truncates): G'MIC's 'input' left image titles
-#   unterminated, read past their end (crash, e.g. Montage Pappus Chain on Windows ARM64) (#111)
+#   unterminated, read past their end (crash, e.g. Montage Pappus Chain on Windows ARM64) (#111,
+#   https://github.com/GreycLab/CImg/issues/507)
 # G'MIC 4.0.8 has the fixes of the other patches that 4.0.7 needed (see CHANGELOG.md), and CImg's
 # pocketfft support (cimg_use_pocketfft, https://github.com/GreycLab/CImg/pull/497).
 # CMakeLists.txt reads CIMG_PATCHES (a plain one-line assignment, see above), and applies the
