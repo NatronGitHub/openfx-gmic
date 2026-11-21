@@ -45,10 +45,8 @@ name: Continuous Integration
 #
 # Frugal CI (the NatronGitHub runners are shared by all repos): one run per change. Pushes run CI
 # only on master and tags; feature branches run through their pull request. Draft pull requests
-# don't run CI. Superseded runs are cancelled, except for tags. The weekly run is skipped when
-# master's head is the commit that the last scheduled run tested (no job builds a moving upstream
-# head: the G'MIC tarball, pocketfft, openfx, zlib, libpng and the vcpkg baseline are pinned; only
-# the package managers' packages move). Jobs time out.
+# don't run CI. Superseded runs are cancelled, except for tags. The weekly run is never skipped:
+# the toolchains (package managers, runner images) move even when master doesn't. Jobs time out.
 
 on:
   workflow_dispatch:
@@ -98,34 +96,21 @@ env:
   UPLOAD_ARTIFACTS: ${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && (contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc'))) }}
 
 jobs:
-  # Skip the weekly scheduled run if master's head is the commit that the last scheduled run tested
-  # (once per commit, even if that run failed; as openfx-io). Commits, not dates: a commit made
-  # just before a skipped run would otherwise be missed.
+  # Which jobs run: draft pull requests run none; "only: windows-arm" (workflow_dispatch) runs just
+  # the Windows on Arm job. The weekly scheduled run is never skipped: the toolchains (package
+  # managers, runner images) move even when master doesn't.
   changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    # gh run list (the scheduled run only)
-    permissions:
-      actions: read
-      contents: read
     outputs:
       run: ${{ steps.check.outputs.run }}
       # the Windows ARM64/Arm64EC/Arm64X job: weekly and on demand only
       arm: ${{ steps.check.outputs.arm }}
     steps:
       - id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           run=true
-          if [ "${{ github.event_name }}" = schedule ]; then
-            # the head commit of the last completed scheduled run (this one is still in progress)
-            last=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --event schedule --status completed --limit 1 --json headSha --jq '.[0].headSha // empty') || last=
-            if [ -n "$last" ] && [ "$last" = "$GITHUB_SHA" ]; then
-              run=false; echo "master ($GITHUB_SHA) is the commit the last scheduled run tested: skipping."
-            fi
-          fi
           arm=false
           case "${{ github.event_name }}" in schedule|workflow_dispatch) arm=$run;; esac
           if [ "${{ inputs.only }}" = windows-arm ]; then run=false; arm=true; fi
@@ -628,8 +613,9 @@ jobs:
           name: openfx-gmic-windows-x64-msvc
           path: install/OFX/Plugins
           # 1 day weekly and on demand, when the merged openfx-gmic-windows-msvc bundle (below,
-          # 14 days) has it; 7 days for pre-release tags, which build no Arm bundle
-          retention-days: ${{ startsWith(github.ref, 'refs/tags/') && 7 || 1 }}
+          # 14 days) has it; 14 days for pre-release tags, which build no Arm bundle (this one is
+          # then the Windows download)
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/') && 14 || 1 }}
           compression-level: 9
 
   # Weekly and on demand only: MSYS2 UCRT64 (MinGW-w64 GCC, libgomp, pkg-config, CMake), the other

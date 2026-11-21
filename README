@@ -183,7 +183,10 @@ environment, vcvarsall.bat arm64):
 OpenMP works on both (the ARM64 Redist vcomp140.dll is an Arm64X image, bundled as on x64).
 The weekly CI artifact openfx-gmic-windows-msvc is one bundle for x64, Arm64EC and ARM64 hosts:
 Contents/Win64 (x64), Contents/Win-arm64ec (the Arm64X GMIC.ofx) and Contents/Win-arm64 (the
-ARM64 one), each with its vcomp140.dll.
+ARM64 one), each with its vcomp140.dll. It is only made when both Windows jobs succeed, so after
+a failed week there is no fresh Windows download until the next green weekly or on-demand run;
+the previous bundle stays available for up to 14 days. The weekly run is never skipped: the
+toolchains (package managers, runner images) move even when master doesn't.
 Arm64EC with a CMake that doesn't report ARM64EC as the compiler's architecture: -arm64EC (or
 /arm64EC) in CMAKE_CXX_FLAGS is enough for the choice of vcomp140.dll.
 
