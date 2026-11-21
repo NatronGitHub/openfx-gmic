@@ -198,8 +198,9 @@ CIMG_PATCHES = patches/cimg-omp-rand.sh patches/cimg-vvar2.sh patches/cimg-vargk
 CImg.h: gmic_sources.request $(CIMG_PATCHES)
 # GMIC_PATCHES: the same for gmic.cpp (read by CMakeLists.txt too). gmic-win-thread-stack.sh: an
 # 8 MiB stack for the threads of G'MIC's 'parallel' command on Windows
-# (https://github.com/GreycLab/gmic/issues/226).
-GMIC_PATCHES = patches/gmic-win-thread-stack.sh
+# (https://github.com/GreycLab/gmic/issues/226). gmic-argx-overflow.sh: 'displacement' and
+# 'serialize' no longer strcpy() into argx's 1-byte sentinel (a stack-buffer overflow).
+GMIC_PATCHES = patches/gmic-win-thread-stack.sh patches/gmic-argx-overflow.sh
 gmic.cpp: gmic_sources.request $(GMIC_PATCHES)
 
 distclean: clean
