@@ -2,7 +2,7 @@
 # Patch gmic.cpp, extracted from the G'MIC sources by the top-level Makefile, so that the
 # 'displacement' and 'serialize' commands no longer write past G'MIC's 1-byte empty string.
 # Usage: gmic-argx-overflow.sh <gmic.cpp>   (prints "already patched" on a patched file)
-# Upstream: TBD
+# Upstream: https://github.com/GreycLab/gmic/issues/227
 #
 # In gmic::_run(), argx points to the 1-byte sentinel _c0 (an empty string on the stack) until
 # gmic_use_argx allocates its 256-byte buffer. Two commands strcpy() into it without that:
