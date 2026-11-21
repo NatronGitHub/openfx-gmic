@@ -8,7 +8,8 @@
 #   libz.so.1);
 # - it exports only OfxGetNumberOfPlugins and OfxGetPlugin (the version script keeps the symbols
 #   of the static libraries local);
-# - its RUNPATH (or RPATH) has no empty entry, which the loader takes as the current directory:
+# - its RUNPATH and RPATH, if present, are not empty and have no empty entry, which the loader
+#   takes as the current directory:
 #   CMake pads the RUNPATH of build-tree binaries with ':' until cmake --install rewrites it, so
 #   check (and ship) the installed bundle.
 # SHARED_DEPS=1: a GMIC_STATIC_DEPS=OFF build (Natron's release builds, distribution packages),
@@ -34,13 +35,24 @@ for lib in $needed; do
     esac
 done
 
-runpath=$(readelf -d "$bin" | sed -n -e 's/.*(\(RUNPATH\|RPATH\)).*\[\(.*\)\]/\2/p')
-echo "RUNPATH: ${runpath:-(none)}"
-if [ -n "$runpath" ]; then
-    case ":$runpath:" in
-        *::*) echo "FAIL: $bin has an empty RUNPATH entry ($runpath), which the loader takes as the current directory"; status=1 ;;
-    esac
-fi
+# RUNPATH and RPATH, each on its own (both may be present): no tag is fine; a tag with an empty
+# value, or an empty entry in its value (a leading, trailing or double ':'), is an error
+dynamic=$(readelf -d "$bin")
+for tag in RUNPATH RPATH; do
+    if ! printf '%s\n' "$dynamic" | grep -q "($tag)"; then
+        echo "$tag: (none)"
+        continue
+    fi
+    value=$(printf '%s\n' "$dynamic" | sed -n -e "s/.*($tag).*\\[\\(.*\\)\\]/\\1/p")
+    echo "$tag: [$value]"
+    if [ -z "$value" ]; then
+        echo "FAIL: $bin has a $tag tag with an empty value ([]): not a binary made by cmake --install"; status=1
+    else
+        case ":$value:" in
+            *::*) echo "FAIL: $bin has an empty $tag entry ($value), which the loader takes as the current directory"; status=1 ;;
+        esac
+    fi
+done
 
 # (without the version node, type A, and the @@OFX_1.0 version suffixes of the version script)
 exports=$(nm -D --defined-only "$bin" | awk '$(NF-1) != "A" { sub(/@.*/, "", $NF); print $NF }' | LC_ALL=C sort | tr '\n' ' ')
