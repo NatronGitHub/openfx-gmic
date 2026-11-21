@@ -8,7 +8,8 @@
 # directory, this checks that the plug-in finds the DLLs bundled with it.
 # MSVC (Git for Windows' bash with cl.exe in PATH, e.g. after vcvars): DESCRIBE_MSVC_EXPAT_LIB=<a
 # static expat .lib built with /MT> builds the host with cl.exe instead of $CXX, and
-# DESCRIBE_MSVC_CFLAGS adds compile flags (e.g. -I<expat's include directory>).
+# DESCRIBE_MSVC_CFLAGS adds compile flags (e.g. -I<expat's include directory>, -arm64EC) and
+# DESCRIBE_MSVC_LDFLAGS link flags (e.g. -MACHINE:ARM64EC).
 set -euo pipefail
 
 BUNDLE_DIR=$(cd "$1" && pwd)
@@ -44,7 +45,7 @@ if [ -n "${DESCRIBE_MSVC_EXPAT_LIB:-}" ]; then
     (cd "$WORK" && MSYS2_ARG_CONV_EXCL='*' cl -nologo -std:c++17 -O1 -EHsc -MT -w -DOFX_EXTENSIONS_NUKE -DOFX_EXTENSIONS_NATRON \
         -DXML_STATIC -I"$(w "$WORK/include")" -I"$(w "$WORK/ofxinclude")" ${DESCRIBE_MSVC_CFLAGS:-} \
         $(for f in "$WORK"/src/*.cpp; do w "$f"; done) "$(w "$SRC/.github/workflows/describe_plugins.cpp")" \
-        -Fe:describe_plugins.exe -link "$(w "$DESCRIBE_MSVC_EXPAT_LIB")" shell32.lib) > "$WORK/cl.log" 2>&1 ||
+        -Fe:describe_plugins.exe -link ${DESCRIBE_MSVC_LDFLAGS:-} "$(w "$DESCRIBE_MSVC_EXPAT_LIB")" shell32.lib) > "$WORK/cl.log" 2>&1 ||
         { tail -n 50 "$WORK/cl.log"; exit 1; }
 else
     # shellcheck disable=SC2086

@@ -2,9 +2,11 @@ name: Continuous Integration
 
 # Natron CI policy: per PR/push, exactly three full builds plus tests (macOS 15 arm64 with the
 # system clang and MacPorts libraries, Ubuntu 24.04, Windows x64 with MSVC). Extra variants (debug
-# builds, a C++20 build, an MSYS2 UCRT64 Windows build) run nightly or on demand; the per-PR
-# builds use C++17 (Natron RB-2.6 policy: Qt5 builds C++17, Qt6 builds C++20); build artifacts
-# are uploaded only on demand or for pre-release tags, and the Windows bundle also nightly.
+# builds, a C++20 build, an MSYS2 UCRT64 Windows build, Windows on Arm: MSVC ARM64 and Arm64X on
+# windows-11-arm) run nightly or on demand; the per-PR builds use C++17 (Natron RB-2.6 policy: Qt5
+# builds C++17, Qt6 builds C++20); build artifacts are uploaded only on demand or for pre-release
+# tags, and the Windows bundle (x64 + Arm, merged) also nightly. On demand, "only: windows-arm" runs just
+# the Windows on Arm job (gh workflow run ci.yml -f only=windows-arm).
 #
 # CI builds with CMake (NatronGitHub/Natron#1181), as Natron's build-plugins.sh does by default.
 # The top-level Makefile is a fallback (build-plugins.sh's PLUGINS_BUILD_SYSTEM=make), kept tested
@@ -47,7 +49,13 @@ name: Continuous Integration
 # master didn't change. Jobs time out.
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "all: every job; windows-arm: only the Windows ARM64/Arm64EC/Arm64X job"
+        type: choice
+        options: [ all, windows-arm ]
+        default: all
   schedule:
     - cron: '17 3 * * *' # nightly, 03:17 UTC: also builds the variants (debug, C++20)
   # pushes to master (and tags) only: pull requests are built by the pull_request trigger,
@@ -95,6 +103,8 @@ jobs:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     outputs:
       run: ${{ steps.check.outputs.run }}
+      # the Windows ARM64/Arm64EC/Arm64X job: nightly and on demand only
+      arm: ${{ steps.check.outputs.arm }}
     steps:
       - uses: actions/checkout@v4
         if: github.event_name == 'schedule' # only the scheduled run needs the history
@@ -102,11 +112,15 @@ jobs:
           fetch-depth: 50
       - id: check
         run: |
-          if [ "${{ github.event_name }}" != schedule ] || [ -n "$(git log --since='25 hours ago' --format=%h -1)" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"; echo "No commits in the last 25 hours: skipping."
+          run=true
+          if [ "${{ github.event_name }}" = schedule ] && [ -z "$(git log --since='25 hours ago' --format=%h -1)" ]; then
+            run=false; echo "No commits in the last 25 hours: skipping."
           fi
+          arm=false
+          case "${{ github.event_name }}" in schedule|workflow_dispatch) arm=$run;; esac
+          if [ "${{ inputs.only }}" = windows-arm ]; then run=false; arm=true; fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "arm=$arm" >> "$GITHUB_OUTPUT"
 
   linux:
     name: Linux (Ubuntu 24.04)
@@ -603,11 +617,14 @@ jobs:
         with:
           name: openfx-gmic-windows-x64-msvc
           path: install/OFX/Plugins
-          retention-days: 7
+          # 1 day nightly and on demand, when the merged openfx-gmic-windows-msvc bundle (below,
+          # 7 days) has it; 7 days for pre-release tags, which build no Arm bundle
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/') && 7 || 1 }}
           compression-level: 9
 
   # Nightly and on demand only: MSYS2 UCRT64 (MinGW-w64 GCC, libgomp, pkg-config, CMake), the other
-  # way to build on Windows. Built, described and rendered (pr subset); bundle_libs.sh then makes the bundle self-contained, and the describe test runs a
+  # way to build on Windows. Built, described and rendered (pr subset); bundle_libs.sh then makes
+  # the bundle self-contained, and the describe test runs a
   # statically linked host with a PATH without /ucrt64/bin, so that the plug-in loads only if it
   # finds its DLLs in the bundle (see bundle_libs.sh for its limits). No artifact.
   windows-ucrt64:
@@ -670,3 +687,222 @@ jobs:
           .github/workflows/check_no_libcurl.sh Bundle/GMIC.ofx.bundle
           CXX="c++ -DXML_STATIC" HOST_LDFLAGS=-static HOST_RUN_PATH=/c/Windows/System32:/c/Windows \
             .github/workflows/describe_plugins.sh Bundle $GMIC_PLUGIN_COUNT
+
+  # Nightly and on demand only: Windows on Arm with MSVC, built natively on windows-11-arm, as the
+  # x64 job (vcpkg static libraries, /MT, /openmp with the bundled vcomp140.dll, which is an Arm64X
+  # image there: the same file serves ARM64 and Arm64EC code). Two builds:
+  # - ARM64, with vcpkg's arm64-windows-static: Contents/Win-arm64, for native ARM64 hosts (a
+  #   reserved folder of the OFX packaging spec); it also writes the Arm64X linker inputs;
+  # - Arm64X, an Arm64EC build (overlay triplet vcpkg-triplets/arm64ec-windows-static) linked with
+  #   the ARM64 build's objects (Microsoft's two-pass recipe, see CMakeLists.txt):
+  #   Contents/Win-arm64ec, the normative folder for Arm64EC hosts and x64 hosts under emulation.
+  # The bundle is described and renders the pr subset with an ARM64 host (Win-arm64) and an
+  # Arm64EC host (Win-arm64ec), and the Arm64X GMIC.ofx also with the ARM64 host (from a copy in
+  # Win-arm64x, where native hosts also look). Uploaded nightly and on demand, for windows-bundle,
+  # which merges it with the x64 bundle. A failed render keeps its work directory and the crash
+  # dumps of hostDemo.exe (WER LocalDumps) as an artifact.
+  windows-arm:
+    name: Windows on Arm (MSVC ARM64, Arm64X)
+    runs-on: windows-11-arm
+    needs: changes
+    if: needs.changes.outputs.arm == 'true'
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash -eo pipefail {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Set up MSVC (ARM64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: arm64
+      - name: Toolchain id
+        id: toolchain
+        run: echo "id=$ImageOS-$ImageVersion-msvc$VCToolsVersion" >> "$GITHUB_OUTPUT"
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-cache
+          key: vcpkg-arm-${{ steps.toolchain.outputs.id }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-triplets/*') }}
+          restore-keys: |
+            vcpkg-arm-${{ steps.toolchain.outputs.id }}-
+            vcpkg-arm-
+      - name: Cache G'MIC sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            gmic_*.tar.gz
+            pocketfft_hdronly.h
+          key: gmic-src-${{ hashFiles('Makefile') }}
+      - name: vcpkg
+        run: |
+          baseline=$(python -c "import json; print(json.load(open('vcpkg.json'))['builtin-baseline'])")
+          if ! git -C "$VCPKG_INSTALLATION_ROOT" cat-file -e "$baseline^{commit}" 2>/dev/null; then
+            git -C "$VCPKG_INSTALLATION_ROOT" fetch --quiet origin
+          fi
+          git -C "$VCPKG_INSTALLATION_ROOT" log -1 --format='vcpkg baseline: %h %cs %s' "$baseline"
+          mkdir -p "$RUNNER_TEMP/vcpkg-cache"
+          echo "VCPKG_BINARY_SOURCES=clear;files,$(cygpath -w "$RUNNER_TEMP/vcpkg-cache"),readwrite" >> "$GITHUB_ENV"
+          echo "VCPKG_TOOLCHAIN=$(cygpath -m "$VCPKG_INSTALLATION_ROOT")/scripts/buildsystems/vcpkg.cmake" >> "$GITHUB_ENV"
+      - name: Build ARM64 (and the Arm64X linker inputs)
+        run: |
+          mkdir -p arm64x
+          cmake -S . -B build-arm64 -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 \
+            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=arm64-windows-static \
+            -DGMIC_DOWNLOAD_DIR="$(cygpath -m "$PWD")" -DGMIC_POCKETFFT="$(cygpath -m "$PWD")/pocketfft_hdronly.h" \
+            -DGMIC_BUILD_TESTS=ON -DGMIC_ARM64X=ARM64 -DGMIC_ARM64X_RSP="$(cygpath -m "$PWD")/arm64x/GMIC.rsp"
+          cmake --build build-arm64 -j4
+          cmake --install build-arm64 --prefix install-arm64
+      # CFLAGS/CXXFLAGS: added to CMake's default flags, which -DCMAKE_CXX_FLAGS would replace
+      - name: Build Arm64X (Arm64EC, linked with the ARM64 build's objects)
+        run: |
+          CFLAGS=-arm64EC CXXFLAGS=-arm64EC cmake -S . -B build-arm64x -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 \
+            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=arm64ec-windows-static \
+            -DGMIC_DOWNLOAD_DIR="$(cygpath -m "$PWD")" -DGMIC_POCKETFFT="$(cygpath -m "$PWD")/pocketfft_hdronly.h" \
+            -DGMIC_BUILD_TESTS=ON -DGMIC_ARM64X=ARM64EC -DGMIC_ARM64X_RSP="$(cygpath -m "$PWD")/arm64x/GMIC.rsp"
+          cmake --build build-arm64x -j4
+          cmake --install build-arm64x --prefix install-arm64x
+      # one bundle: Win-arm64ec (Arm64X) and Win-arm64 (ARM64)
+      - name: Assemble and check the bundle
+        run: |
+          rm -rf bundle-arm && mkdir -p bundle-arm
+          cp -R install-arm64x/OFX/Plugins/GMIC.ofx.bundle bundle-arm/
+          cp -R install-arm64/OFX/Plugins/GMIC.ofx.bundle/Contents/Win-arm64 bundle-arm/GMIC.ofx.bundle/Contents/
+          find bundle-arm -type f -exec ls -l {} \; | awk '{print $5, $9}'
+          for a in Win-arm64ec:ARM64X Win-arm64:ARM64; do
+            dir=bundle-arm/GMIC.ofx.bundle/Contents/${a%%:*} want=${a##*:}
+            [ "$(ls "$dir" | tr '\n' ' ')" = "GMIC.ofx vcomp140.dll " ] || { echo "FAIL: $dir must have GMIC.ofx and vcomp140.dll only"; exit 1; }
+            w=$(cygpath -w "$dir/GMIC.ofx")
+            deps=$(MSYS2_ARG_CONV_EXCL='*' dumpbin -nologo -dependents "$w" | sed -n '/has the following dependencies/,/Summary/p' |
+                   grep -iE '^ +[^ ]+\.dll$' | tr -d ' \r' | tr 'a-z' 'A-Z' | sort | tr '\n' ' ')
+            machine=$(MSYS2_ARG_CONV_EXCL='*' dumpbin -nologo -headers "$w" | grep -m1 ' machine ' | tr -d '\r' | sed 's/^ *//; s/ *$//')
+            echo "$dir/GMIC.ofx: $machine; imports $deps"
+            [ "$deps" = "KERNEL32.DLL SHELL32.DLL VCOMP140.DLL " ] || { echo "FAIL: GMIC.ofx must import only KERNEL32, SHELL32 and VCOMP140"; exit 1; }
+            case $want in
+              ARM64X) echo "$machine" | grep -q 'AA64 machine (ARM64) (ARM64X)' ;;
+              ARM64) echo "$machine" | grep -q 'AA64 machine (ARM64)$' ;;
+            esac || { echo "FAIL: $dir/GMIC.ofx is not $want"; exit 1; }
+            # vcomp140.dll must serve both kinds of code: the ARM64 Redist copy is an Arm64X image
+            MSYS2_ARG_CONV_EXCL='*' dumpbin -nologo -headers "$(cygpath -w "$dir/vcomp140.dll")" | grep -q 'AA64 machine (ARM64) (ARM64X)' ||
+              { echo "FAIL: $dir/vcomp140.dll is not Arm64X"; exit 1; }
+            MSYS2_ARG_CONV_EXCL='*' mt -nologo "-inputresource:$w;#2" -out:GMIC.ofx.manifest
+            grep -q 'file name="vcomp140.dll"' GMIC.ofx.manifest || { echo "FAIL: no vcomp140.dll in $dir's manifest"; exit 1; }
+          done
+          cat bundle-arm/GMIC.ofx.bundle/Contents/Resources/vcomp140-NOTICE.txt
+      # (native ARM64 PowerShell, which loads ARM64 and Arm64X DLLs; one process per DLL)
+      - name: Check that vcomp140.dll is loaded from the bundle (ARM64 process)
+        shell: pwsh
+        run: |
+          foreach ($a in @('Win-arm64', 'Win-arm64ec')) {
+            $dir = (Resolve-Path "bundle-arm/GMIC.ofx.bundle/Contents/$a").Path
+            pwsh -NoProfile -Command {
+              param($dir)
+              Add-Type -Namespace W -Name K -MemberDefinition '[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern System.IntPtr LoadLibraryW(string f);'
+              if ([W.K]::LoadLibraryW("$dir\GMIC.ofx") -eq [System.IntPtr]::Zero) { throw "LoadLibrary failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())" }
+              $v = (Get-Process -Id $PID).Modules | Where-Object ModuleName -ieq 'vcomp140.dll'
+              Write-Host "$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture) process, $dir\GMIC.ofx: vcomp140.dll from $($v.FileName)"
+              if ($v.FileName -ine "$dir\vcomp140.dll") { throw "vcomp140.dll is not the bundle's" }
+            } -args $dir
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+      - name: Crash dumps of hostDemo.exe (WER LocalDumps)
+        shell: pwsh
+        run: |
+          $dumps = "$env:RUNNER_TEMP\dumps"
+          New-Item -ItemType Directory -Force $dumps | Out-Null
+          $k = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\hostDemo.exe'
+          New-Item -Force $k | Out-Null
+          New-ItemProperty -Force -Path $k -Name DumpFolder -PropertyType ExpandString -Value $dumps | Out-Null
+          New-ItemProperty -Force -Path $k -Name DumpType -PropertyType DWord -Value 2 | Out-Null
+          New-ItemProperty -Force -Path $k -Name DumpCount -PropertyType DWord -Value 10 | Out-Null
+          # (the runner image disables WER: no dumps were written in earlier runs)
+          $wer = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
+          New-ItemProperty -Force -Path $wer -Name Disabled -PropertyType DWord -Value 0 | Out-Null
+          New-ItemProperty -Force -Path $wer -Name DontShowUI -PropertyType DWord -Value 1 | Out-Null
+          Set-Service WerSvc -StartupType Manual
+          Start-Service WerSvc
+          Get-Service WerSvc | Format-List Name,Status,StartType
+      - name: Describe and render (pr subset)
+        run: |
+          test_one() { # <name> <host build> <plug-in dir> <vcpkg triplet> <cflags> <ldflags>
+            n=$1 host=$2 plugins=$3 trip=$4
+            echo "::group::$n"
+            DESCRIBE_MSVC_EXPAT_LIB=$(ls $host/vcpkg_installed/$trip/lib/libexpat*MT.lib | head -1) \
+            DESCRIBE_MSVC_CFLAGS="$5 -I$(cygpath -m "$PWD/$host/vcpkg_installed/$trip/include")" DESCRIBE_MSVC_LDFLAGS="$6" \
+            PLUGIN_LIST=plugins-$n.txt .github/workflows/describe_plugins.sh "$plugins" $GMIC_PLUGIN_COUNT
+            python .github/workflows/render_plugins.py --host $host --plugins "$plugins" --list plugins-$n.txt \
+              --stdlib $host/gmic/gmic_stdlib_community.h --subset pr --jobs 2 --work render-$n
+            echo "::endgroup::"
+          }
+          # the bundle: an ARM64 host takes Win-arm64, an Arm64EC host Win-arm64ec (the Arm64X GMIC.ofx)
+          test_one arm64 build-arm64 bundle-arm arm64-windows-static "" ""
+          test_one arm64ec build-arm64x bundle-arm arm64ec-windows-static -arm64EC -MACHINE:ARM64EC
+          # the Arm64X GMIC.ofx in an ARM64 host: from Win-arm64x, which native hosts check after Win-arm64
+          rm -rf bundle-arm64x && mkdir -p bundle-arm64x/GMIC.ofx.bundle/Contents
+          cp -R bundle-arm/GMIC.ofx.bundle/Contents/Info.plist bundle-arm/GMIC.ofx.bundle/Contents/Resources bundle-arm64x/GMIC.ofx.bundle/Contents/
+          cp -R bundle-arm/GMIC.ofx.bundle/Contents/Win-arm64ec bundle-arm64x/GMIC.ofx.bundle/Contents/Win-arm64x
+          test_one arm64x-in-arm64 build-arm64 bundle-arm64x arm64-windows-static "" ""
+      - name: Upload the failed render's work directories and crash dumps
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-arm-render-failure
+          path: |
+            render-*
+            ${{ runner.temp }}/dumps
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload bundle
+        if: env.UPLOAD_ARTIFACTS == 'true' || github.event_name == 'schedule'
+        uses: actions/upload-artifact@v4
+        with:
+          name: openfx-gmic-windows-arm64-msvc
+          path: bundle-arm
+          retention-days: 1
+          compression-level: 9
+
+  # Nightly and on demand: one Windows bundle for x64, Arm64EC and ARM64 hosts (Contents/Win64,
+  # Win-arm64ec with the Arm64X GMIC.ofx, Win-arm64), merged from the two Windows MSVC bundles,
+  # whose Info.plist and Resources must be identical. Only when both jobs succeeded: no partial
+  # bundle.
+  windows-bundle:
+    name: Windows bundle (x64, Arm64X, ARM64)
+    runs-on: ubuntu-24.04
+    needs: [changes, windows, windows-arm]
+    if: >-
+      needs.windows.result == 'success' && needs.windows-arm.result == 'success' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash -eo pipefail {0}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: openfx-gmic-windows-x64-msvc
+          path: x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: openfx-gmic-windows-arm64-msvc
+          path: arm
+      - name: Merge
+        run: |
+          x=x64/GMIC.ofx.bundle/Contents a=arm/GMIC.ofx.bundle/Contents
+          cmp $x/Info.plist $a/Info.plist
+          diff -r $x/Resources $a/Resources
+          rm -rf merged && mkdir -p merged && cp -R x64/GMIC.ofx.bundle merged/
+          cp -R $a/Win-arm64ec $a/Win-arm64 merged/GMIC.ofx.bundle/Contents/
+          [ "$(ls merged/GMIC.ofx.bundle/Contents | tr '\n' ' ')" = "Info.plist Resources Win-arm64 Win-arm64ec Win64 " ] ||
+            { echo "FAIL: unexpected Contents:"; ls merged/GMIC.ofx.bundle/Contents; exit 1; }
+          find merged -type f -printf '%s %P\n' | sort -k2
+      - name: Upload the Windows bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: openfx-gmic-windows-msvc
+          path: merged
+          retention-days: 7
+          compression-level: 9
