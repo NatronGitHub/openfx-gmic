@@ -41,8 +41,9 @@ patched: patches/cimg-omp-rand.sh makes CImg's random numbers in OpenMP loops re
 patches/cimg-vvar2.sh, patches/cimg-vargkth2.sh, patches/cimg-log1p-peephole.sh and
 patches/cimg-abs-peephole.sh fix math parser bugs,
 patches/cimg-fftw-no-cleanup-at-unload.sh keeps FFTW's threads when the plug-in is unloaded
-(FFT=fftw3), patches/gmic-win-thread-stack.sh gives the threads of G'MIC's "parallel" command an
-8 MiB stack on Windows, and gmic_hotfixes.gmic replaces the
+(FFT=fftw3), patches/cimg-msvc-snprintf.sh makes cimg_snprintf() always end its output with a
+null character with MSVC, patches/gmic-win-thread-stack.sh gives the threads of G'MIC's
+"parallel" command an 8 MiB stack on Windows, and gmic_hotfixes.gmic replaces the
 definitions of broken filters (each fix is skipped once G'MIC has it).
 
 Requirements
