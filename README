@@ -64,7 +64,7 @@ Requirements
   release builds use it (Natron's installer bundles these libraries).
 - Python 3, for the render test only.
 - Platforms: Linux, macOS (Apple clang; libraries from MacPorts or Homebrew) and Windows: MSVC
-  x64 with CMake, as in CI (see "Building with MSVC" below), or MSYS2 (UCRT64, tested nightly; with make or CMake;
+  x64 with CMake, as in CI (see "Building with MSVC" below), or MSYS2 (UCRT64, tested weekly; with make or CMake;
   libraries from its packages: mingw-w64-ucrt-x86_64-zlib, -libpng, -libgomp and -pkgconf).
 
 Runtime requirements on Linux: GMIC.ofx needs only the system libraries libc, libm, libstdc++,
@@ -87,7 +87,7 @@ Building with make
 
 CI builds with CMake (https://github.com/NatronGitHub/Natron/issues/1181), as Natron's
 build-plugins.sh does by default. The Makefile is a fallback (build-plugins.sh's
-PLUGINS_BUILD_SYSTEM=make), tested only by one nightly Linux release build compared with the CMake
+PLUGINS_BUILD_SYSTEM=make), tested only by one weekly Linux release build compared with the CMake
 one. CMakeLists.txt reads the G'MIC version, the checksums, POCKETFFTCOMMIT, CIMG_PATCHES and GMIC_PATCHES from
 it.
 
@@ -168,7 +168,7 @@ plug-ins). Debug builds link the same vcomp140.dll (vcomp140d.dll is not redistr
 Contents/Resources/vcomp140-NOTICE.txt says that vcomp140.dll is Microsoft's redistributable, not
 under the plug-in's licence. /openmp:llvm is not supported.
 
-Windows on Arm (CI builds them nightly, natively on windows-11-arm, from an "ARM64 Native Tools"
+Windows on Arm (CI builds them weekly, natively on windows-11-arm, from an "ARM64 Native Tools"
 environment, vcvarsall.bat arm64):
 - ARM64: as above, with -DVCPKG_TARGET_TRIPLET=arm64-windows-static. The plug-in is installed
   into Contents/Win-arm64, a reserved folder of the OFX packaging spec, for native ARM64 hosts.
@@ -181,7 +181,7 @@ environment, vcvarsall.bat arm64):
   or later); an Arm64EC build configured afterwards with -DGMIC_ARM64X=ARM64EC and the same
   GMIC_ARM64X_RSP links them into an Arm64X GMIC.ofx, installed into Contents/Win-arm64ec.
 OpenMP works on both (the ARM64 Redist vcomp140.dll is an Arm64X image, bundled as on x64).
-The nightly CI artifact openfx-gmic-windows-msvc is one bundle for x64, Arm64EC and ARM64 hosts:
+The weekly CI artifact openfx-gmic-windows-msvc is one bundle for x64, Arm64EC and ARM64 hosts:
 Contents/Win64 (x64), Contents/Win-arm64ec (the Arm64X GMIC.ofx) and Contents/Win-arm64 (the
 ARM64 one), each with its vcomp140.dll.
 Arm64EC with a CMake that doesn't report ARM64EC as the compiler's architecture: -arm64EC (or
