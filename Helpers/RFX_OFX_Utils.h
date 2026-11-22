@@ -1870,10 +1870,12 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 #endif
 
 	} catch(OfxuNoImageException &ex) {
-		// if we were interrupted, the failed fetch is fine, just return kOfxStatOK
-		// otherwise, something weird happened
+		// no output image, or no Source image (the main input, not optional): the output was not
+		// written. If we were interrupted, the failed fetch is fine, just return kOfxStatOK (the
+		// host discards an aborted render); otherwise fail, so that the host doesn't use (and
+		// cache) an unwritten output (as in the OFX Programming Guide's examples).
 		if (!gEffectHost->abort(instance)) {
-			// status = kOfxStatFailed;
+			status = kOfxStatFailed;
 		}
 	} catch(OfxuStatusException &ex) {
 		status = ex.status();

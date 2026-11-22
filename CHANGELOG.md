@@ -68,6 +68,7 @@ Changes in openfx-gmic since Natron 2.5.0 (tag `Natron-2.5.0`). Natron 2.6 polic
 - Link labels are no longer garbled: `link(0,"Label",URL)` showed `Label": : URL`, and `link(Label,URL)` lost the label's last character (Ink Wash) (#122).
 - Lowercasing the filter definitions, which contain UTF-8, no longer calls `tolower()` on negative chars (undefined behaviour, an assertion in MSVC debug builds) (#123).
 - Accented and other non-ASCII characters show as written in filter descriptions, notes and menu groups: "Jérôme Boulanger", "Sébastien Fourey", "Cœurs / Hearts", the JéJé group, instead of "Jerome", "S  bastien" or "C&#339;urs". HTML entities (`&#233;`, `&#xE9;`, `&lt;`…) become UTF-8, and hosts other than Natron no longer lose the bytes 0x80–0x9F of UTF-8 characters such as "’" (#124).
+- A render without a Source image (or output image) now fails instead of succeeding with an unwritten output, which the host could display or cache; an aborted render still returns quietly (#125).
 
 ### Build
 - Built with C++17 (C++20 for Qt6 builds of Natron) (#33); CI on Linux, macOS (Apple clang, MacPorts) and Windows (#23, #25, #28, #35, #38).
