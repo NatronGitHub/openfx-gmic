@@ -422,7 +422,7 @@ void processParam(const string& s, EffectParameter& cp)
 		// ???? not in the G'MIC doc (see gmic_stdlib.gmic)
 		cp.defaultValue = strTrim(pval, "\"");
 	} else {
-		// e.g. a type added by a newer G'MIC: pluginSetup shows it as an empty note
+		// e.g. a type added by a newer G'MIC: pluginSetup passes 0 for it (a hidden float)
 		fprintf(stderr, "openfx-gmic: Warning: parameter \"%s\" has an unknown type \"%s\": ignored\n",
 			cp.name.c_str(), cp.paramType.c_str());
 	}

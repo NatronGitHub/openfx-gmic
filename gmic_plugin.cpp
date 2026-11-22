@@ -720,9 +720,10 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 				t = PT_LAYER;
 			} else {
 				// a type this plug-in doesn't know (e.g. from a newer G'MIC, or a malformed line in
-				// ~/.config/gmic; the parser warns): shown as an empty note, not passed to G'MIC
-				t = PT_TEXT;
-				flags = 4;
+				// ~/.config/gmic; the parser warns): a hidden float, which passes 0 in its slot, so
+				// that the later arguments keep their positions
+				t = PT_FLOAT;
+				h = true;
 			}
 		}
 		// a value(...) parameter is a hidden constant argument: its value is the default, which
