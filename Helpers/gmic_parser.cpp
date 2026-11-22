@@ -530,10 +530,10 @@ string gmic_parse_single(const string& content, EffectData& cd)
 						string &name = cd.param[cd.param.size() - 1].name;
 						// Only add a space if the previous line does not end with "\n" or "\"
 						// (see eg. the "Privacy Notice" in gmic_stdlib.gmic)
-						if (name.size() < 2 ||
-							!(name[name.size()-2] == '\\' && name[name.size()-1] == 'n') ||
-							!(name[name.size()-1] == '\\')) {
-							cd.param[cd.param.size() - 1].name += ' ';
+						const bool endsWithNewline = name.size() >= 2 && name.compare(name.size() - 2, 2, "\\n") == 0;
+						const bool endsWithBackslash = !name.empty() && name[name.size() - 1] == '\\';
+						if (!(endsWithNewline || endsWithBackslash)) {
+							name += ' ';
 						}
 						int pEnd = (int)line.find(inMultiClose);
 						if (pEnd > 0) {
