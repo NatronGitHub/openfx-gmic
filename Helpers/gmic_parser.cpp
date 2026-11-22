@@ -71,7 +71,6 @@ namespace reduxfx {
 static const char* const src_prefix_old_c = "#@gimp";
 static const char* const src_prefix_c = "#@gui";
 static const char* const dst_prefix_c = "#@gmic_plugin";
-//static const char* const master_name_c = "gmic_ae";
 
 
 static

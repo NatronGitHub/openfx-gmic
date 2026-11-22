@@ -91,10 +91,6 @@
 #endif
 #endif
 
-// the following flags apply to the OFX plugin interface only and are ignored if set in an AE plugin!
-#define NO_MULTITHREADED_CONVERSION
-#define IMG_FLIP_Y
-
 // the following flags apply to the AE plugin interface only and are ignored if set in an OFX plugin!
 #define	_PF_OutFlag2_AE13_5_THREADSAFE 4194304
 #define _PF_OutFlag2_SUPPORTS_GET_FLATTENED_SEQUENCE_DATA 8388608
@@ -102,6 +98,8 @@
 #define FX_OUT_FLAGS2 PF_OutFlag2_SUPPORTS_SMART_RENDER + PF_OutFlag2_FLOAT_COLOR_AWARE + PF_OutFlag2_PARAM_GROUP_START_COLLAPSED_FLAG + _PF_OutFlag2_AE13_5_THREADSAFE + _PF_OutFlag2_SUPPORTS_GET_FLATTENED_SEQUENCE_DATA
 
 #ifndef PIPL
+
+// CONVERT_INT_TO_FLOAT, CONVERT_FLOAT_TO_INT and PLANAR_BUFFER are read by the AE glue only: the OFX glue always uses float planar buffers
 
 // if this is defined, 8bpc (0-255) input layers will be transformed into 32bpc (0.0-1.0) input layers
 // this should in most cases be set, as you then only have to write algorithms for float data
@@ -496,7 +494,6 @@ static void frameCacheRelease(const void* owner);
 class MySequenceData
 {
 public:
-	//string command;
 	gmic_interface_options options;
 
 	MySequenceData() {
