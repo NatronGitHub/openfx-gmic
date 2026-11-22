@@ -42,9 +42,10 @@ patches/cimg-vvar2.sh, patches/cimg-vargkth2.sh, patches/cimg-log1p-peephole.sh 
 patches/cimg-abs-peephole.sh fix math parser bugs,
 patches/cimg-fftw-no-cleanup-at-unload.sh keeps FFTW's threads when the plug-in is unloaded
 (FFT=fftw3), patches/cimg-msvc-snprintf.sh makes cimg_snprintf() always end its output with a
-null character with MSVC, patches/gmic-win-thread-stack.sh gives the threads of G'MIC's
-"parallel" command an 8 MiB stack on Windows, patches/gmic-atomic-abort.sh makes G'MIC read and
-write its abort flags atomically (they are shared between threads), and gmic_hotfixes.gmic replaces the
+null character with MSVC, patches/cimg-omp-abort-read.sh and patches/gmic-atomic-abort.sh make
+CImg and G'MIC read and write their abort flags atomically (they are shared between threads),
+patches/gmic-win-thread-stack.sh gives the threads of G'MIC's
+"parallel" command an 8 MiB stack on Windows, and gmic_hotfixes.gmic replaces the
 definitions of broken filters (each fix is skipped once G'MIC has it).
 
 Requirements

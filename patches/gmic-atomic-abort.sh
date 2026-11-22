@@ -13,13 +13,16 @@
 # Core Guidelines CP.2; volatile isn't a fix, CP.8): e.g. the compiler may hoist a test out of a
 # loop, which then never sees the abort.
 # The patch adds gmic_abort_load() and gmic_abort_store() to gmic.h (before '#ifndef gmic_core',
-# so that library users get them too), relaxed atomic accesses to a bool: std::atomic_ref<bool>
-# where the library has it (C++20), else __atomic_load_n()/__atomic_store_n() (GCC, clang,
-# MinGW, clang-cl), else MSVC's __iso_volatile_load8()/__iso_volatile_store8() (what MSVC's
-# std::atomic uses for relaxed loads and stores). Relaxed: the flags are stop requests and
-# publish no data (the caller gets the results after joining G'MIC's thread). Every access to the
-# flags in gmic.h (cimg_abort_test) and gmic.cpp goes through them; the bool* API and ABI are
-# unchanged. The plug-in sets the flag with gmic_abort_store() (gmic_plugin_call.cpp).
+# so that library users get them too), relaxed atomic accesses to a bool: __atomic_load_n() and
+# __atomic_store_n() with GCC, clang, clang-cl, MinGW and icx, MSVC's __iso_volatile_load8() and
+# __iso_volatile_store8() (what MSVC's std::atomic uses for relaxed loads and stores), an #error
+# with other compilers. The choice depends on the compiler only, not on the C++ standard or the
+# library (e.g. std::atomic_ref in C++20), so that translation units built with different -std
+# options get the same inline functions (ODR). Relaxed: the flags are stop requests and publish no
+# data (the caller gets the results after joining G'MIC's thread). Every access to the flags in
+# gmic.h (cimg_abort_test) and gmic.cpp goes through them, and callers must write the flag with
+# gmic_abort_store() too (a plain write would still race); the bool* API and ABI are unchanged.
+# The plug-in sets the flag with gmic_abort_store() (gmic_plugin_call.cpp).
 #
 # Running it again on a patched file does nothing (it says so), and so does running it on a file
 # where upstream made the accesses atomic (it says so too). The script fails in any other case (a
@@ -56,16 +59,14 @@ EOF
   cat > "$block" <<EOF
 $tag (patches/gmic-atomic-abort.sh, #136).
 // The abort flags (p_is_abort, is_abort_thread) are written and read by different threads (the
-// caller's, the interpreter's, those of 'parallel' and of OpenMP): access them only through these
-// (relaxed: a flag is a stop request, and publishes no data).
-#include <atomic>
-#if !defined(__cpp_lib_atomic_ref) && !defined(__GNUC__) && !defined(__clang__) && defined(_MSC_VER)
+// caller's, the interpreter's, those of 'parallel' and of OpenMP): access them only through these,
+// callers included (relaxed: a flag is a stop request, and publishes no data). Chosen by compiler
+// only, not by C++ standard, so that all translation units get the same definitions (ODR).
+#if defined(_MSC_VER) && !defined(__clang__)
 #include <intrin.h>
 #endif
 inline bool gmic_abort_load(const bool *const p_is_abort) {
-#if defined(__cpp_lib_atomic_ref)
-  return std::atomic_ref<bool>(*const_cast<bool*>(p_is_abort)).load(std::memory_order_relaxed);
-#elif defined(__GNUC__) || defined(__clang__)
+#if defined(__GNUC__) || defined(__clang__)
   return __atomic_load_n(p_is_abort,__ATOMIC_RELAXED);
 #elif defined(_MSC_VER)
   return __iso_volatile_load8((const volatile __int8*)p_is_abort)!=0;
@@ -74,9 +75,7 @@ inline bool gmic_abort_load(const bool *const p_is_abort) {
 #endif
 }
 inline void gmic_abort_store(bool *const p_is_abort, const bool value) {
-#if defined(__cpp_lib_atomic_ref)
-  std::atomic_ref<bool>(*p_is_abort).store(value,std::memory_order_relaxed);
-#elif defined(__GNUC__) || defined(__clang__)
+#if defined(__GNUC__) || defined(__clang__)
   __atomic_store_n(p_is_abort,value,__ATOMIC_RELAXED);
 #elif defined(_MSC_VER)
   __iso_volatile_store8((volatile __int8*)p_is_abort,(__int8)value);
