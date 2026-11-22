@@ -244,9 +244,9 @@ jobs:
           .github/workflows/check_linux_deps.sh install-debug/OFX/Plugins/GMIC.ofx.bundle
           .github/workflows/describe_plugins.sh install-debug/OFX/Plugins $GMIC_PLUGIN_COUNT
       # The installed Linux bundle is uploaded as is, the one that linuxCheckBundle.sh and
-      # check_linux_deps.sh checked (the build tree's bundle lacks the Info.plist): it needs only
-      # system libraries, but the glibc and libstdc++ of Ubuntu 24.04. Natron's Linux releases
-      # build the plug-in on Rocky Linux 9, Natron 2.6's Linux baseline (see the linux-rocky9 job).
+      # check_linux_deps.sh checked: it needs only system libraries, but the glibc and libstdc++ of
+      # Ubuntu 24.04. Natron's Linux releases build the plug-in on Rocky Linux 9, Natron 2.6's Linux
+      # baseline (see the linux-rocky9 job).
       - name: Upload bundle
         if: env.UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@v4

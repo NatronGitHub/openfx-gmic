@@ -626,7 +626,8 @@ target_include_directories(GMIC PRIVATE
 
 # GMIC_OFX/Makefile's CXXFLAGS. G'MIC >= 3 compiles CImg in its own namespace (gmic_library), so it
 # cannot clash with the cimg_library of other plug-ins (e.g. openfx-misc) loaded in the same host.
-# (OFX_EXTENSIONS_NATRON/NUKE come from openfx's options, through openfx::Api.)
+# (OFX_EXTENSIONS_NATRON/NUKE come from openfx's options, default ON, through openfx::Api: don't
+# add or remove them here, https://github.com/NatronGitHub/openfx/pull/264.)
 target_compile_definitions(GMIC PRIVATE
   OFX_PLUGIN
   gmic_core
