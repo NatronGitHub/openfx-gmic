@@ -429,10 +429,12 @@ string strToAscii(string& s)
 	return s;
 }
 
-// Append the UTF-8 encoding of the code point cp (U+FFFD if it is not a valid one).
+// Append the UTF-8 encoding of the code point cp: U+FFFD if it is not a valid one, or a control
+// character other than tab, LF and CR (e.g. from "&#1;").
 static void appendUtf8(string& out, unsigned long cp)
 {
-	if (cp == 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) cp = 0xFFFD;
+	const bool control = (cp < 0x20 && cp != '\t' && cp != '\n' && cp != '\r') || cp == 0x7F;
+	if (control || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) cp = 0xFFFD;
 	if (cp < 0x80) {
 		out += static_cast<char>(cp);
 	} else if (cp < 0x800) {
@@ -450,67 +452,74 @@ static void appendUtf8(string& out, unsigned long cp)
 	}
 }
 
+// The code point of the entity name e (the text between '&' and ';': "amp", "#233", "#xE9"), or
+// -1 if it isn't one we know.
+static long entityCodePoint(const string& e)
+{
+	static const struct { const char* name; long cp; } named[] = {
+		{ "amp", '&' }, { "lt", '<' }, { "gt", '>' }, { "quot", '"' }, { "apos", '\'' },
+		{ "nbsp", ' ' }, // a plain space, as before
+		{ "hearts", 0x2665 },
+	};
+	if (e.size() >= 2 && e[0] == '#') {
+		const bool hex = (e[1] == 'x' || e[1] == 'X');
+		const string digits = e.substr(hex ? 2 : 1);
+		if (digits.empty() || digits.find_first_not_of(hex ? "0123456789abcdefABCDEF" : "0123456789") != string::npos) return -1;
+		return static_cast<long>(std::min(strtoul(digits.c_str(), NULL, hex ? 16 : 10), 0x110000UL)); // > U+10FFFF: invalid
+	}
+	for (const auto& n : named) {
+		if (e == n.name) return n.cp;
+	}
+	return -1;
+}
+
 // Replace the HTML entities of s (&amp; &nbsp; ..., &#233; and &#xE9;) and G'MIC's "\251" with
 // their UTF-8 characters, in one pass (so that "&amp;#233;" gives "&#233;"). Unknown entities are
 // left as they are.
 static string utf8Entities(const string& s)
 {
-	static const struct { const char* name; unsigned long cp; } named[] = {
-		{ "amp", '&' }, { "lt", '<' }, { "gt", '>' }, { "quot", '"' }, { "apos", '\'' },
-		{ "nbsp", ' ' }, // a plain space, as before
-		{ "hearts", 0x2665 },
-	};
+	const size_t maxEntity = 10; // characters between '&' and ';' ("#x10FFFF", "hearts")
 	string r;
 	r.reserve(s.size());
-	for (size_t i = 0; i < s.size(); ++i) {
+	size_t i = 0;
+	while (i < s.size()) {
+		size_t next = i + 1;
 		if (s.compare(i, 4, "\\251") == 0) { // the octal escape of the copyright sign
 			appendUtf8(r, 0xA9);
-			i += 3;
-			continue;
-		}
-		const size_t semi = (s[i] == '&') ? s.find(';', i + 1) : string::npos;
-		if (semi == string::npos || semi - i > 10) {
-			r += s[i];
-			continue;
-		}
-		const string e = s.substr(i + 1, semi - i - 1);
-		unsigned long cp = 0;
-		bool known = false;
-		if (e.size() >= 2 && e[0] == '#') {
-			const bool hex = (e[1] == 'x' || e[1] == 'X');
-			const string digits = e.substr(hex ? 2 : 1);
-			known = !digits.empty() && digits.find_first_not_of(hex ? "0123456789abcdefABCDEF" : "0123456789") == string::npos;
-			if (known) cp = strtoul(digits.c_str(), NULL, hex ? 16 : 10);
-		} else {
-			for (const auto& n : named) {
-				if (e == n.name) {
-					cp = n.cp;
-					known = true;
-					break;
-				}
+			next = i + 4;
+		} else if (s[i] == '&') {
+			const size_t semi = s.substr(i + 1, maxEntity + 1).find(';');
+			const long cp = (semi == string::npos) ? -1 : entityCodePoint(s.substr(i + 1, semi));
+			if (cp >= 0) {
+				appendUtf8(r, static_cast<unsigned long>(cp));
+				next = i + semi + 2;
+			} else {
+				r += s[i];
 			}
-		}
-		if (known) {
-			appendUtf8(r, cp);
-			i = semi;
 		} else {
 			r += s[i];
 		}
+		i = next;
 	}
 	return r;
 }
 
 string strRemoveXmlTags(const string& s, bool replaceEntities)
 {
+	// a tag is '<' followed by a letter, '/' or '!' (as "<b>", "</i>", "<!-- -->"), up to the next
+	// '>'; any other '<' or '>' is text ("a < b", "Anisotropy>0")
+	const size_t lastGt = s.rfind('>');
 	string r;
 	bool inHtml = false;
-	for (unsigned int i = 0; i < s.size(); i++) {
-		if (s[i] == '<') {
+	for (size_t i = 0; i < s.size(); i++) {
+		const char c = s[i];
+		if (inHtml) {
+			if (c == '>') inHtml = false;
+		} else if (c == '<' && lastGt != string::npos && i + 1 < lastGt &&
+		           ((s[i + 1] >= 'a' && s[i + 1] <= 'z') || (s[i + 1] >= 'A' && s[i + 1] <= 'Z') || s[i + 1] == '/' || s[i + 1] == '!')) {
 			inHtml = true;
-		} else if (s[i] == '>') {
-			inHtml = false;
-		} else if (!inHtml) {
-			r += s[i];
+		} else {
+			r += c;
 		}
 	}
 	if (replaceEntities) {
