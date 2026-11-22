@@ -2047,7 +2047,8 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 
 	OfxPropertySetHandle props = NULL;
 	// define the single output clip in both contexts
-	gEffectHost->clipDefine(effect, "Output", &props);
+	OfxStatus stat = gEffectHost->clipDefine(effect, "Output", &props);
+	if (stat != kOfxStatOK) return stat;
 
 	// set the component types we can handle on our output
 	gPropHost->propSetString(props, kOfxImageEffectPropSupportedComponents, 0, kOfxImageComponentRGBA);
@@ -2061,7 +2062,8 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 	gEffectHost->getParamSet(effect, &paramSet);
 
 	{
-	gParamHost->paramDefine(paramSet, kOfxParamTypeCustom, "SequenceData", &props);
+	stat = gParamHost->paramDefine(paramSet, kOfxParamTypeCustom, "SequenceData", &props);
+	if (stat != kOfxStatOK) return stat;
 	gPropHost->propSetInt(props, kOfxParamPropSecret, 0, 1);
 	}
 	bool hasPointParams = false;
@@ -2069,7 +2071,8 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 		if (globalData[pluginIndex].param[i].paramType == PT_POINT) hasPointParams = true;
 	}
 	if (hasPointParams) {
-	gParamHost->paramDefine(paramSet, kOfxParamTypeString, POINTS_FROM_SOURCE_PARAM, &props);
+	stat = gParamHost->paramDefine(paramSet, kOfxParamTypeString, POINTS_FROM_SOURCE_PARAM, &props);
+	if (stat != kOfxStatOK) return stat;
 	gPropHost->propSetInt(props, kOfxParamPropSecret, 0, 1);
 	gPropHost->propSetInt(props, kOfxParamPropPersistant, 0, 1);
 	gPropHost->propSetInt(props, kOfxParamPropAnimates, 0, 0);
@@ -2183,7 +2186,8 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 #endif
 			continue;
 		} else if (param.paramType == PT_LAYER) {
-			gEffectHost->clipDefine(effect, param.paramName.c_str(), &props);
+			stat = gEffectHost->clipDefine(effect, param.paramName.c_str(), &props);
+			if (stat != kOfxStatOK) return stat;
 			if (i > 0) {
 				gPropHost->propSetInt(props, kOfxImageClipPropOptional, 0, 1);
 			}
@@ -2196,7 +2200,8 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 			l++;
 			continue;
 		} else if (param.paramType == PT_TOPIC_START) {	
-			gParamHost->paramDefine(paramSet, kOfxParamTypeGroup, param.paramName.c_str(), &props);
+			stat = gParamHost->paramDefine(paramSet, kOfxParamTypeGroup, param.paramName.c_str(), &props);
+			if (stat != kOfxStatOK) return stat;
 			if (param.flags>0) gPropHost->propSetInt(props, kOfxParamPropGroupOpen, 0, 0);
 			gPropHost->propSetInt(props, kOfxParamPropAnimates, 0, 0);
 			gPropHost->propSetInt(props, kOfxParamPropGroupOpen, 0, param.flags>0?0:1);
@@ -2424,21 +2429,14 @@ static OfxStatus pluginMain(int pluginIndex, const char *action, const void *han
 		if (myData) pluginPurgeCaches(myData->sequenceDataP);
 		return kOfxStatOK;
 	}
-	} catch (std::bad_alloc) {
-		// catch memory
-		//std::cout << "OFX Plugin Memory error." << std::endl;
+	} catch (const OfxuStatusException& e) {
+		// a failed suite call (e.g. paramDefine in paramAddFloat): its status
+		return e.status();
+	} catch (const std::bad_alloc&) {
 		return kOfxStatErrMemory;
-	} catch (const std::exception& e) {
-		// standard exceptions
-		//std::cout << "OFX Plugin error: " << e.what() << std::endl;
-		return kOfxStatErrUnknown;
-	} catch (int err) {
-		// ho hum, gone wrong somehow
-		return err;
 	} catch (...) {
-		// everything else
-		//std::cout << "OFX Plugin error" << std::endl;
-		return kOfxStatErrUnknown;
+		// everything else (std::exception, G'MIC/CImg exceptions...): no exception may reach the host
+		return kOfxStatFailed;
 	}
 
 	// other actions to take the default value
@@ -2449,9 +2447,13 @@ static OfxStatus pluginMain(int pluginIndex, const char *action, const void *han
 static void setHostFunc(OfxHost *hostStruct)
 {
 	gHost = hostStruct;
-	OfxStatus stat = ofxuFetchHostSuites();
-	if (stat == kOfxStatOK) {
-		gMessageSuiteV2 = (OfxMessageSuiteV2*)gHost->fetchSuite(gHost->host, kOfxMessageSuite, 2);
+	try {
+		OfxStatus stat = ofxuFetchHostSuites();
+		if (stat == kOfxStatOK) {
+			gMessageSuiteV2 = (OfxMessageSuiteV2*)gHost->fetchSuite(gHost->host, kOfxMessageSuite, 2);
+		}
+	} catch (...) {
+		// no exception may reach the host (a C caller)
 	}
 }
 
@@ -2499,21 +2501,34 @@ void initPlugins()
 	}
 }
 
+// The plug-in list is built once: the host may keep the pointers into it (pluginIdentifier).
+// No exception may reach the host (a C caller): if building it fails (bad_alloc), there are no
+// plug-ins, and the next call tries again.
+static bool ensurePlugins()
+{
+	if (!gPlugins.empty()) return true;
+	try {
+		initPlugins();
+		return true;
+	} catch (...) {
+		gPlugins.clear();
+		globalData.clear();
+		return false;
+	}
+}
+
 // the two mandated functions
 OfxExport OfxPlugin* OfxGetPlugin(int nth)
 {
-	if ((int)gPlugins.size() == 0) {
-		initPlugins();
-	}
-	if (nth < (int)gPlugins.size()) return &gPlugins[nth];
+	if (!ensurePlugins()) return NULL;
+	if (nth >= 0 && nth < (int)gPlugins.size()) return &gPlugins[nth];
 	return NULL;
 }
  
 OfxExport int OfxGetNumberOfPlugins(void)
 {
-	initPlugins();
-	int n = (int)gPlugins.size();
-	return n;
+	if (!ensurePlugins()) return 0;
+	return (int)gPlugins.size();
 } 
 
 #endif
