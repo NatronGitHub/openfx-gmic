@@ -219,12 +219,12 @@ struct LayerTimes {
 static MyInstanceData* getMyInstanceData(OfxImageEffectHandle effect)
 {
 	// get the property handle for the plugin
-	OfxPropertySetHandle effectProps;
-	gEffectHost->getPropertySet(effect, &effectProps);
+	OfxPropertySetHandle effectProps = NULL;
+	if (gEffectHost->getPropertySet(effect, &effectProps) != kOfxStatOK) return NULL;
 
 	// get my data pointer out of that
 	MyInstanceData* myData = NULL;
-	gPropHost->propGetPointer(effectProps, kOfxPropInstanceData, 0, (void **)&myData);
+	if (gPropHost->propGetPointer(effectProps, kOfxPropInstanceData, 0, (void **)&myData) != kOfxStatOK) return NULL;
 	return myData;
 }
 
