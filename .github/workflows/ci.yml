@@ -160,11 +160,12 @@ jobs:
             -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h" -DGMIC_BUILD_TESTS=ON
           cmake --build build -j4
           cmake --install build --prefix install
-          .github/workflows/check_fft.sh build/Plugins/GMIC.ofx.bundle pocketfft
+          .github/workflows/check_fft.sh install/OFX/Plugins/GMIC.ofx.bundle pocketfft
           openfx/Support/include/linuxCheckBundle.sh install/OFX/Plugins
           .github/workflows/check_linux_deps.sh install/OFX/Plugins/GMIC.ofx.bundle
+      # the tests run on the installed bundle, the one that is shipped (see "Upload bundle")
       - name: Describe all plug-ins
-        run: PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh build/Plugins $GMIC_PLUGIN_COUNT
+        run: PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
       # the default FFT (pocketfft) on a non-power-of-two image, with an interpreter built from the
       # same sources
       - name: Render FFT filters (720x576)
@@ -173,14 +174,14 @@ jobs:
       - name: Render plug-ins
         run: |
           python3 .github/workflows/render_plugins.py --host build \
-            --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
+            --plugins install/OFX/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset "$([ "$BUILD_VARIANTS" = true ] && echo all || echo pr)" --jobs 2
       # an OFX 1.4-only host (hostDemo --ofx14, openfx#170): only the OFX 1.4 host properties and
       # suites
       - name: Render plug-ins (subset, OFX 1.4 host)
         run: |
           python3 .github/workflows/render_plugins.py --host build --host-arg=--ofx14 \
-            --plugins build/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
+            --plugins install/OFX/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset pr --jobs 2 --work render-ofx14
       # no libcurl: G'MIC downloads with the curl command (cimg::load_network). Add Grain
       # downloads its grain images (gmic_grain.gmz, from gmic.eu) into G'MIC's cache, here an empty
@@ -192,7 +193,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/gmic-cache"
           OFX_GMIC_TEST_CURL_ONLY=1 GMIC_CACHE_PATH="$RUNNER_TEMP/gmic-cache/" python3 .github/workflows/render_plugins.py --host build \
-            --plugins build/Plugins --list plugins.txt --only eu.gmic.AddGrain --work render-download
+            --plugins install/OFX/Plugins --list plugins.txt --only eu.gmic.AddGrain --work render-download
           find "$RUNNER_TEMP/gmic-cache" -name 'gmic_grain*' -size +0 -exec ls -l {} + | grep . ||
             { echo "FAIL: gmic_grain.gmz was not downloaded"; exit 1; }
       # FFTW (opt-in, GPL builds only), rendered with the hostDemo of the default build; before the
@@ -206,12 +207,12 @@ jobs:
             -DFFT=fftw3
           cmake --build build-fftw3 -j4
           cmake --install build-fftw3 --prefix install-fftw3
-          .github/workflows/check_fft.sh build-fftw3/Plugins/GMIC.ofx.bundle fftw3
+          .github/workflows/check_fft.sh install-fftw3/OFX/Plugins/GMIC.ofx.bundle fftw3
           openfx/Support/include/linuxCheckBundle.sh install-fftw3/OFX/Plugins
           .github/workflows/check_linux_deps.sh install-fftw3/OFX/Plugins/GMIC.ofx.bundle
-          PLUGIN_LIST=plugins-fftw3.txt .github/workflows/describe_plugins.sh build-fftw3/Plugins $GMIC_PLUGIN_COUNT
+          PLUGIN_LIST=plugins-fftw3.txt .github/workflows/describe_plugins.sh install-fftw3/OFX/Plugins $GMIC_PLUGIN_COUNT
           python3 .github/workflows/render_plugins.py --host build \
-            --plugins build-fftw3/Plugins --list plugins-fftw3.txt --stdlib build-fftw3/gmic/gmic_stdlib_community.h \
+            --plugins install-fftw3/OFX/Plugins --list plugins-fftw3.txt --stdlib build-fftw3/gmic/gmic_stdlib_community.h \
             --subset pr --jobs 2
       # GMIC_STATIC_DEPS=OFF, as Natron's release builds (whose SDK has only shared zlib and libpng,
       # which the installer bundles) and distribution packages do: the system's shared zlib and
@@ -224,14 +225,14 @@ jobs:
             -DGMIC_DOWNLOAD_DIR="$PWD" -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h" -DGMIC_STATIC_DEPS=OFF
           cmake --build build-shared -j4
           cmake --install build-shared --prefix install-shared
-          .github/workflows/check_fft.sh build-shared/Plugins/GMIC.ofx.bundle pocketfft
+          .github/workflows/check_fft.sh install-shared/OFX/Plugins/GMIC.ofx.bundle pocketfft
           # the shared zlib and libpng may come from the system (or Natron's installer bundles them);
           # any other non-system library must be bundled
           OFX_ABI_OPTIONAL_LIBS="libz.so.1 libpng16.so.16" openfx/Support/include/linuxCheckBundle.sh install-shared/OFX/Plugins
           SHARED_DEPS=1 .github/workflows/check_linux_deps.sh install-shared/OFX/Plugins/GMIC.ofx.bundle
-          readelf -d build-shared/Plugins/GMIC.ofx.bundle/Contents/Linux-x86-64/GMIC.ofx | grep -q 'NEEDED.*libpng16\.so' ||
+          readelf -d install-shared/OFX/Plugins/GMIC.ofx.bundle/Contents/Linux-x86-64/GMIC.ofx | grep -q 'NEEDED.*libpng16\.so' ||
             { echo "FAIL: GMIC_STATIC_DEPS=OFF does not link the shared libpng"; exit 1; }
-          .github/workflows/describe_plugins.sh build-shared/Plugins $GMIC_PLUGIN_COUNT
+          .github/workflows/describe_plugins.sh install-shared/OFX/Plugins $GMIC_PLUGIN_COUNT
       # debug build (CMAKE_BUILD_TYPE=Debug), described; before the Makefile build, as above
       - name: Build and describe (debug)
         if: env.BUILD_VARIANTS == 'true'
@@ -239,24 +240,29 @@ jobs:
           cmake -S . -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
             -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h"
           cmake --build build-debug -j4
-          .github/workflows/check_linux_deps.sh build-debug/Plugins/GMIC.ofx.bundle
-          .github/workflows/describe_plugins.sh build-debug/Plugins $GMIC_PLUGIN_COUNT
-      # The Linux bundle is uploaded as is: it needs only system libraries (linuxCheckBundle.sh),
-      # but the glibc and libstdc++ of Ubuntu 24.04. Natron's Linux releases build the plug-in on
+          cmake --install build-debug --prefix install-debug
+          .github/workflows/check_linux_deps.sh install-debug/OFX/Plugins/GMIC.ofx.bundle
+          .github/workflows/describe_plugins.sh install-debug/OFX/Plugins $GMIC_PLUGIN_COUNT
+      # The installed Linux bundle is uploaded as is, the one that linuxCheckBundle.sh and
+      # check_linux_deps.sh checked (the build tree's GMIC.ofx has a padded RUNPATH, with empty
+      # entries, until cmake --install rewrites it): it needs only system libraries, but the glibc
+      # and libstdc++ of Ubuntu 24.04. Natron's Linux releases build the plug-in on
       # Rocky Linux 9, Natron 2.6's Linux baseline (see the linux-rocky9 job).
       - name: Upload bundle
         if: env.UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: openfx-gmic-linux-release
-          path: build/Plugins/GMIC.ofx.bundle
+          path: install/OFX/Plugins/GMIC.ofx.bundle
       # before the Makefile build, as above
       - name: Build and describe (release, C++20)
         if: env.BUILD_VARIANTS == 'true'
         run: |
           cmake -S . -B build-cxx20 -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=20 -DGMIC_DOWNLOAD_DIR="$PWD"
           cmake --build build-cxx20 -j4
-          .github/workflows/describe_plugins.sh build-cxx20/Plugins $GMIC_PLUGIN_COUNT
+          cmake --install build-cxx20 --prefix install-cxx20
+          .github/workflows/check_linux_deps.sh install-cxx20/OFX/Plugins/GMIC.ofx.bundle
+          .github/workflows/describe_plugins.sh install-cxx20/OFX/Plugins $GMIC_PLUGIN_COUNT
       # the Makefile fallback of Natron's build-plugins.sh (PLUGINS_BUILD_SYSTEM=make), release, as
       # its fallback builds it; its bundle and G'MIC sources are compared with the CMake release
       # build's (installed). Last: its G'MIC headers in the checkout would stop CMake configures.
@@ -662,6 +668,7 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$(cygpath -m "$PWD")" \
             -DGMIC_POCKETFFT="$(cygpath -m "$PWD")/pocketfft_hdronly.h" -DGMIC_BUILD_TESTS=ON
           cmake --build build -j4
+          cmake --install build --prefix install
           .github/workflows/check_fft.sh build/Plugins/GMIC.ofx.bundle pocketfft
           .github/workflows/check_no_libcurl.sh build/Plugins/GMIC.ofx.bundle
       - name: Describe all plug-ins
@@ -678,7 +685,7 @@ jobs:
         run: |
           set -eo pipefail
           rm -rf Bundle && mkdir -p Bundle
-          cp -R build/Plugins/GMIC.ofx.bundle Bundle/
+          cp -R install/OFX/Plugins/GMIC.ofx.bundle Bundle/
           .github/workflows/bundle_libs.sh Bundle/GMIC.ofx.bundle
           .github/workflows/check_no_libcurl.sh Bundle/GMIC.ofx.bundle
           CXX="c++ -DXML_STATIC" HOST_LDFLAGS=-static HOST_RUN_PATH=/c/Windows/System32:/c/Windows \
