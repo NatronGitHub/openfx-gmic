@@ -113,15 +113,16 @@ Options:
 - POCKETFFT_HEADER: a downloaded pocketfft_hdronly.h, for offline builds (copied, then checked
   against POCKETFFT_SHA256); without it, it is downloaded at POCKETFFTCOMMIT.
 
-For an Xcode or Visual Studio project, use CMake's generator (cmake -G Xcode,
-cmake -G "Visual Studio 17 2022").
-
 Building with CMake
 -------------------
 
     cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
     cmake --build build              # build/Plugins/GMIC.ofx.bundle
     cmake --install build --prefix <dir>   # <dir>/OFX/Plugins/GMIC.ofx.bundle
+
+For an Xcode or Visual Studio project, use CMake's generator: cmake -G Xcode, or
+cmake -G "Visual Studio <n> <year>" -A x64 (cmake --help lists them). Its configurations share
+build/Plugins/GMIC.ofx.bundle: the last one built is the one there.
 
 Distribute the installed bundle, not build/Plugins: on Linux, the build tree's GMIC.ofx has a
 RUNPATH that CMake pads with ':' (empty entries, which the loader takes as the current
@@ -162,6 +163,9 @@ vcpkg.json (its builtin-baseline), as static libraries with the static C runtime
       -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static
     cmake --build build
     cmake --install build --prefix <dir>
+
+With a Visual Studio generator (Debug and Release in one project), use
+-DCMAKE_MSVC_RUNTIME_LIBRARY='MultiThreaded$<$<CONFIG:Debug>:Debug>' instead.
 
 OpenMP uses MSVC's /openmp (OpenMP 2.0): the bundle ships the compiler's redistributable
 vcomp140.dll (VC/Redist/MSVC/<version>/x64/Microsoft.VC<nnn>.OpenMP) next to GMIC.ofx, and a

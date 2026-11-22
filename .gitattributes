@@ -38,7 +38,7 @@ CMakeLists.txt text whitespace=tab-in-indent,trail,space
 # Other 'windows-specific' files
 *.bat text eol=crlf
 *.bat.in text eol=crlf
-*.cmd text eof=crlf
+*.cmd text eol=crlf
 
 # Denote all files that are truly binary and should not be modified.
 *.png binary
@@ -52,7 +52,7 @@ CMakeLists.txt text whitespace=tab-in-indent,trail,space
 *.dll binary
 
 *.pdf binary
-*.pbxproj text eof=lf
+*.pbxproj text eol=lf
 *.vec binary
 *.doc binary
 
