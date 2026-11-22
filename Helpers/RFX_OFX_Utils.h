@@ -219,12 +219,12 @@ struct LayerTimes {
 static MyInstanceData* getMyInstanceData(OfxImageEffectHandle effect)
 {
 	// get the property handle for the plugin
-	OfxPropertySetHandle effectProps;
-	gEffectHost->getPropertySet(effect, &effectProps);
+	OfxPropertySetHandle effectProps = NULL;
+	if (gEffectHost->getPropertySet(effect, &effectProps) != kOfxStatOK) return NULL;
 
 	// get my data pointer out of that
 	MyInstanceData* myData = NULL;
-	gPropHost->propGetPointer(effectProps, kOfxPropInstanceData, 0, (void **)&myData);
+	if (gPropHost->propGetPointer(effectProps, kOfxPropInstanceData, 0, (void **)&myData) != kOfxStatOK) return NULL;
 	return myData;
 }
 
@@ -705,12 +705,14 @@ OfxStatus getSpatialRoD(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPro
 	// retrieve any instance data associated with this effect
 	MyInstanceData *myData = getMyInstanceData(effect);
 
-	OfxTime time;
-	gPropHost->propGetDouble(inArgs, kOfxPropTime, 0, &time);
-
-	// my RoD is the same as my input's
-	OfxRectD rod;
-	gEffectHost->clipGetRegionOfDefinition(myData->input[0], time, &rod);
+	OfxTime time = 0.;
+	OfxRectD rod = {0., 0., 0., 0.};
+	// my RoD is the same as my input's (the host's default if it can't be read)
+	if (!myData || !myData->input[0] ||
+		gPropHost->propGetDouble(inArgs, kOfxPropTime, 0, &time) != kOfxStatOK ||
+		gEffectHost->clipGetRegionOfDefinition(myData->input[0], time, &rod) != kOfxStatOK) {
+		return kOfxStatReplyDefault;
+	}
 
 	// set the rod in the out args
 	gPropHost->propSetDoubleN(outArgs, kOfxImageEffectPropRegionOfDefinition, 4, &rod.x1);
@@ -731,6 +733,7 @@ OfxStatus getSpatialRoI(int pluginIndex, OfxImageEffectHandle effect, OfxPropert
 	// With layer times, the region of definition of each frame fetched (see render): the union of
 	// them for Source, whose frames may also be layers.
 	MyInstanceData *myData = getMyInstanceData(effect);
+	if (!myData) return kOfxStatReplyDefault;
 	OfxTime time = 0.;
 	gPropHost->propGetDouble(inArgs, kOfxPropTime, 0, &time);
 	const LayerTimes lt = layerTimesOf(pluginIndex, myData, time);
@@ -782,6 +785,7 @@ OfxStatus getFramesNeeded(int pluginIndex, OfxImageEffectHandle effect, OfxPrope
 		return kOfxStatReplyDefault;
 	}
 	MyInstanceData *myData = getMyInstanceData(effect);
+	if (!myData) return kOfxStatReplyDefault;
 	OfxTime time = 0.;
 	gPropHost->propGetDouble(inArgs, kOfxPropTime, 0, &time);
 	const LayerTimes lt = layerTimesOf(pluginIndex, myData, time);
@@ -820,11 +824,15 @@ static
 OfxStatus getTemporalDomain(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPropertySetHandle /*inArgs*/, OfxPropertySetHandle outArgs)
 {
 	MyInstanceData *myData = getMyInstanceData(effect);
-	double sourceRange[2];
+	double sourceRange[2] = {0., 0.};
 	
-	// get the frame range of the source clip
-	OfxPropertySetHandle props; gEffectHost->clipGetPropertySet(myData->input[0], &props);
-	gPropHost->propGetDoubleN(props, kOfxImageEffectPropFrameRange, 2, sourceRange);
+	// get the frame range of the source clip (the host's default if it can't be read)
+	OfxPropertySetHandle props = NULL;
+	if (!myData || !myData->input[0] ||
+		gEffectHost->clipGetPropertySet(myData->input[0], &props) != kOfxStatOK ||
+		gPropHost->propGetDoubleN(props, kOfxImageEffectPropFrameRange, 2, sourceRange) != kOfxStatOK) {
+		return kOfxStatReplyDefault;
+	}
 
 	// set it on the out args
 	gPropHost->propSetDoubleN(outArgs, kOfxImageEffectPropFrameRange, 2, sourceRange);
@@ -863,6 +871,7 @@ static OfxStatus getClipPreferences(int pluginIndex, OfxImageEffectHandle effect
 {
 	// retrieve any instance data associated with this effect
 	MyInstanceData *myData = getMyInstanceData(effect);
+	if (!myData) return kOfxStatReplyDefault;
 	
 	// get the component type and bit depth of our main input
 	int	bitDepth;
@@ -934,8 +943,8 @@ static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance,
 	setContextData(contextData, instance, inArgs, outArgs, pluginIndex);
 
 	// see why it changed
-	const char *changeReason;
-	gPropHost->propGetString(inArgs, kOfxPropChangeReason, 0, &changeReason);
+	const char *changeReason = NULL;
+	if (gPropHost->propGetString(inArgs, kOfxPropChangeReason, 0, &changeReason) != kOfxStatOK) changeReason = NULL;
 
 	// Layers from Source raised by the user: give the layers it adds whose offset is still 0 the
 	// previous frames (Layer -k at -k), a frame window instead of copies of the current frame. Not
@@ -948,7 +957,7 @@ static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance,
 		if (d && d->layersFromSource && name && strcmp(name, LAYERS_FROM_SOURCE_PARAM) == 0) {
 			const int previous = d->lastLayersFromSource;
 			gParamHost->paramGetValue(d->layersFromSource, &d->lastLayersFromSource);
-			if (strcmp(changeReason, kOfxChangeUserEdited) == 0 && d->lastLayersFromSource > previous) {
+			if (changeReason && strcmp(changeReason, kOfxChangeUserEdited) == 0 && d->lastLayersFromSource > previous) {
 				OfxTime time = 0.;
 				gPropHost->propGetDouble(inArgs, kOfxPropTime, 0, &time);
 				const LayerTimes lt = layerTimesOf(pluginIndex, d, time);
@@ -995,19 +1004,20 @@ static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance,
 	}
 
 	// we are only interested in user edits
-	if (strcmp(changeReason, kOfxChangeUserEdited) != 0) return kOfxStatReplyDefault;
+	if (!changeReason || strcmp(changeReason, kOfxChangeUserEdited) != 0) return kOfxStatReplyDefault;
 
 	// fetch the type of the object that changed
-	const char *typeChanged;
-	gPropHost->propGetString(inArgs, kOfxPropType, 0, &typeChanged);
+	const char *typeChanged = NULL;
+	if (gPropHost->propGetString(inArgs, kOfxPropType, 0, &typeChanged) != kOfxStatOK) typeChanged = NULL;
+
+	// get the name of the thing that changed
+	const char *objChanged = NULL;
+	if (gPropHost->propGetString(inArgs, kOfxPropName, 0, &objChanged) != kOfxStatOK) objChanged = NULL;
+	if (!typeChanged || !objChanged) return kOfxStatReplyDefault;
 
 	// was it a clip or a param?
 	bool isClip = strcmp(typeChanged, kOfxTypeClip) == 0;
 	bool isParam = strcmp(typeChanged, kOfxTypeParameter) == 0;
-
-	// get the name of the thing that changed
-	const char *objChanged;
-	gPropHost->propGetString(inArgs, kOfxPropName, 0, &objChanged);
 
 	// retrieve any instance data associated with this effect
 	MyInstanceData* myData = getMyInstanceData(instance);
@@ -1421,13 +1431,18 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 
 	// get the time from the inArgs (the render window is not used: tiles are not supported, and
 	// the whole output image is rendered)
-	OfxTime time;
+	OfxTime time = 0.;
 	OfxStatus status = kOfxStatOK;
 
-	gPropHost->propGetDouble(inArgs, kOfxPropTime, 0, &time);
+	if (gPropHost->propGetDouble(inArgs, kOfxPropTime, 0, &time) != kOfxStatOK) {
+		return kOfxStatFailed;
+	}
 
 	// retrieve any instance data associated with this effect
 	MyInstanceData *myData = getMyInstanceData(instance);
+	if (!myData) {
+		return kOfxStatFailed;
+	}
 
 	OfxPropertySetHandle outputImg = NULL;
 	OfxPropertySetHandle sourceImg[MAX_NOF_LAYERS] = { 0 };
@@ -2047,7 +2062,8 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 
 	OfxPropertySetHandle props = NULL;
 	// define the single output clip in both contexts
-	gEffectHost->clipDefine(effect, "Output", &props);
+	OfxStatus stat = gEffectHost->clipDefine(effect, "Output", &props);
+	if (stat != kOfxStatOK) return stat;
 
 	// set the component types we can handle on our output
 	gPropHost->propSetString(props, kOfxImageEffectPropSupportedComponents, 0, kOfxImageComponentRGBA);
@@ -2061,7 +2077,8 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 	gEffectHost->getParamSet(effect, &paramSet);
 
 	{
-	gParamHost->paramDefine(paramSet, kOfxParamTypeCustom, "SequenceData", &props);
+	stat = gParamHost->paramDefine(paramSet, kOfxParamTypeCustom, "SequenceData", &props);
+	if (stat != kOfxStatOK) return stat;
 	gPropHost->propSetInt(props, kOfxParamPropSecret, 0, 1);
 	}
 	bool hasPointParams = false;
@@ -2069,7 +2086,8 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 		if (globalData[pluginIndex].param[i].paramType == PT_POINT) hasPointParams = true;
 	}
 	if (hasPointParams) {
-	gParamHost->paramDefine(paramSet, kOfxParamTypeString, POINTS_FROM_SOURCE_PARAM, &props);
+	stat = gParamHost->paramDefine(paramSet, kOfxParamTypeString, POINTS_FROM_SOURCE_PARAM, &props);
+	if (stat != kOfxStatOK) return stat;
 	gPropHost->propSetInt(props, kOfxParamPropSecret, 0, 1);
 	gPropHost->propSetInt(props, kOfxParamPropPersistant, 0, 1);
 	gPropHost->propSetInt(props, kOfxParamPropAnimates, 0, 0);
@@ -2183,7 +2201,8 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 #endif
 			continue;
 		} else if (param.paramType == PT_LAYER) {
-			gEffectHost->clipDefine(effect, param.paramName.c_str(), &props);
+			stat = gEffectHost->clipDefine(effect, param.paramName.c_str(), &props);
+			if (stat != kOfxStatOK) return stat;
 			if (i > 0) {
 				gPropHost->propSetInt(props, kOfxImageClipPropOptional, 0, 1);
 			}
@@ -2196,7 +2215,8 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 			l++;
 			continue;
 		} else if (param.paramType == PT_TOPIC_START) {	
-			gParamHost->paramDefine(paramSet, kOfxParamTypeGroup, param.paramName.c_str(), &props);
+			stat = gParamHost->paramDefine(paramSet, kOfxParamTypeGroup, param.paramName.c_str(), &props);
+			if (stat != kOfxStatOK) return stat;
 			if (param.flags>0) gPropHost->propSetInt(props, kOfxParamPropGroupOpen, 0, 0);
 			gPropHost->propSetInt(props, kOfxParamPropAnimates, 0, 0);
 			gPropHost->propSetInt(props, kOfxParamPropGroupOpen, 0, param.flags>0?0:1);
@@ -2424,21 +2444,14 @@ static OfxStatus pluginMain(int pluginIndex, const char *action, const void *han
 		if (myData) pluginPurgeCaches(myData->sequenceDataP);
 		return kOfxStatOK;
 	}
-	} catch (std::bad_alloc) {
-		// catch memory
-		//std::cout << "OFX Plugin Memory error." << std::endl;
+	} catch (const OfxuStatusException& e) {
+		// a failed suite call (e.g. paramDefine in paramAddFloat): its status
+		return e.status();
+	} catch (const std::bad_alloc&) {
 		return kOfxStatErrMemory;
-	} catch (const std::exception& e) {
-		// standard exceptions
-		//std::cout << "OFX Plugin error: " << e.what() << std::endl;
-		return kOfxStatErrUnknown;
-	} catch (int err) {
-		// ho hum, gone wrong somehow
-		return err;
 	} catch (...) {
-		// everything else
-		//std::cout << "OFX Plugin error" << std::endl;
-		return kOfxStatErrUnknown;
+		// everything else (std::exception, G'MIC/CImg exceptions...): no exception may reach the host
+		return kOfxStatFailed;
 	}
 
 	// other actions to take the default value
@@ -2499,21 +2512,32 @@ void initPlugins()
 	}
 }
 
+// The plug-in list is built once: the host may keep the pointers into it (pluginIdentifier).
+// No exception may reach the host (a C caller): if building it fails (bad_alloc), there are no
+// plug-ins, and the next call tries again.
+static void ensurePlugins()
+{
+	if (!gPlugins.empty()) return;
+	try {
+		initPlugins();
+	} catch (...) {
+		gPlugins.clear();
+		globalData.clear();
+	}
+}
+
 // the two mandated functions
 OfxExport OfxPlugin* OfxGetPlugin(int nth)
 {
-	if ((int)gPlugins.size() == 0) {
-		initPlugins();
-	}
-	if (nth < (int)gPlugins.size()) return &gPlugins[nth];
+	ensurePlugins();
+	if (nth >= 0 && nth < (int)gPlugins.size()) return &gPlugins[nth];
 	return NULL;
 }
  
 OfxExport int OfxGetNumberOfPlugins(void)
 {
-	initPlugins();
-	int n = (int)gPlugins.size();
-	return n;
+	ensurePlugins();
+	return (int)gPlugins.size();
 } 
 
 #endif

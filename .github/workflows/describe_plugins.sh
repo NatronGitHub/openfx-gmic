@@ -80,6 +80,11 @@ if grep -E "HIDDEN_FILTER_UNKNOWN" describe.log; then
     echo "FAIL: update the curated list in hideBatchFilters() (see above)"
     status=1
 fi
+# a parameter type the parser doesn't know (e.g. new in a G'MIC bump): pluginSetup passes 0 for it
+if grep "has an unknown type" describe.log; then
+    echo "FAIL: unknown G'MIC parameter types, support them in Helpers/gmic_parser.cpp and pluginSetup (see above)"
+    status=1
+fi
 # the plug-in skips a hot fix whose built-in G'MIC definition changed (see gmic_hotfixes.gmic)
 if grep "openfx-gmic: Warning: hot fix" describe.log; then
     echo "FAIL: hot fixes not applied, review them in gmic_hotfixes.gmic (see above)"
