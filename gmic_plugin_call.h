@@ -1,6 +1,7 @@
 // gmic_plugin_call(): run G'MIC on the plug-in's images, like gmic_call() from gmic_libc, but
-// never writing more than maxImages results. gmic_plugin_call.cpp also defines
-// gmic_delete_external() and gmic_get_stdlib() from gmic_libc.h (gmic_libc.cpp is not built).
+// never writing more than maxImages results; gmic_plugin_abort(): stop it. gmic_plugin_call.cpp
+// also defines gmic_delete_external() and gmic_get_stdlib() from gmic_libc.h (gmic_libc.cpp is not
+// built).
 #ifndef GMIC_PLUGIN_CALL_H
 #define GMIC_PLUGIN_CALL_H
 
@@ -17,5 +18,10 @@
 //   options->error_message_buffer (at least 256 bytes), and *nofImages and images[] are left
 //   unchanged.
 int gmic_plugin_call(const char* cmd, unsigned int* nofImages, gmic_interface_image* images, unsigned int maxImages, gmic_interface_options* options);
+
+// Asks a running gmic_plugin_call() to stop: sets *p_is_abort, its options->p_is_abort, to true.
+// May be called from any thread: G'MIC's threads read the flag concurrently, so it is set
+// atomically, as G'MIC accesses it (gmic_abort_store(), patches/gmic-atomic-abort.sh, #136).
+void gmic_plugin_abort(bool* p_is_abort);
 
 #endif

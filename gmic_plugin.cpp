@@ -1129,12 +1129,14 @@ static int gmicCallAbortable(OfxImageEffectHandle instance, const char* cmd, uns
 		*aborted = true;
 		return -1;
 	}
-	// G'MIC's abort flag. It is a plain bool, read by G'MIC's threads while the render thread sets
-	// it: that is upstream's design (the API takes a bool*, polled in G'MIC's loops), and gmic-qt
-	// shares its flag across threads the same way. Note that CImg's OpenMP loops find the flag
-	// through gmic::current_is_abort(), which looks up the interpreter by thread: a thread that is
-	// not an interpreter's (e.g. an OpenMP worker evaluating the math abort()) gets a static flag
-	// shared by the whole process, which stays set (upstream behavior, not patched here).
+	// G'MIC's abort flag: G'MIC's API takes a bool*, which G'MIC's threads poll while the render
+	// thread sets it, so both sides access it atomically (#136): G'MIC through the
+	// gmic_abort_load()/gmic_abort_store() of patches/gmic-atomic-abort.sh, the render thread
+	// through gmic_plugin_abort(). Its initialization happens before the worker starts. Note that
+	// CImg's OpenMP loops find the flag through gmic::current_is_abort(), which looks up the
+	// interpreter by thread: a thread that is not an interpreter's (e.g. an OpenMP worker
+	// evaluating the math abort()) gets a static flag shared by the whole process, which stays set
+	// (upstream behavior, not patched here).
 	bool isAbort = false;
 	GmicCallData d;
 	d.cmd = cmd;
@@ -1180,13 +1182,13 @@ static int gmicCallAbortable(OfxImageEffectHandle instance, const char* cmd, uns
 			}
 			if (*aborted) {
 				// set it on every poll: G'MIC resets the flag when its interpreter starts
-				isAbort = true;
+				gmic_plugin_abort(&isAbort);
 			}
 			lock.lock();
 		}
 	} catch (...) {
 		// waiting failed (e.g. std::system_error from the mutex): stop G'MIC, wait for it, and fail
-		isAbort = true;
+		gmic_plugin_abort(&isAbort);
 #ifndef _WIN32
 		pthread_join(thread, NULL);
 #else

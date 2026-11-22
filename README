@@ -43,7 +43,8 @@ patches/cimg-abs-peephole.sh fix math parser bugs,
 patches/cimg-fftw-no-cleanup-at-unload.sh keeps FFTW's threads when the plug-in is unloaded
 (FFT=fftw3), patches/cimg-msvc-snprintf.sh makes cimg_snprintf() always end its output with a
 null character with MSVC, patches/gmic-win-thread-stack.sh gives the threads of G'MIC's
-"parallel" command an 8 MiB stack on Windows, and gmic_hotfixes.gmic replaces the
+"parallel" command an 8 MiB stack on Windows, patches/gmic-atomic-abort.sh makes G'MIC read and
+write its abort flags atomically (they are shared between threads), and gmic_hotfixes.gmic replaces the
 definitions of broken filters (each fix is skipped once G'MIC has it).
 
 Requirements
@@ -88,8 +89,8 @@ Building with make
 CI builds with CMake (https://github.com/NatronGitHub/Natron/issues/1181), as Natron's
 build-plugins.sh does by default. The Makefile is a fallback (build-plugins.sh's
 PLUGINS_BUILD_SYSTEM=make), tested only by one weekly Linux release build compared with the CMake
-one. CMakeLists.txt reads the G'MIC version, the checksums, POCKETFFTCOMMIT, CIMG_PATCHES and GMIC_PATCHES from
-it.
+one. CMakeLists.txt reads the G'MIC version, the checksums, POCKETFFTCOMMIT, CIMG_PATCHES, GMIC_PATCHES and
+GMIC_H_PATCHES from it.
 
     make CONFIG=release OPENMP=1 CXXSTD=c++17
     make CONFIG=release OPENMP=1 CXXSTD=c++17 install   # may need root

@@ -14,7 +14,8 @@ name: Continuous Integration
 # (compare_bundles.sh, compare_sources.sh). Not tested: the Makefile's debug, macOS and Windows
 # builds. COMMERCIAL builds (LICENSE=COMMERCIAL, -DOFX_LICENSE=COMMERCIAL) are not CI-tested at
 # all (low priority). CMakeLists.txt also reads GMICVER, the checksums, POCKETFFTCOMMIT,
-# CIMG_PATCHES and GMIC_PATCHES from the Makefile, hence the cache keys on hashFiles('Makefile').
+# CIMG_PATCHES, GMIC_PATCHES and GMIC_H_PATCHES from the Makefile, hence the cache keys on
+# hashFiles('Makefile').
 #
 # FFT: all builds use the default, pocketfft (header-only, downloaded), as Natron's builds do; each
 # checks that its bundle doesn't link FFTW (check_fft.sh), and Linux renders FFT filters on a

@@ -89,6 +89,11 @@ static void setError(gmic_interface_options* options, const std::string& message
 	}
 }
 
+void gmic_plugin_abort(bool* p_is_abort)
+{
+	gmic_abort_store(p_is_abort, true);
+}
+
 int gmic_plugin_call(const char* cmd, unsigned int* nofImages, gmic_interface_image* images, unsigned int maxImages, gmic_interface_options* options)
 {
 #if defined(_WIN32) && defined(_OPENMP)

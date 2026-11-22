@@ -132,7 +132,7 @@ $(GMICSRC):
 # compiled from older sources (GMIC_OFX/Makefile rebuilds them when the G'MIC headers change).
 $(GMICSOURCES): $(GMICSRC)
 	tar -m --strip-components 2 -zxvf $< $(patsubst %,$(GMICSRCDIR)/src/%, $@)
-	@case $@ in CImg.h) for p in $(CIMG_PATCHES); do sh $$p $@ || { rm -f $@; exit 1; }; done;; gmic.cpp) for p in $(GMIC_PATCHES); do sh $$p $@ || { rm -f $@; exit 1; }; done;; esac
+	@case $@ in CImg.h) for p in $(CIMG_PATCHES); do sh $$p $@ || { rm -f $@; exit 1; }; done;; gmic.cpp) for p in $(GMIC_PATCHES); do sh $$p $@ || { rm -f $@; exit 1; }; done;; gmic.h) for p in $(GMIC_H_PATCHES); do sh $$p $@ || { rm -f $@; exit 1; }; done;; esac
 
 # G'MIC's standard library with the community filters: from the tarball (GPL builds), or, for
 # COMMERCIAL builds, generated from the G'MIC standard library and the community files whose
@@ -196,12 +196,16 @@ Licence_pocketfft.txt: pocketfft_hdronly.h
 # scripts in the same order.
 CIMG_PATCHES = patches/cimg-omp-rand.sh patches/cimg-vvar2.sh patches/cimg-vargkth2.sh patches/cimg-log1p-peephole.sh patches/cimg-abs-peephole.sh patches/cimg-fftw-no-cleanup-at-unload.sh patches/cimg-msvc-snprintf.sh
 CImg.h: gmic_sources.request $(CIMG_PATCHES)
-# GMIC_PATCHES: the same for gmic.cpp (read by CMakeLists.txt too). gmic-win-thread-stack.sh: an
-# 8 MiB stack for the threads of G'MIC's 'parallel' command on Windows
+# GMIC_PATCHES: the same for gmic.cpp, GMIC_H_PATCHES for gmic.h (both read by CMakeLists.txt too).
+# gmic-win-thread-stack.sh: an 8 MiB stack for the threads of G'MIC's 'parallel' command on Windows
 # (https://github.com/GreycLab/gmic/issues/226). gmic-argx-overflow.sh: 'displacement' and
-# 'serialize' no longer strcpy() into argx's 1-byte sentinel (a stack-buffer overflow).
-GMIC_PATCHES = patches/gmic-win-thread-stack.sh patches/gmic-argx-overflow.sh
+# 'serialize' no longer strcpy() into argx's 1-byte sentinel (a stack-buffer overflow,
+# https://github.com/GreycLab/gmic/issues/227). gmic-atomic-abort.sh (on both files): G'MIC's
+# abort flags, shared between threads, are read and written atomically (a data race, #136).
+GMIC_PATCHES = patches/gmic-win-thread-stack.sh patches/gmic-argx-overflow.sh patches/gmic-atomic-abort.sh
 gmic.cpp: gmic_sources.request $(GMIC_PATCHES)
+GMIC_H_PATCHES = patches/gmic-atomic-abort.sh
+gmic.h: gmic_sources.request $(GMIC_H_PATCHES)
 
 distclean: clean
 	-rm -f $(GMICSRC) $(GMICSOURCES) gmic_stdlib_community.h gmic_stdlib_community.h.commands gmic_hotfixes.h gmic_hotfixes.version gmic_sources.license gmic_sources.request pocketfft_hdronly.h Licence_pocketfft.txt gmic_libc.cpp gmic_stdlib_gmic.h # the last two: left by older builds
