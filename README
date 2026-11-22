@@ -121,8 +121,8 @@ Building with CMake
     cmake --install build --prefix <dir>   # <dir>/OFX/Plugins/GMIC.ofx.bundle
 
 For an Xcode or Visual Studio project, use CMake's generator: cmake -G Xcode, or
-cmake -G "Visual Studio <n> <year>" -A x64 (cmake --help lists them). The configurations of such a project share
-build/Plugins/GMIC.ofx.bundle: the last one built is the one there.
+cmake -G "Visual Studio <n> <year>" -A x64 (cmake --help lists them). The configurations of
+such a project share build/Plugins/GMIC.ofx.bundle: the last one built is the one there.
 
 Distribute the installed bundle, not build/Plugins: on Linux, the build tree's GMIC.ofx has a
 RUNPATH that CMake pads with ':' (empty entries, which the loader takes as the current
