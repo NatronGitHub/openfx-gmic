@@ -397,6 +397,8 @@ static string gmicGetHotfixes(const string& stdlib)
 	return hotfixes;
 }
 
+namespace {
+
 // The filters, parsed from the G'MIC stdlib (or a user file) once, on first use.
 struct PluginGlobalData
 {
@@ -405,7 +407,7 @@ struct PluginGlobalData
 	string hotfixes; // custom commands for every run, see gmicGetHotfixes()
 };
 
-static PluginGlobalData loadPluginGlobalData()
+PluginGlobalData loadPluginGlobalData()
 {
 	PluginGlobalData data;
 	vector<EffectData>& pluginData = data.pluginData;
@@ -456,7 +458,7 @@ static PluginGlobalData loadPluginGlobalData()
 // exception would terminate the host and gmic_get_stdlib() could run before the statics of gmic.cpp
 // are initialised (C++ Core Guidelines I.22); a function-local static is initialised once,
 // thread-safely. A failure gives zero plug-ins.
-static const PluginGlobalData& pluginGlobalData()
+const PluginGlobalData& pluginGlobalData()
 {
 	static const PluginGlobalData data = []() {
 		try {
@@ -470,6 +472,8 @@ static const PluginGlobalData& pluginGlobalData()
 	}();
 	return data;
 }
+
+} // namespace
 
 #endif
 
