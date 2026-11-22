@@ -113,8 +113,8 @@ Options:
 - POCKETFFT_HEADER: a downloaded pocketfft_hdronly.h, for offline builds (copied, then checked
   against POCKETFFT_SHA256); without it, it is downloaded at POCKETFFTCOMMIT.
 
-GMIC_OFX/GMIC_OFX.xcodeproj is unmaintained (it still uses FFTW and an old file list): build with
-make or CMake.
+For an Xcode or Visual Studio project, use CMake's generator (cmake -G Xcode,
+cmake -G "Visual Studio 17 2022").
 
 Building with CMake
 -------------------
