@@ -423,7 +423,7 @@ void processParam(const string& s, EffectParameter& cp)
 		cp.defaultValue = strTrim(pval, "\"");
 	} else {
 		// e.g. a type added by a newer G'MIC: pluginSetup passes 0 for it (a hidden float)
-		fprintf(stderr, "openfx-gmic: Warning: parameter \"%s\" has an unknown type \"%s\": ignored\n",
+		fprintf(stderr, "openfx-gmic: Warning: parameter \"%s\" has an unknown type \"%s\": passed as 0\n",
 			cp.name.c_str(), cp.paramType.c_str());
 	}
 }
