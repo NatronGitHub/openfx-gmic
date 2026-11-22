@@ -51,11 +51,8 @@
 #include <string>
 #include <iostream>
 #include <fstream>
-#include <filesystem>
 #include <iterator>
-#include <new>
-#include <stdexcept>
-#include <system_error>
+#include <exception>
 
 #include "RFX_StringUtils.h"
 
@@ -112,20 +109,16 @@ int loadBufferFromFile(const string& filename, unsigned char** bufferP, unsigned
 
 string loadStringFromFile(const string& filename, const bool loadOnlyText)
 {
-	// Postcondition: the file's contents, or an empty string if it can't be read (missing, not a
-	// regular file, e.g. a directory, unreadable, or too large to hold). The size isn't taken from
-	// tellg(), which can be -1 or 2^63-1 for a directory (ext4 htree).
+	// Postcondition: the file's contents, or an empty string if it can't be read (missing, a
+	// directory, unreadable, or too large to hold). The size isn't taken from tellg(), which can be
+	// -1 or 2^63-1 for a directory (ext4 htree); libstdc++ throws ios_base::failure when reading one.
 	if (filename.empty()) return string();
-	error_code ec;
-	if (!filesystem::is_regular_file(filesystem::path(filename), ec)) return string();
 	ifstream infile(filename.c_str(), ios::in | ios::binary);
 	if (!infile) return string();
 	string buffer;
 	try {
 		buffer.assign(istreambuf_iterator<char>(infile), istreambuf_iterator<char>());
-	} catch (const bad_alloc&) {
-		return string();
-	} catch (const length_error&) {
+	} catch (const exception&) { // bad_alloc, length_error, ios_base::failure (EISDIR, EIO)
 		return string();
 	}
 	if (infile.bad()) return string();
