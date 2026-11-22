@@ -66,6 +66,7 @@ Changes in openfx-gmic since Natron 2.5.0 (tag `Natron-2.5.0`). Natron 2.6 polic
 - Notes, links, choices and other texts no longer have "true" and "false" replaced with "1" and "0" (Upscale [Scale2x]'s note said "useless for 1 colors images"); only bool() defaults map them, as G'MIC-Qt does (#120).
 - Filter files read from `~/.config/gmic`: a parameter written over several lines no longer gets an extra space after a line ending with `\n` or `\` (#121).
 - Link labels are no longer garbled: `link(0,"Label",URL)` showed `Label": : URL`, and `link(Label,URL)` lost the label's last character (Ink Wash) (#122).
+- Lowercasing the filter definitions, which contain UTF-8, no longer calls `tolower()` on negative chars (undefined behaviour, an assertion in MSVC debug builds) (#123).
 
 ### Build
 - Built with C++17 (C++20 for Qt6 builds of Natron) (#33); CI on Linux, macOS (Apple clang, MacPorts) and Windows (#23, #25, #28, #35, #38).

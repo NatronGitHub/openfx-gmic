@@ -56,6 +56,7 @@
 #include <vector>
 #include <fstream>
 #include <cassert>
+#include <cctype>
 #include <cstring>
 #include <locale>
 #include <locale.h>
@@ -71,14 +72,15 @@ namespace reduxfx {
 string strLowercase(const string& str)
 {
 	string s = str;
-	transform(s.begin(), s.end(), s.begin(), ::tolower);
+	// through unsigned char: a negative char (a UTF-8 byte) is undefined behaviour for std::tolower
+	transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 	return s;
 }
 
 string strUppercase(const string& str)
 {
 	string s = str;
-	transform(s.begin(), s.end(), s.begin(), ::toupper);
+	transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
 	return s;
 }
 

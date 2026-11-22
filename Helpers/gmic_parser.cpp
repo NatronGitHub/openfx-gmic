@@ -457,10 +457,7 @@ static bool usesSeveralLayers(const string& content)
 	if ((int)content.find(" layers") > 0) {
 		return true;
 	}
-	string lc = content;
-	for (size_t i = 0; i < lc.size(); ++i) {
-		lc[i] = (char)tolower((unsigned char)lc[i]);
-	}
+	const string lc = strLowercase(content);
 	// also a note asking for two images, or a choice/note naming another input: "requires 2 images
 	// as input" (Save Noise Print), "Two input images" (Fast Median Stack), "at least 2 layer"
 	// (Tiled Form), "another image" (Softlight), "Other Layer (Image)" (Page Curl); not the
@@ -900,8 +897,7 @@ static void markMultiInputFilters(const string& content, vector<EffectData>& cds
 static bool namesFrames(const string& s)
 {
 	static const char* const words[] = { "video", "frame", "frames" };
-	string lc = s;
-	for (size_t i = 0; i < lc.size(); ++i) lc[i] = (char)tolower((unsigned char)lc[i]);
+	const string lc = strLowercase(s);
 	for (size_t w = 0; w < sizeof(words) / sizeof(words[0]); ++w) {
 		const size_t n = strlen(words[w]);
 		for (size_t pos = lc.find(words[w]); pos != string::npos; pos = lc.find(words[w], pos + 1)) {
