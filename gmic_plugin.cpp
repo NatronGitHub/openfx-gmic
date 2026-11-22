@@ -812,7 +812,10 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		if (effectData.notes[i] >= 32 && effectData.notes[i] < 128) d += effectData.notes[i];
 */
 	d = strRemoveXmlTags(d, true);
+#ifdef AE_PLUGIN
 	d = strToAscii(d);
+#endif
+	// OFX strings are UTF-8, as G'MIC's: no transliteration on the OFX path
 	strReplace(d, "<", "(");
 	strReplace(d, ">", ")");
 //	strReplace(d, "\n", "\\n");
@@ -1825,8 +1828,7 @@ void getPluginInfo(int pluginIndex, PluginInfo& pluginInfo)
 	
 	string d = pluginGlobalData.pluginData[pluginIndex].notes;
 	//strReplace(d, "\n", "\\n");
-	d = strRemoveXmlTags(d, true);
-	d = strToAscii(d);
+	d = strRemoveXmlTags(d, true); // UTF-8, as OFX strings are
 	strReplace(d, "<", "(");
 	strReplace(d, ">", ")");
 	pluginInfo.description = d + ignoreAlphaNote(pluginGlobalData.pluginData[pluginIndex]) + layerTimesNote(pluginGlobalData.pluginData[pluginIndex]) + "\n\n" + PLUGIN_DESCRIPTION;

@@ -2238,7 +2238,7 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 // https://github.com/ofxa/openfx/blob/64ba52fff61894759fbf3942b92659b02b2b17cd/HostSupport/include/ofxhXml.h
 //
 // With the old version:
-// - All characters within 0x01..0x1f and 0x7F..0x9F, except \t \b \r (0x09 0x0A 0X0D) are forbidden
+// - All characters within U+0001..U+001F and U+007F..U+009F, except \t \b \r (0x09 0x0A 0X0D) are forbidden
 //   in label and grouping, because these may be used to build the GUI before loading the plugin.
 //   They may appear in the description, although it is not recommended.
 // - The '<' and '&' characters generate bad XML in all cases
@@ -2262,8 +2262,13 @@ static string validateXMLString(std::string const & s)
             case '&':
                 break;
             default: {
-                unsigned char c = (unsigned char)(s[i]);
-                if ( !((0x01 <= c && c <= 0x1f) || (0x7F <= c && c <= 0x9F)) ) {
+                // UTF-8 (OFX strings are): the C1 controls U+0080..U+009F are the two bytes C2 80..C2 9F;
+                // the bytes 0x80..0x9F of other characters (e.g. "’", E2 80 99) must stay
+                const unsigned char c = (unsigned char)(s[i]);
+                const unsigned char next = (i + 1 < s.size()) ? (unsigned char)(s[i + 1]) : 0;
+                if (c == 0xC2 && 0x80 <= next && next <= 0x9F) {
+                    ++i;
+                } else if ( !((0x01 <= c && c <= 0x1f) || c == 0x7F) ) {
                     r += c;
                 }
             } break;

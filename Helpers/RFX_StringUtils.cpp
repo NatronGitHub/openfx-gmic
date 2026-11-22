@@ -425,7 +425,79 @@ string strToAscii(string& s)
 #endif
 		else if ((unsigned char)s[i] >= 128 || (unsigned char)s[i] < 10) s[i] = ' ';
 	}
+#undef ascii_conv
 	return s;
+}
+
+// Append the UTF-8 encoding of the code point cp (U+FFFD if it is not a valid one).
+static void appendUtf8(string& out, unsigned long cp)
+{
+	if (cp == 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) cp = 0xFFFD;
+	if (cp < 0x80) {
+		out += static_cast<char>(cp);
+	} else if (cp < 0x800) {
+		out += static_cast<char>(0xC0 | (cp >> 6));
+		out += static_cast<char>(0x80 | (cp & 0x3F));
+	} else if (cp < 0x10000) {
+		out += static_cast<char>(0xE0 | (cp >> 12));
+		out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+		out += static_cast<char>(0x80 | (cp & 0x3F));
+	} else {
+		out += static_cast<char>(0xF0 | (cp >> 18));
+		out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+		out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+		out += static_cast<char>(0x80 | (cp & 0x3F));
+	}
+}
+
+// Replace the HTML entities of s (&amp; &nbsp; ..., &#233; and &#xE9;) and G'MIC's "\251" with
+// their UTF-8 characters, in one pass (so that "&amp;#233;" gives "&#233;"). Unknown entities are
+// left as they are.
+static string utf8Entities(const string& s)
+{
+	static const struct { const char* name; unsigned long cp; } named[] = {
+		{ "amp", '&' }, { "lt", '<' }, { "gt", '>' }, { "quot", '"' }, { "apos", '\'' },
+		{ "nbsp", ' ' }, // a plain space, as before
+		{ "hearts", 0x2665 },
+	};
+	string r;
+	r.reserve(s.size());
+	for (size_t i = 0; i < s.size(); ++i) {
+		if (s.compare(i, 4, "\\251") == 0) { // the octal escape of the copyright sign
+			appendUtf8(r, 0xA9);
+			i += 3;
+			continue;
+		}
+		const size_t semi = (s[i] == '&') ? s.find(';', i + 1) : string::npos;
+		if (semi == string::npos || semi - i > 10) {
+			r += s[i];
+			continue;
+		}
+		const string e = s.substr(i + 1, semi - i - 1);
+		unsigned long cp = 0;
+		bool known = false;
+		if (e.size() >= 2 && e[0] == '#') {
+			const bool hex = (e[1] == 'x' || e[1] == 'X');
+			const string digits = e.substr(hex ? 2 : 1);
+			known = !digits.empty() && digits.find_first_not_of(hex ? "0123456789abcdefABCDEF" : "0123456789") == string::npos;
+			if (known) cp = strtoul(digits.c_str(), NULL, hex ? 16 : 10);
+		} else {
+			for (const auto& n : named) {
+				if (e == n.name) {
+					cp = n.cp;
+					known = true;
+					break;
+				}
+			}
+		}
+		if (known) {
+			appendUtf8(r, cp);
+			i = semi;
+		} else {
+			r += s[i];
+		}
+	}
+	return r;
 }
 
 string strRemoveXmlTags(const string& s, bool replaceEntities)
@@ -442,26 +514,7 @@ string strRemoveXmlTags(const string& s, bool replaceEntities)
 		}
 	}
 	if (replaceEntities) {
-		strReplace(r, "&amp;", "&");
-		strReplace(r, "&nbsp;", " ");
-		strReplace(r, "&hearts;", "");
-		strReplace(r, "\\251", "(C)");
-		strReplace(r, "&#224;", "a"); // agrave
-		strReplace(r, "&#225;", "a"); // aacute
-		strReplace(r, "&#228;", "a"); // auml
-		strReplace(r, "&#229;", "a"); // aring
-		strReplace(r, "&#231;", "c"); // ccedil
-		strReplace(r, "&#232;", "e"); // egrave
-		strReplace(r, "&#233;", "e"); // eacute
-		strReplace(r, "&#239;", "i"); // iuml
-		strReplace(r, "&#244;", "o"); // ocirc
-		strReplace(r, "&#252;", "u"); // uuml
-		for (int i = 230; i < 255; i++) {
-			unsigned char c = (unsigned char)i;
-			string ss; ss += c;
-			strReplace(r, "&#" + intToString(i) + ";", ss);
-		
-		}
+		r = utf8Entities(r);
 	}
 	return r;
 }
