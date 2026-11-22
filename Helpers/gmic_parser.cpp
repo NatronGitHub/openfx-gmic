@@ -272,10 +272,10 @@ void processParam(const string& s, EffectParameter& cp)
 	if (cp.paramType == "bool") {
 		// 'bool(default_value={ 0 | 1 | false | true })'
 		// Add a boolean parameter (0 or 1) (as a checkbutton).
-		// "true"/"false" are the whole value, not substrings of other parameters' values; case
-		// sensitive, as in G'MIC-Qt (BoolParameter::initFromText: "True" is false)
+		// As G'MIC-Qt (BoolParameter::initFromText): true if the trimmed value starts with "true" or
+		// "1" (case sensitive: "True" is false), else false; only for bool(), not in other values
 		const string v = strTrim(pval, " \t\r\n");
-		cp.defaultValue = (v == "true") ? "1" : (v == "false") ? "0" : v;
+		cp.defaultValue = (v.compare(0, 4, "true") == 0 || v.compare(0, 1, "1") == 0) ? "1" : "0";
 		cp.minValue = "0";
 		cp.maxValue = "1";
 	} else if (cp.paramType == "button") {
