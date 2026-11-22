@@ -107,29 +107,24 @@ int loadBufferFromFile(const string& filename, unsigned char** bufferP, unsigned
 
 string loadStringFromFile(const string& filename, const bool loadOnlyText)
 {
-    string res;
-	if (filename == "") return res;
-	ifstream infile;
-    infile.open(filename.c_str(), ios::in | ios::binary | ios::ate);
-    if (infile.is_open()) {
-        int size = (int)infile.tellg();
-        char* bufferP = new char[size];
-        infile.seekg (0, ios::beg);
-        infile.read(bufferP, size);
-		if (!infile) size = (int)infile.gcount();
-        infile.close();
-
-		if (!loadOnlyText) {
-			res = string(reinterpret_cast<const char*>(bufferP), size);
-		} else {
-			for (int i = 0; i < size; i++) {
-				if ((unsigned char)bufferP[i] >= 13 && (unsigned char)bufferP[i] <= 127)
-					res += bufferP[i];
-			}
-		}
-		delete[] bufferP;
-    }
-    return res;
+	// an empty string if the file can't be read: missing, unreadable, a directory (whose tellg()
+	// is -1), or a read error
+	if (filename.empty()) return string();
+	ifstream infile(filename.c_str(), ios::in | ios::binary | ios::ate);
+	if (!infile) return string();
+	const streamoff size = infile.tellg();
+	if (size <= 0) return string();
+	string buffer(static_cast<size_t>(size), '\0');
+	infile.seekg(0, ios::beg);
+	infile.read(&buffer[0], size);
+	if (infile.bad()) return string();
+	buffer.resize(static_cast<size_t>(infile.gcount()));
+	if (!loadOnlyText) return buffer;
+	string res;
+	for (const char c : buffer) {
+		if ((unsigned char)c >= 13 && (unsigned char)c <= 127) res += c;
+	}
+	return res;
 }
 
 int saveStringToFile(const string& s, const string& filename, const bool unifyLineEndings)

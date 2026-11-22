@@ -397,13 +397,20 @@ static string gmicGetHotfixes(const string& stdlib)
 	return hotfixes;
 }
 
-class PluginGlobalData
+// The filters, parsed from the G'MIC stdlib (or a user file) once, on first use.
+struct PluginGlobalData
 {
-public:
 	vector<EffectData> pluginData;
 	vector<string> pluginContent;
 	string hotfixes; // custom commands for every run, see gmicGetHotfixes()
-	PluginGlobalData() {
+};
+
+static PluginGlobalData loadPluginGlobalData()
+{
+	PluginGlobalData data;
+	vector<EffectData>& pluginData = data.pluginData;
+	vector<string>& pluginContent = data.pluginContent;
+	{
 		// The hot fixes are checked against the built-in stdlib, which G'MIC always loads: decompress
 		// it once here (~35 ms), even when the filters come from a user file (gmic_ofx.gmic).
 		string stdlib;
@@ -412,7 +419,7 @@ public:
 			stdlib = string(lib);
 			gmic_delete_external((float*)lib);
 		}
-		hotfixes = gmicGetHotfixes(stdlib);
+		data.hotfixes = gmicGetHotfixes(stdlib);
 		bool builtinStdlib = false; // the curated lists of the parser are only checked against it
 		string effectContent = loadStringFromFile(get_gmic_rc_path() + "gmic_ofx.gmic");
 		if (effectContent.empty()) {
@@ -441,10 +448,28 @@ public:
 				++i;
 			}
 		}
-	};
-};
+	}
+	return data;
+}
 
-PluginGlobalData pluginGlobalData;
+// Built on first use (OfxGetNumberOfPlugins), not in a global constructor during dlopen, where an
+// exception would terminate the host and gmic_get_stdlib() could run before the statics of gmic.cpp
+// are initialised (C++ Core Guidelines I.22); a function-local static is initialised once,
+// thread-safely. A failure gives zero plug-ins.
+static const PluginGlobalData& pluginGlobalData()
+{
+	static const PluginGlobalData data = []() {
+		try {
+			return loadPluginGlobalData();
+		} catch (const std::exception& e) {
+			fprintf(stderr, "openfx-gmic: Error: could not load the G'MIC filters: %s\n", e.what());
+		} catch (...) {
+			fprintf(stderr, "openfx-gmic: Error: could not load the G'MIC filters\n");
+		}
+		return PluginGlobalData();
+	}();
+	return data;
+}
 
 #endif
 
@@ -583,7 +608,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 	}
 	bool hasContent = effectContent != "";
 #else
-	effectData = pluginGlobalData.pluginData[globalDataP->pluginIndex];
+	effectData = pluginGlobalData().pluginData[globalDataP->pluginIndex];
 	bool hasContent = true;
 #endif
 
@@ -831,7 +856,7 @@ effectDataOf(GlobalData* globalDataP)
 #ifdef AE_PLUGIN
     return ((MyGlobalData*)globalDataP->customGlobalDataP)->effectData;
 #else
-    return pluginGlobalData.pluginData[globalDataP->pluginIndex];
+    return pluginGlobalData().pluginData[globalDataP->pluginIndex];
 #endif
 }
 
@@ -965,7 +990,7 @@ fullCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, unsigned int n
 	customCommands = ((MyGlobalData*)globalDataP->customGlobalDataP)->effectContent;
 #else
 	// the filter's #@gui lines, and the hot fixes for G'MIC bugs (gmic_hotfixes.gmic), on every run
-	customCommands = pluginGlobalData.pluginContent[globalDataP->pluginIndex] + '\n' + pluginGlobalData.hotfixes;
+	customCommands = pluginGlobalData().pluginContent[globalDataP->pluginIndex] + '\n' + pluginGlobalData().hotfixes;
 #endif
 	customCommands += kOpaqueResizedCommand;
 	string cmd = gmicCommand(sequenceDataP, globalDataP, isPreview);
@@ -1817,21 +1842,21 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 
 int getNofPlugins()
 {
-	return (int)pluginGlobalData.pluginData.size();
+	return (int)pluginGlobalData().pluginData.size();
 }
 
 void getPluginInfo(int pluginIndex, PluginInfo& pluginInfo)
 {
-	pluginInfo.name = pluginGlobalData.pluginData[pluginIndex].name;
-	pluginInfo.identifier = pluginGlobalData.pluginData[pluginIndex].uniqueId;
-	pluginInfo.category = pluginGlobalData.pluginData[pluginIndex].category;
+	pluginInfo.name = pluginGlobalData().pluginData[pluginIndex].name;
+	pluginInfo.identifier = pluginGlobalData().pluginData[pluginIndex].uniqueId;
+	pluginInfo.category = pluginGlobalData().pluginData[pluginIndex].category;
 	
-	string d = pluginGlobalData.pluginData[pluginIndex].notes;
+	string d = pluginGlobalData().pluginData[pluginIndex].notes;
 	//strReplace(d, "\n", "\\n");
 	d = strRemoveXmlTags(d, true); // UTF-8, as OFX strings are
 	strReplace(d, "<", "(");
 	strReplace(d, ">", ")");
-	pluginInfo.description = d + ignoreAlphaNote(pluginGlobalData.pluginData[pluginIndex]) + layerTimesNote(pluginGlobalData.pluginData[pluginIndex]) + "\n\n" + PLUGIN_DESCRIPTION;
+	pluginInfo.description = d + ignoreAlphaNote(pluginGlobalData().pluginData[pluginIndex]) + layerTimesNote(pluginGlobalData().pluginData[pluginIndex]) + "\n\n" + PLUGIN_DESCRIPTION;
 	pluginInfo.major_version = MAJOR_VERSION;
 	pluginInfo.minor_version = MINOR_VERSION;
 }
