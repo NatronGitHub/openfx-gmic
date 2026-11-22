@@ -91,10 +91,6 @@
 #endif
 #endif
 
-// the following flags apply to the OFX plugin interface only and are ignored if set in an AE plugin!
-#define NO_MULTITHREADED_CONVERSION
-#define IMG_FLIP_Y
-
 // the following flags apply to the AE plugin interface only and are ignored if set in an OFX plugin!
 #define	_PF_OutFlag2_AE13_5_THREADSAFE 4194304
 #define _PF_OutFlag2_SUPPORTS_GET_FLATTENED_SEQUENCE_DATA 8388608

@@ -77,13 +77,6 @@ string strLowercase(const string& str)
 	return s;
 }
 
-string strUppercase(const string& str)
-{
-	string s = str;
-	transform(s.begin(), s.end(), s.begin(), [](char c) { return (c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A') : c; });
-	return s;
-}
-
 string strTrim(const string& str, const string& whitespace)
 {
     const size_t strBegin = str.find_first_not_of(whitespace);
@@ -129,24 +122,6 @@ void strSplit(const string& s, const char seperator, vector<string>& results)
 	}
 	string substring = strTrim(s.substr(prev_pos, pos - prev_pos));
 	if (substring != "") results.push_back(substring); // Last word
-}
-
-string strAfterFirst(const string& s, const string& ss, const int ofs)
-{ 
-	int ii = (int)s.find(ss); 
-	if (ii >= 0) 
-		return s.substr(ii + ofs);
-	else
-		return "";
-}
-
-string strAfterLast(const string& s, const string& ss, const int ofs)
-{ 
-	int ii = (int)s.rfind(ss); 
-	if (ii >= 0) 
-		return s.substr(ii + ofs);
-	else
-		return "";
 }
 
 // Number conversions use the classic ("C") locale, whatever the global C or C++ locale of the
@@ -207,89 +182,6 @@ double stringToDouble(const string& s)
     return strtod(t.c_str(), NULL);
 #endif
 }
-
-// hex string/buffer conversion
-
-string bufferToHexString(const unsigned char* buf, const unsigned int length)
-{
-	stringstream ss;
-	for (size_t i = 0; length > i; ++i)
-        	ss << hex << setw(2) << setfill('0') << static_cast<unsigned int>(static_cast<unsigned char>(buf[i]));
-	return ss.str();
-}
-
-void hexBufferToBuffer(const unsigned char* inbuf, const unsigned int length, unsigned char* outbuf)
-{
-    unsigned int ocnt = 0;
-    for (size_t i = 0; i < length; i += 2) {
-        size_t s = 0;
-        stringstream ss;
-        ss << std::hex << inbuf[i] << inbuf[i + 1];
-        ss >> s;
-        outbuf[ocnt++] = (static_cast<unsigned char>(s));
-    }
-}
-
-void hexStringToBuffer(const string& hexstr, unsigned char* outbuf)
-{
-	hexBufferToBuffer((const unsigned char*)hexstr.c_str(), (int)hexstr.length(), outbuf);
-}
-
-string hexStringToString(const string& hexstr)
-{
-	string h = hexstr;
-	strReplace(h, " ", "");
-	unsigned char* buf = new unsigned char[(h.length() / 2) + 1];
-	hexStringToBuffer(h, buf);
-	buf[h.length() / 2] = 0;
-	string s = string((char*)buf);
-	delete [] buf;
-	return s;
-}
-
-string stringToHexString(const string& str)
-{
-	return bufferToHexString((const unsigned char*)str.c_str(), (int)str.length());
-}
-
-string strGetTokenValue(const string& script, const string& token, const string& defaultValue, bool ignoreCase)
-{
-    string val = defaultValue;
-    int iPos = -1;
-    int iStartPos = 0;
-
-    bool found = false;
-    do {
-        if (ignoreCase) {
-            string scriptL = strLowercase(script);
-            string tokenL = strLowercase(token);
-	        iPos = (int)scriptL.find(tokenL, iStartPos);
-        } else {
-	        iPos = (int)script.find(token, iStartPos);
-        }
-        if (iPos < 0) {
-            break;
-        } else if (iPos == 0 || script[iPos-1] == '\r' || script[iPos-1] == '\n') {
-            found = true;
-        } else {
-            iStartPos = iPos + 1;
-        }
-    } while (!found);
-
-	if (iPos >= 0) {
-		iPos = (int)script.find("=", iPos);
-		if (iPos < 0) iPos = (int)script.find(" ", iPos);
-		int iPos2 = (int)script.find_first_of("\r\n)", iPos);
-		if (iPos2 > 0) {
-			val = script.substr(iPos + 1, iPos2 - iPos - 1);
-        } else {
-			val = script.substr(iPos + 1);
-        }
-	}
-	val = strTrim(val, " \t\r\n'\"");
-	return val;
-}
-
 
 string strToAscii(string& s)
 {
@@ -526,14 +418,6 @@ string strRemoveXmlTags(const string& s, bool replaceEntities)
 		r = utf8Entities(r);
 	}
 	return r;
-}
-
-void strToChar(string src, char** dst)
-{
-	if (*dst) delete (*dst);
-	*dst = new char[src.length() + 1];
-	memset(*dst, 0, src.length() + 1);
-	strcpy(*dst, src.c_str());
 }
 
 }

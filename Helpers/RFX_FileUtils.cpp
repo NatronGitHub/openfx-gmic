@@ -54,58 +54,9 @@
 #include <iterator>
 #include <exception>
 
-#include "RFX_StringUtils.h"
-
 using namespace std;
 
 namespace reduxfx {
-
-bool fileExists(const string& inFilename)
-{
-    FILE *fileP;
-#ifndef _WIN32
-	fileP = fopen(inFilename.c_str(), "r");
-#else
-	fopen_s(&fileP, inFilename.c_str(), "r");
-#endif
-	if (fileP == NULL) return false;
-	fclose(fileP);
-	return true;
-}
-
-int loadBufferFromFile(const string& filename, unsigned char** bufferP, unsigned int& bufferSize, const bool piggybackMode)
-{
-	bufferSize = 0;
-	*bufferP = NULL;
-	if (filename == "") return -1;
-	ifstream infile;
-    infile.open(filename.c_str(), ios::in | ios::binary | ios::ate);
-    if (infile.is_open()) {
-		if (piggybackMode) {
-			infile.seekg(0, ios::end);
-			unsigned int flen = (unsigned int)infile.tellg();
-			int ofs = (int)flen - sizeof(int);
-			infile.seekg(ofs, ios::beg);
-			infile.read((char*)(&bufferSize), sizeof(int));
-			ofs = (int)flen - (int)bufferSize - sizeof(int);
-			if (ofs < 0 || bufferSize == 0) {
-				infile.close();
-				return -1;
-			}
-	        infile.seekg(ofs, ios::beg);
-		} else {
-			bufferSize = (unsigned int)infile.tellg();
-	        infile.seekg(0, ios::beg);
-		}
-        *bufferP = new unsigned char[bufferSize];
-        infile.read((char*)*bufferP, bufferSize);
-		if (!infile) bufferSize = (unsigned int)infile.gcount();
-        
-		infile.close();
-		return 0;
-    }
-    return -1;
-}
 
 string loadStringFromFile(const string& filename, const bool loadOnlyText)
 {
@@ -128,42 +79,6 @@ string loadStringFromFile(const string& filename, const bool loadOnlyText)
 		if ((unsigned char)c >= 13 && (unsigned char)c <= 127) res += c;
 	}
 	return res;
-}
-
-int saveStringToFile(const string& s, const string& filename, const bool unifyLineEndings)
-{
-    ofstream myfile(filename.c_str(), ios::out | ios::binary);
-    if (myfile.is_open()) {
-        if (!unifyLineEndings) {
-            myfile.write(s.c_str(), s.size());
-        } else {
-            string res = s;
-            strReplace(res, "\r\n", "\n");
-            strReplace(res, "\r", "\n");
-            strReplace(res, "\n", "\r\n");
-            myfile.write(res.c_str(), s.size());
-        }
-        myfile.close();
-	    return 0;
-    }
-	return -1;
-}
-
-int saveBufferToFile(const unsigned char** bufferP, const unsigned int bufferSize, const string& filename, const bool piggybackMode)
-{
-	ofstream outfile;
-	if (piggybackMode) {
-		outfile.open(filename.c_str(), ios::out | ios::binary | ios::app);
-	} else {
-		outfile.open(filename.c_str(), ios::out | ios::binary);
-	}
-    if (outfile.is_open()) {
-        outfile.write((char*)(*bufferP), bufferSize);
-		if (piggybackMode) outfile.write((char*)&bufferSize, sizeof(int));
-        outfile.close();			
-		return 0;
-    }
-	return -1;
 }
 
 };

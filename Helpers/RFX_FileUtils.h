@@ -57,15 +57,7 @@
 
 namespace reduxfx {
 
-bool fileExists(const std::string& inFilename);
-
-int loadBufferFromFile(const std::string& filename, unsigned char** bufferP, unsigned int& bufferSize, const bool piggybackMode = false);
-
 std::string loadStringFromFile(const std::string& filename, const bool loadOnlyText = false);
-
-int saveStringToFile(const std::string& s, const std::string& filename, const bool unifyLineEndings = true);
-
-int saveBufferToFile(const unsigned char** bufferP, const unsigned int bufferSize, const std::string& filename, const bool piggybackMode = false);
 
 };
 #endif
