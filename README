@@ -124,7 +124,7 @@ Building with CMake
     cmake --install build --prefix <dir>   # <dir>/OFX/Plugins/GMIC.ofx.bundle
 
 Distribute the installed bundle (cmake --install), not build/Plugins: the install finishes it
-(mode 755; macOS: MacPorts/Homebrew rpaths removed, re-signed; OFX_DEPLOY_BUNDLES: bundled
+(mode 755; macOS: rpaths into /opt/local, /usr/local, Homebrew removed, re-signed; OFX_DEPLOY_BUNDLES: bundled
 libraries).
 
 Options (the Makefile's equivalent in parentheses):
