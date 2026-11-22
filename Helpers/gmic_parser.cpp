@@ -266,17 +266,16 @@ void processParam(const string& s, EffectParameter& cp)
 	cp.paramType = strLowercase(cp.paramType);
 	string pval = strTrim(r.substr(p1 + 1));
 	pval = pval.substr(0, pval.size() - 1);
-	const string rawVal = pval; // text(): without the true/false replacement below
-	strLowercase(pval);
-	strReplace(pval, "true", "1");
-	strReplace(pval, "false", "0");
 
 	// For parameters description, see "Specific rules for the universal plug-in"
 	// in the gmic_stdlib.gmic file in the G'MIC sources.
 	if (cp.paramType == "bool") {
 		// 'bool(default_value={ 0 | 1 | false | true })'
 		// Add a boolean parameter (0 or 1) (as a checkbutton).
-		cp.defaultValue = pval;
+		// "true"/"false" are the whole value, not substrings of other parameters' values; case
+		// sensitive, as in G'MIC-Qt (BoolParameter::initFromText: "True" is false)
+		const string v = strTrim(pval, " \t\r\n");
+		cp.defaultValue = (v == "true") ? "1" : (v == "false") ? "0" : v;
 		cp.minValue = "0";
 		cp.maxValue = "1";
 	} else if (cp.paramType == "button") {
@@ -344,7 +343,7 @@ void processParam(const string& s, EffectParameter& cp)
 		// Add a pre-defined value parameter (not displayed). It is passed as a quoted string, so
 		// strip quotes from a quoted value ('value("-1")'), or they would be passed literally.
 		// As G'MIC-Qt (ConstParameter::initFromText): unquoted then unescaped, like text().
-		cp.defaultValue = textUnescaped(textUnquoted(rawVal));
+		cp.defaultValue = textUnescaped(textUnquoted(pval));
 	} else if (cp.paramType == "file" || cp.paramType == "filein" || cp.paramType == "fileout") {
 		// 'file[_in,_out](_default_filename)'
 		// Add a filename parameter (as a filechooser).
@@ -403,7 +402,7 @@ void processParam(const string& s, EffectParameter& cp)
 		// Kaleido Patterns: the default is "0xFFFFFFFF"); the rest is unquoted (one pair of
 		// enclosing double quotes, else trimmed) then unescaped as cimg::strunescape does.
 		// maxValue holds the flag.
-		string v = rawVal;
+		string v = pval;
 		size_t b = v.find_first_not_of(" \t\r\n");
 		cp.maxValue = "0";
 		if (b != string::npos && (v[b] == '0' || v[b] == '1')) {
