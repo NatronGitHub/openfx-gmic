@@ -71,8 +71,6 @@
 #include "nuke/fnPublicOfxExtensions.h"
 #endif
 
-// #include "../../../Helpers/TLog.h"
-
 #include <string>
 #include <sstream>
 #include <locale>
@@ -98,7 +96,6 @@ extern void destroyCustomGlobalData(void* customGlobalDataP);
 extern void* createCustomSequenceData();
 extern void destroyCustomSequenceData(void* customSequenceDataP);
 
-extern int pluginParamChange(int index, SequenceData* sequenceDataP, GlobalData* globalDataP, ContextData* contextDataP);
 extern int pluginSetup(GlobalData* globalDataP, ContextData* contextDataP);
 extern int pluginSetdown(GlobalData* globalDataP, ContextData* contextDataP);
 extern int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextData* contextDataP);

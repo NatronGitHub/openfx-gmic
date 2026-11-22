@@ -99,6 +99,8 @@
 
 #ifndef PIPL
 
+// CONVERT_INT_TO_FLOAT, CONVERT_FLOAT_TO_INT and PLANAR_BUFFER are read by the AE glue only: the OFX glue always uses float planar buffers
+
 // if this is defined, 8bpc (0-255) input layers will be transformed into 32bpc (0.0-1.0) input layers
 // this should in most cases be set, as you then only have to write algorithms for float data
 #define CONVERT_INT_TO_FLOAT
@@ -492,7 +494,6 @@ static void frameCacheRelease(const void* owner);
 class MySequenceData
 {
 public:
-	//string command;
 	gmic_interface_options options;
 
 	MySequenceData() {
