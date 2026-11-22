@@ -381,10 +381,10 @@ void processParam(const string& s, EffectParameter& cp)
 		p2 = (int)pval.find(",", p1 + 1);
 		if (p2 != (int)std::string::npos) {
 			// alignment, label, URL
-			cp.text = strTrim(pval.substr(p1+1, p2-1), " \t\r\n'\"") + ": " + strTrim(pval.substr(p2+1), " \t\r\n'\"");
+			cp.text = strTrim(pval.substr(p1 + 1, p2 - p1 - 1), " \t\r\n'\"") + ": " + strTrim(pval.substr(p2+1), " \t\r\n'\"");
 		} else if (p1 != (int)std::string::npos) {
 			// label, URL
-			cp.text = strTrim(pval.substr(0, p1-1), " \t\r\n'\"") + ": " + strTrim(pval.substr(p1+1), " \t\r\n'\"");
+			cp.text = strTrim(pval.substr(0, p1), " \t\r\n'\"") + ": " + strTrim(pval.substr(p1+1), " \t\r\n'\"");
 		} else {
 			// URL
 			cp.text = strTrim(pval, " \t\r\n'\"");
