@@ -1517,6 +1517,14 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 			if (sourceImg[i] == NULL) {
 				myData->sequenceDataP->inputConnected[i] = false;
 				if (i == 0) {
+					// the render fails (see the handler below): say why, unless the host aborted it
+					if (!gEffectHost->abort(instance)) {
+						if (gMessageSuiteV2) {
+							gMessageSuiteV2->setPersistentMessage(instance, kOfxMessageError, "", "No image from %s at frame %g", clipName.c_str(), inTime);
+						} else if (gMessageSuite) {
+							gMessageSuite->message(instance, kOfxMessageError, "", "No image from %s at frame %g", clipName.c_str(), inTime);
+						}
+					}
 					throw OfxuNoImageException();
 				} else {
 					myData->sequenceDataP->inWorld[i].data = NULL;
