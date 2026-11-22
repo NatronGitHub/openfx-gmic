@@ -705,12 +705,14 @@ OfxStatus getSpatialRoD(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPro
 	// retrieve any instance data associated with this effect
 	MyInstanceData *myData = getMyInstanceData(effect);
 
-	OfxTime time;
-	gPropHost->propGetDouble(inArgs, kOfxPropTime, 0, &time);
-
-	// my RoD is the same as my input's
-	OfxRectD rod;
-	gEffectHost->clipGetRegionOfDefinition(myData->input[0], time, &rod);
+	OfxTime time = 0.;
+	OfxRectD rod = {0., 0., 0., 0.};
+	// my RoD is the same as my input's (the host's default if it can't be read)
+	if (!myData || !myData->input[0] ||
+		gPropHost->propGetDouble(inArgs, kOfxPropTime, 0, &time) != kOfxStatOK ||
+		gEffectHost->clipGetRegionOfDefinition(myData->input[0], time, &rod) != kOfxStatOK) {
+		return kOfxStatReplyDefault;
+	}
 
 	// set the rod in the out args
 	gPropHost->propSetDoubleN(outArgs, kOfxImageEffectPropRegionOfDefinition, 4, &rod.x1);
@@ -731,6 +733,7 @@ OfxStatus getSpatialRoI(int pluginIndex, OfxImageEffectHandle effect, OfxPropert
 	// With layer times, the region of definition of each frame fetched (see render): the union of
 	// them for Source, whose frames may also be layers.
 	MyInstanceData *myData = getMyInstanceData(effect);
+	if (!myData) return kOfxStatReplyDefault;
 	OfxTime time = 0.;
 	gPropHost->propGetDouble(inArgs, kOfxPropTime, 0, &time);
 	const LayerTimes lt = layerTimesOf(pluginIndex, myData, time);
@@ -782,6 +785,7 @@ OfxStatus getFramesNeeded(int pluginIndex, OfxImageEffectHandle effect, OfxPrope
 		return kOfxStatReplyDefault;
 	}
 	MyInstanceData *myData = getMyInstanceData(effect);
+	if (!myData) return kOfxStatReplyDefault;
 	OfxTime time = 0.;
 	gPropHost->propGetDouble(inArgs, kOfxPropTime, 0, &time);
 	const LayerTimes lt = layerTimesOf(pluginIndex, myData, time);
@@ -820,11 +824,15 @@ static
 OfxStatus getTemporalDomain(int /*pluginIndex*/, OfxImageEffectHandle effect, OfxPropertySetHandle /*inArgs*/, OfxPropertySetHandle outArgs)
 {
 	MyInstanceData *myData = getMyInstanceData(effect);
-	double sourceRange[2];
+	double sourceRange[2] = {0., 0.};
 	
-	// get the frame range of the source clip
-	OfxPropertySetHandle props; gEffectHost->clipGetPropertySet(myData->input[0], &props);
-	gPropHost->propGetDoubleN(props, kOfxImageEffectPropFrameRange, 2, sourceRange);
+	// get the frame range of the source clip (the host's default if it can't be read)
+	OfxPropertySetHandle props = NULL;
+	if (!myData || !myData->input[0] ||
+		gEffectHost->clipGetPropertySet(myData->input[0], &props) != kOfxStatOK ||
+		gPropHost->propGetDoubleN(props, kOfxImageEffectPropFrameRange, 2, sourceRange) != kOfxStatOK) {
+		return kOfxStatReplyDefault;
+	}
 
 	// set it on the out args
 	gPropHost->propSetDoubleN(outArgs, kOfxImageEffectPropFrameRange, 2, sourceRange);
@@ -863,6 +871,7 @@ static OfxStatus getClipPreferences(int pluginIndex, OfxImageEffectHandle effect
 {
 	// retrieve any instance data associated with this effect
 	MyInstanceData *myData = getMyInstanceData(effect);
+	if (!myData) return kOfxStatReplyDefault;
 	
 	// get the component type and bit depth of our main input
 	int	bitDepth;
@@ -934,8 +943,8 @@ static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance,
 	setContextData(contextData, instance, inArgs, outArgs, pluginIndex);
 
 	// see why it changed
-	const char *changeReason;
-	gPropHost->propGetString(inArgs, kOfxPropChangeReason, 0, &changeReason);
+	const char *changeReason = NULL;
+	if (gPropHost->propGetString(inArgs, kOfxPropChangeReason, 0, &changeReason) != kOfxStatOK) changeReason = NULL;
 
 	// Layers from Source raised by the user: give the layers it adds whose offset is still 0 the
 	// previous frames (Layer -k at -k), a frame window instead of copies of the current frame. Not
@@ -948,7 +957,7 @@ static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance,
 		if (d && d->layersFromSource && name && strcmp(name, LAYERS_FROM_SOURCE_PARAM) == 0) {
 			const int previous = d->lastLayersFromSource;
 			gParamHost->paramGetValue(d->layersFromSource, &d->lastLayersFromSource);
-			if (strcmp(changeReason, kOfxChangeUserEdited) == 0 && d->lastLayersFromSource > previous) {
+			if (changeReason && strcmp(changeReason, kOfxChangeUserEdited) == 0 && d->lastLayersFromSource > previous) {
 				OfxTime time = 0.;
 				gPropHost->propGetDouble(inArgs, kOfxPropTime, 0, &time);
 				const LayerTimes lt = layerTimesOf(pluginIndex, d, time);
@@ -995,19 +1004,23 @@ static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance,
 	}
 
 	// we are only interested in user edits
-	if (strcmp(changeReason, kOfxChangeUserEdited) != 0) return kOfxStatReplyDefault;
+	if (!changeReason || strcmp(changeReason, kOfxChangeUserEdited) != 0) return kOfxStatReplyDefault;
 
 	// fetch the type of the object that changed
-	const char *typeChanged;
-	gPropHost->propGetString(inArgs, kOfxPropType, 0, &typeChanged);
+	const char *typeChanged = NULL;
+	if (gPropHost->propGetString(inArgs, kOfxPropType, 0, &typeChanged) != kOfxStatOK || !typeChanged) {
+		return kOfxStatReplyDefault;
+	}
 
 	// was it a clip or a param?
 	bool isClip = strcmp(typeChanged, kOfxTypeClip) == 0;
 	bool isParam = strcmp(typeChanged, kOfxTypeParameter) == 0;
 
 	// get the name of the thing that changed
-	const char *objChanged;
-	gPropHost->propGetString(inArgs, kOfxPropName, 0, &objChanged);
+	const char *objChanged = NULL;
+	if (gPropHost->propGetString(inArgs, kOfxPropName, 0, &objChanged) != kOfxStatOK || !objChanged) {
+		return kOfxStatReplyDefault;
+	}
 
 	// retrieve any instance data associated with this effect
 	MyInstanceData* myData = getMyInstanceData(instance);
@@ -1421,13 +1434,18 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 
 	// get the time from the inArgs (the render window is not used: tiles are not supported, and
 	// the whole output image is rendered)
-	OfxTime time;
+	OfxTime time = 0.;
 	OfxStatus status = kOfxStatOK;
 
-	gPropHost->propGetDouble(inArgs, kOfxPropTime, 0, &time);
+	if (gPropHost->propGetDouble(inArgs, kOfxPropTime, 0, &time) != kOfxStatOK) {
+		return kOfxStatFailed;
+	}
 
 	// retrieve any instance data associated with this effect
 	MyInstanceData *myData = getMyInstanceData(instance);
+	if (!myData) {
+		return kOfxStatFailed;
+	}
 
 	OfxPropertySetHandle outputImg = NULL;
 	OfxPropertySetHandle sourceImg[MAX_NOF_LAYERS] = { 0 };
