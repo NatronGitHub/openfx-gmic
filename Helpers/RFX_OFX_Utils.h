@@ -1008,19 +1008,16 @@ static OfxStatus instanceChanged(int pluginIndex, OfxImageEffectHandle instance,
 
 	// fetch the type of the object that changed
 	const char *typeChanged = NULL;
-	if (gPropHost->propGetString(inArgs, kOfxPropType, 0, &typeChanged) != kOfxStatOK || !typeChanged) {
-		return kOfxStatReplyDefault;
-	}
+	if (gPropHost->propGetString(inArgs, kOfxPropType, 0, &typeChanged) != kOfxStatOK) typeChanged = NULL;
+
+	// get the name of the thing that changed
+	const char *objChanged = NULL;
+	if (gPropHost->propGetString(inArgs, kOfxPropName, 0, &objChanged) != kOfxStatOK) objChanged = NULL;
+	if (!typeChanged || !objChanged) return kOfxStatReplyDefault;
 
 	// was it a clip or a param?
 	bool isClip = strcmp(typeChanged, kOfxTypeClip) == 0;
 	bool isParam = strcmp(typeChanged, kOfxTypeParameter) == 0;
-
-	// get the name of the thing that changed
-	const char *objChanged = NULL;
-	if (gPropHost->propGetString(inArgs, kOfxPropName, 0, &objChanged) != kOfxStatOK || !objChanged) {
-		return kOfxStatReplyDefault;
-	}
 
 	// retrieve any instance data associated with this effect
 	MyInstanceData* myData = getMyInstanceData(instance);
@@ -2465,13 +2462,9 @@ static OfxStatus pluginMain(int pluginIndex, const char *action, const void *han
 static void setHostFunc(OfxHost *hostStruct)
 {
 	gHost = hostStruct;
-	try {
-		OfxStatus stat = ofxuFetchHostSuites();
-		if (stat == kOfxStatOK) {
-			gMessageSuiteV2 = (OfxMessageSuiteV2*)gHost->fetchSuite(gHost->host, kOfxMessageSuite, 2);
-		}
-	} catch (...) {
-		// no exception may reach the host (a C caller)
+	OfxStatus stat = ofxuFetchHostSuites();
+	if (stat == kOfxStatOK) {
+		gMessageSuiteV2 = (OfxMessageSuiteV2*)gHost->fetchSuite(gHost->host, kOfxMessageSuite, 2);
 	}
 }
 
@@ -2522,30 +2515,28 @@ void initPlugins()
 // The plug-in list is built once: the host may keep the pointers into it (pluginIdentifier).
 // No exception may reach the host (a C caller): if building it fails (bad_alloc), there are no
 // plug-ins, and the next call tries again.
-static bool ensurePlugins()
+static void ensurePlugins()
 {
-	if (!gPlugins.empty()) return true;
+	if (!gPlugins.empty()) return;
 	try {
 		initPlugins();
-		return true;
 	} catch (...) {
 		gPlugins.clear();
 		globalData.clear();
-		return false;
 	}
 }
 
 // the two mandated functions
 OfxExport OfxPlugin* OfxGetPlugin(int nth)
 {
-	if (!ensurePlugins()) return NULL;
+	ensurePlugins();
 	if (nth >= 0 && nth < (int)gPlugins.size()) return &gPlugins[nth];
 	return NULL;
 }
  
 OfxExport int OfxGetNumberOfPlugins(void)
 {
-	if (!ensurePlugins()) return 0;
+	ensurePlugins();
 	return (int)gPlugins.size();
 } 
 
