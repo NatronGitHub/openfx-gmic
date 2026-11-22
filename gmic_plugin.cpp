@@ -719,7 +719,10 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 			} else if (paramType == "input") {
 				t = PT_LAYER;
 			} else {
-				assert(false);
+				// a type this plug-in doesn't know (e.g. from a newer G'MIC, or a malformed line in
+				// ~/.config/gmic; the parser warns): shown as an empty note, not passed to G'MIC
+				t = PT_TEXT;
+				flags = 4;
 			}
 		}
 		// a value(...) parameter is a hidden constant argument: its value is the default, which
