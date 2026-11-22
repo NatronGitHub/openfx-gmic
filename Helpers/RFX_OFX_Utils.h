@@ -1517,6 +1517,14 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 			if (sourceImg[i] == NULL) {
 				myData->sequenceDataP->inputConnected[i] = false;
 				if (i == 0) {
+					// the render fails (see the handler below): say why, unless the host aborted it
+					if (!gEffectHost->abort(instance)) {
+						if (gMessageSuiteV2) {
+							gMessageSuiteV2->setPersistentMessage(instance, kOfxMessageError, "", "No image from %s at frame %g", clipName.c_str(), inTime);
+						} else if (gMessageSuite) {
+							gMessageSuite->message(instance, kOfxMessageError, "", "No image from %s at frame %g", clipName.c_str(), inTime);
+						}
+					}
 					throw OfxuNoImageException();
 				} else {
 					myData->sequenceDataP->inWorld[i].data = NULL;
@@ -1870,10 +1878,12 @@ static OfxStatus render(int pluginIndex, OfxImageEffectHandle instance, OfxPrope
 #endif
 
 	} catch(OfxuNoImageException &ex) {
-		// if we were interrupted, the failed fetch is fine, just return kOfxStatOK
-		// otherwise, something weird happened
+		// no output image, or no Source image (the main input, not optional): the output was not
+		// written. If we were interrupted, the failed fetch is fine, just return kOfxStatOK (the
+		// host discards an aborted render); otherwise fail, so that the host doesn't use (and
+		// cache) an unwritten output (as in the OFX Programming Guide's examples).
 		if (!gEffectHost->abort(instance)) {
-			// status = kOfxStatFailed;
+			status = kOfxStatFailed;
 		}
 	} catch(OfxuStatusException &ex) {
 		status = ex.status();
@@ -2238,7 +2248,7 @@ static OfxStatus describeInContext(int pluginIndex, OfxImageEffectHandle effect,
 // https://github.com/ofxa/openfx/blob/64ba52fff61894759fbf3942b92659b02b2b17cd/HostSupport/include/ofxhXml.h
 //
 // With the old version:
-// - All characters within 0x01..0x1f and 0x7F..0x9F, except \t \b \r (0x09 0x0A 0X0D) are forbidden
+// - All characters within U+0001..U+001F and U+007F..U+009F, except \t \b \r (0x09 0x0A 0X0D) are forbidden
 //   in label and grouping, because these may be used to build the GUI before loading the plugin.
 //   They may appear in the description, although it is not recommended.
 // - The '<' and '&' characters generate bad XML in all cases
@@ -2262,8 +2272,13 @@ static string validateXMLString(std::string const & s)
             case '&':
                 break;
             default: {
-                unsigned char c = (unsigned char)(s[i]);
-                if ( !((0x01 <= c && c <= 0x1f) || (0x7F <= c && c <= 0x9F)) ) {
+                // UTF-8 (OFX strings are): the C1 controls U+0080..U+009F are the two bytes C2 80..C2 9F;
+                // the bytes 0x80..0x9F of other characters (e.g. "’", E2 80 99) must stay
+                const unsigned char c = (unsigned char)(s[i]);
+                const unsigned char next = (i + 1 < s.size()) ? (unsigned char)(s[i + 1]) : 0;
+                if (c == 0xC2 && 0x80 <= next && next <= 0x9F) {
+                    ++i;
+                } else if ( !((0x01 <= c && c <= 0x1f) || c == 0x7F) ) {
                     r += c;
                 }
             } break;

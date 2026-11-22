@@ -51,6 +51,8 @@
 #include <string>
 #include <iostream>
 #include <fstream>
+#include <iterator>
+#include <exception>
 
 #include "RFX_StringUtils.h"
 
@@ -107,29 +109,25 @@ int loadBufferFromFile(const string& filename, unsigned char** bufferP, unsigned
 
 string loadStringFromFile(const string& filename, const bool loadOnlyText)
 {
-    string res;
-	if (filename == "") return res;
-	ifstream infile;
-    infile.open(filename.c_str(), ios::in | ios::binary | ios::ate);
-    if (infile.is_open()) {
-        int size = (int)infile.tellg();
-        char* bufferP = new char[size];
-        infile.seekg (0, ios::beg);
-        infile.read(bufferP, size);
-		if (!infile) size = (int)infile.gcount();
-        infile.close();
-
-		if (!loadOnlyText) {
-			res = string(reinterpret_cast<const char*>(bufferP), size);
-		} else {
-			for (int i = 0; i < size; i++) {
-				if ((unsigned char)bufferP[i] >= 13 && (unsigned char)bufferP[i] <= 127)
-					res += bufferP[i];
-			}
-		}
-		delete[] bufferP;
-    }
-    return res;
+	// Postcondition: the file's contents, or an empty string if it can't be read (missing, a
+	// directory, unreadable, or too large to hold). The size isn't taken from tellg(), which can be
+	// -1 or 2^63-1 for a directory (ext4 htree); libstdc++ throws ios_base::failure when reading one.
+	if (filename.empty()) return string();
+	ifstream infile(filename.c_str(), ios::in | ios::binary);
+	if (!infile) return string();
+	string buffer;
+	try {
+		buffer.assign(istreambuf_iterator<char>(infile), istreambuf_iterator<char>());
+	} catch (const exception&) { // bad_alloc, length_error, ios_base::failure (EISDIR, EIO)
+		return string();
+	}
+	if (infile.bad()) return string();
+	if (!loadOnlyText) return buffer;
+	string res;
+	for (const char c : buffer) {
+		if ((unsigned char)c >= 13 && (unsigned char)c <= 127) res += c;
+	}
+	return res;
 }
 
 int saveStringToFile(const string& s, const string& filename, const bool unifyLineEndings)

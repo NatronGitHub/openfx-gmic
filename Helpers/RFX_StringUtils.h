@@ -58,45 +58,47 @@
 
 namespace reduxfx {
 
-std::string strLowercase(const std::string& str);
+// [[nodiscard]]: these return a new value and leave their arguments alone (C++ Core Guidelines F.20)
 
-std::string strUppercase(const std::string& str);
+[[nodiscard]] std::string strLowercase(const std::string& str);
 
-std::string strTrim(const std::string& str, const std::string& whitespace = " \t\0");
+[[nodiscard]] std::string strUppercase(const std::string& str);
+
+[[nodiscard]] std::string strTrim(const std::string& str, const std::string& whitespace = " \t\0");
 
 void strReplace(std::string& str, const std::string& search, const std::string& replace, bool firstOnly = false, bool caseInsensitive = false);
 
 void strSplit(const std::string& s, const char seperator, std::vector<std::string>& results);
 
-std::string strAfterFirst(const std::string& s, const std::string& ss, const int ofs = 0);
+[[nodiscard]] std::string strAfterFirst(const std::string& s, const std::string& ss, const int ofs = 0);
 
-std::string strAfterLast(const std::string& s, const std::string& ss, const int ofs = 0);
+[[nodiscard]] std::string strAfterLast(const std::string& s, const std::string& ss, const int ofs = 0);
 
-std::string intToString(const int i);
+[[nodiscard]] std::string intToString(const int i);
 
-std::string floatToString(const float i);
+[[nodiscard]] std::string floatToString(const float i);
 
 // parse a number written with '.' as the decimal separator, whatever the locale (0 if none)
-double stringToDouble(const std::string& s);
+[[nodiscard]] double stringToDouble(const std::string& s);
 
 // hex string/buffer conversion
 
-std::string bufferToHexString(const unsigned char* buf, const unsigned int length);
+[[nodiscard]] std::string bufferToHexString(const unsigned char* buf, const unsigned int length);
 
 void hexBufferToBuffer(const unsigned char* inbuf, const unsigned int length, unsigned char* outbuf);
 
 void hexStringToBuffer(const std::string& hexstr, unsigned char* outbuf);
 
-std::string hexStringToString(const std::string& hexstr);
+[[nodiscard]] std::string hexStringToString(const std::string& hexstr);
 
-std::string stringToHexString(const std::string& str);
+[[nodiscard]] std::string stringToHexString(const std::string& str);
 
-std::string strGetTokenValue(const std::string& script, const std::string& token, const std::string& defaultValue = "", bool ignoreCase = true);
+[[nodiscard]] std::string strGetTokenValue(const std::string& script, const std::string& token, const std::string& defaultValue = "", bool ignoreCase = true);
 
 
 std::string strToAscii(std::string& s);
 
-std::string strRemoveXmlTags(const std::string& s, bool replaceEntities = false);
+[[nodiscard]] std::string strRemoveXmlTags(const std::string& s, bool replaceEntities = false);
 
 void strToChar(std::string src, char** dst);
 

@@ -266,17 +266,16 @@ void processParam(const string& s, EffectParameter& cp)
 	cp.paramType = strLowercase(cp.paramType);
 	string pval = strTrim(r.substr(p1 + 1));
 	pval = pval.substr(0, pval.size() - 1);
-	const string rawVal = pval; // text(): without the true/false replacement below
-	strLowercase(pval);
-	strReplace(pval, "true", "1");
-	strReplace(pval, "false", "0");
 
 	// For parameters description, see "Specific rules for the universal plug-in"
 	// in the gmic_stdlib.gmic file in the G'MIC sources.
 	if (cp.paramType == "bool") {
 		// 'bool(default_value={ 0 | 1 | false | true })'
 		// Add a boolean parameter (0 or 1) (as a checkbutton).
-		cp.defaultValue = pval;
+		// As G'MIC-Qt (BoolParameter::initFromText): true if the trimmed value starts with "true" or
+		// "1" (case sensitive: "True" is false), else false; only for bool(), not in other values
+		const string v = strTrim(pval, " \t\r\n");
+		cp.defaultValue = (v.compare(0, 4, "true") == 0 || v.compare(0, 1, "1") == 0) ? "1" : "0";
 		cp.minValue = "0";
 		cp.maxValue = "1";
 	} else if (cp.paramType == "button") {
@@ -344,7 +343,7 @@ void processParam(const string& s, EffectParameter& cp)
 		// Add a pre-defined value parameter (not displayed). It is passed as a quoted string, so
 		// strip quotes from a quoted value ('value("-1")'), or they would be passed literally.
 		// As G'MIC-Qt (ConstParameter::initFromText): unquoted then unescaped, like text().
-		cp.defaultValue = textUnescaped(textUnquoted(rawVal));
+		cp.defaultValue = textUnescaped(textUnquoted(pval));
 	} else if (cp.paramType == "file" || cp.paramType == "filein" || cp.paramType == "fileout") {
 		// 'file[_in,_out](_default_filename)'
 		// Add a filename parameter (as a filechooser).
@@ -382,10 +381,10 @@ void processParam(const string& s, EffectParameter& cp)
 		p2 = (int)pval.find(",", p1 + 1);
 		if (p2 != (int)std::string::npos) {
 			// alignment, label, URL
-			cp.text = strTrim(pval.substr(p1+1, p2-1), " \t\r\n'\"") + ": " + strTrim(pval.substr(p2+1), " \t\r\n'\"");
+			cp.text = strTrim(pval.substr(p1 + 1, p2 - p1 - 1), " \t\r\n'\"") + ": " + strTrim(pval.substr(p2+1), " \t\r\n'\"");
 		} else if (p1 != (int)std::string::npos) {
 			// label, URL
-			cp.text = strTrim(pval.substr(0, p1-1), " \t\r\n'\"") + ": " + strTrim(pval.substr(p1+1), " \t\r\n'\"");
+			cp.text = strTrim(pval.substr(0, p1), " \t\r\n'\"") + ": " + strTrim(pval.substr(p1+1), " \t\r\n'\"");
 		} else {
 			// URL
 			cp.text = strTrim(pval, " \t\r\n'\"");
@@ -403,7 +402,7 @@ void processParam(const string& s, EffectParameter& cp)
 		// Kaleido Patterns: the default is "0xFFFFFFFF"); the rest is unquoted (one pair of
 		// enclosing double quotes, else trimmed) then unescaped as cimg::strunescape does.
 		// maxValue holds the flag.
-		string v = rawVal;
+		string v = pval;
 		size_t b = v.find_first_not_of(" \t\r\n");
 		cp.maxValue = "0";
 		if (b != string::npos && (v[b] == '0' || v[b] == '1')) {
@@ -458,10 +457,7 @@ static bool usesSeveralLayers(const string& content)
 	if ((int)content.find(" layers") > 0) {
 		return true;
 	}
-	string lc = content;
-	for (size_t i = 0; i < lc.size(); ++i) {
-		lc[i] = (char)tolower((unsigned char)lc[i]);
-	}
+	const string lc = strLowercase(content);
 	// also a note asking for two images, or a choice/note naming another input: "requires 2 images
 	// as input" (Save Noise Print), "Two input images" (Fast Median Stack), "at least 2 layer"
 	// (Tiled Form), "another image" (Softlight), "Other Layer (Image)" (Page Curl); not the
@@ -531,10 +527,10 @@ string gmic_parse_single(const string& content, EffectData& cd)
 						string &name = cd.param[cd.param.size() - 1].name;
 						// Only add a space if the previous line does not end with "\n" or "\"
 						// (see eg. the "Privacy Notice" in gmic_stdlib.gmic)
-						if (name.size() < 2 ||
-							!(name[name.size()-2] == '\\' && name[name.size()-1] == 'n') ||
-							!(name[name.size()-1] == '\\')) {
-							cd.param[cd.param.size() - 1].name += ' ';
+						const bool endsWithNewline = name.size() >= 2 && name.compare(name.size() - 2, 2, "\\n") == 0;
+						const bool endsWithBackslash = !name.empty() && name[name.size() - 1] == '\\';
+						if (!(endsWithNewline || endsWithBackslash)) {
+							name += ' ';
 						}
 						int pEnd = (int)line.find(inMultiClose);
 						if (pEnd > 0) {
@@ -901,8 +897,7 @@ static void markMultiInputFilters(const string& content, vector<EffectData>& cds
 static bool namesFrames(const string& s)
 {
 	static const char* const words[] = { "video", "frame", "frames" };
-	string lc = s;
-	for (size_t i = 0; i < lc.size(); ++i) lc[i] = (char)tolower((unsigned char)lc[i]);
+	const string lc = strLowercase(s);
 	for (size_t w = 0; w < sizeof(words) / sizeof(words[0]); ++w) {
 		const size_t n = strlen(words[w]);
 		for (size_t pos = lc.find(words[w]); pos != string::npos; pos = lc.find(words[w], pos + 1)) {
