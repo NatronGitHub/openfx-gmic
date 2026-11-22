@@ -123,9 +123,7 @@ Building with CMake
     cmake --build build              # build/Plugins/GMIC.ofx.bundle
     cmake --install build --prefix <dir>   # <dir>/OFX/Plugins/GMIC.ofx.bundle
 
-Distribute the installed bundle, not build/Plugins: on Linux, the build tree's GMIC.ofx has a
-RUNPATH that CMake pads with ':' (empty entries, which the loader takes as the current
-directory) until cmake --install rewrites it, and the build tree's bundle has no Info.plist.
+Distribute the installed bundle, not build/Plugins: the build tree's bundle has no Info.plist.
 
 Options (the Makefile's equivalent in parentheses):
 - CMAKE_BUILD_TYPE: Release (default), Debug or RelWithDebInfo (CONFIG).

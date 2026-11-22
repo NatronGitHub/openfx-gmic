@@ -9,9 +9,9 @@
 # - it exports only OfxGetNumberOfPlugins and OfxGetPlugin (the version script keeps the symbols
 #   of the static libraries local);
 # - its RUNPATH and RPATH, if present, are not empty and have no empty entry, which the loader
-#   takes as the current directory:
-#   CMake pads the RUNPATH of build-tree binaries with ':' until cmake --install rewrites it, so
-#   check (and ship) the installed bundle.
+#   takes as the current directory (CMake pads a build-tree RUNPATH with ':' unless
+#   BUILD_WITH_INSTALL_RPATH, which openfx's add_ofx_plugin sets): check (and ship) the installed
+#   bundle.
 # SHARED_DEPS=1: a GMIC_STATIC_DEPS=OFF build (Natron's release builds, distribution packages),
 # which may need the shared zlib and libpng (libz.so.1, libpng16.so.16).
 # Usage: [SHARED_DEPS=1] check_linux_deps.sh <GMIC.ofx.bundle>
