@@ -1,5 +1,5 @@
 PLUGINNAME = GMIC
-PLUGINSOURCES = gmic.cpp gmic_plugin.cpp gmic_plugin_call.cpp gmic_parser.cpp RFX_FileUtils.cpp RFX_StringUtils.cpp
+PLUGINSOURCES = gmic.cpp gmic_plugin.cpp gmic_plugin_call.cpp gmic_parser.cpp RFX_StringUtils.cpp
 PLUGINOBJECTS = $(PLUGINSOURCES:.cpp=.o)
 
 SRCDIR = ..
@@ -61,7 +61,6 @@ $(OBJECTPATH)/gmic_plugin.o: $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h
 CXXFLAGS += \
 -DOFX_EXTENSIONS_NATRON \
 -DOFX_EXTENSIONS_NUKE \
--DOFX_PLUGIN \
 -I$(SRCDIR) \
 -I$(SRCDIR)/Helpers \
 -I$(SRCDIR)/openfx/include \

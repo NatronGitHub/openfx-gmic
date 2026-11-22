@@ -81,8 +81,8 @@ struct EffectData {
 	bool previewOnly;
 	// the main command may need the state left by G'MIC-Qt's preview (_persistent, or the status
 	// that fills a value() parameter): if it fails, render with the preview command (issue #52).
-	// The _persistent rule needs the whole stdlib (gmic_parse_multi); gmic_parse_single (used by
-	// the unmaintained AE build) only applies the value() rule.
+	// The _persistent rule needs the whole stdlib (gmic_parse_multi); gmic_parse_single only
+	// applies the value() rule.
 	bool previewFallback;
     std::vector<EffectParameter> param;
 };

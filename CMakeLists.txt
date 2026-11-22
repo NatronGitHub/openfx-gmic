@@ -582,7 +582,6 @@ add_ofx_plugin(GMIC
     gmic_plugin_call.cpp
     gmic_plugin_call.h
     Helpers/gmic_parser.cpp
-    Helpers/RFX_FileUtils.cpp
     Helpers/RFX_StringUtils.cpp)
 # The resources of GMIC_OFX/Makefile, before ofx_deploy_bundle (below): the icon, the licences of
 # the plug-in and G'MIC (COPYING: dual CeCILL-C / CeCILL v2; COMMERCIAL builds use CeCILL-C);
@@ -629,7 +628,6 @@ target_include_directories(GMIC PRIVATE
 # (OFX_EXTENSIONS_NATRON/NUKE come from openfx's options, default ON, through openfx::Api: don't
 # add or remove them here, https://github.com/NatronGitHub/openfx/pull/264.)
 target_compile_definitions(GMIC PRIVATE
-  OFX_PLUGIN
   gmic_core
   gmic_is_parallel
   cimg_use_abort

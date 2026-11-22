@@ -3,9 +3,8 @@
  #
  #  File        : gmic_plugin.cpp
  #
- #  Description : The sources for a plugin that can be compiled for both 
- #                After Effects and OpenFX hosts and which interface the
- #                G'MIC library     
+ #  Description : The sources of an OpenFX plugin which interfaces the
+ #                G'MIC library
  #
  #  Copyright   : Tobias Fleischer / reduxFX Productions (http://www.reduxfx.com)
  #
@@ -74,44 +73,9 @@
 
 #define PLUGIN_DESCRIPTION	"Wrapper for the G'MIC framework (http://gmic.eu) written by Tobias Fleischer (http://www.reduxfx.com) and Frederic Devernay.";
 
-#ifdef OFX_PLUGIN
 #define PLUGIN_NAME	        "G'MIC"
 #define PLUGIN_CATEGORY		"G'MIC"
 #define PLUGIN_UNIQUEID		"GMIC"
-#else
-// AE plugin needs these with spaces to replace them with proper effect names in the gmic_ae_tool
-#define PLUGIN_NAME	        "G'MIC Plugin                   "
-#define PLUGIN_CATEGORY		"G'MIC                          "
-#define PLUGIN_UNIQUEID		"gmic_plugin                    "
-#endif
-
-#ifndef OFX_PLUGIN
-#ifndef AE_PLUGIN
-#define OFX_PLUGIN
-#endif
-#endif
-
-// the following flags apply to the AE plugin interface only and are ignored if set in an OFX plugin!
-#define	_PF_OutFlag2_AE13_5_THREADSAFE 4194304
-#define _PF_OutFlag2_SUPPORTS_GET_FLATTENED_SEQUENCE_DATA 8388608
-#define FX_OUT_FLAGS PF_OutFlag_NON_PARAM_VARY + PF_OutFlag_DEEP_COLOR_AWARE + PF_OutFlag_I_DO_DIALOG + PF_OutFlag_SEND_UPDATE_PARAMS_UI + PF_OutFlag_USE_OUTPUT_EXTENT + PF_OutFlag_CUSTOM_UI
-#define FX_OUT_FLAGS2 PF_OutFlag2_SUPPORTS_SMART_RENDER + PF_OutFlag2_FLOAT_COLOR_AWARE + PF_OutFlag2_PARAM_GROUP_START_COLLAPSED_FLAG + _PF_OutFlag2_AE13_5_THREADSAFE + _PF_OutFlag2_SUPPORTS_GET_FLATTENED_SEQUENCE_DATA
-
-#ifndef PIPL
-
-// CONVERT_INT_TO_FLOAT, CONVERT_FLOAT_TO_INT and PLANAR_BUFFER are read by the AE glue only: the OFX glue always uses float planar buffers
-
-// if this is defined, 8bpc (0-255) input layers will be transformed into 32bpc (0.0-1.0) input layers
-// this should in most cases be set, as you then only have to write algorithms for float data
-#define CONVERT_INT_TO_FLOAT
-
-// if this is defined, 32bpc (0.0-1.0) input layers will be transformed into 8bpc (0-255) input layers
-// this should in most cases NOT be set, as you will lose precision
-// #define CONVERT_FLOAT_TO_INT
-
-// if this is defined, pixel data is not stored interleaved internally (RGBARGBARGBA...) but in a planar buffer (RRR... GGG... BBB... AAA...)
-// this should in most cases NOT be set, unless you (or a specific library) need the pixel buffers in this format
-#define PLANAR_BUFFER
 
 // Layout of the last parameters (see pluginSetup): Command, [Advanced Options group start], Output Layer,
 // Resize Mode, Ignore Alpha, Preview/Draft Mode, Global Random Seed, Animate Random Seed, Log Verbosity,
@@ -136,22 +100,15 @@
 #error "/fp:fast breaks G'MIC: use /fp:precise"
 #endif
 
-#ifdef OFX_PLUGIN
-    #include "RFX_OFX_Utils.h"
-#else
-    #include "RFX_AE_Utils.h"
-#endif
+#include "RFX_OFX_Utils.h"
 
 #include "gmic_parser.h"
 #include "gmic_libc.h"
 #include "gmic_plugin_call.h"
 #include <cmath>
 
-#include "RFX_FileUtils.h"
-
 using namespace reduxfx;
 
-#ifdef OFX_PLUGIN
 #include <sstream>
 #include <map>
 #include <set>
@@ -163,6 +120,8 @@ using namespace reduxfx;
 #include <cstdio>
 #include <cstdlib>
 #include <cassert>
+#include <fstream>
+#include <iterator>
 #include <chrono>
 #include <condition_variable>
 #include <exception>
@@ -176,7 +135,7 @@ using namespace reduxfx;
 #include <pthread.h>
 #else
 // CreateThread (the render thread) and GlobalMemoryStatusEx (physicalMemoryBytes), without the
-// min/max macros (RFX_Utils.h, included above, already includes windows.h)
+// min/max macros
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -186,6 +145,25 @@ using namespace reduxfx;
 #include <iostream>
 #endif
 
+
+// The contents of a file, or an empty string if it can't be read (missing, a directory, unreadable,
+// or too large to hold). The size isn't taken from tellg(), which can be -1 or 2^63-1 for a
+// directory (ext4 htree); libstdc++ throws ios_base::failure when reading one.
+static
+string loadStringFromFile(const string& filename)
+{
+	if (filename.empty()) return string();
+	std::ifstream infile(filename.c_str(), std::ios::in | std::ios::binary);
+	if (!infile) return string();
+	string buffer;
+	try {
+		buffer.assign(std::istreambuf_iterator<char>(infile), std::istreambuf_iterator<char>());
+	} catch (const std::exception&) { // bad_alloc, length_error, ios_base::failure (EISDIR, EIO)
+		return string();
+	}
+	if (infile.bad()) return string();
+	return buffer;
+}
 
 static
 string get_gmic_rc_path()
@@ -473,23 +451,16 @@ const PluginGlobalData& pluginGlobalData()
 
 } // namespace
 
-#endif
 
 class MyGlobalData
 {
 public:
-#ifdef AE_PLUGIN
-	EffectData effectData;
-	string effectContent;
-#endif
 	MyGlobalData() {};
 	~MyGlobalData() {};
 };
 
-#ifdef OFX_PLUGIN
 // the results kept for Output Layer "Frame" (see frameCacheStore)
 static void frameCacheRelease(const void* owner);
-#endif
 
 class MySequenceData
 {
@@ -508,9 +479,7 @@ public:
 		options.no_inplace_processing = false;
 	};
 	~MySequenceData() {
-#ifdef OFX_PLUGIN
 		frameCacheRelease(this);
-#endif
 		delete[] options.error_message_buffer;
 	};
 };
@@ -519,8 +488,6 @@ void* createCustomGlobalData() { return new MyGlobalData(); }
 void destroyCustomGlobalData(void* customGlobalDataP) { delete (MyGlobalData*)customGlobalDataP; }
 void* createCustomSequenceData() { return new MySequenceData(); }
 void destroyCustomSequenceData(void* customSequenceDataP) { delete (MySequenceData*)customSequenceDataP; }
-void* flattenCustomSequenceData(void* /*customUnflatSequenceDataP*/, int& /*flatSize*/) { return NULL; }
-void* unflattenCustomSequenceData(void* /*customSequenceDataP*/, int /*flatSize*/) { return new MySequenceData(); }
 
 int pluginSetdown(GlobalData* /*globalDataP*/, ContextData* /*contextDataP*/) { return 0; }
 
@@ -590,34 +557,14 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 	makeFftwThreadSafe();
 #endif
 	globalDataP->scale = 255.f;
-	globalDataP->buttonName = "Reload";
 
 
 	EffectData effectData;
 	effectData.multiLayer = true;
-#ifdef AE_PLUGIN
-	MyGlobalData* myGlobalDataP = (MyGlobalData*)globalDataP->customGlobalDataP;
-	string filename = globalDataP->pluginFilename;
-	int pos = (int)filename.find_last_of(".");
-	if (pos > 0) filename = filename.substr(0, pos);
-	filename = globalDataP->pluginPath + filename + ".gmic";
-	string effectContent = loadStringFromFile(filename);
-	effectContent = gmic_parse_single(effectContent, effectData);
-	if (myGlobalDataP) {
-		myGlobalDataP->effectContent = effectContent;
-		myGlobalDataP->effectData = effectData;
-	}
-	bool hasContent = effectContent != "";
-#else
 	effectData = pluginGlobalData().pluginData[globalDataP->pluginIndex];
 	bool hasContent = true;
-#endif
 
-#ifdef AE_PLUGIN
-	globalDataP->param[0] = Parameter("Input", "", PT_LAYER);
-#else
 	globalDataP->param[0] = Parameter(kOfxImageEffectSimpleSourceClipName, "", PT_LAYER);
-#endif
 	int p = 1;
 	for (int i = 0; i < (int)effectData.param.size(); i++) {
 		int t = PT_FLOAT;
@@ -667,13 +614,11 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 			while (r.size() < 2) r.push_back("50");
 			d1 = (float)stringToDouble(r[0]);
 			d2 = (float)stringToDouble(r[1]);
-#ifdef OFX_PLUGIN
 			// erase any occurence of " (%)" in the string, because the displayed parameter will be in pixels
 			size_t start_pos = name.find(" (%)");
     		if(start_pos != string::npos) {
 				name.erase(start_pos, 4);
 			}
-#endif
 		} else {
 			d1 = (float)stringToDouble(defaultValue);
 			d2 = d1; d3 = d1; d4 = d1;
@@ -784,12 +729,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 	++p;
 	// "Frame" is added at the end (issue #65): the choice is saved as its index (and label in
 	// Natron), so the other options keep their meaning in saved projects
-#ifdef OFX_PLUGIN
 	globalDataP->param[p] = Parameter("Output Layer", "", PT_SELECT, 0, OUTPUT_LAYER_FRAME, 1, 0, 0, 0, "Merged|Layer 0|Layer -1|Layer -2|Layer -3|Layer -4|Layer -5|Layer -6|Layer -7|Layer -8|Layer -9|Frame");
-#else
-	// no Frame in the AE build (its times are in time_scale ticks, and frameRangeStart is not set)
-	globalDataP->param[p] = Parameter("Output Layer", "", PT_SELECT, 0, 10, 1, 0, 0, 0, "Merged|Layer 0|Layer -1|Layer -2|Layer -3|Layer -4|Layer -5|Layer -6|Layer -7|Layer -8|Layer -9|");
-#endif
 	globalDataP->param[p].hint = "The image of the G'MIC results to output. Merged: all the results merged into one. "
 		"Layer 0, Layer -1...: one result, counted from the top of the stack as in G'MIC-Qt (Layer 0 is the first). "
 		"Frame: the result whose number is the frame number minus the first frame of Source, modulo the number of "
@@ -842,9 +782,6 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		if (effectData.notes[i] >= 32 && effectData.notes[i] < 128) d += effectData.notes[i];
 */
 	d = strRemoveXmlTags(d, true);
-#ifdef AE_PLUGIN
-	d = strToAscii(d);
-#endif
 	// OFX strings are UTF-8, as G'MIC's: no transliteration on the OFX path
 	strReplace(d, "<", "(");
 	strReplace(d, ">", ")");
@@ -858,11 +795,7 @@ static
 const EffectData&
 effectDataOf(GlobalData* globalDataP)
 {
-#ifdef AE_PLUGIN
-    return ((MyGlobalData*)globalDataP->customGlobalDataP)->effectData;
-#else
     return pluginGlobalData().pluginData[globalDataP->pluginIndex];
-#endif
 }
 
 // the filter's command line, with its main or preview command
@@ -957,11 +890,7 @@ gmicCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, bool preview)
 // Spirograph makes up to 512 frames, Fade Layers up to 401); the other modes use at most
 // MAX_NOF_LAYERS (Layer -9 is the last one that can be picked)
 static const int kMaxFrameResults = 1024;
-#ifdef OFX_PLUGIN
 static size_t frameCacheBudget();
-#else
-static size_t frameCacheBudget() { return 0; }
-#endif
 
 static bool outputIsFrame(SequenceData* sequenceDataP, GlobalData* globalDataP)
 {
@@ -991,12 +920,8 @@ std::string
 fullCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, unsigned int nofImages, bool isPreview, string& customCommands)
 {
 	MySequenceData* mySequenceDataP = (MySequenceData*)sequenceDataP->customSequenceDataP;
-#ifdef AE_PLUGIN
-	customCommands = ((MyGlobalData*)globalDataP->customGlobalDataP)->effectContent;
-#else
 	// the filter's #@gui lines, and the hot fixes for G'MIC bugs (gmic_hotfixes.gmic), on every run
 	customCommands = pluginGlobalData().pluginContent[globalDataP->pluginIndex] + '\n' + pluginGlobalData().hotfixes;
-#endif
 	customCommands += kOpaqueResizedCommand;
 	string cmd = gmicCommand(sequenceDataP, globalDataP, isPreview);
 
@@ -1095,14 +1020,6 @@ fullCommand(SequenceData* sequenceDataP, GlobalData* globalDataP, unsigned int n
 	return cmd;
 }
 
-// parameter change callback of the host glue (only the AE glue calls it): nothing to do, see
-// "Resize Mode" in pluginSetup
-int pluginParamChange(int /*index*/, SequenceData* /*sequenceDataP*/, GlobalData* /*globalDataP*/, ContextData* /*contextDataP*/)
-{
-	return 0;
-}
-
-#ifdef OFX_PLUGIN
 // Render abort (issue #46): G'MIC polls a flag (p_is_abort), in its interpreter and in CImg's
 // OpenMP loops. The host's abort() must be called from the render thread (Natron reads
 // thread-local render state), and G'MIC only returns when it is done. So run G'MIC in a worker
@@ -1247,7 +1164,6 @@ static int gmicCallAbortable(OfxImageEffectHandle instance, const char* cmd, uns
 	}
 	return d.result;
 }
-#endif
 
 // Output Layer "Frame" (issue #65). Filters such as Fade Layers, Morph Layers (Inter-Frames),
 // Tiles to Layers, Spline Spirograph (Number of Output Frames), 3D Conversion (Render Multiple
@@ -1285,7 +1201,6 @@ static int gmicCallAbortable(OfxImageEffectHandle instance, const char* cmd, uns
 // Single flight: a render that misses while another render (a clone, another thread) runs G'MIC
 // for the same key waits for that run, then takes its result from the cache; if there is none
 // (the run failed or was aborted, or its results were not kept), it runs G'MIC itself.
-#ifdef OFX_PLUGIN
 static unsigned long long physicalMemoryBytes(); // at the end of the file
 
 // OFX_GMIC_FRAME_CACHE_MB: a decimal number >= 0, with '.' as decimal point whatever the locale
@@ -1591,7 +1506,6 @@ int pluginOutputLayerChanged(SequenceData* sequenceDataP, int outputLayer)
 	}
 	return 0;
 }
-#endif
 
 // the frame number of Output Layer "Frame": the render time minus the first frame of Source,
 // rounded to the nearest frame
@@ -1623,11 +1537,9 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		if (sequenceDataP->outWorld.data) {
 			memset(sequenceDataP->outWorld.data, 0, (size_t)sequenceDataP->outWorld.height * (size_t)sequenceDataP->outWorld.rowBytes);
 		}
-#ifdef OFX_PLUGIN
 		if (gMessageSuiteV2) {
 			gMessageSuiteV2->clearPersistentMessage(contextDataP->instance);
 		}
-#endif
 		return err;
 	}
 
@@ -1662,7 +1574,6 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	string errmsg;
 	// Output Layer "Frame": the results kept from a previous render, if the key is the same
 	const long long frame = frameNumberOf(sequenceDataP);
-#ifdef OFX_PLUGIN
 	string cacheKey;
 	std::shared_ptr<const CachedFrame> cachedFrame;
 	// this render runs G'MIC for cacheKey while other renders wait: release the key on any return
@@ -1680,19 +1591,12 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		frameCacheRelease(mySequenceDataP);
 	}
 	const bool runGmic = !cachedFrame && !aborted;
-#else
-	const bool runGmic = true;
-#endif
 	// Frame: at most the results that can be kept (see kFrameSelectCommand), after the key
 	const string frameSelect = frameMode ? " -_openfx_gmic_frame_select " + std::to_string(frame) + "," +
 		intToString(kMaxFrameResults) + "," + std::to_string((unsigned long long)frameCacheBudget()) : string();
 	if (runGmic) {
 		cmd += frameSelect;
-#ifdef OFX_PLUGIN
 		result = gmicCallAbortable(contextDataP->instance, cmd.c_str(), &nofImages, images, maxImages, &mySequenceDataP->options, &aborted);
-#else
-		result = gmic_plugin_call(cmd.c_str(), &nofImages, images, maxImages, &mySequenceDataP->options);
-#endif
 		errmsg = string(mySequenceDataP->options.error_message_buffer);
 		// The retry needs unchanged inputs: gmic_plugin_call() works on copies (no_inplace_processing)
 		// and leaves images[] unchanged on an error. Not after an abort.
@@ -1701,11 +1605,7 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 					effectData.name.c_str(), errmsg.c_str());
 			preview = true;
 			cmd = fullCommand(sequenceDataP, globalDataP, nofImages, preview, customCommands) + frameSelect;
-#ifdef OFX_PLUGIN
 			result = gmicCallAbortable(contextDataP->instance, cmd.c_str(), &nofImages, images, maxImages, &mySequenceDataP->options, &aborted);
-#else
-			result = gmic_plugin_call(cmd.c_str(), &nofImages, images, maxImages, &mySequenceDataP->options);
-#endif
 			if (result != 0 && !aborted) {
 				errmsg += " (with the preview command: " + string(mySequenceDataP->options.error_message_buffer) + ")";
 			}
@@ -1726,9 +1626,7 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 		// layer in G'MIC-Qt, then the "Layer -1" input = [1]...). Past the last result: the last one.
 		// Frame: image [frame mod N] (see frameNumberOf), maybe from the kept results.
 		const gmic_interface_image* res = NULL;
-#ifdef OFX_PLUGIN
 		if (cachedFrame) res = &cachedFrame->image;
-#endif
 		// the result selected by G'MIC: too many or too large to keep
 		const bool selected = frameMode && nofImages == 1 && strcmp(images[0].name, "openfx_gmic_frame_selected") == 0;
 		if (!res && nofImages > 0) {
@@ -1787,7 +1685,6 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 				}
 			}
 		}
-#ifdef OFX_PLUGIN
 		// Frame: keep the results for the next frames (their buffers then belong to the cache)
 		if (result == 0 && useCache && runGmic && !selected) {
 			// out of memory: the results not moved to the cache are freed below, as without cache
@@ -1801,10 +1698,8 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 					(double)frameCacheBudget() / (1024. * 1024.));
 		}
 		if (claim.claimed) { claim.claimed = false; frameCacheRunDone(cacheKey); } // the waiting renders go on
-#endif
 	}
 	if (result != 0 && !aborted) {
-#ifdef OFX_PLUGIN
 		if (gMessageSuiteV2) {
 			// persistent message on the node (cleared by the next successful render), instead of a
 			// modal message on every render
@@ -1816,18 +1711,11 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 			cout << "ERROR: " << errmsg << endl;
 #endif
 		}
-#endif
-#ifdef AE_PLUGIN
-		errmsg = errmsg.substr(0, 255);
-		strcpy(contextDataP->out_data->return_msg, errmsg.c_str());
-#endif
 		err = PF_Err_INTERNAL_STRUCT_DAMAGED;
 	}
-#ifdef OFX_PLUGIN
 	else if (!aborted && gMessageSuiteV2) {
 		gMessageSuiteV2->clearPersistentMessage(contextDataP->instance);
 	}
-#endif
 
 	for (unsigned int i = 0; i < nofImages; i++) {
 		if (!images[i].data) continue; // kept by the cache
@@ -1843,7 +1731,6 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	return err;
 }
 
-#ifdef OFX_PLUGIN
 
 int getNofPlugins()
 {
@@ -1866,25 +1753,6 @@ void getPluginInfo(int pluginIndex, PluginInfo& pluginInfo)
 	pluginInfo.minor_version = MINOR_VERSION;
 }
 
-#else
-
-extern "C" DllExport PF_Err EntryPointFunc(PF_Cmd cmd, PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* param[], PF_LayerDef* outputP, void* extraP)
-{
-	if (cmd == PF_Cmd_DO_DIALOG) {
-		GlobalData* globalDataP = ((AE_GlobalData*)PF_LOCK_HANDLE(in_data->global_data))->globalDataP;
-		pluginSetup(globalDataP, NULL);
-		PF_UNLOCK_HANDLE(in_data->global_data);
-		return PF_Err_NONE;
-	} else {
-		return pluginMain(cmd, in_data, out_data, param, outputP, extraP); 
-	}
-};
-
-#endif
-
-#endif
-
-#ifdef OFX_PLUGIN
 // the physical memory (frameCacheBudget), 0 if unknown
 #if defined(_WIN32)
 // (windows.h: included at the top)
@@ -1909,4 +1777,3 @@ static unsigned long long physicalMemoryBytes()
 	return (pages > 0 && pageSize > 0) ? (unsigned long long)pages * (unsigned long long)pageSize : 0ULL;
 #endif
 }
-#endif
