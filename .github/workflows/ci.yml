@@ -356,6 +356,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      # CI builds aren't shipped: they target the runner's macOS (all openfx* repos). Release
+      # bundles (Natron's, on its macOS 14 VM) target 14.0, CMakeLists.txt's default.
+      - name: Deployment target
+        run: echo "MACOSX_DEPLOYMENT_TARGET=$(sw_vers -productVersion | cut -d. -f1).0" >> "$GITHUB_ENV"
       # the only dependency cache on macOS: setup-macports caches the MacPorts installation
       # (the G'MIC sources are downloaded on each run)
       - name: Install MacPorts and dependencies
@@ -422,9 +426,9 @@ jobs:
       # step's osxDeploy.sh (OFX_DEPLOY_BUNDLES) already copied the MacPorts dylibs into
       # Contents/Libraries; bundle_libs.sh copies any that's missing, removes the rpaths into
       # /opt/local, signs the bundle ad hoc, and fails if a dependency is neither a system library
-      # nor bundled. GMIC.ofx targets macOS 14.0, but the bundled MacPorts dylibs are built for the
-      # runner (minos 15.0, reported by check_macos_minos.sh): the artifact needs macOS 15 or newer
-      # (Natron's release builds, with its SDK, target 14.0). It must be unquarantined after
+      # nor bundled. Like the bundled MacPorts dylibs, GMIC.ofx targets the runner's macOS (see the
+      # Deployment target step): the artifact needs macOS 15 or newer (Natron's release builds,
+      # with its SDK, target 14.0). It must be unquarantined after
       # download (xattr -dr com.apple.quarantine GMIC.ofx.bundle); see the header of bundle_libs.sh.
       - name: Bundle libraries
         if: env.UPLOAD_ARTIFACTS == 'true'
