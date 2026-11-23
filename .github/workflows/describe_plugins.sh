@@ -3,6 +3,9 @@
 # Usage: describe_plugins.sh <dir containing GMIC.ofx.bundle> <minimum number of plug-ins>
 # Uses $CXX (default c++) and $HOST_LDFLAGS (extra link flags, e.g. -L/opt/local/lib).
 # PLUGIN_LIST=<file>: also write the plug-ins' ids, contexts and input clips there (for render_plugins.py).
+# The bundle's list of the plug-ins (gmic_ofx_plugins.txt), if any, must be the described plug-ins;
+# DESCRIBE_USER_LIST=1 (once per CI job: it describes them all again) also checks that a user's
+# list that disables two plug-ins leaves them out.
 # If $HOST_RUN_PATH is set, the host runs with PATH=$HOST_RUN_PATH (the build still uses the
 # current PATH): on Windows, with a statically linked host and a PATH without the MSYS2 bin
 # directory, this checks that the plug-in finds the DLLs bundled with it.
@@ -93,11 +96,10 @@ if grep "openfx-gmic: Warning: hot fix" describe.log; then
     status=1
 fi
 # The bundle's list of the plug-ins (README, "Choosing the plug-ins") has the described plug-ins,
-# all enabled; a user's list that disables two of them leaves them out.
+# all enabled; DESCRIBE_USER_LIST=1: a user's list that disables two of them leaves them out.
 SHIPPED_LIST="$BUNDLE_DIR/GMIC.ofx.bundle/Contents/Resources/gmic_ofx_plugins.txt"
 if [ ! -f "$SHIPPED_LIST" ]; then
-    echo "FAIL: no list of the plug-ins, $SHIPPED_LIST"
-    status=1
+    echo "Note: no list of the plug-ins in the bundle (a GMIC_PLUGIN_LIST=OFF build?): not checked"
 else
     sed -n -e 's/^PLUGIN //p' describe.log | tr -d '\r' | sort > described.txt
     grep -v '^[[:space:]]*#' "$SHIPPED_LIST" | sed -e 's/#.*//' | tr -d ' \t\r' | grep . | sort > listed.txt || true
@@ -106,11 +108,13 @@ else
         echo "FAIL: the bundle's list of the plug-ins (-) is not the described plug-ins (+)"
         status=1
     fi
+fi
+if [ -f "$SHIPPED_LIST" ] && [ "${DESCRIBE_USER_LIST:-}" = 1 ]; then
     first=$(head -n 1 listed.txt)
     last=$(tail -n 1 listed.txt)
     mkdir -p "$WORK/home2/.config/gmic"
-    # (as a user would: commented out, with or without a space after '#'; and stale lines)
-    sed -e "s/^$first /# $first /" -e "s/^$last /#$last /" "$SHIPPED_LIST" > "$WORK/home2/.config/gmic/gmic_ofx_plugins.txt"
+    # (as a user would: commented out with "# " and with "##"; and stale lines)
+    sed -e "s/^$first /# $first /" -e "s/^$last /##$last /" "$SHIPPED_LIST" > "$WORK/home2/.config/gmic/gmic_ofx_plugins.txt"
     printf '# eu.gmic.NoSuchPlugin  # a filter that G'"'"'MIC removed\neu.gmic.NoSuchPlugin2\n' >> "$WORK/home2/.config/gmic/gmic_ofx_plugins.txt"
     mkdir -p "$WORK/home2/gmic" # (Windows: %APPDATA%/gmic)
     cp "$WORK/home2/.config/gmic/gmic_ofx_plugins.txt" "$WORK/home2/gmic/"

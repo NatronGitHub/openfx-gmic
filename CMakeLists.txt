@@ -618,17 +618,32 @@ if(DEFINED GMIC_RESOURCES_KEY AND NOT GMIC_RESOURCES_KEY STREQUAL _resources_key
   file(REMOVE_RECURSE "${OFX_PLUGIN_BUILD_DIR}/GMIC.ofx.bundle/Contents/Resources")
 endif()
 set(GMIC_RESOURCES_KEY "${_resources_key}" CACHE INTERNAL "OFX_LICENSE and FFT of the bundle's resources")
-# The list of the plug-ins (README, "Choosing the plug-ins"), Contents/Resources/gmic_ofx_plugins.txt,
-# every plug-in enabled: written by the plug-in itself, after each link, through a small loader
-# (GMIC_OFX/gmic_ofx_plugin_list.cpp), as GMIC_OFX/Makefile does. Installed before the last
-# ofx_plugin_resources(), which signs the installed bundle on macOS. Not when cross-compiling, as
-# the plug-in can't be loaded then: the bundle has no list, which also registers every plug-in.
-if(NOT CMAKE_CROSSCOMPILING)
+# GMIC_PLUGIN_LIST: the list of the plug-ins (README, "Choosing the plug-ins"),
+# Contents/Resources/gmic_ofx_plugins.txt, every plug-in enabled, written by the plug-in itself
+# after each link, through a small loader (GMIC_OFX/gmic_ofx_plugin_list.cpp), as GMIC_OFX/Makefile
+# does. The build machine must be able to load the plug-in: ON by default unless cross-compiling
+# (with a CMAKE_CROSSCOMPILING_EMULATOR, the loader runs under it). Turn it OFF for builds whose
+# plug-in the build machine can't load, but that CMake doesn't see as cross-compiling: e.g. MSVC
+# ARM64 or Arm64EC built on an x64 machine, or arm64 built on an Intel Mac. Without it, the bundle
+# has no list, which registers every plug-in too. Installed before the last
+# ofx_plugin_resources(), which signs the installed bundle on macOS.
+if(CMAKE_CROSSCOMPILING AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
+  set(_default OFF)
+else()
+  set(_default ON)
+endif()
+option(GMIC_PLUGIN_LIST "Ship the list of the plug-ins (the build loads the plug-in)" ${_default})
+if(GMIC_PLUGIN_LIST)
   get_target_property(_bundle GMIC OFX_BUNDLE_DIR)
   set(_list "${_bundle}/Contents/Resources/gmic_ofx_plugins.txt")
   add_executable(gmic_ofx_plugin_list GMIC_OFX/gmic_ofx_plugin_list.cpp)
+  set_target_properties(gmic_ofx_plugin_list PROPERTIES CXX_STANDARD ${OFX_CXX_STANDARD} CXX_STANDARD_REQUIRED ON) # (>= 17: std::filesystem)
   target_link_libraries(gmic_ofx_plugin_list PRIVATE ${CMAKE_DL_LIBS})
-  # (DEPENDS GMIC: after its POST_BUILD commands too, e.g. the copy of vcomp140.dll that it needs)
+  if(MINGW)
+    target_link_options(gmic_ofx_plugin_list PRIVATE -municode) # (wmain)
+  endif()
+  # (DEPENDS GMIC: after its POST_BUILD commands too, e.g. the copy of vcomp140.dll that it needs.
+  # A target in COMMAND runs under its CROSSCOMPILING_EMULATOR, if any.)
   add_custom_command(OUTPUT "${_list}"
     COMMAND gmic_ofx_plugin_list "$<TARGET_FILE:GMIC>" "${_list}"
     DEPENDS GMIC gmic_ofx_plugin_list

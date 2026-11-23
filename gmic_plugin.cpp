@@ -379,9 +379,9 @@ namespace {
 constexpr const char* kPluginListFile = "gmic_ofx_plugins.txt";
 
 // The plug-in identifiers that "list" (the contents of a gmic_ofx_plugins.txt) disables. Each line
-// is a plug-in identifier, enabled, or disabled if commented out with '#', either one optionally
-// followed by a '#' comment; any other line is a comment. If an identifier is on several lines,
-// the last one wins. (The identifiers aren't checked: one that is no plug-in, e.g. of a filter
+// is a plug-in identifier, enabled, or disabled if commented out with one or more '#' (and spaces),
+// either one optionally followed by a '#' comment; any other line is a comment. If an identifier is
+// on several lines, the last one wins. (The identifiers aren't checked: one that is no plug-in, e.g. of a filter
 // that G'MIC removed, changes nothing.)
 std::set<string> disabledPlugins(const string& list)
 {
@@ -393,7 +393,7 @@ std::set<string> disabledPlugins(const string& list)
 		size_t b = line.find_first_not_of(kSpaces);
 		const bool commented = b != string::npos && line[b] == '#';
 		if (commented) {
-			b = line.find_first_not_of(kSpaces, b + 1);
+			b = line.find_first_not_of(" \t\r#", b); // ("##eu.gmic.X", "# # eu.gmic.X")
 		}
 		if (b == string::npos) {
 			continue;
@@ -415,7 +415,8 @@ std::set<string> disabledPlugins(const string& list)
 // Write the list of the plug-ins pluginData to "path": grouped by menu (in their order within
 // each), each with its menu and label in a comment, those in "disabled" commented out. The build
 // writes the bundle's list so, with every plug-in enabled (GMIC_OFX/gmic_ofx_plugin_list.cpp).
-void writePluginList(const string& path, const vector<EffectData>& pluginData, const std::set<string>& disabled)
+// False if it could not be written (then no file is left at "path").
+[[nodiscard]] bool writePluginList(const string& path, const vector<EffectData>& pluginData, const std::set<string>& disabled)
 {
 	vector<const EffectData*> sorted;
 	sorted.reserve(pluginData.size());
@@ -426,10 +427,13 @@ void writePluginList(const string& path, const vector<EffectData>& pluginData, c
 	std::ofstream out(path.c_str(), std::ios::out | std::ios::binary);
 	out << "# The OpenFX plug-ins of openfx-gmic: one plug-in identifier per line (as saved in projects).\n"
 	       "# To disable a plug-in, comment out its line (\"# eu.gmic.AddGrain\"); after another '#', the\n"
-	       "# rest of a line is a comment. The plug-ins that this list doesn't mention are enabled.\n"
-	       "# Copy it to ~/.config/gmic/" << kPluginListFile << " (Windows: %APPDATA%\\gmic\\" << kPluginListFile << ") to\n"
-	       "# edit it, then restart the host and clear its plug-in cache, if any (README, \"Choosing the\n"
-	       "# plug-ins\"). A project that uses a disabled plug-in can't load its node.\n";
+	       "# rest of a line is a comment. The plug-ins that this list doesn't mention are enabled; if an\n"
+	       "# identifier is on several lines, the last one wins. Copy this file to\n"
+	       "# ~/.config/gmic/" << kPluginListFile << " (Windows: %APPDATA%\\gmic\\" << kPluginListFile << ") to edit it.\n"
+	       "# After a change, restart the host and CLEAR ITS PLUG-IN CACHE (Natron: Cache > Clear Plug-ins\n"
+	       "# Load Cache, or start it once with --clear-openfx-cache): with a stale cache, a host may keep\n"
+	       "# the old menus and create the wrong filter for a node. A project that uses a disabled plug-in\n"
+	       "# can't load that node. See README, \"Choosing the plug-ins\".\n";
 	const string* category = nullptr;
 	for (const EffectData* d : sorted) {
 		if (!category || *category != d->category) {
@@ -440,8 +444,10 @@ void writePluginList(const string& path, const vector<EffectData>& pluginData, c
 	}
 	out.close();
 	if (!out) {
-		fprintf(stderr, "openfx-gmic: Error: could not write the plug-in list %s\n", path.c_str());
+		std::remove(path.c_str());
+		return false;
 	}
+	return true;
 }
 
 // The filters, parsed from the G'MIC stdlib (or a user file) once, on first use.
@@ -511,8 +517,8 @@ PluginGlobalData loadPluginGlobalData()
 		const string rcPath = get_gmic_rc_path();
 		const std::set<string> disabled = rcPath.empty() ? std::set<string>() : disabledPlugins(loadStringFromFile(rcPath + kPluginListFile));
 		const char* const listPath = std::getenv("OFX_GMIC_WRITE_PLUGIN_LIST");
-		if (listPath && *listPath) {
-			writePluginList(listPath, pluginData, disabled);
+		if (listPath && *listPath && !writePluginList(listPath, pluginData, disabled)) {
+			fprintf(stderr, "openfx-gmic: Error: could not write the plug-in list %s\n", listPath);
 		}
 		if (!disabled.empty()) {
 			leaveOutFilters([&disabled](const EffectData& d) { return disabled.count(d.uniqueId) > 0; });

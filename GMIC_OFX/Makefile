@@ -30,15 +30,30 @@ endif
 # The list of the plug-ins (README, "Choosing the plug-ins"), Contents/Resources/gmic_ofx_plugins.txt,
 # every plug-in enabled: written by the plug-in itself, after each link, through a small loader
 # (gmic_ofx_plugin_list.cpp), as CMakeLists.txt does; it loads the bundle's copy (on macOS, the
-# one that osxDeploy.sh changed in release builds).
+# one that osxDeploy.sh changed in release builds). GMIC_PLUGIN_LIST=0: no list, which registers
+# every plug-in too, for a plug-in that the build machine can't load. It is the default when the
+# compiler targets another processor than the build machine's (uname -m; not checked on macOS,
+# whose builds are universal): pass GMIC_PLUGIN_LIST=1 if the build machine runs it anyway (e.g.
+# i686 on x86_64, or MSYS2's emulated x86_64 uname on Windows on Arm).
+ifneq ($(OS),Darwin)
+  norm_machine = $(patsubst aarch64,arm64,$(patsubst amd64,x86_64,$(1)))
+  TARGET_MACHINE := $(call norm_machine,$(firstword $(subst -, ,$(shell $(CXX) -dumpmachine 2>/dev/null))))
+  ifneq ($(and $(TARGET_MACHINE),$(filter-out $(call norm_machine,$(shell uname -m)),$(TARGET_MACHINE))),)
+    GMIC_PLUGIN_LIST ?= 0
+  endif
+endif
+GMIC_PLUGIN_LIST ?= 1
+ifeq ($(GMIC_PLUGIN_LIST),1)
 PLUGINLIST = $(OBJECTPATH)/$(PLUGINNAME).ofx.bundle/Contents/Resources/gmic_ofx_plugins.txt
+PLUGINLIST_TOOL = $(OBJECTPATH)/gmic_ofx_plugin_list$(if $(MINGW_OS),.exe)
 all: $(PLUGINLIST)
-$(OBJECTPATH)/gmic_ofx_plugin_list: gmic_ofx_plugin_list.cpp
+$(PLUGINLIST_TOOL): gmic_ofx_plugin_list.cpp
 	@mkdir -p $(OBJECTPATH)
-	$(CXX) -O1 $< -o $@ $(if $(filter Linux,$(OS)),-ldl)
-$(PLUGINLIST): $(OBJECTPATH)/$(PLUGINNAME).ofx $(OBJECTPATH)/gmic_ofx_plugin_list | $(OBJECTPATH)/$(PLUGINNAME).ofx.bundle
+	$(CXX) $(BITSFLAG) -std=$(or $(CXXSTD),c++17) -O1 $< -o $@ $(if $(filter Linux,$(OS)),-ldl) $(if $(MINGW_OS),-municode)
+$(PLUGINLIST): $(OBJECTPATH)/$(PLUGINNAME).ofx $(PLUGINLIST_TOOL) | $(OBJECTPATH)/$(PLUGINNAME).ofx.bundle
 	@mkdir -p $(@D)
-	$(OBJECTPATH)/gmic_ofx_plugin_list $(OBJECTPATH)/$(PLUGINNAME).ofx.bundle/Contents/$(ARCH)/$(PLUGINNAME).ofx $@
+	$(PLUGINLIST_TOOL) $(OBJECTPATH)/$(PLUGINNAME).ofx.bundle/Contents/$(ARCH)/$(PLUGINNAME).ofx $@
+endif
 
 # LICENSE, FFT, OPENMP and GMIC_STATIC_DEPS change the compiled code, the linked libraries and the
 # bundled files: when they change, rebuild the objects and the bundle (whose Contents/Libraries
