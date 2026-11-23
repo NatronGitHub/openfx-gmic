@@ -4,32 +4,84 @@
 //
 //   gmic_ofx_plugin_list <GMIC.ofx> <output file>
 //
-// It loads the plug-in and calls OfxGetNumberOfPlugins, with OFX_GMIC_WRITE_PLUGIN_LIST=<output
-// file>: the plug-in writes the list when it builds it (gmic_plugin.cpp). HOME and APPDATA are set
-// to a directory that does not exist, so that no G'MIC configuration of the user (a
-// gmic_ofx.gmic, or a gmic_ofx_plugins.txt) changes the list. It fails unless the list has one
-// entry per plug-in. Built and run by CMakeLists.txt (GMIC_PLUGIN_LIST) and GMIC_OFX/Makefile.
-// C++17. Windows: UTF-16 paths (wmain; MinGW links it with -municode).
+// It loads the plug-in and calls OfxGetNumberOfPlugins, with OFX_GMIC_WRITE_PLUGIN_LIST set: the
+// plug-in writes the list when it builds it (gmic_plugin.cpp). HOME and APPDATA are set to a
+// directory that does not exist, so that no G'MIC configuration of the user (a gmic_ofx.gmic, or a
+// gmic_ofx_plugins.txt) changes the list. It fails unless the list has one entry per plug-in.
+// Built and run by CMakeLists.txt (GMIC_PLUGIN_LIST) and GMIC_OFX/Makefile.
+//
+// The plug-in reads these variables with the narrow getenv and writes with a narrow ofstream,
+// which can't represent every path (e.g. a non-ASCII one on Windows): the tool runs in the
+// output's directory and gives them relative ASCII names, then renames the list to the output.
+// Windows: UTF-16 paths (wmain; MinGW links it with -municode). No std::filesystem, which macOS
+// only has from 10.15 (the plug-in may target older versions).
 #ifdef _WIN32
+#include <direct.h>
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <unistd.h>
 #endif
 #include <cstdio>
 #include <cstdlib>
-#include <filesystem>
 #include <fstream>
 #include <string>
 
 namespace {
 
-namespace fs = std::filesystem;
+#ifdef _WIN32
+using Path = std::wstring; // (UTF-16)
+const wchar_t* const kSeparators = L"/\\";
+#else
+using Path = std::string;
+const char* const kSeparators = "/";
+#endif
 
-// The number of entries of the list at "path" (its lines that are neither empty nor comments), -1
-// if it can't be read
-int countEntries(const fs::path& path)
+// the names that the plug-in gets, relative to the output's directory
+constexpr const char* kListName = "gmic_ofx_plugin_list.out";
+constexpr const char* kNoConfig = "gmic_ofx_plugin_list.no-config"; // (not created)
+
+// the ASCII string "s" as a Path
+Path ascii(const char* s)
 {
-    std::ifstream in(path);
+    return Path(s, s + std::char_traits<char>::length(s));
+}
+
+// "path" for messages (Windows: UTF-8)
+std::string display(const Path& path)
+{
+#ifdef _WIN32
+    const int n = WideCharToMultiByte(CP_UTF8, 0, path.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (n <= 1) {
+        return std::string();
+    }
+    std::string s(static_cast<std::string::size_type>(n), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, path.c_str(), -1, &s[0], n, nullptr, nullptr);
+    s.resize(s.size() - 1); // (the terminating null)
+    return s;
+#else
+    return path;
+#endif
+}
+
+// "path" made absolute, or empty if it can't be
+Path absolute(const Path& path)
+{
+#ifdef _WIN32
+    wchar_t* const p = _wfullpath(nullptr, path.c_str(), 0);
+#else
+    char* const p = realpath(path.c_str(), nullptr);
+#endif
+    const Path result = p ? Path(p) : Path();
+    std::free(p);
+    return result;
+}
+
+// The number of entries of the list "name" (its lines that are neither empty nor comments), -1 if
+// it can't be read
+int countEntries(const char* name)
+{
+    std::ifstream in(name);
     if (!in) {
         return -1;
     }
@@ -44,28 +96,21 @@ int countEntries(const fs::path& path)
     return n;
 }
 
-// "path" in UTF-8, for messages
-std::string display(const fs::path& path)
-{
-    const auto s = path.u8string(); // (C++20: a std::u8string)
-    return std::string(s.begin(), s.end());
-}
-
-// Set the environment variable "name" (ASCII) to "value", for the plug-in loaded afterwards
-bool setEnv(const char* name, const fs::path& value)
+// Set the environment variable "name" to "value" (both ASCII), for the plug-in loaded afterwards
+bool setEnv(const char* name, const char* value)
 {
 #ifdef _WIN32
-    // _wputenv_s also sets the process environment (SetEnvironmentVariableW), from which the C
+    // _putenv_s also sets the process environment (SetEnvironmentVariable), from which the C
     // runtime of a plug-in built with /MT (its own copy) takes its environment when it starts, at
     // LoadLibrary: so the plug-in's getenv sees it.
-    return _wputenv_s(fs::path(name).c_str(), value.c_str()) == 0;
+    return _putenv_s(name, value) == 0;
 #else
-    return setenv(name, value.c_str(), 1) == 0;
+    return setenv(name, value, 1) == 0;
 #endif
 }
 
 // Load the plug-in and return its number of plug-ins, or -1 (with a message) if it can't be loaded
-int numberOfPlugins(const fs::path& plugin)
+int numberOfPlugins(const Path& plugin)
 {
     using GetNumberOfPlugins = int (*)();
 #ifdef _WIN32
@@ -90,13 +135,29 @@ int numberOfPlugins(const fs::path& plugin)
     return getNumberOfPlugins();
 }
 
-int run(const fs::path& plugin, const fs::path& output)
+int run(const Path& pluginArg, const Path& output)
 {
-    std::error_code ec;
-    fs::remove(output, ec);
-    fs::path noConfig = output; // (not created)
-    noConfig += ".no-config";
-    if (!setEnv("OFX_GMIC_WRITE_PLUGIN_LIST", output) || !setEnv("HOME", noConfig) || !setEnv("APPDATA", noConfig)) {
+    const Path plugin = absolute(pluginArg); // (before the chdir)
+    const Path::size_type slash = output.find_last_of(kSeparators);
+    const Path dir = slash == Path::npos ? ascii(".") : output.substr(0, slash + 1);
+    const Path name = slash == Path::npos ? output : output.substr(slash + 1);
+#ifdef _WIN32
+    const bool inDir = _wchdir(dir.c_str()) == 0;
+    if (inDir) {
+        _wremove(name.c_str());
+    }
+#else
+    const bool inDir = chdir(dir.c_str()) == 0;
+    if (inDir) {
+        std::remove(name.c_str());
+    }
+#endif
+    if (plugin.empty() || !inDir) {
+        fprintf(stderr, "gmic_ofx_plugin_list: %s not found, or no directory %s\n", display(pluginArg).c_str(), display(dir).c_str());
+        return 1;
+    }
+    std::remove(kListName);
+    if (!setEnv("OFX_GMIC_WRITE_PLUGIN_LIST", kListName) || !setEnv("HOME", kNoConfig) || !setEnv("APPDATA", kNoConfig)) {
         fprintf(stderr, "gmic_ofx_plugin_list: could not set the environment\n");
         return 1;
     }
@@ -104,10 +165,18 @@ int run(const fs::path& plugin, const fs::path& output)
     if (n < 0) {
         return 1;
     }
-    const int entries = countEntries(output);
+    const int entries = countEntries(kListName);
     if (n == 0 || entries != n) {
-        fprintf(stderr, "gmic_ofx_plugin_list: %s has %d plug-ins, but the list %s has %d entries\n",
-            display(plugin).c_str(), n, display(output).c_str(), entries);
+        fprintf(stderr, "gmic_ofx_plugin_list: %s has %d plug-ins, but its list has %d entries\n", display(plugin).c_str(), n, entries);
+        return 1;
+    }
+#ifdef _WIN32
+    const bool renamed = _wrename(ascii(kListName).c_str(), name.c_str()) == 0;
+#else
+    const bool renamed = std::rename(kListName, name.c_str()) == 0;
+#endif
+    if (!renamed) {
+        fprintf(stderr, "gmic_ofx_plugin_list: could not write %s\n", display(output).c_str());
         return 1;
     }
     printf("%s: %d plug-ins\n", display(output).c_str(), n);
@@ -126,5 +195,5 @@ int main(int argc, char** argv)
         fprintf(stderr, "Usage: gmic_ofx_plugin_list <GMIC.ofx> <output file>\n");
         return 2;
     }
-    return run(fs::path(argv[1]), fs::path(argv[2]));
+    return run(argv[1], argv[2]);
 }

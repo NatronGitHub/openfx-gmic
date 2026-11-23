@@ -36,7 +36,8 @@ endif
 # whose builds are universal): pass GMIC_PLUGIN_LIST=1 if the build machine runs it anyway (e.g.
 # i686 on x86_64, or MSYS2's emulated x86_64 uname on Windows on Arm).
 ifneq ($(OS),Darwin)
-  norm_machine = $(patsubst aarch64,arm64,$(patsubst amd64,x86_64,$(1)))
+  # (the names of the same processor in uname -m and in the compiler's target triplet)
+  norm_machine = $(patsubst powerpc64le,ppc64le,$(patsubst armv%,arm,$(patsubst aarch64,arm64,$(patsubst amd64,x86_64,$(1)))))
   TARGET_MACHINE := $(call norm_machine,$(firstword $(subst -, ,$(shell $(CXX) -dumpmachine 2>/dev/null))))
   ifneq ($(and $(TARGET_MACHINE),$(filter-out $(call norm_machine,$(shell uname -m)),$(TARGET_MACHINE))),)
     GMIC_PLUGIN_LIST ?= 0

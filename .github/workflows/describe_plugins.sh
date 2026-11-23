@@ -4,8 +4,8 @@
 # Uses $CXX (default c++) and $HOST_LDFLAGS (extra link flags, e.g. -L/opt/local/lib).
 # PLUGIN_LIST=<file>: also write the plug-ins' ids, contexts and input clips there (for render_plugins.py).
 # The bundle's list of the plug-ins (gmic_ofx_plugins.txt), if any, must be the described plug-ins;
-# DESCRIBE_USER_LIST=1 (once per CI job: it describes them all again) also checks that a user's
-# list that disables two plug-ins leaves them out.
+# DESCRIBE_USER_LIST=1 (once per CI job: it describes them all again) requires the list, and also
+# checks that a user's list that disables two plug-ins leaves them out.
 # If $HOST_RUN_PATH is set, the host runs with PATH=$HOST_RUN_PATH (the build still uses the
 # current PATH): on Windows, with a statically linked host and a PATH without the MSYS2 bin
 # directory, this checks that the plug-in finds the DLLs bundled with it.
@@ -98,7 +98,10 @@ fi
 # The bundle's list of the plug-ins (README, "Choosing the plug-ins") has the described plug-ins,
 # all enabled; DESCRIBE_USER_LIST=1: a user's list that disables two of them leaves them out.
 SHIPPED_LIST="$BUNDLE_DIR/GMIC.ofx.bundle/Contents/Resources/gmic_ofx_plugins.txt"
-if [ ! -f "$SHIPPED_LIST" ]; then
+if [ ! -f "$SHIPPED_LIST" ] && [ "${DESCRIBE_USER_LIST:-}" = 1 ]; then
+    echo "FAIL: no list of the plug-ins in the bundle, $SHIPPED_LIST"
+    status=1
+elif [ ! -f "$SHIPPED_LIST" ]; then
     echo "Note: no list of the plug-ins in the bundle (a GMIC_PLUGIN_LIST=OFF build?): not checked"
 else
     sed -n -e 's/^PLUGIN //p' describe.log | tr -d '\r' | sort > described.txt

@@ -415,7 +415,8 @@ std::set<string> disabledPlugins(const string& list)
 // Write the list of the plug-ins pluginData to "path": grouped by menu (in their order within
 // each), each with its menu and label in a comment, those in "disabled" commented out. The build
 // writes the bundle's list so, with every plug-in enabled (GMIC_OFX/gmic_ofx_plugin_list.cpp).
-// False if it could not be written (then no file is left at "path").
+// It is written to "<path>.tmp", then renamed: false if it could not be written, and then a file
+// that was at "path" is kept.
 [[nodiscard]] bool writePluginList(const string& path, const vector<EffectData>& pluginData, const std::set<string>& disabled)
 {
 	vector<const EffectData*> sorted;
@@ -424,7 +425,8 @@ std::set<string> disabledPlugins(const string& list)
 		sorted.push_back(&d);
 	}
 	std::stable_sort(sorted.begin(), sorted.end(), [](const EffectData* a, const EffectData* b) { return a->category < b->category; });
-	std::ofstream out(path.c_str(), std::ios::out | std::ios::binary);
+	const string tmp = path + ".tmp";
+	std::ofstream out(tmp.c_str(), std::ios::out | std::ios::binary);
 	out << "# The OpenFX plug-ins of openfx-gmic: one plug-in identifier per line (as saved in projects).\n"
 	       "# To disable a plug-in, comment out its line (\"# eu.gmic.AddGrain\"); after another '#', the\n"
 	       "# rest of a line is a comment. The plug-ins that this list doesn't mention are enabled; if an\n"
@@ -444,10 +446,11 @@ std::set<string> disabledPlugins(const string& list)
 	}
 	out.close();
 	if (!out) {
-		std::remove(path.c_str());
+		std::remove(tmp.c_str());
 		return false;
 	}
-	return true;
+	std::remove(path.c_str()); // (Windows: rename doesn't replace a file)
+	return std::rename(tmp.c_str(), path.c_str()) == 0;
 }
 
 // The filters, parsed from the G'MIC stdlib (or a user file) once, on first use.
