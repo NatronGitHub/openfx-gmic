@@ -141,8 +141,8 @@ Options (the Makefile's equivalent in parentheses):
 - OFX_DEPLOY_BUNDLES=ON: on macOS, the install step copies the libraries into the bundle.
   GMIC.ofx targets macOS 14.0 by default (CMAKE_OSX_DEPLOYMENT_TARGET, MACOSX_DEPLOYMENT_TARGET),
   but the copied libraries keep the macOS version they were built for. CI builds, which aren't
-  shipped, target the runner's macOS (15), as do the MacPorts libraries they bundle; Natron's
-  release builds (its SDK) target 14.0.
+  shipped, target the runner's macOS (15 on macos-15), as do the MacPorts libraries they bundle;
+  Natron's release builds, built on macOS 14, target 14.0.
 - GMIC_BUILD_TESTS=ON: also build openfx's hostDemo, for the render test.
 - GMIC_VCOMP_DLL: MSVC with OpenMP: the vcomp140.dll copied into the bundle (default: the
   redistributable one of the compiler, see below).
