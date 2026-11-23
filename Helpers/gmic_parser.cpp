@@ -535,11 +535,13 @@ string gmic_parse_single(const string& content, EffectData& cd)
 						if (!(endsWithNewline || endsWithBackslash)) {
 							name += ' ';
 						}
-						int pEnd = (int)line.find(inMultiClose);
-						if (pEnd > 0) {
+						// as G'MIC-Qt (AbstractParameter::parseText): the first closing delimiter ends
+						// the value, even at the start of the line; then skip the ", " before the next one
+						const string::size_type pEnd = line.find(inMultiClose);
+						if (pEnd != string::npos) {
 							cd.param[cd.param.size() - 1].name += line.substr(0, pEnd + 1);
 							inMulti = false;
-							line = strTrim(line.substr(pEnd));
+							line = strTrim(line.substr(pEnd + 1), ", ");
 						} else {
 							cd.param[cd.param.size() - 1].name += line;
 							line.clear();
