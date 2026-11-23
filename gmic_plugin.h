@@ -33,12 +33,13 @@ constexpr int kOutputLayerFrame = 11;
 // The number of plug-ins, one per G'MIC filter (the filters are loaded on first use).
 int getNofPlugins();
 
-// The identifier, label, grouping, description and version of plug-in pluginIndex.
+// The identifier, label, grouping and version of plug-in pluginIndex (the description: see
+// pluginSetup).
 reduxfx::PluginInfo getPluginInfo(int pluginIndex);
 
 // The parameters of plug-in pluginIndex, whose info is pluginInfo (getPluginInfo): the filter's
-// own, then the layers, layer times and advanced options that the plug-in adds; pluginInfo's
-// description gets the notes of the parameters. The PT_LAYER parameters are the input clips, the
+// own, then the layers, layer times and advanced options that the plug-in adds; also makes the
+// description of the plug-in. The PT_LAYER parameters are the input clips, the
 // first one Source.
 std::unique_ptr<reduxfx::GlobalData> pluginSetup(int pluginIndex, const reduxfx::PluginInfo& pluginInfo);
 
@@ -61,11 +62,10 @@ private:
 	std::array<char, 256> _errorMessage; // _options.error_message_buffer
 };
 
-// An error on the node: a persistent message (cleared by the next successful render) if the host
-// has them, else a modal message titled modalId.
+// An error on the node: a persistent message (cleared by the next successful render, with
+// effect.clearPersistentMessage()) if the host has them, else a modal message titled modalId.
+// (Defined in gmic_ofx.cpp.)
 void showRenderError(OFX::ImageEffect& effect, const std::string& msg, const std::string& modalId = std::string());
-// clears the persistent message, if the host has them
-void clearRenderError(OFX::ImageEffect& effect);
 
 // Run G'MIC on sequenceData's input images (float planar RGBA, values up to 255), into its
 // outWorld buffer, with the parameter values of sequenceData. Polls effect.abort() while G'MIC

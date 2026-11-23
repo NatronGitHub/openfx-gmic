@@ -190,6 +190,23 @@ bool hasLayerTimes(const GlobalData& gd)
 	});
 }
 
+// does the plug-in have point parameters? (see pointsMoveToSource)
+bool hasPoints(const GlobalData& gd)
+{
+	return std::any_of(gd.param, gd.param + gd.nofParams, [](const Parameter& p) { return p.paramType == reduxfx::PT_POINT; });
+}
+
+bool isEmpty(const OfxRectD& r)
+{
+	return !(r.x2 > r.x1 && r.y2 > r.y1);
+}
+
+// the frame range of a clip, if the host gives it
+std::optional<OfxRangeD> frameRangeOf(const OFX::Clip& clip)
+{
+	return hostQuery([&clip] { return clip.getFrameRange(); });
+}
+
 // the default of a point parameter in normalised coordinates, as declared to the host (G'MIC gives
 // it in percent of the image, its y going down; OFX normalised y goes up)
 OfxPointD pointNormalisedDefault(const Parameter& param)
@@ -214,61 +231,61 @@ const T* rowOf(const void* data, int rowBytes, int height, int y)
 	return static_cast<const T*>(static_cast<const void*>(static_cast<const char*>(data) + static_cast<ptrdiff_t>(height - 1 - y) * rowBytes));
 }
 
-void convertRGBA8ToPlanar(const void* src, int srcRowBytes, float* dst, int width, int height, float scale)
+// a planar value (in [0, 1] for 8-bit pixels) as a Pixel: 8-bit values are rounded, clamped, and
+// NaN gives 0 (a float-to-integer conversion of NaN or of a value out of range is undefined)
+template <class Pixel>
+Pixel toPixel(float v);
+
+template <>
+float toPixel<float>(float v)
+{
+	return v;
+}
+
+template <>
+unsigned char toPixel<unsigned char>(float v)
+{
+	return !(v > 0.f) ? 0 : v >= 1.f ? 255 : static_cast<unsigned char>(v * kMaxChan8 + 0.5f);
+}
+
+// an interleaved RGBA image of Pixels to the planar buffer dst, multiplied by factor
+template <class Pixel>
+void convertToPlanar(const void* src, int srcRowBytes, float* dst, int width, int height, float factor)
 {
 	const size_t plane = static_cast<size_t>(width) * static_cast<size_t>(height);
 	for (int y = 0; y < height; y++) {
-		// rows in the same order as convertRGBA32ToPlanar (and as the output conversions)
-		const unsigned char* in = rowOf<unsigned char>(src, srcRowBytes, height, y);
+		const Pixel* in = rowOf<Pixel>(src, srcRowBytes, height, y);
 		float* out = dst + static_cast<size_t>(width) * y;
 		for (int x = 0; x < width; x++) {
 			for (size_t c = 0; c < 4; ++c) {
-				out[plane * c + x] = static_cast<float>(*in++) * kInvMaxChan8 * scale;
+				out[plane * c + x] = static_cast<float>(*in++) * factor;
 			}
 		}
 	}
 }
 
-void convertRGBA32ToPlanar(const void* src, int srcRowBytes, float* dst, int width, int height, float scale)
-{
-	const size_t plane = static_cast<size_t>(width) * static_cast<size_t>(height);
-	for (int y = 0; y < height; y++) {
-		const float* in = rowOf<float>(src, srcRowBytes, height, y);
-		float* out = dst + static_cast<size_t>(width) * y;
-		for (int x = 0; x < width; x++) {
-			for (size_t c = 0; c < 4; ++c) {
-				out[plane * c + x] = (*in++) * scale;
-			}
-		}
-	}
-}
-
-void convertPlanarToRGBA8(const float* src, void* dst, int dstRowBytes, int width, int height, float scale)
+// the planar buffer src, multiplied by factor, to an interleaved RGBA image of Pixels
+template <class Pixel>
+void convertFromPlanar(const float* src, void* dst, int dstRowBytes, int width, int height, float factor)
 {
 	const size_t plane = static_cast<size_t>(width) * static_cast<size_t>(height);
 	for (int y = 0; y < height; y++) {
 		const float* in = src + static_cast<size_t>(width) * y;
-		unsigned char* out = rowOf<unsigned char>(dst, dstRowBytes, height, y);
+		Pixel* out = rowOf<Pixel>(dst, dstRowBytes, height, y);
 		for (int x = 0; x < width; x++) {
 			for (size_t c = 0; c < 4; ++c) {
-				*out++ = static_cast<unsigned char>(std::clamp(in[plane * c + x] * scale, 0.f, 1.f) * kMaxChan8 + 0.5f);
+				*out++ = toPixel<Pixel>(in[plane * c + x] * factor);
 			}
 		}
 	}
 }
 
-void convertPlanarToRGBA32(const float* src, void* dst, int dstRowBytes, int width, int height, float scale)
+// the factor alpha / maxValue, clamped to [0,1] (NaN gives 0), so that a G'MIC alpha below 0 or
+// above maxValue can't produce colours outside [0, alpha]
+float alphaFactor(float a, float maxValue)
 {
-	const size_t plane = static_cast<size_t>(width) * static_cast<size_t>(height);
-	for (int y = 0; y < height; y++) {
-		const float* in = src + static_cast<size_t>(width) * y;
-		float* out = rowOf<float>(dst, dstRowBytes, height, y);
-		for (int x = 0; x < width; x++) {
-			for (size_t c = 0; c < 4; ++c) {
-				*out++ = in[plane * c + x] * scale;
-			}
-		}
-	}
+	const float f = a / maxValue;
+	return !(f > 0.f) ? 0.f : f > 1.f ? 1.f : f; // also NaN
 }
 
 // alpha at or below this fraction of maxValue is treated as transparent when unpremultiplying
@@ -296,8 +313,7 @@ void unpremultiplyPlanar(float* data, int width, int height, float maxValue)
 	}
 }
 
-// Premultiply, in place. The factor alpha / maxValue is clamped to [0,1] (NaN gives 0), so that a
-// G'MIC alpha below 0 or above maxValue can't produce colours outside [0, alpha].
+// Premultiply, in place, by alphaFactor.
 void premultiplyPlanar(float* data, int width, int height, float maxValue)
 {
 	if (!data || width <= 0 || height <= 0) return;
@@ -307,9 +323,7 @@ void premultiplyPlanar(float* data, int width, int height, float maxValue)
 	float* b = data + 2 * n;
 	const float* a = data + 3 * n;
 	for (size_t k = 0; k < n; ++k) {
-		float f = a[k] / maxValue;
-		if (!(f > 0.f)) f = 0.f; // also NaN
-		else if (f > 1.f) f = 1.f;
+		const float f = alphaFactor(a[k], maxValue);
 		r[k] *= f;
 		g[k] *= f;
 		b[k] *= f;
@@ -331,15 +345,13 @@ void multiplyByInputAlphaPlanar(const World& out, const World& in, float maxValu
 	const int x1 = std::max(out.origin_x, in.origin_x), x2 = std::min(out.origin_x + out.width, in.origin_x + in.width);
 	const int y1 = std::max(out.origin_y, in.origin_y), y2 = std::min(out.origin_y + out.height, in.origin_y + in.height);
 	const size_t dplane = (size_t)out.width * (size_t)out.height, splane = (size_t)in.width * (size_t)in.height;
-	float* const dst = (float*)out.data;
-	const float* const srcA = (const float*)in.data + 3 * splane;
+	float* const dst = out.data;
+	const float* const srcA = in.data + 3 * splane;
 	for (int y = y1; y < y2; ++y) {
 		const size_t drow = (size_t)(out.height - 1 - (y - out.origin_y)) * out.width;
 		const size_t srow = (size_t)(in.height - 1 - (y - in.origin_y)) * in.width;
 		for (int x = x1; x < x2; ++x) {
-			float f = srcA[srow + (x - in.origin_x)] / maxValue;
-			if (!(f > 0.f)) f = 0.f;
-			else if (f > 1.f) f = 1.f;
+			const float f = alphaFactor(srcA[srow + (x - in.origin_x)], maxValue);
 			const size_t k = drow + (x - out.origin_x);
 			dst[k] *= f;
 			dst[dplane + k] *= f;
@@ -505,7 +517,6 @@ GMICEffect::GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData
 	, _pointFromSource((size_t)globalData.nofParams)
 {
 	using namespace reduxfx;
-	bool hasPoints = false;
 	for (int i = 0; i < _gd.nofParams; i++) {
 		const Parameter& param = _gd.param[i];
 		const std::string& name = param.paramName;
@@ -532,7 +543,6 @@ GMICEffect::GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData
 			break;
 		case PT_POINT:
 			_params[i] = fetchDouble2DParam(name);
-			hasPoints = true;
 			break;
 		case PT_TEXT:
 			_params[i] = fetchStringParam(name);
@@ -541,7 +551,7 @@ GMICEffect::GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData
 			break;
 		}
 	}
-	if (hasPoints) {
+	if (hasPoints(_gd)) {
 		_pointsFromSource = fetchStringParam(kPointsFromSourceParam);
 	}
 	if (hasLayerTimes(_gd)) {
@@ -575,48 +585,37 @@ void GMICEffect::fetchParamValues(SequenceData& sd, const OfxRectI& dstRect, dou
 		const Parameter& param = _gd.param[i];
 		float* const value = sd.floatValue[i];
 		switch (param.paramType) {
-		case PT_FLOAT: {
-			double v;
-			std::get<OFX::DoubleParam*>(_params[i])->getValueAtTime(t, v);
-			value[0] = (float)v;
-		} break;
-		case PT_INT: {
-			int v;
-			std::get<OFX::IntParam*>(_params[i])->getValueAtTime(t, v);
-			value[0] = (float)v;
-		} break;
+		case PT_FLOAT:
+			value[0] = static_cast<float>(std::get<OFX::DoubleParam*>(_params[i])->getValueAtTime(t));
+			break;
+		case PT_INT:
+			value[0] = static_cast<float>(std::get<OFX::IntParam*>(_params[i])->getValueAtTime(t));
+			break;
 		case PT_COLOR: {
-			double r, g, b, a;
-			std::get<OFX::RGBAParam*>(_params[i])->getValueAtTime(t, r, g, b, a);
-			value[0] = (float)r;
-			value[1] = (float)g;
-			value[2] = (float)b;
-			value[3] = (float)a;
+			const OfxRGBAColourD c = std::get<OFX::RGBAParam*>(_params[i])->getValueAtTime(t);
+			value[0] = static_cast<float>(c.r);
+			value[1] = static_cast<float>(c.g);
+			value[2] = static_cast<float>(c.b);
+			value[3] = static_cast<float>(c.a);
 		} break;
 		case PT_POINT: {
 			// percent of the image, from its top-left corner (G'MIC's y goes down); an empty dstRect
 			// (no input, empty output) counts as 1 pixel, so as not to divide by 0
-			double x, y;
-			std::get<OFX::Double2DParam*>(_params[i])->getValueAtTime(t, x, y);
+			const OfxPointD p = std::get<OFX::Double2DParam*>(_params[i])->getValueAtTime(t);
 			const int w = std::max(1, dstRect.x2 - dstRect.x1), h = std::max(1, dstRect.y2 - dstRect.y1);
-			value[0] = (float)((x * renderScale.x / par - dstRect.x1) * 100. / w);
-			value[1] = 100.f - (float)((y * renderScale.y - dstRect.y1) * 100. / h);
+			value[0] = static_cast<float>((p.x * renderScale.x / par - dstRect.x1) * 100. / w);
+			value[1] = 100.f - static_cast<float>((p.y * renderScale.y - dstRect.y1) * 100. / h);
 		} break;
 		case PT_ANGLE: {
-			double v;
-			std::get<OFX::DoubleParam*>(_params[i])->getValueAtTime(t, v);
-			value[0] = (param.flags > 0) ? -kRfxPi * (float)v / 180.0f : (float)v;
+			const float v = static_cast<float>(std::get<OFX::DoubleParam*>(_params[i])->getValueAtTime(t));
+			value[0] = static_cast<float>((param.flags > 0) ? -kRfxPi * v / 180.0f : v);
 		} break;
-		case PT_SELECT: {
-			int v;
-			std::get<OFX::ChoiceParam*>(_params[i])->getValueAtTime(t, v);
-			value[0] = (float)v;
-		} break;
-		case PT_BOOL: {
-			bool v;
-			std::get<OFX::BooleanParam*>(_params[i])->getValueAtTime(t, v);
-			value[0] = (float)v;
-		} break;
+		case PT_SELECT:
+			value[0] = static_cast<float>(std::get<OFX::ChoiceParam*>(_params[i])->getValueAtTime(t));
+			break;
+		case PT_BOOL:
+			value[0] = std::get<OFX::BooleanParam*>(_params[i])->getValueAtTime(t) ? 1.f : 0.f;
+			break;
 		case PT_TEXT:
 			std::get<OFX::StringParam*>(_params[i])->getValueAtTime(t, sd.textValue[i]);
 			break;
@@ -655,7 +654,7 @@ double GMICEffect::inputTime(const LayerTimes& lt, int i, double t) const
 	if (lt.offset[i] == 0) return t;
 	double ft = t + lt.offset[i];
 	const OFX::Clip* clip = _inputs[lt.clipIndex(i)];
-	if (const std::optional<OfxRangeD> range = hostQuery([clip] { return clip->getFrameRange(); });
+	if (const std::optional<OfxRangeD> range = frameRangeOf(*clip);
 		range && range->min <= range->max) {
 		ft = std::max(range->min, std::min(ft, range->max));
 	}
@@ -692,9 +691,9 @@ void GMICEffect::getRegionsOfInterest(const OFX::RegionsOfInterestArguments& arg
 		const double t = inputTime(lt, i, args.time);
 		const std::optional<OfxRectD> rod = hostQuery([&] { return clip->getRegionOfDefinition(t); });
 		if (!rod) continue;
-		if (!roi[c]) {
+		if (!roi[c] || isEmpty(*roi[c])) {
 			roi[c] = *rod;
-		} else {
+		} else if (!isEmpty(*rod)) { // (an empty rectangle, e.g. at 0,0, would extend the union)
 			roi[c]->x1 = std::min(roi[c]->x1, rod->x1);
 			roi[c]->y1 = std::min(roi[c]->y1, rod->y1);
 			roi[c]->x2 = std::max(roi[c]->x2, rod->x2);
@@ -747,7 +746,7 @@ void GMICEffect::getFramesNeeded(const OFX::FramesNeededArguments& args, OFX::Fr
 bool GMICEffect::getTimeDomain(OfxRangeD& range)
 {
 	const OFX::Clip* source = _inputs[0];
-	const std::optional<OfxRangeD> sourceRange = hostQuery([source] { return source->getFrameRange(); });
+	const std::optional<OfxRangeD> sourceRange = frameRangeOf(*source);
 	if (!sourceRange) return false;
 	range = *sourceRange;
 	return true;
@@ -772,11 +771,7 @@ void GMICEffect::getClipPreferences(OFX::ClipPreferencesSetter& clipPreferences)
 	// Output Layer "Frame": the output changes with the frame, also for still inputs. Not set for
 	// the layer times: a host keys the images by time when an input varies (inputs fetched at
 	// other frames), and a frame varying output would re-render still inputs every frame.
-	bool frameVarying = false;
-	_animateSeed->getValue(frameVarying);
-	int outputLayer = 0;
-	_outputLayer->getValue(outputLayer);
-	if (frameVarying || outputLayer == kOutputLayerFrame) {
+	if (_animateSeed->getValue() || _outputLayer->getValue() == kOutputLayerFrame) {
 		clipPreferences.setOutputFrameVarying(true);
 	}
 }
@@ -819,9 +814,7 @@ void GMICEffect::changedParam(const OFX::InstanceChangedArgs& args, const std::s
 
 	// Output Layer changed in any way: no longer Frame, the results kept for it can go
 	if (paramName == kOutputLayerParam) {
-		int outputLayer = 0;
-		_outputLayer->getValue(outputLayer);
-		pluginOutputLayerChanged(_gmic, outputLayer);
+		pluginOutputLayerChanged(_gmic, _outputLayer->getValue());
 	}
 
 	// a removable point's checkbox, changed in any way (user edit, undo, a script...), and a point
@@ -844,7 +837,7 @@ void GMICEffect::changedParam(const OFX::InstanceChangedArgs& args, const std::s
 		const Parameter& param = _gd.param[i];
 		if (param.paramType != PT_POINT || param.paramName != paramName) continue;
 		OFX::Double2DParam* point = std::get<OFX::Double2DParam*>(_params[i]);
-		const std::optional<OfxPointD> v = hostQuery([point] { OfxPointD p; point->getValue(p.x, p.y); return p; });
+		const std::optional<OfxPointD> v = hostQuery([point] { return point->getValue(); });
 		if (!v) break;
 		if (pointIsDefault(param, v->x, v->y)) {
 			pointsMoveToSource(args.time, i);
@@ -914,7 +907,7 @@ void GMICEffect::pointsFromSourceRead()
 {
 	std::fill(_pointFromSource.begin(), _pointFromSource.end(), std::nullopt);
 	if (!_pointsFromSource) return;
-	const std::optional<std::string> value = hostQuery([this] { std::string v; _pointsFromSource->getValue(v); return v; });
+	const std::optional<std::string> value = hostQuery([this] { return _pointsFromSource->getValue(); });
 	if (!value) return;
 	const std::string& str = *value;
 	std::string::size_type b = 0;
@@ -947,7 +940,7 @@ void GMICEffect::pointsFromSourceWrite()
 		str += _gd.param[i].paramName + "=" + pointValueToString(_pointFromSource[i]->x) + "," +
 			pointValueToString(_pointFromSource[i]->y) + ";";
 	}
-	if (hostQuery([this] { std::string v; _pointsFromSource->getValue(v); return v; }) == str) return;
+	if (hostQuery([this] { return _pointsFromSource->getValue(); }) == str) return;
 	_pointsFromSource->setValue(str);
 }
 
@@ -966,7 +959,7 @@ void GMICEffect::pointsMoveToSource(double time, int onlyParam)
 		OFX::Double2DParam* point = std::get<OFX::Double2DParam*>(_params[i]);
 		const std::optional<unsigned int> keys = hostQuery([point] { return point->getNumKeys(); });
 		if (keys && *keys > 0) continue; // (not all hosts count keys)
-		const std::optional<OfxPointD> v = hostQuery([point] { OfxPointD p; point->getValue(p.x, p.y); return p; });
+		const std::optional<OfxPointD> v = hostQuery([point] { return point->getValue(); });
 		if (!v) continue;
 		const bool atDefault = pointIsDefault(param, v->x, v->y) ||
 			(_pointFromSource[i] && pointValueIs(*_pointFromSource[i], v->x, v->y));
@@ -992,7 +985,7 @@ void GMICEffect::pointsUpdateEnabled(int onlyParam)
 		if (param.paramType != PT_BOOL || param.flags != PARAM_FLAGS_POINT_ENABLED || (onlyParam >= 0 && i != onlyParam)) continue;
 		if (_gd.param[i - 1].paramType != PT_POINT) continue;
 		OFX::BooleanParam* checkbox = std::get<OFX::BooleanParam*>(_params[i]);
-		const std::optional<bool> on = hostQuery([checkbox] { bool v = true; checkbox->getValue(v); return v; });
+		const std::optional<bool> on = hostQuery([checkbox] { return checkbox->getValue(); });
 		if (!on) continue;
 		OFX::Double2DParam* point = std::get<OFX::Double2DParam*>(_params[i - 1]);
 		hostTry([point, on] { point->setEnabled(*on); }); // (also called from createInstance)
@@ -1034,7 +1027,7 @@ void GMICEffect::render(const OFX::RenderArguments& args)
 	// Output Layer "Frame" counts frames from the start of Source (0 if none, or infinite)
 	{
 		const OFX::Clip* source = _inputs[0];
-		const std::optional<OfxRangeD> range = hostQuery([source] { return source->getFrameRange(); });
+		const std::optional<OfxRangeD> range = frameRangeOf(*source);
 		if (range && range->min <= range->max && std::fabs(range->min) < 1e9) {
 			sd.frameRangeStart = range->min;
 		}
@@ -1105,9 +1098,9 @@ void GMICEffect::render(const OFX::RenderArguments& args)
 		buffer.resize((size_t)in.width * (size_t)in.height * 4);
 		in.data = buffer.data();
 		if (img.getPixelDepth() == OFX::eBitDepthUByte) {
-			convertRGBA8ToPlanar(img.getPixelData(), img.getRowBytes(), buffer.data(), in.width, in.height, scale);
+			convertToPlanar<unsigned char>(img.getPixelData(), img.getRowBytes(), buffer.data(), in.width, in.height, kInvMaxChan8 * scale);
 		} else {
-			convertRGBA32ToPlanar(img.getPixelData(), img.getRowBytes(), buffer.data(), in.width, in.height, scale);
+			convertToPlanar<float>(img.getPixelData(), img.getRowBytes(), buffer.data(), in.width, in.height, scale);
 		}
 		// G'MIC works on straight colours: unpremultiply premultiplied inputs (the converted buffer
 		// is float planar for both 8-bit and float images, so this also covers 8-bit inputs)
@@ -1147,9 +1140,9 @@ void GMICEffect::render(const OFX::RenderArguments& args)
 	}
 
 	if (outputImg->getPixelDepth() == OFX::eBitDepthUByte) {
-		convertPlanarToRGBA8(outBuffer.data(), outputImg->getPixelData(), outputImg->getRowBytes(), out.width, out.height, 1.f / scale);
+		convertFromPlanar<unsigned char>(outBuffer.data(), outputImg->getPixelData(), outputImg->getRowBytes(), out.width, out.height, 1.f / scale);
 	} else {
-		convertPlanarToRGBA32(outBuffer.data(), outputImg->getPixelData(), outputImg->getRowBytes(), out.width, out.height, 1.f / scale);
+		convertFromPlanar<float>(outBuffer.data(), outputImg->getPixelData(), outputImg->getRowBytes(), out.width, out.height, 1.f / scale);
 	}
 }
 
@@ -1186,8 +1179,8 @@ private:
 GMICPluginFactory::GMICPluginFactory(int pluginIndex, OfxPluginEntryPoint* mainEntry)
 	: _pluginIndex(pluginIndex)
 	, _info(getPluginInfo(pluginIndex))
-	// "<id>@<major>.<minor>", as the Support library's PluginFactoryHelper
-	, _uid(_info.identifier + "@" + reduxfx::intToString(_info.major_version) + "." + reduxfx::intToString(_info.minor_version))
+	// the key of the Support library's plug-in map: any string unique to the plug-in
+	, _uid(_info.identifier + "@" + std::to_string(_info.major_version) + "." + std::to_string(_info.minor_version))
 	, _mainEntry(mainEntry)
 {
 }
@@ -1242,10 +1235,6 @@ void GMICPluginFactory::describe(OFX::ImageEffectDescriptor& desc)
 	desc.setHostFrameThreading(false);
 	desc.setSupportsMultiResolution(false);
 
-	// by name: the parameters are only defined in describeInContext
-	OFX::PropertySet& props = desc.getPropertySet();
-	props.propSetString(kOfxImageEffectPropClipPreferencesSlaveParam, kAnimateSeedParam, 0);
-	props.propSetString(kOfxImageEffectPropClipPreferencesSlaveParam, kOutputLayerParam, 1); // Frame: frame varying
 	if (hasLayerTimes(gd)) {
 		// layer times: inputs at other frames (getFramesNeeded)
 		desc.setTemporalClipAccess(true);
@@ -1277,7 +1266,7 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 		sequenceData->setIsSecret(true);
 		previous = sequenceData;
 	}
-	if (std::any_of(gd.param, gd.param + gd.nofParams, [](const Parameter& p) { return p.paramType == PT_POINT; })) {
+	if (hasPoints(gd)) {
 		OFX::StringParamDescriptor* points = desc.defineStringParam(kPointsFromSourceParam);
 		points->setIsSecret(true);
 		points->setIsPersistent(true);
@@ -1288,6 +1277,9 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 	}
 
 	OFX::GroupParamDescriptor* group = nullptr;
+	// the parameters that the clip preferences depend on (pluginSetup always defines them)
+	OFX::ParamDescriptor* animateSeed = nullptr;
+	OFX::ParamDescriptor* outputLayer = nullptr;
 	for (int i = 0; i < gd.nofParams; i++) {
 		const Parameter& param = gd.param[i];
 		const std::string& name = param.paramName;
@@ -1322,31 +1314,31 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			if (textType == 0 && txt.find_first_of("\r\n") != std::string::npos) {
 				textType = 1;
 			}
+			if (textType == 4) {
+				txt = strTrim(strRemoveXmlTags(txt, true), " \t\r\n'\"");
+			}
 			OFX::StringParamDescriptor* p = desc.defineStringParam(name);
+			if (textType >= 0 && textType <= 4) {
+				p->setDefault(txt); // (filein has no default)
+			}
 			switch (textType) {
 			case 0: // single-line
-				p->setDefault(txt);
 				p->setStringType(OFX::eStringTypeSingleLine);
 				break;
 			case 1: // multi-line
-				p->setDefault(txt);
 				p->setStringType(OFX::eStringTypeMultiLine);
 				break;
 			case 2: // file / fileout
-				p->setDefault(txt);
 				p->setStringType(OFX::eStringTypeFilePath);
 				p->setFilePathExists(false);
 				break;
 			case 3: // folder
-				p->setDefault(txt);
 				p->setStringType(OFX::eStringTypeDirectoryPath);
 				break;
-			case 4: { // label
-				const std::string text = strTrim(strRemoveXmlTags(txt, true), " \t\r\n'\"");
-				p->setDefault(text);
+			case 4: // label
 				p->setStringType(OFX::eStringTypeLabel);
-				p->setHint(text); // for long labels
-			} break;
+				p->setHint(txt); // for long labels
+				break;
 			case 5: // filein
 				p->setStringType(OFX::eStringTypeFilePath);
 				p->setFilePathExists(true);
@@ -1448,7 +1440,15 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			paramDesc->setParent(*group);
 		}
 		previous = paramDesc;
+		if (name == kAnimateSeedParam) {
+			animateSeed = paramDesc;
+		} else if (name == kOutputLayerParam) {
+			outputLayer = paramDesc;
+		}
 	}
+	// the clip preferences depend on them (Output Layer Frame: frame varying)
+	desc.addClipPreferencesSlaveParam(*animateSeed);
+	desc.addClipPreferencesSlaveParam(*outputLayer);
 }
 
 OFX::ImageEffect* GMICPluginFactory::createInstance(OfxImageEffectHandle handle, OFX::ContextEnum /*context*/)
@@ -1487,17 +1487,9 @@ constexpr std::array<OfxPluginEntryPoint*, kMaxNofPlugins> kMainEntries = makeMa
 
 void showRenderError(OFX::ImageEffect& effect, const std::string& msg, const std::string& modalId)
 {
-	if (OFX::getImageEffectHostDescription()->supportsMessageSuiteV2 &&
-		effect.setPersistentMessage(OFX::Message::eMessageError, "", msg) != OFX::Message::eMessageReplyFailed) {
-		return;
-	}
-	effect.sendMessage(OFX::Message::eMessageError, modalId, msg);
-}
-
-void clearRenderError(OFX::ImageEffect& effect)
-{
-	if (OFX::getImageEffectHostDescription()->supportsMessageSuiteV2) {
-		effect.clearPersistentMessage();
+	// (the Support library checks that the host has the message suites)
+	if (effect.setPersistentMessage(OFX::Message::eMessageError, "", msg) == OFX::Message::eMessageReplyFailed) {
+		effect.sendMessage(OFX::Message::eMessageError, modalId, msg);
 	}
 }
 

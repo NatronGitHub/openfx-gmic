@@ -100,7 +100,7 @@ class World
 public:
 	int width = 0;
 	int height = 0;
-	void* data = nullptr; // not owned, width * height * 4 floats
+	float* data = nullptr; // not owned, width * height * 4 floats
 	int origin_x = 0;
 	int origin_y = 0;
 };

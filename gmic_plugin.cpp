@@ -507,6 +507,17 @@ static string layerTimesNote(const EffectData& effectData)
 		"clips to the layer inputs and set their time offsets.";
 }
 
+// The plug-in's description: the filter's notes (with those of its note() parameters), the notes
+// on Ignore Alpha and Layer Times, and the plug-in's own.
+static string pluginDescription(const EffectData& effectData)
+{
+	// OFX strings are UTF-8, as G'MIC's: no transliteration on the OFX path
+	string d = strRemoveXmlTags(effectData.notes, true);
+	strReplace(d, "<", "(");
+	strReplace(d, ">", ")");
+	return d + ignoreAlphaNote(effectData) + layerTimesNote(effectData) + "\n" + PLUGIN_DESCRIPTION;
+}
+
 #if defined(cimg_use_fftw3) && !defined(cimg_use_fftw3_singlethread)
 // FFTW is a shared library: other plug-ins of the host process (e.g. openfx-misc's CImg plug-ins)
 // share its global planner and thread pool, and each one only locks its own mutex around its
@@ -755,17 +766,7 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 	++p;
 	globalDataP->nofParams = p;
 
-	string d = effectData.notes;
-/*
-	for (int i = 0; i < effectData.notes.size(); i++)
-		if (effectData.notes[i] >= 32 && effectData.notes[i] < 128) d += effectData.notes[i];
-*/
-	d = strRemoveXmlTags(d, true);
-	// OFX strings are UTF-8, as G'MIC's: no transliteration on the OFX path
-	strReplace(d, "<", "(");
-	strReplace(d, ">", ")");
-//	strReplace(d, "\n", "\\n");
-	globalDataP->pluginInfo.description = d + ignoreAlphaNote(effectData) + layerTimesNote(effectData) + "\n" + PLUGIN_DESCRIPTION;
+	globalDataP->pluginInfo.description = pluginDescription(effectData);
 	globalDataP->nofInputs = (int)std::count_if(globalDataP->param, globalDataP->param + p,
 		[](const Parameter& param) { return param.paramType == PT_LAYER; });
 	return globalData;
@@ -1514,7 +1515,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		if (sequenceDataP->outWorld.data) {
 			memset(sequenceDataP->outWorld.data, 0, (size_t)sequenceDataP->outWorld.width * (size_t)sequenceDataP->outWorld.height * 4 * sizeof(float));
 		}
-		clearRenderError(effect);
+		effect.clearPersistentMessage();
 		return ok;
 	}
 
@@ -1628,7 +1629,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 			const int sy1 = sequenceDataP->inWorld[0].origin_y + sequenceDataP->inWorld[0].height - sh;
 			const int dx1 = out.origin_x, dy1 = out.origin_y;
 			const size_t dplane = (size_t)dw * (size_t)dh, splane = (size_t)sw * (size_t)sh;
-			float* const dst = (float*)out.data;
+			float* const dst = out.data;
 			const float* const src = (const float*)res->data;
 			const unsigned int spectrum = res->spectrum;
 			sequenceDataP->resultHasAlpha = (spectrum == 2 || spectrum >= 4);
@@ -1680,7 +1681,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		ok = false;
 	}
 	else if (!aborted) {
-		clearRenderError(effect);
+		effect.clearPersistentMessage();
 	}
 
 	for (unsigned int i = 0; i < nofImages; i++) {
@@ -1708,13 +1709,7 @@ PluginInfo getPluginInfo(int pluginIndex)
 	pluginInfo.name = pluginGlobalData().pluginData[pluginIndex].name;
 	pluginInfo.identifier = pluginGlobalData().pluginData[pluginIndex].uniqueId;
 	pluginInfo.category = pluginGlobalData().pluginData[pluginIndex].category;
-	
-	string d = pluginGlobalData().pluginData[pluginIndex].notes;
-	//strReplace(d, "\n", "\\n");
-	d = strRemoveXmlTags(d, true); // UTF-8, as OFX strings are
-	strReplace(d, "<", "(");
-	strReplace(d, ">", ")");
-	pluginInfo.description = d + ignoreAlphaNote(pluginGlobalData().pluginData[pluginIndex]) + layerTimesNote(pluginGlobalData().pluginData[pluginIndex]) + "\n\n" + PLUGIN_DESCRIPTION;
+	// (the description is made by pluginSetup)
 	pluginInfo.major_version = MAJOR_VERSION;
 	pluginInfo.minor_version = MINOR_VERSION;
 	return pluginInfo;
