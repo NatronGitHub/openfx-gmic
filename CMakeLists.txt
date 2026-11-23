@@ -586,17 +586,8 @@ add_ofx_plugin(GMIC
     gmic_plugin_call.h
     Helpers/gmic_parser.cpp
     Helpers/RFX_StringUtils.cpp)
-# The OpenFX C++ Support library (gmic_ofx.cpp), with its manual registration
-# (OFXS_MANUAL_REGISTRATION, read by ofxsImageEffect.cpp only): the plug-ins are the G'MIC filters,
-# only known once they are loaded, at the first OfxGetNumberOfPlugins (OFX::Plugin::getPluginIDs
-# in gmic_ofx.cpp), not static factory objects registered at dlopen. GMIC must be openfx::Support's
-# only user in this build: openfx's example plug-ins register their factories automatically.
-if(BUILD_EXAMPLE_PLUGINS)
-  message(FATAL_ERROR "BUILD_EXAMPLE_PLUGINS: openfx's example plug-ins can't link the openfx::Support built here, with OFXS_MANUAL_REGISTRATION for GMIC")
-endif()
-set_property(SOURCE "${PROJECT_SOURCE_DIR}/openfx/Support/Library/ofxsImageEffect.cpp"
-  DIRECTORY "${PROJECT_SOURCE_DIR}/openfx/Support/Library"
-  APPEND PROPERTY COMPILE_DEFINITIONS OFXS_MANUAL_REGISTRATION)
+# The OpenFX C++ Support library (gmic_ofx.cpp): the plug-ins are the G'MIC filters, registered
+# lazily, at the first OfxGetNumberOfPlugins (OFX::PluginFactories in gmic_ofx.cpp)
 target_link_libraries(GMIC PRIVATE openfx::Support)
 # The resources of GMIC_OFX/Makefile, before ofx_deploy_bundle (below): the icon, the licences of
 # the plug-in and G'MIC (COPYING: dual CeCILL-C / CeCILL v2; COMMERCIAL builds use CeCILL-C);

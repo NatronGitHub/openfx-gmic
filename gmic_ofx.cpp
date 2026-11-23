@@ -218,19 +218,6 @@ OfxPointD pointNormalisedDefault(const Parameter& param)
 // Pixel conversions. The G'MIC buffers are float planar RGBA (RRR... GGG... BBB... AAA...), rows
 // top-down; the OFX images are interleaved RGBA, rows bottom-up (rowBytes may be negative).
 
-// row y of an image (rows top-down in the planar buffer, bottom-up in the OFX image), as T
-template <class T>
-T* rowOf(void* data, int rowBytes, int height, int y)
-{
-	return static_cast<T*>(static_cast<void*>(static_cast<char*>(data) + static_cast<ptrdiff_t>(height - 1 - y) * rowBytes));
-}
-
-template <class T>
-const T* rowOf(const void* data, int rowBytes, int height, int y)
-{
-	return static_cast<const T*>(static_cast<const void*>(static_cast<const char*>(data) + static_cast<ptrdiff_t>(height - 1 - y) * rowBytes));
-}
-
 // a planar value (in [0, 1] for 8-bit pixels) as a Pixel: 8-bit values are rounded, clamped, and
 // NaN gives 0 (a float-to-integer conversion of NaN or of a value out of range is undefined)
 template <class Pixel>
@@ -248,13 +235,16 @@ unsigned char toPixel<unsigned char>(float v)
 	return !(v > 0.f) ? 0 : v >= 1.f ? 255 : static_cast<unsigned char>(v * kMaxChan8 + 0.5f);
 }
 
-// an interleaved RGBA image of Pixels to the planar buffer dst, multiplied by factor
+// the interleaved RGBA image src, of Pixels, to the planar buffer dst (its bounds' size), multiplied
+// by factor. Row y of the planar buffer (top-down) is row bounds.y2 - 1 - y of the image.
 template <class Pixel>
-void convertToPlanar(const void* src, int srcRowBytes, float* dst, int width, int height, float factor)
+void convertToPlanar(const OFX::Image& src, float* dst, float factor)
 {
+	const OfxRectI& b = src.getBounds();
+	const int width = b.x2 - b.x1, height = b.y2 - b.y1;
 	const size_t plane = static_cast<size_t>(width) * static_cast<size_t>(height);
 	for (int y = 0; y < height; y++) {
-		const Pixel* in = rowOf<Pixel>(src, srcRowBytes, height, y);
+		const Pixel* in = static_cast<const Pixel*>(src.getPixelAddress(b.x1, b.y2 - 1 - y));
 		float* out = dst + static_cast<size_t>(width) * y;
 		for (int x = 0; x < width; x++) {
 			for (size_t c = 0; c < 4; ++c) {
@@ -264,14 +254,17 @@ void convertToPlanar(const void* src, int srcRowBytes, float* dst, int width, in
 	}
 }
 
-// the planar buffer src, multiplied by factor, to an interleaved RGBA image of Pixels
+// the planar buffer src (the bounds' size of dst), multiplied by factor, to the interleaved RGBA
+// image dst, of Pixels
 template <class Pixel>
-void convertFromPlanar(const float* src, void* dst, int dstRowBytes, int width, int height, float factor)
+void convertFromPlanar(const float* src, OFX::Image& dst, float factor)
 {
+	const OfxRectI& b = dst.getBounds();
+	const int width = b.x2 - b.x1, height = b.y2 - b.y1;
 	const size_t plane = static_cast<size_t>(width) * static_cast<size_t>(height);
 	for (int y = 0; y < height; y++) {
 		const float* in = src + static_cast<size_t>(width) * y;
-		Pixel* out = rowOf<Pixel>(dst, dstRowBytes, height, y);
+		Pixel* out = static_cast<Pixel*>(dst.getPixelAddress(b.x1, b.y2 - 1 - y));
 		for (int x = 0; x < width; x++) {
 			for (size_t c = 0; c < 4; ++c) {
 				*out++ = toPixel<Pixel>(in[plane * c + x] * factor);
@@ -416,39 +409,6 @@ struct LayerTimes
 // separators)
 using ParamPtr = std::variant<std::monostate, OFX::DoubleParam*, OFX::IntParam*, OFX::BooleanParam*, OFX::ChoiceParam*,
 	OFX::RGBAParam*, OFX::Double2DParam*, OFX::StringParam*>;
-
-// An undo block opened on the first change: the plug-in's own parameter changes (see
-// pointsMoveToSource) undo in one step. Closed on destruction, never throwing from there.
-class LazyEditBlock
-{
-public:
-	LazyEditBlock(OFX::ParamSet& paramSet, std::string name) : _paramSet(paramSet), _name(std::move(name)) {}
-	~LazyEditBlock()
-	{
-		if (_open) {
-			try {
-				_paramSet.endEditBlock();
-			} catch (...) {
-			}
-		}
-	}
-	LazyEditBlock(const LazyEditBlock&) = delete;
-	LazyEditBlock& operator=(const LazyEditBlock&) = delete;
-	// best-effort: without an undo block if the host refuses it
-	void open()
-	{
-		if (!_tried) {
-			_tried = true;
-			_open = hostTry([this] { _paramSet.beginEditBlock(_name); });
-		}
-	}
-
-private:
-	OFX::ParamSet& _paramSet;
-	std::string _name;
-	bool _tried = false;
-	bool _open = false;
-};
 
 // ---------------------------------------------------------------------------------------------
 // The effect instance
@@ -951,7 +911,9 @@ void GMICEffect::pointsMoveToSource(double time, int onlyParam)
 	const std::optional<OfxRectD> rod = sourceRoD(time);
 	if (!rod) return;
 	pointsFromSourceRead(); // the parameter may have been loaded, or undone
-	LazyEditBlock editBlock(*this, "Point defaults on Source");
+	// one undo step, begun at the first change only; best-effort: without an undo block if the host
+	// refuses it
+	EditBlock editBlock(*this, "Point defaults on Source", EditBlock::eBeginOnChange, EditBlock::eHostErrorsIgnore);
 	bool moved = false;
 	for (int i = 0; i < _gd.nofParams; i++) {
 		const Parameter& param = _gd.param[i];
@@ -1098,9 +1060,9 @@ void GMICEffect::render(const OFX::RenderArguments& args)
 		buffer.resize((size_t)in.width * (size_t)in.height * 4);
 		in.data = buffer.data();
 		if (img.getPixelDepth() == OFX::eBitDepthUByte) {
-			convertToPlanar<unsigned char>(img.getPixelData(), img.getRowBytes(), buffer.data(), in.width, in.height, kInvMaxChan8 * scale);
+			convertToPlanar<unsigned char>(img, buffer.data(), kInvMaxChan8 * scale);
 		} else {
-			convertToPlanar<float>(img.getPixelData(), img.getRowBytes(), buffer.data(), in.width, in.height, scale);
+			convertToPlanar<float>(img, buffer.data(), scale);
 		}
 		// G'MIC works on straight colours: unpremultiply premultiplied inputs (the converted buffer
 		// is float planar for both 8-bit and float images, so this also covers 8-bit inputs)
@@ -1140,9 +1102,9 @@ void GMICEffect::render(const OFX::RenderArguments& args)
 	}
 
 	if (outputImg->getPixelDepth() == OFX::eBitDepthUByte) {
-		convertFromPlanar<unsigned char>(outBuffer.data(), outputImg->getPixelData(), outputImg->getRowBytes(), out.width, out.height, 1.f / scale);
+		convertFromPlanar<unsigned char>(outBuffer.data(), *outputImg, 1.f / scale);
 	} else {
-		convertFromPlanar<float>(outBuffer.data(), outputImg->getPixelData(), outputImg->getRowBytes(), out.width, out.height, 1.f / scale);
+		convertFromPlanar<float>(outBuffer.data(), *outputImg, 1.f / scale);
 	}
 }
 
@@ -1454,7 +1416,7 @@ OFX::ImageEffect* GMICPluginFactory::createInstance(OfxImageEffectHandle handle,
 }
 
 // The factories, one per G'MIC filter, made on the first OfxGetNumberOfPlugins (see
-// OFX::Plugin::getPluginIDs) and kept until the binary is unloaded: the host may keep the
+// registerGmicPlugins) and kept until the binary is unloaded: the host may keep the
 // identifiers, and the Support library the factories.
 std::vector<std::unique_ptr<GMICPluginFactory>>& factories()
 {
@@ -1479,6 +1441,31 @@ constexpr std::array<OfxPluginEntryPoint*, sizeof...(N)> makeMainEntries(std::in
 
 constexpr std::array<OfxPluginEntryPoint*, kMaxNofPlugins> kMainEntries = makeMainEntries(std::make_index_sequence<kMaxNofPlugins>());
 
+// Lazy registration (lazyRegistration, below): the Support library calls this once, from the first
+// OfxGetNumberOfPlugins or OfxGetPlugin, and keeps the list. The filters are loaded then, not in a
+// static constructor at dlopen (see pluginGlobalData). If it throws, the Support library logs the
+// exception and the host gets no plug-ins.
+void registerGmicPlugins(OFX::PluginFactoryArray& ids)
+{
+	// no entry point beyond kMainEntries
+	const size_t nofFilters = static_cast<size_t>(std::max(0, getNofPlugins()));
+	const size_t n = std::min(nofFilters, kMaxNofPlugins);
+	if (nofFilters > n) {
+		fprintf(stderr, "openfx-gmic: Warning: %zu G'MIC filters, only the first %zu are plug-ins (kMaxNofPlugins in gmic_ofx.cpp)\n",
+			nofFilters, n);
+	}
+	factories().reserve(n);
+	ids.reserve(ids.size() + n);
+	for (size_t i = 0; i < n; i++) {
+		factories().push_back(std::make_unique<GMICPluginFactory>((int)i, kMainEntries[i]));
+		ids.push_back(factories().back().get());
+	}
+}
+
+// the plug-ins are the G'MIC filters, only known once they are loaded: not static factory objects
+// registered at dlopen
+const OFX::PluginFactories lazyRegistration(&registerGmicPlugins);
+
 } // namespace
 
 void showRenderError(OFX::ImageEffect& effect, const std::string& msg, const std::string& modalId)
@@ -1488,36 +1475,3 @@ void showRenderError(OFX::ImageEffect& effect, const std::string& msg, const std
 		effect.sendMessage(OFX::Message::eMessageError, modalId, msg);
 	}
 }
-
-namespace OFX {
-namespace Plugin {
-
-// Manual registration (OFXS_MANUAL_REGISTRATION): the Support library calls this once, from the
-// first OfxGetNumberOfPlugins or OfxGetPlugin, and keeps the list. The filters are loaded then,
-// not in a static constructor at dlopen (see pluginGlobalData). No exception may reach the host (a
-// C caller): if this fails, there are no plug-ins.
-void getPluginIDs(OFX::PluginFactoryArray& ids)
-{
-	const size_t first = ids.size();
-	try {
-		// no entry point beyond kMainEntries
-		const size_t nofFilters = static_cast<size_t>(std::max(0, getNofPlugins()));
-		const size_t n = std::min(nofFilters, kMaxNofPlugins);
-		if (nofFilters > n) {
-			fprintf(stderr, "openfx-gmic: Warning: %zu G'MIC filters, only the first %zu are plug-ins (kMaxNofPlugins in gmic_ofx.cpp)\n",
-				nofFilters, n);
-		}
-		factories().reserve(n);
-		ids.reserve(first + n);
-		for (size_t i = 0; i < n; i++) {
-			factories().push_back(std::make_unique<GMICPluginFactory>((int)i, kMainEntries[i]));
-			ids.push_back(factories().back().get());
-		}
-	} catch (...) {
-		ids.resize(first);
-		factories().clear();
-	}
-}
-
-} // namespace Plugin
-} // namespace OFX

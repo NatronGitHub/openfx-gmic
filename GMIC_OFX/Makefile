@@ -7,10 +7,6 @@ SRCDIR = ..
 # into the plug-in
 PATHTOROOT = $(SRCDIR)/openfx/Support
 include $(PATHTOROOT)/Plugins/Makefile.master
-# manual registration (read by ofxsImageEffect.cpp only): the plug-ins are the G'MIC filters, only
-# known once they are loaded, at the first OfxGetNumberOfPlugins (OFX::Plugin::getPluginIDs in
-# gmic_ofx.cpp), not static factory objects registered at dlopen (see CMakeLists.txt)
-$(OBJECTPATH)/ofxsImageEffect.o: CXXFLAGS += -DOFXS_MANUAL_REGISTRATION
 # LICENSE (GPL or COMMERCIAL) and FFT (pocketfft or fftw3): see license.mk
 include $(SRCDIR)/license.mk
 
