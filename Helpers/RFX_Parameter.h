@@ -68,17 +68,8 @@
 #define TIME_OFFSET_PARAM_SUFFIX " Time Offset"
 
 #include <string>
-using namespace std;
 
 namespace reduxfx {
-
-enum PixelFormat
-{
-	PF_RGBA = 0,
-	PF_ARGB = 1,
-	PF_BGRA = 2,
-	PF_RGB = 3,
-};
 
 enum ParamType
 {
@@ -108,48 +99,35 @@ enum DisplayStatus
 	DS_HIDDEN = 2,
 };
 
+// an image given to or made by G'MIC: float planar RGBA (RRR... GGG... BBB... AAA...), rows
+// top-down, of width x height pixels at (origin_x, origin_y) in pixel coordinates (y up)
 class World
 {
 public:
-	int width;
-	int height;
-	void* data;
-	int bitDepth;
-	int rowBytes;
-	int origin_x;
-	int origin_y;
-	reduxfx::PixelFormat pixelFormat;
-	World() {
-		width = 0;
-		height = 0;
-		data = NULL;
-		bitDepth = 8;
-		rowBytes = 0;
-		origin_x = 0;
-		origin_y = 0;
-		pixelFormat = PF_RGBA;
-	};
+	int width = 0;
+	int height = 0;
+	void* data = nullptr; // not owned
+	int bitDepth = 32;
+	int rowBytes = 0; // width * 4 floats
+	int origin_x = 0;
+	int origin_y = 0;
 };
 
-class PluginInfo 
+class PluginInfo
 {
 public:
-	string name;
-	string identifier;
-	string category;
-	string description;
-	int major_version;
-	int minor_version;
-	PluginInfo() {
-		major_version = 1;
-		minor_version = 0;
-	};
+	std::string name;
+	std::string identifier;
+	std::string category;
+	std::string description;
+	int major_version = 1;
+	int minor_version = 0;
 };
 
 class Parameter
 {
 public:
-	Parameter(string _paramName = "", string _displayName = "", int _paramType = PT_FLOAT, float _minValue = 0.f, float _maxValue = 1.f, float _defaultValue0 = 0.f, float _defaultValue1 = 0.f, float _defaultValue2 = 0.f, float _defaultValue3 = 0.f, string _text = "") {
+	Parameter(std::string _paramName = "", std::string _displayName = "", int _paramType = PT_FLOAT, float _minValue = 0.f, float _maxValue = 1.f, float _defaultValue0 = 0.f, float _defaultValue1 = 0.f, float _defaultValue2 = 0.f, float _defaultValue3 = 0.f, std::string _text = "") {
 		displayName = _displayName;
 		paramName = _paramName;
 		if (displayName == "") displayName = paramName;
@@ -162,58 +140,34 @@ public:
 		maxValue = _maxValue;
 		text = _text;
 		flags = 0;
-		id = -1;
 		displayStatus = DS_NORMAL;
 	};
 	int paramType;
-	string paramName;
-	string displayName;
-	string text;
-	string hint; // tooltip (OFX), empty for none
+	std::string paramName;
+	std::string displayName;
+	std::string text;
+	std::string hint; // tooltip (OFX), empty for none
 	float defaultValue[4];
 	float minValue;
 	float maxValue;
 	DisplayStatus displayStatus;
-	int id;
 	int flags;
 };
 
+// the values of one render: the parameters at the render time, and the images
 class SequenceData
 {
 public:
-	bool isFlat;
-	bool update;
-	float floatValue[MAX_NOF_PARAMS][4];
-	string textValue[MAX_NOF_PARAMS];
-	double time;
+	float floatValue[MAX_NOF_PARAMS][4] = {};
+	std::string textValue[MAX_NOF_PARAMS];
+	double time = 0;
 	// the first frame of the main input's frame range (Output Layer "Frame" in G'MIC), 0 if unknown
-	double frameRangeStart;
-	float downsample_x, downsample_y, pixelsize_x, pixelsize_y;
+	double frameRangeStart = 0;
 	reduxfx::World inWorld[MAX_NOF_LAYERS];
 	reduxfx::World outWorld;
-	int timeSpread;
-	void* customSequenceDataP;
-	void* contextP;
-	bool inputConnected[MAX_NOF_LAYERS];
+	bool inputConnected[MAX_NOF_LAYERS] = {};
 	// set by pluginProcess: whether the image copied to outWorld had an alpha channel
-	bool resultHasAlpha;
-	SequenceData() {
-		resultHasAlpha = true;
-		isFlat = false;
-		update = false;
-		for (int i = 0; i < MAX_NOF_PARAMS; i++) 
-			for (int j = 0; j < 4; j++) floatValue[i][j] = 0.f;
-		for (int i = 0; i < MAX_NOF_LAYERS; i++) inputConnected[i] = false;
-		time = 0;
-		frameRangeStart = 0;
-		downsample_x = 1.f;
-		downsample_y = 1.f;
-		pixelsize_x = 1.f;
-		pixelsize_y = 1.f;
-		timeSpread = 1;
-		customSequenceDataP = NULL;
-		contextP = NULL;
-	};
+	bool resultHasAlpha = true;
 };
 
 #define PAR_TYPE(idx) globalDataP->param[idx].paramType
@@ -221,46 +175,21 @@ public:
 #define PAR_TXT(idx) sequenceDataP->textValue[idx]
 #define PAR_CH(idx, ch) sequenceDataP->floatValue[idx][ch]
 
+// a plug-in: its G'MIC filter's parameters and the ones the plug-in adds (see pluginSetup)
 class GlobalData
 {
 public:
-	void* customGlobalDataP;
 	reduxfx::Parameter param[MAX_NOF_PARAMS];
-	int nofParams;
-	int nofInputs;
+	int nofParams = 1;
+	int nofInputs = 0; // the PT_LAYER parameters, i.e. the input clips
 	PluginInfo pluginInfo;
-	float scale;
-	int pluginIndex;
+	int pluginIndex = 0;
 
 	GlobalData() {
-		customGlobalDataP = NULL;
-		// memset(&param[0], 0, sizeof(reduxfx::Parameter) * MAX_NOF_PARAMS);
 		param[0] = reduxfx::Parameter("input", "Input", PT_LAYER);
-		nofParams = 1;
-		nofInputs = 0;
-		scale = 1.f;
-		pluginIndex = 0;
-#ifdef PLUGIN_NAME
-		pluginInfo.name = PLUGIN_NAME;
-#endif
-#ifdef PLUGIN_CATEGORY
-		pluginInfo.category = PLUGIN_CATEGORY;
-#endif
-#ifdef PLUGIN_DESCRIPTION
-		pluginInfo.description = PLUGIN_DESCRIPTION;
-#endif
-#ifdef MINOR_VERSION
-		pluginInfo.minor_version = MINOR_VERSION;
-#endif
-#ifdef MAJOR_VERSION
-		pluginInfo.major_version = MAJOR_VERSION;
-#endif
-#ifdef PLUGIN_UNIQUEID
-		pluginInfo.identifier = PLUGIN_UNIQUEID;
-#endif
 	}
 };
 
-};
+}
 
 #endif

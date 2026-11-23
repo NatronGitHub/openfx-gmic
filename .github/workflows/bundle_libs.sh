@@ -4,7 +4,7 @@
 # Usage: bundle_libs.sh <path to GMIC.ofx.bundle>   (the bundle is modified in place; running it
 # again on the same bundle is harmless)
 #
-# macOS: release builds already run openfx's Examples/include/osxDeploy.sh at link time, which
+# macOS: release builds already run openfx's Support/include/osxDeploy.sh at link time, which
 #   copies the MacPorts dylibs into Contents/Libraries and rewrites their install names to
 #   @rpath/<name> (the plug-in is linked with the rpath @loader_path/../Libraries), as Natron's
 #   tools/jenkins/build-OSX-installer.sh does. This script completes it: it copies any library from
