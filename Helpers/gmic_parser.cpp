@@ -300,6 +300,9 @@ void processParam(const string& s, EffectParameter& cp)
 		}
 		vector<string> c;
 		strSplit(cp.text, ',', c);
+		// no label ("choice()", "choice(,)", "choice(1,)"): G'MIC-Qt (ChoiceParameter::initFromText)
+		// accepts it with one empty label, so do the same instead of reading c[-1]
+		if (c.empty()) c.push_back(string());
 		cp.text = "";
 		for (int i = 0; i < (int)c.size() - 1; i++) {
 			cp.text += strTrim(c[i]) + "|";
@@ -355,17 +358,21 @@ void processParam(const string& s, EffectParameter& cp)
 		// Add a float-valued parameter (as a float slider).
 		// 'int(default_value,min_value,max_value)'
 		// Add a integer parameter (as an integer slider).
+		// As G'MIC-Qt (FloatParameter/IntParameter::initFromText), which rejects any other count
+		// of values (e.g. "float(1)" or "float(0,1)"): exactly three. A malformed one is left
+		// without a type, as an unknown type: a hidden parameter passing 0, so that the later
+		// arguments keep their positions.
 		p1 = (int)pval.find(",");
-		p2 = (int)pval.rfind(",");
-		if (p1 == p2) {
-			cp.minValue = pval.substr(0, p1);
-			cp.maxValue = pval.substr(p1);
-			cp.defaultValue = cp.minValue;
-		} else {
-			cp.defaultValue = pval.substr(0, p1);
-			cp.maxValue = pval.substr(p2 + 1);
-			cp.minValue = pval.substr(p1 + 1, p2 - p1 - 1);
+		p2 = (int)pval.find(",", p1 + 1);
+		if (p1 < 0 || p2 < 0 || pval.find(",", p2 + 1) != string::npos) {
+			fprintf(stderr, "openfx-gmic: Warning: parameter \"%s\" is a malformed %s(%s), not three values: passed as 0\n",
+				cp.name.c_str(), cp.paramType.c_str(), pval.c_str());
+			cp.paramType = "";
+			return;
 		}
+		cp.defaultValue = pval.substr(0, p1);
+		cp.minValue = pval.substr(p1 + 1, p2 - p1 - 1);
+		cp.maxValue = pval.substr(p2 + 1);
 	} else if (cp.paramType == "folder") {
 		// 'folder(_default_foldername)'
 		// Add a foldername parameter (as a folderchooser).
