@@ -100,6 +100,15 @@
 #error "/fp:fast breaks G'MIC: use /fp:precise"
 #endif
 
+#ifdef _WIN32
+// CreateThread (the render thread) and GlobalMemoryStatusEx (physicalMemoryBytes), without the
+// min/max macros. Before the headers that have "using namespace std": with it, the Windows SDK's
+// byte is ambiguous with C++17's std::byte (C2872).
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #include "RFX_OFX_Utils.h"
 
 #include "gmic_parser.h"
@@ -133,13 +142,6 @@ using namespace reduxfx;
 #include <thread>
 #ifndef _WIN32
 #include <pthread.h>
-#else
-// CreateThread (the render thread) and GlobalMemoryStatusEx (physicalMemoryBytes), without the
-// min/max macros
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
 #endif
 #ifdef DEBUG
 #include <iostream>
