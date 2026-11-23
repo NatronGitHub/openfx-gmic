@@ -506,7 +506,6 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	for (int i = 0; i < (int)lines.size(); i++) {
 		//printf("[%d]: %s\n", i,lines[i].c_str());
 		string line = strTrim(lines[i], " \r\n\t");
-        // TODO: there should be a "while" loop here, in case there are several parameters on the line
 		if (line.size() > 0 && line[0] != '#') result += line + "\n";
 		strReplace(line, src_prefix_old, dst_prefix);
 		strReplace(line, src_prefix_en, dst_prefix);
@@ -528,22 +527,23 @@ string gmic_parse_single(const string& content, EffectData& cd)
 				while (!line.empty()) {
 					if (inMulti) {
 						string &name = cd.param[cd.param.size() - 1].name;
-						// Only add a space if the previous line does not end with "\n" or "\"
-						// (see eg. the "Privacy Notice" in gmic_stdlib.gmic)
-						const bool endsWithNewline = name.size() >= 2 && name.compare(name.size() - 2, 2, "\\n") == 0;
-						const bool endsWithBackslash = !name.empty() && name[name.size() - 1] == '\\';
-						if (!(endsWithNewline || endsWithBackslash)) {
-							name += ' ';
-						}
 						// as G'MIC-Qt (AbstractParameter::parseText): the first closing delimiter ends
 						// the value, even at the start of the line; then skip the ", " before the next one
 						const string::size_type pEnd = line.find(inMultiClose);
+						// Only add a space if the previous line does not end with "\n" or "\"
+						// (see eg. the "Privacy Notice" in gmic_stdlib.gmic), and not before a
+						// closing delimiter that starts the line (the value would end with a space)
+						const bool endsWithNewline = name.size() >= 2 && name.compare(name.size() - 2, 2, "\\n") == 0;
+						const bool endsWithBackslash = !name.empty() && name[name.size() - 1] == '\\';
+						if (pEnd != 0 && !(endsWithNewline || endsWithBackslash)) {
+							name += ' ';
+						}
 						if (pEnd != string::npos) {
-							cd.param[cd.param.size() - 1].name += line.substr(0, pEnd + 1);
+							name += line.substr(0, pEnd + 1);
 							inMulti = false;
 							line = strTrim(line.substr(pEnd + 1), ", ");
 						} else {
-							cd.param[cd.param.size() - 1].name += line;
+							name += line;
 							line.clear();
 						}
 						continue;
