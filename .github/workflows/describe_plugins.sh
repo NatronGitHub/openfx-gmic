@@ -104,11 +104,16 @@ if [ ! -f "$SHIPPED_LIST" ] && [ "${DESCRIBE_USER_LIST:-}" = 1 ]; then
 elif [ ! -f "$SHIPPED_LIST" ]; then
     echo "Note: no list of the plug-ins in the bundle (a GMIC_PLUGIN_LIST=OFF build?): not checked"
 else
-    sed -n -e 's/^PLUGIN //p' describe.log | tr -d '\r' | sort > described.txt
-    grep -v '^[[:space:]]*#' "$SHIPPED_LIST" | sed -e 's/#.*//' | tr -d ' \t\r' | grep . | sort > listed.txt || true
-    if ! diff -u listed.txt described.txt > list.diff; then
-        head -n 20 list.diff
-        echo "FAIL: the bundle's list of the plug-ins (-) is not the described plug-ins (+)"
+    # (comm and sort, from coreutils: diff may not be installed, e.g. in MSYS2; LC_ALL=C: the same
+    # order for both)
+    sed -n -e 's/^PLUGIN //p' describe.log | tr -d '\r' | LC_ALL=C sort > described.txt
+    grep -v '^[[:space:]]*#' "$SHIPPED_LIST" | sed -e 's/#.*//' | tr -d ' \t\r' | grep . | LC_ALL=C sort > listed.txt || true
+    LC_ALL=C comm -3 listed.txt described.txt > list.diff
+    if [ -s list.diff ] || [ ! -s listed.txt ]; then
+        # (od -c: also the invisible characters)
+        echo "the first differences, only in the list, or (after a tab) only described:"
+        head -n 10 list.diff | od -c | head -n 20
+        echo "FAIL: the bundle's list of the plug-ins ($(($(wc -l < listed.txt))) entries) is not the described plug-ins ($(($(wc -l < described.txt))))"
         status=1
     fi
 fi
