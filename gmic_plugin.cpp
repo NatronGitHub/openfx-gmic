@@ -451,7 +451,6 @@ const PluginGlobalData& pluginGlobalData()
 
 } // namespace
 
-
 class MyGlobalData
 {
 public:
@@ -558,11 +557,8 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 #endif
 	globalDataP->scale = 255.f;
 
-
-	EffectData effectData;
-	effectData.multiLayer = true;
-	effectData = pluginGlobalData().pluginData[globalDataP->pluginIndex];
-	bool hasContent = true;
+	// a copy: the note() parameters are appended to its notes (the description)
+	EffectData effectData = pluginGlobalData().pluginData[globalDataP->pluginIndex];
 
 	globalDataP->param[0] = Parameter(kOfxImageEffectSimpleSourceClipName, "", PT_LAYER);
 	int p = 1;
@@ -720,9 +716,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		++p;
 	}
 	globalDataP->param[p] = Parameter("Command", "", PT_TEXT, 0, 0, 0, 0, 0, 0, "-blur 2");
-	if (hasContent) {
-		globalDataP->param[p].displayStatus = DS_HIDDEN;
-	}
+	globalDataP->param[p].displayStatus = DS_HIDDEN;
 	++p;
 	globalDataP->param[p] = Parameter("Advanced Options", "", PT_TOPIC_START);
 	globalDataP->param[p].flags = 1;
@@ -752,7 +746,7 @@ int pluginSetup(GlobalData* globalDataP, ContextData* /*contextDataP*/)
 		"Gray or RGB results of another size than the input (frames, rotation, crop, resize...) are opaque.";
 	++p;
 	globalDataP->param[p] = Parameter("Preview/Draft Mode", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
-	if (!hasContent || effectData.command == effectData.preview_command) {
+	if (effectData.command == effectData.preview_command) {
 		globalDataP->param[p].displayStatus = DS_HIDDEN;
 	}
 	++p;
@@ -1730,7 +1724,6 @@ int pluginProcess(SequenceData* sequenceDataP, GlobalData* globalDataP, ContextD
 	}
 	return err;
 }
-
 
 int getNofPlugins()
 {
