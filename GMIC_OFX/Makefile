@@ -30,11 +30,12 @@ endif
 # LICENSE, FFT, OPENMP and GMIC_STATIC_DEPS change the compiled code, the linked libraries and the
 # bundled files: when they change, rebuild the objects and the bundle (whose Contents/Libraries
 # and Resources would keep stale files).
-BUILD_KEY = LICENSE=$(LICENSE) FFT=$(FFT) OPENMP=$(OPENMP) GMIC_STATIC_DEPS=$(GMIC_STATIC_DEPS)
+# OFX_DEFINES (below) changes the Support library's class layouts: rebuild its objects too.
+BUILD_KEY = LICENSE=$(LICENSE) FFT=$(FFT) OPENMP=$(OPENMP) GMIC_STATIC_DEPS=$(GMIC_STATIC_DEPS) OFX_DEFINES=$(OFX_DEFINES)
 $(OBJECTPATH)/build.license: gmic_sources
 	@mkdir -p $(OBJECTPATH)
 	@echo '$(BUILD_KEY)' | cmp -s - $@ || { echo '$(BUILD_KEY)' > $@; rm -rf $(OBJECTPATH)/$(PLUGINNAME).ofx.bundle; }
-$(addprefix $(OBJECTPATH)/,$(PLUGINOBJECTS)): $(OBJECTPATH)/build.license
+$(addprefix $(OBJECTPATH)/,$(PLUGINOBJECTS) $(SUPPORTOBJECTS)): $(OBJECTPATH)/build.license
 
 # The G'MIC sources, gmic_hotfixes.h, gmic_stdlib_community.h (generated for COMMERCIAL builds),
 # pocketfft and its licence are made by the top-level Makefile: let it update them also when make
@@ -68,12 +69,8 @@ $(OBJECTPATH)/gmic_ofx.o: $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin.h
 # The OpenFX extensions of openfx's CMake defaults (openfx/CMakeLists.txt's OFX_DEFINITIONS), as
 # CMake builds get them through openfx::Api and openfx::Support: both builds ship the same Support
 # library. They change its class layouts: every object is compiled with the same set.
-CXXFLAGS += \
--DOFX_EXTENSIONS_NATRON \
--DOFX_EXTENSIONS_NUKE \
--DOFX_EXTENSIONS_VEGAS \
--DOFX_EXTENSIONS_TUTTLE \
--DOFX_SUPPORTS_OPENGLRENDER \
+OFX_DEFINES = -DOFX_EXTENSIONS_NATRON -DOFX_EXTENSIONS_NUKE -DOFX_EXTENSIONS_VEGAS -DOFX_EXTENSIONS_TUTTLE -DOFX_SUPPORTS_OPENGLRENDER
+CXXFLAGS += $(OFX_DEFINES) \
 -I$(SRCDIR) \
 -I$(SRCDIR)/Helpers \
 -Dgmic_core \
