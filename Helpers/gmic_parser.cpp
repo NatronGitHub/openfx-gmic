@@ -584,6 +584,11 @@ string gmic_parse_single(const string& content, EffectData& cd)
 								inMulti = true;
 								line.clear();
 							}
+						} else {
+							// "Name = value" with no "(", "[" or "{" after the '=' is not a parameter
+							// (G'MIC-Qt's AbstractParameter::createFromText makes none), and no other
+							// parameter can follow it on this line: skip the line, so that the loop ends
+							line.clear();
 						}
 					}
 				}
