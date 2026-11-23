@@ -229,26 +229,16 @@ public:
 	int nofParams;
 	int nofInputs;
 	PluginInfo pluginInfo;
-	string pluginPath;
-	string pluginFilename;
-	string buttonName;
 	float scale;
-	// always false: read only by the (unmaintained) AE glue, RFX_AE_Utils.h. The plug-in never
-	// processes in place (the "Fixed (Inplace)" Resize Mode behaves like "Dynamic").
-	bool inplaceProcessing;
 	int pluginIndex;
-	bool headlessMode;
 
 	GlobalData() {
-		headlessMode = false;
 		customGlobalDataP = NULL;
 		// memset(&param[0], 0, sizeof(reduxfx::Parameter) * MAX_NOF_PARAMS);
 		param[0] = reduxfx::Parameter("input", "Input", PT_LAYER);
 		nofParams = 1;
 		nofInputs = 0;
-		buttonName = " ";
 		scale = 1.f;
-		inplaceProcessing = false;
 		pluginIndex = 0;
 #ifdef PLUGIN_NAME
 		pluginInfo.name = PLUGIN_NAME;

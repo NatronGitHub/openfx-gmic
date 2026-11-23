@@ -75,8 +75,6 @@ void strSplit(const std::string& s, const char seperator, std::vector<std::strin
 // parse a number written with '.' as the decimal separator, whatever the locale (0 if none)
 [[nodiscard]] double stringToDouble(const std::string& s);
 
-std::string strToAscii(std::string& s);
-
 [[nodiscard]] std::string strRemoveXmlTags(const std::string& s, bool replaceEntities = false);
 
 }

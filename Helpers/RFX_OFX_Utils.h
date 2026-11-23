@@ -74,14 +74,16 @@
 #include <string>
 #include <sstream>
 #include <locale>
-#include "RFX_Utils.h"
+#include <cmath>
 #include "RFX_Parameter.h"
 #include "RFX_StringUtils.h"
 using namespace std;
 using namespace reduxfx;
 
-#define PF_Err_NONE 0
 #define PF_Err_INTERNAL_STRUCT_DAMAGED 512
+
+// pi, without relying on the non-standard M_PI
+constexpr double kRfxPi = 3.14159265358979323846;
 
 struct ContextData
 {
@@ -1020,10 +1022,10 @@ void convert_RGBA32P_to_RGBA8(ConvertData& data, const int startLine, const int 
 		float* in_pixA = (float*)((char*)data.srcData + sizeof(float) * data.width * (y + data.height * 3));
 		unsigned char* out_pix = (unsigned char*)((char*)data.dstData + ((ptrdiff_t)(data.height-1-y) * data.dstRowBytes));
 		for (int x = 0; x < data.width; x++) {
-			*out_pix++ = (unsigned char)(saturate(*in_pixR * data.scale) * MAX_CHAN8 + 0.5f); in_pixR += stepWidth;
-			*out_pix++ = (unsigned char)(saturate(*in_pixG * data.scale) * MAX_CHAN8 + 0.5f); in_pixG += stepWidth;
-			*out_pix++ = (unsigned char)(saturate(*in_pixB * data.scale) * MAX_CHAN8 + 0.5f); in_pixB += stepWidth;
-			*out_pix++ = (unsigned char)(saturate(*in_pixA * data.scale) * MAX_CHAN8 + 0.5f); in_pixA += stepWidth;
+			*out_pix++ = (unsigned char)(std::clamp(*in_pixR * data.scale, 0.f, 1.f) * MAX_CHAN8 + 0.5f); in_pixR += stepWidth;
+			*out_pix++ = (unsigned char)(std::clamp(*in_pixG * data.scale, 0.f, 1.f) * MAX_CHAN8 + 0.5f); in_pixG += stepWidth;
+			*out_pix++ = (unsigned char)(std::clamp(*in_pixB * data.scale, 0.f, 1.f) * MAX_CHAN8 + 0.5f); in_pixB += stepWidth;
+			*out_pix++ = (unsigned char)(std::clamp(*in_pixA * data.scale, 0.f, 1.f) * MAX_CHAN8 + 0.5f); in_pixA += stepWidth;
 		}
 	}
 }
@@ -1803,25 +1805,6 @@ static OfxStatus describe(int pluginIndex, OfxImageEffectHandle effect)
 	gPropHost->propSetInt(effectProps, kOfxImageEffectPropSupportsTiles, 0, 0);
 	gPropHost->propSetInt(effectProps, kOfxImageEffectPluginPropHostFrameThreading, 0, 0);
 	gPropHost->propSetInt(effectProps, kOfxImageEffectPropSupportsMultiResolution, 0, 0);
-
-	const char *path = NULL;
-	gPropHost->propGetString(effectProps, kOfxPluginPropFilePath, 0, &path);
-
-	if (path) {
-		string p = string(path);
-	#ifdef _WIN32
-		int iPos = (int)p.find_last_of("/\\");
-	#else
-		int iPos = (int)p.find_last_of("/");
-	#endif
-		if (iPos >= 0) {
-			globalData[pluginIndex].pluginPath = p.substr(0, iPos);
-			globalData[pluginIndex].pluginFilename = p.substr(iPos + 1);
-		} else {
-			globalData[pluginIndex].pluginPath = p;
-			globalData[pluginIndex].pluginFilename = p;
-		}
-	}
 
     gPropHost->propSetString(effectProps, kOfxImageEffectPropClipPreferencesSlaveParam, 0, "Animate Random Seed");
     gPropHost->propSetString(effectProps, kOfxImageEffectPropClipPreferencesSlaveParam, 1, "Output Layer"); // Frame: frame varying

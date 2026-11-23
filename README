@@ -8,9 +8,7 @@ community filters: 1199 plug-ins with G'MIC 4.0.8 (810 in COMMERCIAL builds). Ch
 Natron 2.5 are in CHANGELOG.md.
 
 It was written by Tobias Fleischer (reduxFX Productions, https://www.reduxfx.com), and is now
-maintained by the Natron developers at https://github.com/NatronGitHub/openfx-gmic. The original
-code also built plug-ins for Adobe After Effects and Premiere Pro (AE_PLUGIN): these parts are
-unmaintained, and only the OpenFX build is supported.
+maintained by the Natron developers at https://github.com/NatronGitHub/openfx-gmic.
 
 Licence
 -------
