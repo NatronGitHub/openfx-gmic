@@ -15,7 +15,7 @@
 # ***** END LICENSE BLOCK *****
 
 # CMake build of GMIC.ofx.bundle, equivalent to the Makefiles (Makefile, GMIC_OFX/Makefile and
-# openfx/Examples/Makefile.master):
+# openfx/Support/Plugins/Makefile.master):
 #
 #   cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release   # Debug, RelWithDebInfo
 #   cmake --build build                    # assembles build/Plugins/GMIC.ofx.bundle
@@ -100,12 +100,13 @@ endif()
 
 # ========================== openfx ==========================
 
-# openfx's cmake/OpenFX.cmake: add_ofx_plugin (which links the OFX C API, openfx::Api: the plug-in
-# doesn't use the Support library), ofx_plugin_resources, ofx_target_openmp, ofx_deploy_bundle, and
+# openfx's cmake/OpenFX.cmake: add_ofx_plugin (which links the OFX C API, openfx::Api; the plug-in
+# also links the C++ Support library, openfx::Support, see below), ofx_plugin_resources,
+# ofx_target_openmp, ofx_deploy_bundle, and
 # the OFX_CXX_STANDARD, OFX_USE_OPENMP, OFX_DEPLOY_BUNDLES and PLUGIN_INSTALLDIR options. The
 # bundle is installed into ${CMAKE_INSTALL_PREFIX}/${PLUGIN_INSTALLDIR}, by default
 # <prefix>/OFX/Plugins (e.g. /usr/OFX/Plugins with the prefix /usr).
-# EXCLUDE_FROM_ALL: openfx's libraries are not built.
+# EXCLUDE_FROM_ALL: openfx's libraries are only built when needed (openfx::Support).
 #
 # GMIC_BUILD_TESTS (default OFF): also build openfx's hostDemo (HostSupport/examples), the host
 # that .github/workflows/render_plugins.py renders the plug-ins with; its path is written to
@@ -578,11 +579,25 @@ add_ofx_plugin(GMIC
   SOURCES
     ${GMIC_EXTRACTED_SOURCES}
     "${GMIC_GENERATED_DIR}/gmic_hotfixes.h"
+    gmic_ofx.cpp
     gmic_plugin.cpp
+    gmic_plugin.h
     gmic_plugin_call.cpp
     gmic_plugin_call.h
     Helpers/gmic_parser.cpp
     Helpers/RFX_StringUtils.cpp)
+# The OpenFX C++ Support library (gmic_ofx.cpp), with its manual registration
+# (OFXS_MANUAL_REGISTRATION, read by ofxsImageEffect.cpp only): the plug-ins are the G'MIC filters,
+# only known once they are loaded, at the first OfxGetNumberOfPlugins (OFX::Plugin::getPluginIDs
+# in gmic_ofx.cpp), not static factory objects registered at dlopen. GMIC must be openfx::Support's
+# only user in this build: openfx's example plug-ins register their factories automatically.
+if(BUILD_EXAMPLE_PLUGINS)
+  message(FATAL_ERROR "BUILD_EXAMPLE_PLUGINS: openfx's example plug-ins can't link the openfx::Support built here, with OFXS_MANUAL_REGISTRATION for GMIC")
+endif()
+set_property(SOURCE "${PROJECT_SOURCE_DIR}/openfx/Support/Library/ofxsImageEffect.cpp"
+  DIRECTORY "${PROJECT_SOURCE_DIR}/openfx/Support/Library"
+  APPEND PROPERTY COMPILE_DEFINITIONS OFXS_MANUAL_REGISTRATION)
+target_link_libraries(GMIC PRIVATE openfx::Support)
 # The resources of GMIC_OFX/Makefile, before ofx_deploy_bundle (below): the icon, the licences of
 # the plug-in and G'MIC (COPYING: dual CeCILL-C / CeCILL v2; COMMERCIAL builds use CeCILL-C);
 # COMMERCIAL: the CeCILL-B licence of the community files without a licence in their header;
@@ -620,12 +635,11 @@ endif()
 target_include_directories(GMIC PRIVATE
   "${GMIC_SRC_DIR}"
   "${GMIC_GENERATED_DIR}"
-  Helpers
-  openfx/Examples/include) # ofxUtilities.H
+  Helpers)
 
 # GMIC_OFX/Makefile's CXXFLAGS. G'MIC >= 3 compiles CImg in its own namespace (gmic_library), so it
 # cannot clash with the cimg_library of other plug-ins (e.g. openfx-misc) loaded in the same host.
-# (OFX_EXTENSIONS_NATRON/NUKE come from openfx's options, default ON, through openfx::Api: don't
+# (OFX_EXTENSIONS_NATRON/NUKE come from openfx's options, default ON, through openfx::Api and openfx::Support: don't
 # add or remove them here, https://github.com/NatronGitHub/openfx/pull/264.)
 target_compile_definitions(GMIC PRIVATE
   gmic_core

@@ -1,10 +1,16 @@
 PLUGINNAME = GMIC
-PLUGINSOURCES = gmic.cpp gmic_plugin.cpp gmic_plugin_call.cpp gmic_parser.cpp RFX_StringUtils.cpp
+PLUGINSOURCES = gmic.cpp gmic_ofx.cpp gmic_plugin.cpp gmic_plugin_call.cpp gmic_parser.cpp RFX_StringUtils.cpp
 PLUGINOBJECTS = $(PLUGINSOURCES:.cpp=.o)
 
 SRCDIR = ..
-PATHTOROOT = $(SRCDIR)/openfx/Examples
-include $(PATHTOROOT)/Makefile.master
+# the OpenFX C++ Support library: Plugins/Makefile.master compiles its sources (SUPPORTOBJECTS)
+# into the plug-in
+PATHTOROOT = $(SRCDIR)/openfx/Support
+include $(PATHTOROOT)/Plugins/Makefile.master
+# manual registration (read by ofxsImageEffect.cpp only): the plug-ins are the G'MIC filters, only
+# known once they are loaded, at the first OfxGetNumberOfPlugins (OFX::Plugin::getPluginIDs in
+# gmic_ofx.cpp), not static factory objects registered at dlopen (see CMakeLists.txt)
+$(OBJECTPATH)/ofxsImageEffect.o: CXXFLAGS += -DOFXS_MANUAL_REGISTRATION
 # LICENSE (GPL or COMMERCIAL) and FFT (pocketfft or fftw3): see license.mk
 include $(SRCDIR)/license.mk
 
@@ -24,11 +30,12 @@ endif
 # LICENSE, FFT, OPENMP and GMIC_STATIC_DEPS change the compiled code, the linked libraries and the
 # bundled files: when they change, rebuild the objects and the bundle (whose Contents/Libraries
 # and Resources would keep stale files).
-BUILD_KEY = LICENSE=$(LICENSE) FFT=$(FFT) OPENMP=$(OPENMP) GMIC_STATIC_DEPS=$(GMIC_STATIC_DEPS)
+# OFX_DEFINES (below) changes the Support library's class layouts: rebuild its objects too.
+BUILD_KEY = LICENSE=$(LICENSE) FFT=$(FFT) OPENMP=$(OPENMP) GMIC_STATIC_DEPS=$(GMIC_STATIC_DEPS) OFX_DEFINES=$(OFX_DEFINES)
 $(OBJECTPATH)/build.license: gmic_sources
 	@mkdir -p $(OBJECTPATH)
 	@echo '$(BUILD_KEY)' | cmp -s - $@ || { echo '$(BUILD_KEY)' > $@; rm -rf $(OBJECTPATH)/$(PLUGINNAME).ofx.bundle; }
-$(addprefix $(OBJECTPATH)/,$(PLUGINOBJECTS)): $(OBJECTPATH)/build.license
+$(addprefix $(OBJECTPATH)/,$(PLUGINOBJECTS) $(SUPPORTOBJECTS)): $(OBJECTPATH)/build.license
 
 # The G'MIC sources, gmic_hotfixes.h, gmic_stdlib_community.h (generated for COMMERCIAL builds),
 # pocketfft and its licence are made by the top-level Makefile: let it update them also when make
@@ -56,15 +63,16 @@ GMIC_HEADERS += $(SRCDIR)/pocketfft_hdronly.h
 endif
 $(OBJECTPATH)/gmic.o: $(GMIC_HEADERS) $(SRCDIR)/gmic_stdlib_community.h
 $(OBJECTPATH)/gmic_plugin_call.o: $(GMIC_HEADERS) $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h
-$(OBJECTPATH)/gmic_plugin.o: $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h
+$(OBJECTPATH)/gmic_plugin.o: $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h $(SRCDIR)/gmic_plugin.h
+$(OBJECTPATH)/gmic_ofx.o: $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin.h
 
-CXXFLAGS += \
--DOFX_EXTENSIONS_NATRON \
--DOFX_EXTENSIONS_NUKE \
+# The OpenFX extensions of openfx's CMake defaults (openfx/CMakeLists.txt's OFX_DEFINITIONS), as
+# CMake builds get them through openfx::Api and openfx::Support: both builds ship the same Support
+# library. They change its class layouts: every object is compiled with the same set.
+OFX_DEFINES = -DOFX_EXTENSIONS_NATRON -DOFX_EXTENSIONS_NUKE -DOFX_EXTENSIONS_VEGAS -DOFX_EXTENSIONS_TUTTLE -DOFX_SUPPORTS_OPENGLRENDER
+CXXFLAGS += $(OFX_DEFINES) \
 -I$(SRCDIR) \
 -I$(SRCDIR)/Helpers \
--I$(SRCDIR)/openfx/include \
--I$(SRCDIR)/openfx/Examples/include \
 -Dgmic_core \
 -Dgmic_is_parallel \
 -Dcimg_use_abort \
@@ -148,7 +156,8 @@ CXXFLAGS += `pkg-config --cflags $(DEPS_MODULES)`
 LINKFLAGS += `pkg-config --libs $(DEPS_MODULES)` $(FFT_LIBS)
 endif
 
-VPATH = $(SRCDIR):$(SRCDIR)/Helpers
+# (after Plugins/Makefile.master's VPATH, the Support library's sources)
+VPATH += $(SRCDIR) $(SRCDIR)/Helpers
 
 # C++ standard: by default none is added, so the compiler's default applies (gnu++17 with current
 # compilers), or a -std option given in CXX by the caller (as Natron's build does). Pass e.g.
