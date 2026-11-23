@@ -73,10 +73,6 @@ constexpr float kInvMaxChan8 = 1.f / 255.f;
 // (see pointsMoveToSource), so that this survives saving and loading the project
 constexpr const char* kPointsFromSourceParam = "PointsFromSource";
 
-// the parameters that the clip preferences depend on (see getClipPreferences)
-constexpr const char* kAnimateSeedParam = "Animate Random Seed";
-constexpr const char* kOutputLayerParam = "Output Layer";
-
 // G'MIC 4 has more than 1000 filters: entry points for up to that many plug-ins (see
 // pluginMainEntry)
 constexpr std::size_t kMaxNofPlugins = 2000;
@@ -93,6 +89,14 @@ auto hostQuery(F f) -> std::optional<decltype(f())>
 	} catch (const OFX::Exception::PropertyValueIllegalToHost&) {
 	}
 	return std::nullopt;
+}
+
+// f(), best-effort: a failed host call is ignored, as the raw C API's callers ignored the status.
+// True if it succeeded.
+template <class F>
+bool hostTry(F f)
+{
+	return hostQuery([&f] { f(); return true; }).has_value();
 }
 
 bool hostIsNatron()
@@ -197,16 +201,29 @@ OfxPointD pointNormalisedDefault(const Parameter& param)
 // Pixel conversions. The G'MIC buffers are float planar RGBA (RRR... GGG... BBB... AAA...), rows
 // top-down; the OFX images are interleaved RGBA, rows bottom-up (rowBytes may be negative).
 
+// row y of an image (rows top-down in the planar buffer, bottom-up in the OFX image), as T
+template <class T>
+T* rowOf(void* data, int rowBytes, int height, int y)
+{
+	return static_cast<T*>(static_cast<void*>(static_cast<char*>(data) + static_cast<ptrdiff_t>(height - 1 - y) * rowBytes));
+}
+
+template <class T>
+const T* rowOf(const void* data, int rowBytes, int height, int y)
+{
+	return static_cast<const T*>(static_cast<const void*>(static_cast<const char*>(data) + static_cast<ptrdiff_t>(height - 1 - y) * rowBytes));
+}
+
 void convertRGBA8ToPlanar(const void* src, int srcRowBytes, float* dst, int width, int height, float scale)
 {
-	const size_t plane = (size_t)width * (size_t)height;
+	const size_t plane = static_cast<size_t>(width) * static_cast<size_t>(height);
 	for (int y = 0; y < height; y++) {
 		// rows in the same order as convertRGBA32ToPlanar (and as the output conversions)
-		const unsigned char* in = (const unsigned char*)src + (ptrdiff_t)(height - 1 - y) * srcRowBytes;
-		float* out = dst + (size_t)width * y;
+		const unsigned char* in = rowOf<unsigned char>(src, srcRowBytes, height, y);
+		float* out = dst + static_cast<size_t>(width) * y;
 		for (int x = 0; x < width; x++) {
-			for (int c = 0; c < 4; ++c) {
-				out[plane * c + x] = ((float)(*in++) * kInvMaxChan8 * scale);
+			for (size_t c = 0; c < 4; ++c) {
+				out[plane * c + x] = static_cast<float>(*in++) * kInvMaxChan8 * scale;
 			}
 		}
 	}
@@ -214,12 +231,12 @@ void convertRGBA8ToPlanar(const void* src, int srcRowBytes, float* dst, int widt
 
 void convertRGBA32ToPlanar(const void* src, int srcRowBytes, float* dst, int width, int height, float scale)
 {
-	const size_t plane = (size_t)width * (size_t)height;
+	const size_t plane = static_cast<size_t>(width) * static_cast<size_t>(height);
 	for (int y = 0; y < height; y++) {
-		const float* in = (const float*)((const char*)src + (ptrdiff_t)(height - 1 - y) * srcRowBytes);
-		float* out = dst + (size_t)width * y;
+		const float* in = rowOf<float>(src, srcRowBytes, height, y);
+		float* out = dst + static_cast<size_t>(width) * y;
 		for (int x = 0; x < width; x++) {
-			for (int c = 0; c < 4; ++c) {
+			for (size_t c = 0; c < 4; ++c) {
 				out[plane * c + x] = (*in++) * scale;
 			}
 		}
@@ -228,13 +245,13 @@ void convertRGBA32ToPlanar(const void* src, int srcRowBytes, float* dst, int wid
 
 void convertPlanarToRGBA8(const float* src, void* dst, int dstRowBytes, int width, int height, float scale)
 {
-	const size_t plane = (size_t)width * (size_t)height;
+	const size_t plane = static_cast<size_t>(width) * static_cast<size_t>(height);
 	for (int y = 0; y < height; y++) {
-		const float* in = src + (size_t)width * y;
-		unsigned char* out = (unsigned char*)dst + (ptrdiff_t)(height - 1 - y) * dstRowBytes;
+		const float* in = src + static_cast<size_t>(width) * y;
+		unsigned char* out = rowOf<unsigned char>(dst, dstRowBytes, height, y);
 		for (int x = 0; x < width; x++) {
-			for (int c = 0; c < 4; ++c) {
-				*out++ = (unsigned char)(std::clamp(in[plane * c + x] * scale, 0.f, 1.f) * kMaxChan8 + 0.5f);
+			for (size_t c = 0; c < 4; ++c) {
+				*out++ = static_cast<unsigned char>(std::clamp(in[plane * c + x] * scale, 0.f, 1.f) * kMaxChan8 + 0.5f);
 			}
 		}
 	}
@@ -242,12 +259,12 @@ void convertPlanarToRGBA8(const float* src, void* dst, int dstRowBytes, int widt
 
 void convertPlanarToRGBA32(const float* src, void* dst, int dstRowBytes, int width, int height, float scale)
 {
-	const size_t plane = (size_t)width * (size_t)height;
+	const size_t plane = static_cast<size_t>(width) * static_cast<size_t>(height);
 	for (int y = 0; y < height; y++) {
-		const float* in = src + (size_t)width * y;
-		float* out = (float*)((char*)dst + (ptrdiff_t)(height - 1 - y) * dstRowBytes);
+		const float* in = src + static_cast<size_t>(width) * y;
+		float* out = rowOf<float>(dst, dstRowBytes, height, y);
 		for (int x = 0; x < width; x++) {
-			for (int c = 0; c < 4; ++c) {
+			for (size_t c = 0; c < 4; ++c) {
 				*out++ = in[plane * c + x] * scale;
 			}
 		}
@@ -405,17 +422,19 @@ public:
 	}
 	LazyEditBlock(const LazyEditBlock&) = delete;
 	LazyEditBlock& operator=(const LazyEditBlock&) = delete;
+	// best-effort: without an undo block if the host refuses it
 	void open()
 	{
-		if (!_open) {
-			_paramSet.beginEditBlock(_name);
-			_open = true;
+		if (!_tried) {
+			_tried = true;
+			_open = hostTry([this] { _paramSet.beginEditBlock(_name); });
 		}
 	}
 
 private:
 	OFX::ParamSet& _paramSet;
 	std::string _name;
+	bool _tried = false;
 	bool _open = false;
 };
 
@@ -445,8 +464,6 @@ private:
 
 	// the render fails (a missing image): unless the host aborted it, then the output is discarded
 	void failUnlessAborted() const;
-	// an error on the node: a persistent message if the host has them
-	void showError(const std::string& msg);
 	void fetchParamValues(SequenceData& sd, const OfxRectI& rect, double par, double t, const OfxPointD& renderScale) const;
 	LayerTimes layerTimesAt(double t) const;
 	double inputTime(const LayerTimes& lt, int i, double t) const;
@@ -545,15 +562,6 @@ void GMICEffect::failUnlessAborted() const
 	// cache) an unwritten output (as in the OFX Programming Guide's examples).
 	if (!abort()) {
 		OFX::throwSuiteStatusException(kOfxStatFailed);
-	}
-}
-
-void GMICEffect::showError(const std::string& msg)
-{
-	if (OFX::getImageEffectHostDescription()->supportsMessageSuiteV2) {
-		setPersistentMessage(OFX::Message::eMessageError, "", msg);
-	} else {
-		sendMessage(OFX::Message::eMessageError, "", msg);
 	}
 }
 
@@ -986,7 +994,8 @@ void GMICEffect::pointsUpdateEnabled(int onlyParam)
 		OFX::BooleanParam* checkbox = std::get<OFX::BooleanParam*>(_params[i]);
 		const std::optional<bool> on = hostQuery([checkbox] { bool v = true; checkbox->getValue(v); return v; });
 		if (!on) continue;
-		std::get<OFX::Double2DParam*>(_params[i - 1])->setEnabled(*on);
+		OFX::Double2DParam* point = std::get<OFX::Double2DParam*>(_params[i - 1]);
+		hostTry([point, on] { point->setEnabled(*on); }); // (also called from createInstance)
 	}
 }
 
@@ -1062,7 +1071,7 @@ void GMICEffect::render(const OFX::RenderArguments& args)
 			// the filters that use frames depend on their order.
 			char msg[512];
 			snprintf(msg, sizeof(msg), "%s: no image from %s at frame %g", inputName(i).c_str(), clipName.c_str(), inTime);
-			showError(msg);
+			showRenderError(*this, msg);
 			OFX::throwSuiteStatusException(kOfxStatFailed);
 		}
 		if (!sourceImg[i]) {
@@ -1072,7 +1081,7 @@ void GMICEffect::render(const OFX::RenderArguments& args)
 				if (!abort()) {
 					char msg[512];
 					snprintf(msg, sizeof(msg), "No image from %s at frame %g", clipName.c_str(), inTime);
-					showError(msg);
+					showRenderError(*this, msg);
 				}
 				failUnlessAborted();
 				return;
@@ -1092,8 +1101,6 @@ void GMICEffect::render(const OFX::RenderArguments& args)
 		in.origin_y = srcRect.y1;
 		in.width = srcRect.x2 - srcRect.x1;
 		in.height = srcRect.y2 - srcRect.y1;
-		in.bitDepth = 32;
-		in.rowBytes = in.width * (int)sizeof(OfxRGBAColourF);
 		std::vector<float>& buffer = sourceBuffer[i];
 		buffer.resize((size_t)in.width * (size_t)in.height * 4);
 		in.data = buffer.data();
@@ -1118,8 +1125,6 @@ void GMICEffect::render(const OFX::RenderArguments& args)
 	out.origin_y = dstRect.y1;
 	out.width = dstRect.x2 - dstRect.x1;
 	out.height = dstRect.y2 - dstRect.y1;
-	out.bitDepth = 32;
-	out.rowBytes = out.width * (int)sizeof(OfxRGBAColourF);
 	std::vector<float> outBuffer((size_t)out.width * (size_t)out.height * 4);
 	out.data = outBuffer.data();
 
@@ -1180,20 +1185,16 @@ private:
 
 GMICPluginFactory::GMICPluginFactory(int pluginIndex, OfxPluginEntryPoint* mainEntry)
 	: _pluginIndex(pluginIndex)
+	, _info(getPluginInfo(pluginIndex))
+	// "<id>@<major>.<minor>", as the Support library's PluginFactoryHelper
+	, _uid(_info.identifier + "@" + reduxfx::intToString(_info.major_version) + "." + reduxfx::intToString(_info.minor_version))
 	, _mainEntry(mainEntry)
 {
-	getPluginInfo(pluginIndex, _info);
-	// "<id>@<major>.<minor>", as the Support library's PluginFactoryHelper
-	_uid = _info.identifier + "@" + reduxfx::intToString(_info.major_version) + "." + reduxfx::intToString(_info.minor_version);
 }
 
 void GMICPluginFactory::load()
 {
-	auto globalData = std::make_unique<GlobalData>();
-	globalData->pluginIndex = _pluginIndex;
-	globalData->pluginInfo = _info;
-	pluginSetup(*globalData);
-	_globalData = std::move(globalData);
+	_globalData = pluginSetup(_pluginIndex, _info);
 }
 
 const GlobalData& GMICPluginFactory::globalData() const
@@ -1484,6 +1485,22 @@ constexpr std::array<OfxPluginEntryPoint*, kMaxNofPlugins> kMainEntries = makeMa
 
 } // namespace
 
+void showRenderError(OFX::ImageEffect& effect, const std::string& msg, const std::string& modalId)
+{
+	if (OFX::getImageEffectHostDescription()->supportsMessageSuiteV2 &&
+		effect.setPersistentMessage(OFX::Message::eMessageError, "", msg) != OFX::Message::eMessageReplyFailed) {
+		return;
+	}
+	effect.sendMessage(OFX::Message::eMessageError, modalId, msg);
+}
+
+void clearRenderError(OFX::ImageEffect& effect)
+{
+	if (OFX::getImageEffectHostDescription()->supportsMessageSuiteV2) {
+		effect.clearPersistentMessage();
+	}
+}
+
 namespace OFX {
 namespace Plugin {
 
@@ -1496,7 +1513,12 @@ void getPluginIDs(OFX::PluginFactoryArray& ids)
 	const size_t first = ids.size();
 	try {
 		// no entry point beyond kMainEntries
-		const size_t n = std::min((size_t)std::max(0, getNofPlugins()), kMaxNofPlugins);
+		const size_t nofFilters = static_cast<size_t>(std::max(0, getNofPlugins()));
+		const size_t n = std::min(nofFilters, kMaxNofPlugins);
+		if (nofFilters > n) {
+			fprintf(stderr, "openfx-gmic: Warning: %zu G'MIC filters, only the first %zu are plug-ins (kMaxNofPlugins in gmic_ofx.cpp)\n",
+				nofFilters, n);
+		}
 		factories().reserve(n);
 		ids.reserve(first + n);
 		for (size_t i = 0; i < n; i++) {

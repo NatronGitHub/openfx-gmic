@@ -65,9 +65,15 @@ $(OBJECTPATH)/gmic_plugin_call.o: $(GMIC_HEADERS) $(SRCDIR)/gmic_libc.h $(SRCDIR
 $(OBJECTPATH)/gmic_plugin.o: $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h $(SRCDIR)/gmic_plugin.h
 $(OBJECTPATH)/gmic_ofx.o: $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin.h
 
+# The OpenFX extensions of openfx's CMake defaults (openfx/CMakeLists.txt's OFX_DEFINITIONS), as
+# CMake builds get them through openfx::Api and openfx::Support: both builds ship the same Support
+# library. They change its class layouts: every object is compiled with the same set.
 CXXFLAGS += \
 -DOFX_EXTENSIONS_NATRON \
 -DOFX_EXTENSIONS_NUKE \
+-DOFX_EXTENSIONS_VEGAS \
+-DOFX_EXTENSIONS_TUTTLE \
+-DOFX_SUPPORTS_OPENGLRENDER \
 -I$(SRCDIR) \
 -I$(SRCDIR)/Helpers \
 -Dgmic_core \

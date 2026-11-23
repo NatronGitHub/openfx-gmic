@@ -589,8 +589,11 @@ add_ofx_plugin(GMIC
 # The OpenFX C++ Support library (gmic_ofx.cpp), with its manual registration
 # (OFXS_MANUAL_REGISTRATION, read by ofxsImageEffect.cpp only): the plug-ins are the G'MIC filters,
 # only known once they are loaded, at the first OfxGetNumberOfPlugins (OFX::Plugin::getPluginIDs
-# in gmic_ofx.cpp), not static factory objects registered at dlopen. GMIC is openfx::Support's only
-# user in this build.
+# in gmic_ofx.cpp), not static factory objects registered at dlopen. GMIC must be openfx::Support's
+# only user in this build: openfx's example plug-ins register their factories automatically.
+if(BUILD_EXAMPLE_PLUGINS)
+  message(FATAL_ERROR "BUILD_EXAMPLE_PLUGINS: openfx's example plug-ins can't link the openfx::Support built here, with OFXS_MANUAL_REGISTRATION for GMIC")
+endif()
 set_property(SOURCE "${PROJECT_SOURCE_DIR}/openfx/Support/Library/ofxsImageEffect.cpp"
   DIRECTORY "${PROJECT_SOURCE_DIR}/openfx/Support/Library"
   APPEND PROPERTY COMPILE_DEFINITIONS OFXS_MANUAL_REGISTRATION)

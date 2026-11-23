@@ -95,8 +95,8 @@
 
 #ifdef _WIN32
 // CreateThread (the render thread) and GlobalMemoryStatusEx (physicalMemoryBytes), without the
-// min/max macros. First: with "using namespace std" in effect, the Windows SDK's byte is
-// ambiguous with C++17's std::byte (C2872).
+// min/max macros. Before the other headers, so that no using-directive for std can be in effect
+// there: the Windows SDK's byte would then be ambiguous with C++17's std::byte (C2872).
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -454,16 +454,17 @@ const PluginGlobalData& pluginGlobalData()
 static void frameCacheRelease(const void* owner);
 
 GmicInstanceData::GmicInstanceData()
-	: errorMessage()
+	: _options()
+	, _errorMessage()
 {
-	options.custom_commands = NULL;
-	options.error_message_buffer = errorMessage.data();
-	options.ignore_stdlib = false;
-	options.p_is_abort = NULL;
-	options.p_progress = NULL;
-	options.output_format = E_FORMAT_FLOAT;
-	options.interleave_output = false;
-	options.no_inplace_processing = false;
+	_options.custom_commands = NULL;
+	_options.error_message_buffer = _errorMessage.data();
+	_options.ignore_stdlib = false;
+	_options.p_is_abort = NULL;
+	_options.p_progress = NULL;
+	_options.output_format = E_FORMAT_FLOAT;
+	_options.interleave_output = false;
+	_options.no_inplace_processing = false;
 }
 
 GmicInstanceData::~GmicInstanceData()
@@ -531,12 +532,15 @@ static void makeFftwThreadSafe()
 }
 #endif
 
-void pluginSetup(GlobalData& globalData)
+std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& pluginInfo)
 {
 #if defined(cimg_use_fftw3) && !defined(cimg_use_fftw3_singlethread)
 	makeFftwThreadSafe();
 #endif
-	GlobalData* const globalDataP = &globalData;
+	auto globalData = std::make_unique<GlobalData>();
+	GlobalData* const globalDataP = globalData.get();
+	globalDataP->pluginIndex = pluginIndex;
+	globalDataP->pluginInfo = pluginInfo;
 
 	// a copy: the note() parameters are appended to its notes (the description)
 	EffectData effectData = pluginGlobalData().pluginData[globalDataP->pluginIndex];
@@ -559,8 +563,8 @@ void pluginSetup(GlobalData& globalData)
 			"Layer Times", LAYERS_FROM_SOURCE_PARAM, "Layer -1" TIME_OFFSET_PARAM_SUFFIX,
 			"Layer -2" TIME_OFFSET_PARAM_SUFFIX, "Layer -3" TIME_OFFSET_PARAM_SUFFIX,
 			"Layer -4" TIME_OFFSET_PARAM_SUFFIX, "Command",
-			"Advanced Options", "Output Layer", "Resize Mode", "Ignore Alpha", "Preview/Draft Mode",
-			"Global Random Seed", "Animate Random Seed", "Log Verbosity" };
+			"Advanced Options", kOutputLayerParam, "Resize Mode", "Ignore Alpha", "Preview/Draft Mode",
+			"Global Random Seed", kAnimateSeedParam, "Log Verbosity" };
 		for (size_t r = 0; r < sizeof(reservedNames) / sizeof(reservedNames[0]); ++r) {
 			if (name == reservedNames[r]) {
 				name += " (filter)";
@@ -704,7 +708,7 @@ void pluginSetup(GlobalData& globalData)
 	++p;
 	// "Frame" is added at the end (issue #65): the choice is saved as its index (and label in
 	// Natron), so the other options keep their meaning in saved projects
-	globalDataP->param[p] = Parameter("Output Layer", "", PT_SELECT, 0, kOutputLayerFrame, 1, 0, 0, 0, "Merged|Layer 0|Layer -1|Layer -2|Layer -3|Layer -4|Layer -5|Layer -6|Layer -7|Layer -8|Layer -9|Frame");
+	globalDataP->param[p] = Parameter(kOutputLayerParam, "", PT_SELECT, 0, kOutputLayerFrame, 1, 0, 0, 0, "Merged|Layer 0|Layer -1|Layer -2|Layer -3|Layer -4|Layer -5|Layer -6|Layer -7|Layer -8|Layer -9|Frame");
 	globalDataP->param[p].hint = "The image of the G'MIC results to output. Merged: all the results merged into one. "
 		"Layer 0, Layer -1...: one result, counted from the top of the stack as in G'MIC-Qt (Layer 0 is the first). "
 		"Frame: the result whose number is the frame number minus the first frame of Source, modulo the number of "
@@ -741,7 +745,7 @@ void pluginSetup(GlobalData& globalData)
 		"for a given seed and number of OpenMP threads; filters using patch matching or G'MIC's parallel command, "
 		"and concurrent renders, can still vary.";
 	++p;
-	globalDataP->param[p] = Parameter("Animate Random Seed", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
+	globalDataP->param[p] = Parameter(kAnimateSeedParam, "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
 	globalDataP->param[p].hint = "Add the frame number to the Global Random Seed, so that the random numbers change "
 		"from frame to frame (reproducibility: see Global Random Seed).";
 	++p;
@@ -764,6 +768,7 @@ void pluginSetup(GlobalData& globalData)
 	globalDataP->pluginInfo.description = d + ignoreAlphaNote(effectData) + layerTimesNote(effectData) + "\n" + PLUGIN_DESCRIPTION;
 	globalDataP->nofInputs = (int)std::count_if(globalDataP->param, globalDataP->param + p,
 		[](const Parameter& param) { return param.paramType == PT_LAYER; });
+	return globalData;
 }
 
 static
@@ -925,7 +930,7 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 		cmd += " -if {$!>" + intToString(MAX_NOF_LAYERS) + "} -keep[0-" + intToString(MAX_NOF_LAYERS - 1) + "] -fi";
 	}
 
-	instanceDataP->options.custom_commands = customCommands.c_str();
+	instanceDataP->options().custom_commands = customCommands.c_str();
 	
 	// Variables that G'MIC-Qt defines for the filters (GmicProcessor.cpp, FilterThread.cpp), with
 	// the whole image as the preview area. Its size is the largest input size, as G'MIC-Qt's
@@ -1452,8 +1457,8 @@ static std::string frameCacheKey(const GlobalData* globalDataP, const std::strin
 	std::string key = intToString(globalDataP->pluginIndex) + "\n" + cmd;
 	for (unsigned int i = 0; i < nofImages; ++i) {
 		const World& w = sequenceDataP->inWorld[i];
-		key += "\n" + intToString(w.width) + "x" + intToString(w.height) + "/" + intToString(w.bitDepth) + "/" + intToString(w.rowBytes) + ":";
-		appendHash(key, w.data, (size_t)w.height * (size_t)w.rowBytes);
+		key += "\n" + intToString(w.width) + "x" + intToString(w.height) + ":";
+		appendHash(key, w.data, (size_t)w.width * (size_t)w.height * 4 * sizeof(float));
 	}
 	return key;
 }
@@ -1483,22 +1488,16 @@ static long long frameNumberOf(const SequenceData* sequenceDataP)
 	return (long long)std::floor(sequenceDataP->time - sequenceDataP->frameRangeStart + 0.5);
 }
 
-// persistent messages (on the node, cleared by the next successful render) if the host has them
-static bool hostHasPersistentMessages()
-{
-	return OFX::getImageEffectHostDescription()->supportsMessageSuiteV2;
-}
-
 bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, GmicInstanceData& instanceData, OFX::ImageEffect& effect)
 {
 	// (the names used by the PAR_* and PARAM_* macros)
 	SequenceData* const sequenceDataP = &sequenceData;
 	const GlobalData* const globalDataP = &globalData;
-	GmicInstanceData* const mySequenceDataP = &instanceData;
+	GmicInstanceData* const instanceDataP = &instanceData;
 	bool ok = true;
 	sequenceDataP->resultHasAlpha = true;
 
-	mySequenceDataP->options.no_inplace_processing = true; // the input buffers are not overwritten
+	instanceDataP->options().no_inplace_processing = true; // the input buffers are not overwritten
 
 	const bool frameMode = outputIsFrame(sequenceDataP, globalDataP);
 	// the inputs, then the results (more of them with Output Layer "Frame", see fullCommand)
@@ -1513,11 +1512,9 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	if (nofImages == 0) {
 		// no input image (main input not connected): output transparent black, not uninitialized memory
 		if (sequenceDataP->outWorld.data) {
-			memset(sequenceDataP->outWorld.data, 0, (size_t)sequenceDataP->outWorld.height * (size_t)sequenceDataP->outWorld.rowBytes);
+			memset(sequenceDataP->outWorld.data, 0, (size_t)sequenceDataP->outWorld.width * (size_t)sequenceDataP->outWorld.height * 4 * sizeof(float));
 		}
-		if (hostHasPersistentMessages()) {
-			effect.clearPersistentMessage();
-		}
+		clearRenderError(effect);
 		return ok;
 	}
 
@@ -1545,8 +1542,8 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		gmic_interface_options& options;
 		explicit ResetCustomCommands(gmic_interface_options& o) : options(o) {}
 		~ResetCustomCommands() { options.custom_commands = NULL; }
-	} resetCustomCommands(mySequenceDataP->options);
-	string cmd = fullCommand(sequenceDataP, globalDataP, mySequenceDataP, nofImages, preview, customCommands);
+	} resetCustomCommands(instanceDataP->options());
+	string cmd = fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, preview, customCommands);
 	bool aborted = false;
 	int result = 0;
 	string errmsg;
@@ -1564,9 +1561,9 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	const bool useCache = frameMode && frameCacheBudget() > 0; // OFX_GMIC_FRAME_CACHE_MB=0: no cache
 	if (useCache) {
 		cacheKey = frameCacheKey(globalDataP, cmd, sequenceDataP, nofImages);
-		cachedFrame = frameCacheFind(mySequenceDataP, cacheKey, frame, effect, &claim.claimed, &aborted);
+		cachedFrame = frameCacheFind(instanceDataP, cacheKey, frame, effect, &claim.claimed, &aborted);
 	} else {
-		frameCacheRelease(mySequenceDataP);
+		frameCacheRelease(instanceDataP);
 	}
 	const bool runGmic = !cachedFrame && !aborted;
 	// Frame: at most the results that can be kept (see kFrameSelectCommand), after the key
@@ -1574,18 +1571,18 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		intToString(kMaxFrameResults) + "," + std::to_string((unsigned long long)frameCacheBudget()) : string();
 	if (runGmic) {
 		cmd += frameSelect;
-		result = gmicCallAbortable(effect, cmd.c_str(), &nofImages, images, maxImages, &mySequenceDataP->options, &aborted);
-		errmsg = string(mySequenceDataP->options.error_message_buffer);
+		result = gmicCallAbortable(effect, cmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(), &aborted);
+		errmsg = string(instanceDataP->options().error_message_buffer);
 		// The retry needs unchanged inputs: gmic_plugin_call() works on copies (no_inplace_processing)
 		// and leaves images[] unchanged on an error. Not after an abort.
-		if (result != 0 && !aborted && !preview && effectData.previewFallback && mySequenceDataP->options.no_inplace_processing) {
+		if (result != 0 && !aborted && !preview && effectData.previewFallback && instanceDataP->options().no_inplace_processing) {
 			fprintf(stderr, "G'MIC: %s: the main command failed (%s), rendering with the preview command\n",
 					effectData.name.c_str(), errmsg.c_str());
 			preview = true;
-			cmd = fullCommand(sequenceDataP, globalDataP, mySequenceDataP, nofImages, preview, customCommands) + frameSelect;
-			result = gmicCallAbortable(effect, cmd.c_str(), &nofImages, images, maxImages, &mySequenceDataP->options, &aborted);
+			cmd = fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, preview, customCommands) + frameSelect;
+			result = gmicCallAbortable(effect, cmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(), &aborted);
 			if (result != 0 && !aborted) {
-				errmsg += " (with the preview command: " + string(mySequenceDataP->options.error_message_buffer) + ")";
+				errmsg += " (with the preview command: " + string(instanceDataP->options().error_message_buffer) + ")";
 			}
 		}
 	}
@@ -1667,7 +1664,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		if (result == 0 && useCache && runGmic && !selected) {
 			// out of memory: the results not moved to the cache are freed below, as without cache
 			try {
-				frameCacheStore(mySequenceDataP, cacheKey, images, nofImages, effectData.name);
+				frameCacheStore(instanceDataP, cacheKey, images, nofImages, effectData.name);
 			} catch (const std::bad_alloc&) {
 			}
 		} else if (result == 0 && useCache && selected && frameCacheUncacheable(cacheKey)) {
@@ -1678,17 +1675,12 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		if (claim.claimed) { claim.claimed = false; frameCacheRunDone(cacheKey); } // the waiting renders go on
 	}
 	if (result != 0 && !aborted) {
-		if (hostHasPersistentMessages()) {
-			// persistent message on the node (cleared by the next successful render), instead of a
-			// modal message on every render
-			effect.setPersistentMessage(OFX::Message::eMessageError, "", errmsg);
-		} else {
-			effect.sendMessage(OFX::Message::eMessageError, "G'MIC Error", errmsg);
-		}
+		// persistent message on the node, instead of a modal message on every render
+		showRenderError(effect, errmsg, "G'MIC Error");
 		ok = false;
 	}
-	else if (!aborted && hostHasPersistentMessages()) {
-		effect.clearPersistentMessage();
+	else if (!aborted) {
+		clearRenderError(effect);
 	}
 
 	for (unsigned int i = 0; i < nofImages; i++) {
@@ -1710,8 +1702,9 @@ int getNofPlugins()
 	return (int)pluginGlobalData().pluginData.size();
 }
 
-void getPluginInfo(int pluginIndex, PluginInfo& pluginInfo)
+PluginInfo getPluginInfo(int pluginIndex)
 {
+	PluginInfo pluginInfo;
 	pluginInfo.name = pluginGlobalData().pluginData[pluginIndex].name;
 	pluginInfo.identifier = pluginGlobalData().pluginData[pluginIndex].uniqueId;
 	pluginInfo.category = pluginGlobalData().pluginData[pluginIndex].category;
@@ -1724,6 +1717,7 @@ void getPluginInfo(int pluginIndex, PluginInfo& pluginInfo)
 	pluginInfo.description = d + ignoreAlphaNote(pluginGlobalData().pluginData[pluginIndex]) + layerTimesNote(pluginGlobalData().pluginData[pluginIndex]) + "\n\n" + PLUGIN_DESCRIPTION;
 	pluginInfo.major_version = MAJOR_VERSION;
 	pluginInfo.minor_version = MINOR_VERSION;
+	return pluginInfo;
 }
 
 // the physical memory (frameCacheBudget), 0 if unknown

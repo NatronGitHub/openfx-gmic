@@ -14,6 +14,8 @@
 #define GMIC_PLUGIN_H
 
 #include <array>
+#include <memory>
+#include <string>
 
 #include "RFX_Parameter.h"
 #include "gmic_libc.h"
@@ -22,6 +24,9 @@ namespace OFX {
 class ImageEffect;
 }
 
+// the parameters that the clip preferences depend on (see pluginSetup and getClipPreferences)
+constexpr const char* kAnimateSeedParam = "Animate Random Seed";
+constexpr const char* kOutputLayerParam = "Output Layer";
 // the last option of the Output Layer parameter, "Frame" (issue #65): see pluginProcess
 constexpr int kOutputLayerFrame = 11;
 
@@ -29,12 +34,13 @@ constexpr int kOutputLayerFrame = 11;
 int getNofPlugins();
 
 // The identifier, label, grouping, description and version of plug-in pluginIndex.
-void getPluginInfo(int pluginIndex, reduxfx::PluginInfo& pluginInfo);
+reduxfx::PluginInfo getPluginInfo(int pluginIndex);
 
-// The parameters of plug-in globalData.pluginIndex, whose pluginInfo is set: the filter's own,
-// then the layers, layer times and advanced options that the plug-in adds; also sets the
-// description and nofInputs. The PT_LAYER parameters are the input clips, the first one Source.
-void pluginSetup(reduxfx::GlobalData& globalData);
+// The parameters of plug-in pluginIndex, whose info is pluginInfo (getPluginInfo): the filter's
+// own, then the layers, layer times and advanced options that the plug-in adds; pluginInfo's
+// description gets the notes of the parameters. The PT_LAYER parameters are the input clips, the
+// first one Source.
+std::unique_ptr<reduxfx::GlobalData> pluginSetup(int pluginIndex, const reduxfx::PluginInfo& pluginInfo);
 
 // The G'MIC state of an instance: the options of its G'MIC runs, and its entry in the results
 // kept for Output Layer "Frame" (released on destruction).
@@ -47,11 +53,19 @@ public:
 	GmicInstanceData(const GmicInstanceData&) = delete;
 	GmicInstanceData& operator=(const GmicInstanceData&) = delete;
 
-	gmic_interface_options options;
+	// the options of the G'MIC runs (gmic_plugin_call)
+	gmic_interface_options& options() { return _options; }
 
 private:
-	std::array<char, 256> errorMessage; // options.error_message_buffer
+	gmic_interface_options _options;
+	std::array<char, 256> _errorMessage; // _options.error_message_buffer
 };
+
+// An error on the node: a persistent message (cleared by the next successful render) if the host
+// has them, else a modal message titled modalId.
+void showRenderError(OFX::ImageEffect& effect, const std::string& msg, const std::string& modalId = std::string());
+// clears the persistent message, if the host has them
+void clearRenderError(OFX::ImageEffect& effect);
 
 // Run G'MIC on sequenceData's input images (float planar RGBA, values up to 255), into its
 // outWorld buffer, with the parameter values of sequenceData. Polls effect.abort() while G'MIC

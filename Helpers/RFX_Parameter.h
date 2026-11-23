@@ -53,7 +53,6 @@
 // arbitrary bounds :)
 #define MAX_NOF_LAYERS 32
 #define MAX_NOF_PARAMS 256
-#define MAX_NOF_TEXTS 32
 
 // flags of a boolean parameter that enables the point parameter just before it (a G'MIC removable
 // point, issue #79): it is not passed to G'MIC, the point is passed as nan,nan when it is off, and
@@ -73,7 +72,6 @@ namespace reduxfx {
 
 enum ParamType
 {
-	PT_NONE = -1,
 	PT_INT = 0,
 	PT_BOOL = 1,
 	PT_SELECT = 2,
@@ -84,10 +82,6 @@ enum ParamType
 	PT_POINT = 7,
 	PT_TOPIC_START = 8,
 	PT_TOPIC_END = 9,
-	PT_CUSTOM = 10,
-	PT_BUTTON = 11,
-	PT_VEC2 = 12,
-	PT_VEC3 = 13,
 	PT_TEXT = 14,
 	PT_SEPARATOR = 15,
 };
@@ -106,9 +100,7 @@ class World
 public:
 	int width = 0;
 	int height = 0;
-	void* data = nullptr; // not owned
-	int bitDepth = 32;
-	int rowBytes = 0; // width * 4 floats
+	void* data = nullptr; // not owned, width * height * 4 floats
 	int origin_x = 0;
 	int origin_y = 0;
 };
