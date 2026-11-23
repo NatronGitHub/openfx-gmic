@@ -483,6 +483,38 @@ static bool usesSeveralLayers(const string& content)
 	return false;
 }
 
+// Visibility propagation of a parameter, as G'MIC-Qt's AbstractParameter::VisibilityPropagation
+enum class VisibilityPropagation { None, Up, Down };
+
+struct VisibilitySuffix {
+	size_t length = 0; // 0: no suffix
+	EffectParameter::Visibility visibility = EffectParameter::Visibility::Visible;
+	VisibilityPropagation propagation = VisibilityPropagation::None;
+};
+
+// As G'MIC-Qt (AbstractParameter::parseText): "_0" (hidden), "_1" (disabled) or "_2" (visible)
+// right after the closing delimiter, which is at s[pos - 1], then an optional '-' (propagate up)
+// or '+' or '*' (propagate down).
+static VisibilitySuffix parseVisibilitySuffix(const string& s, size_t pos)
+{
+	VisibilitySuffix r;
+	if (pos + 1 >= s.size() || s[pos] != '_' || s[pos + 1] < '0' || s[pos + 1] > '2') {
+		return r;
+	}
+	r.visibility = static_cast<EffectParameter::Visibility>(s[pos + 1] - '0');
+	const char sign = (pos + 2 < s.size()) ? s[pos + 2] : '\0';
+	r.propagation = (sign == '-') ? VisibilityPropagation::Up :
+	                (sign == '+' || sign == '*') ? VisibilityPropagation::Down : VisibilityPropagation::None;
+	r.length = (r.propagation == VisibilityPropagation::None) ? 2 : 3;
+	return r;
+}
+
+// G'MIC-Qt's NoValueParameters: they have no value, and ignore their own suffix
+static bool isNoValueParameter(const EffectParameter& p)
+{
+	return p.paramType == "note" || p.paramType == "link" || p.paramType == "separator";
+}
+
 string gmic_parse_single(const string& content, EffectData& cd)
 {
 	const string src_prefix_old = src_prefix_old_c;
@@ -500,6 +532,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	cd.previewOnly = false;
 	cd.previewFallback = false;
 	cd.param.clear();
+	vector<VisibilityPropagation> propagation; // one per cd.param entry, until the "pointenabled" ones
 
 	vector<string> lines;
 	strSplit(content, '\n', lines);
@@ -541,7 +574,10 @@ string gmic_parse_single(const string& content, EffectData& cd)
 						if (pEnd != string::npos) {
 							name += line.substr(0, pEnd + 1);
 							inMulti = false;
-							line = strTrim(line.substr(pEnd + 1), ", ");
+							const VisibilitySuffix v = parseVisibilitySuffix(line, pEnd + 1);
+							cd.param.back().visibility = v.visibility;
+							propagation.back() = v.propagation;
+							line = strTrim(line.substr(pEnd + 1 + v.length), ", ");
 						} else {
 							name += line;
 							line.clear();
@@ -571,8 +607,11 @@ string gmic_parse_single(const string& content, EffectData& cd)
 								EffectParameter p;
 								p.name = line.substr(0, pEnd+1);
 								//std::cout << p.name << std::endl;
+								const VisibilitySuffix v = parseVisibilitySuffix(line, pEnd + 1);
+								p.visibility = v.visibility;
 								cd.param.push_back(p);
-								line = strTrim(line.substr(pEnd + 1), ", ");
+								propagation.push_back(v.propagation);
+								line = strTrim(line.substr(pEnd + 1 + v.length), ", ");
 								if (!line.empty()) {
 									line = dst_prefix + " : " + line;
 								}
@@ -581,6 +620,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 								EffectParameter p;
 								p.name = line;
 								cd.param.push_back(p);
+								propagation.push_back(VisibilityPropagation::None);
 								inMulti = true;
 								line.clear();
 							}
@@ -622,6 +662,25 @@ string gmic_parse_single(const string& content, EffectData& cd)
 			}
 		}
 	}
+	// As G'MIC-Qt (FilterParametersWidget::setVisibilityStates, with the default states): a
+	// note, link or separator has no visibility of its own; a parameter with '-' ('+') gives its
+	// visibility to the ones right before (after) it, up to the previous (next) parameter that has
+	// a value, in this order, so that a later parameter wins.
+	for (size_t i = 0; i < cd.param.size(); i++) {
+		if (isNoValueParameter(cd.param[i])) {
+			cd.param[i].visibility = EffectParameter::Visibility::Visible;
+			propagation[i] = VisibilityPropagation::None;
+		}
+	}
+	for (size_t i = 0; i < cd.param.size(); i++) {
+		if (isNoValueParameter(cd.param[i])) continue;
+		const EffectParameter::Visibility v = cd.param[i].visibility;
+		if (propagation[i] == VisibilityPropagation::Up) {
+			for (size_t j = i; j > 0 && isNoValueParameter(cd.param[j - 1]); j--) cd.param[j - 1].visibility = v;
+		} else if (propagation[i] == VisibilityPropagation::Down) {
+			for (size_t j = i + 1; j < cd.param.size() && isNoValueParameter(cd.param[j]); j++) cd.param[j].visibility = v;
+		}
+	}
 	// A removable point (point(x,y,-1) or point(x,y,1)) can be removed in G'MIC-Qt, which then
 	// passes nan,nan for it (a -1 point starts removed): give it a checkbox right after it, whose
 	// name is the point's (without " (%)", as the plug-in shows it) with " Enabled". It is not a
@@ -645,6 +704,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 		e.minValue = "0";
 		e.maxValue = "1";
 		e.removable = cd.param[i].removable;
+		e.visibility = cd.param[i].visibility; // hidden or disabled with its point
 		cd.param.insert(cd.param.begin() + i + 1, e);
 	}
 	cd.multiLayer = usesSeveralLayers(content);

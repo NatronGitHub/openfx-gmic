@@ -666,7 +666,12 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		globalDataP->param[p] = Parameter(
 		  name, "", t, (float)stringToDouble(minValue), (float)stringToDouble(maxValue), d1, d2, d3, d4, paramText);
 		globalDataP->param[p].flags = flags;
-		if (h) globalDataP->param[p].displayStatus = DS_HIDDEN;
+		// as G'MIC-Qt, "_0" hides the parameter and "_1" disables it (a hidden one still passes its value)
+		if (h || param.visibility == EffectParameter::Visibility::Hidden) {
+			globalDataP->param[p].displayStatus = DS_HIDDEN;
+		} else if (param.visibility == EffectParameter::Visibility::Disabled) {
+			globalDataP->param[p].displayStatus = DS_DISABLED;
+		}
 		if (paramType == "pointenabled") {
 			globalDataP->param[p].hint = (param.removable < 0) ?
 				"Use the point above. Off by default, since G'MIC-Qt starts with this point removed. "

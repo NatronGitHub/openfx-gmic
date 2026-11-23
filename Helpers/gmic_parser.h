@@ -66,7 +66,12 @@ struct EffectParameter {
 	// removable). "pointenabled": the checkbox the parser adds after a removable point (see
 	// gmic_parse_single), whose name is the point's with " Enabled".
 	int removable;
-	EffectParameter() : removable(0) {}
+	// G'MIC-Qt's default visibility state, from "_0", "_1" or "_2" after the closing delimiter
+	// (AbstractParameter::parseText), with the values of its VisibilityState. Static only: the
+	// changes that a filter makes at run time through its status are not applied.
+	enum class Visibility { Hidden = 0, Disabled = 1, Visible = 2 };
+	Visibility visibility;
+	EffectParameter() : removable(0), visibility(Visibility::Visible) {}
 };
 
 struct EffectData {
