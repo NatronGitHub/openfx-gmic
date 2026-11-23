@@ -1235,6 +1235,13 @@ void GMICPluginFactory::describe(OFX::ImageEffectDescriptor& desc)
 	desc.setHostFrameThreading(false);
 	desc.setSupportsMultiResolution(false);
 
+	// the parameters the clip preferences depend on, by name (they are defined in describeInContext).
+	// Not with addClipPreferencesSlaveParam in describeInContext: hosts copy this descriptor's
+	// properties into the in-context ones (HostSupport does), where it would list them twice.
+	OFX::PropertySet& props = desc.getPropertySet();
+	props.propSetString(kOfxImageEffectPropClipPreferencesSlaveParam, kAnimateSeedParam, 0);
+	props.propSetString(kOfxImageEffectPropClipPreferencesSlaveParam, kOutputLayerParam, 1);
+
 	if (hasLayerTimes(gd)) {
 		// layer times: inputs at other frames (getFramesNeeded)
 		desc.setTemporalClipAccess(true);
@@ -1277,9 +1284,6 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 	}
 
 	OFX::GroupParamDescriptor* group = nullptr;
-	// the parameters that the clip preferences depend on (pluginSetup always defines them)
-	OFX::ParamDescriptor* animateSeed = nullptr;
-	OFX::ParamDescriptor* outputLayer = nullptr;
 	for (int i = 0; i < gd.nofParams; i++) {
 		const Parameter& param = gd.param[i];
 		const std::string& name = param.paramName;
@@ -1440,15 +1444,7 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			paramDesc->setParent(*group);
 		}
 		previous = paramDesc;
-		if (name == kAnimateSeedParam) {
-			animateSeed = paramDesc;
-		} else if (name == kOutputLayerParam) {
-			outputLayer = paramDesc;
-		}
 	}
-	// the clip preferences depend on them (Output Layer Frame: frame varying)
-	desc.addClipPreferencesSlaveParam(*animateSeed);
-	desc.addClipPreferencesSlaveParam(*outputLayer);
 }
 
 OFX::ImageEffect* GMICPluginFactory::createInstance(OfxImageEffectHandle handle, OFX::ContextEnum /*context*/)
