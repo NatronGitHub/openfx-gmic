@@ -27,6 +27,19 @@ ifeq ($(FFT),pocketfft)
 RESOURCES += $(SRCDIR)/Licence_pocketfft.txt
 endif
 
+# The list of the plug-ins (README, "Choosing the plug-ins"), Contents/Resources/gmic_ofx_plugins.txt,
+# every plug-in enabled: written by the plug-in itself, after each link, through a small loader
+# (gmic_ofx_plugin_list.cpp), as CMakeLists.txt does; it loads the bundle's copy (on macOS, the
+# one that osxDeploy.sh changed in release builds).
+PLUGINLIST = $(OBJECTPATH)/$(PLUGINNAME).ofx.bundle/Contents/Resources/gmic_ofx_plugins.txt
+all: $(PLUGINLIST)
+$(OBJECTPATH)/gmic_ofx_plugin_list: gmic_ofx_plugin_list.cpp
+	@mkdir -p $(OBJECTPATH)
+	$(CXX) -O1 $< -o $@ $(if $(filter Linux,$(OS)),-ldl)
+$(PLUGINLIST): $(OBJECTPATH)/$(PLUGINNAME).ofx $(OBJECTPATH)/gmic_ofx_plugin_list | $(OBJECTPATH)/$(PLUGINNAME).ofx.bundle
+	@mkdir -p $(@D)
+	$(OBJECTPATH)/gmic_ofx_plugin_list $(OBJECTPATH)/$(PLUGINNAME).ofx.bundle/Contents/$(ARCH)/$(PLUGINNAME).ofx $@
+
 # LICENSE, FFT, OPENMP and GMIC_STATIC_DEPS change the compiled code, the linked libraries and the
 # bundled files: when they change, rebuild the objects and the bundle (whose Contents/Libraries
 # and Resources would keep stale files).

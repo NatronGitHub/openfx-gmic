@@ -618,6 +618,24 @@ if(DEFINED GMIC_RESOURCES_KEY AND NOT GMIC_RESOURCES_KEY STREQUAL _resources_key
   file(REMOVE_RECURSE "${OFX_PLUGIN_BUILD_DIR}/GMIC.ofx.bundle/Contents/Resources")
 endif()
 set(GMIC_RESOURCES_KEY "${_resources_key}" CACHE INTERNAL "OFX_LICENSE and FFT of the bundle's resources")
+# The list of the plug-ins (README, "Choosing the plug-ins"), Contents/Resources/gmic_ofx_plugins.txt,
+# every plug-in enabled: written by the plug-in itself, after each link, through a small loader
+# (GMIC_OFX/gmic_ofx_plugin_list.cpp), as GMIC_OFX/Makefile does. Installed before the last
+# ofx_plugin_resources(), which signs the installed bundle on macOS. Not when cross-compiling, as
+# the plug-in can't be loaded then: the bundle has no list, which also registers every plug-in.
+if(NOT CMAKE_CROSSCOMPILING)
+  get_target_property(_bundle GMIC OFX_BUNDLE_DIR)
+  set(_list "${_bundle}/Contents/Resources/gmic_ofx_plugins.txt")
+  add_executable(gmic_ofx_plugin_list GMIC_OFX/gmic_ofx_plugin_list.cpp)
+  target_link_libraries(gmic_ofx_plugin_list PRIVATE ${CMAKE_DL_LIBS})
+  # (DEPENDS GMIC: after its POST_BUILD commands too, e.g. the copy of vcomp140.dll that it needs)
+  add_custom_command(OUTPUT "${_list}"
+    COMMAND gmic_ofx_plugin_list "$<TARGET_FILE:GMIC>" "${_list}"
+    DEPENDS GMIC gmic_ofx_plugin_list
+    VERBATIM)
+  add_custom_target(gmic_plugin_list ALL DEPENDS "${_list}")
+  install(FILES "${_list}" DESTINATION "${PLUGIN_INSTALLDIR}/GMIC.ofx.bundle/Contents/Resources" COMPONENT GMIC)
+endif()
 ofx_plugin_resources(GMIC ${GMIC_RESOURCES})
 source_group("G'MIC" FILES ${GMIC_EXTRACTED_SOURCES})
 

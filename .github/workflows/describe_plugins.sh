@@ -55,12 +55,14 @@ else
         ${HOST_LDFLAGS:-} -lexpat ${HOST_LIBS:-} -o "$WORK/describe_plugins"
 fi
 
-# run with an empty HOME, so that no user G'MIC configuration (~/.config/gmic) is picked up
+# run with an empty HOME (and APPDATA, on Windows), so that no user G'MIC configuration
+# (~/.config/gmic, %APPDATA%/gmic) is picked up
+native_path() { if command -v cygpath > /dev/null; then cygpath -m "$1"; else echo "$1"; fi; }
 mkdir -p "$WORK/home"
 cd "$WORK"
 status=0
 if [ -n "${DESCRIBE_MSVC_EXPAT_LIB:-}" ]; then BUNDLE_DIR=$(cygpath -m "$BUNDLE_DIR"); fi
-HOME="$WORK/home" OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
+HOME="$WORK/home" APPDATA="$(native_path "$WORK/home")" OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
     ./describe_plugins "$MIN_PLUGINS" 2> describe.log || status=$?
 # $DESCRIBE_LOG (an absolute path): keep a copy of the log (PLUGIN <id> lines, ...)
 if [ -n "${DESCRIBE_LOG:-}" ]; then cp describe.log "$DESCRIBE_LOG"; fi
@@ -89,6 +91,39 @@ fi
 if grep "openfx-gmic: Warning: hot fix" describe.log; then
     echo "FAIL: hot fixes not applied, review them in gmic_hotfixes.gmic (see above)"
     status=1
+fi
+# The bundle's list of the plug-ins (README, "Choosing the plug-ins") has the described plug-ins,
+# all enabled; a user's list that disables two of them leaves them out.
+SHIPPED_LIST="$BUNDLE_DIR/GMIC.ofx.bundle/Contents/Resources/gmic_ofx_plugins.txt"
+if [ ! -f "$SHIPPED_LIST" ]; then
+    echo "FAIL: no list of the plug-ins, $SHIPPED_LIST"
+    status=1
+else
+    sed -n -e 's/^PLUGIN //p' describe.log | tr -d '\r' | sort > described.txt
+    grep -v '^[[:space:]]*#' "$SHIPPED_LIST" | sed -e 's/#.*//' | tr -d ' \t\r' | grep . | sort > listed.txt || true
+    if ! diff -u listed.txt described.txt > list.diff; then
+        head -n 20 list.diff
+        echo "FAIL: the bundle's list of the plug-ins (-) is not the described plug-ins (+)"
+        status=1
+    fi
+    first=$(head -n 1 listed.txt)
+    last=$(tail -n 1 listed.txt)
+    mkdir -p "$WORK/home2/.config/gmic"
+    # (as a user would: commented out, with or without a space after '#'; and stale lines)
+    sed -e "s/^$first /# $first /" -e "s/^$last /#$last /" "$SHIPPED_LIST" > "$WORK/home2/.config/gmic/gmic_ofx_plugins.txt"
+    printf '# eu.gmic.NoSuchPlugin  # a filter that G'"'"'MIC removed\neu.gmic.NoSuchPlugin2\n' >> "$WORK/home2/.config/gmic/gmic_ofx_plugins.txt"
+    mkdir -p "$WORK/home2/gmic" # (Windows: %APPDATA%/gmic)
+    cp "$WORK/home2/.config/gmic/gmic_ofx_plugins.txt" "$WORK/home2/gmic/"
+    expected=$(($(wc -l < listed.txt) - 2))
+    HOME="$WORK/home2" APPDATA="$(native_path "$WORK/home2")" OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
+        ./describe_plugins "$expected" > describe2.out 2> describe2.log || true
+    tr -d '\r' < describe2.out > describe2.txt
+    cat describe2.txt
+    if ! grep -qx "plugins=$expected described=$expected failed=0" describe2.txt ||
+        tr -d '\r' < describe2.log | grep -qxF -e "PLUGIN $first" -e "PLUGIN $last"; then
+        echo "FAIL: a user's list that disables $first and $last: expected the $expected other plug-ins"
+        status=1
+    fi
 fi
 # PLUGIN_LIST=<file>: the plug-ins, their context and input clips, for render_plugins.py
 if [ -n "${PLUGIN_LIST:-}" ]; then
