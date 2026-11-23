@@ -356,16 +356,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      # CI builds aren't shipped: they target the runner's macOS (all openfx* repos). Release
-      # bundles (Natron's, on its macOS 14 VM) target 14.0, CMakeLists.txt's default.
-      - name: Deployment target
-        run: echo "MACOSX_DEPLOYMENT_TARGET=$(sw_vers -productVersion | cut -d. -f1).0" >> "$GITHUB_ENV"
       # the only dependency cache on macOS: setup-macports caches the MacPorts installation
       # (the G'MIC sources are downloaded on each run)
       - name: Install MacPorts and dependencies
         uses: melusina-org/setup-macports@103eded5f10979e927bffcd6d0b86cbbdb2c3bb3 # v1.1.6
         with:
           parameters: .github/parameters/setup-macports.yaml
+      # CI builds aren't shipped: they target the runner's macOS (all openfx* repos), as the MacPorts
+      # binary archives do. Set after the MacPorts install, so it never affects port builds.
+      # check_macos_minos.sh compares against it. Release bundles (Natron's, on its macOS 14 VM)
+      # target 14.0, CMakeLists.txt's default.
+      - name: Deployment target
+        run: echo "MACOSX_DEPLOYMENT_TARGET=$(sw_vers -productVersion | cut -d. -f1).0" >> "$GITHUB_ENV"
       # OFX_DEPLOY_BUNDLES: the install step copies the MacPorts libraries into the bundle
       # (osxDeploy.sh) and signs it; the describe test runs on
       # the installed bundle, so that the deployment is tested on each PR
