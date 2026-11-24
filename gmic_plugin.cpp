@@ -856,7 +856,7 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 			"Layer Times", kLayersFromSourceParam, string("Layer -1") + kTimeOffsetParamSuffix,
 			string("Layer -2") + kTimeOffsetParamSuffix, string("Layer -3") + kTimeOffsetParamSuffix,
 			string("Layer -4") + kTimeOffsetParamSuffix, "Command",
-			"Advanced Options", kOutputLayerParam, "Resize Mode", "Ignore Alpha", "Preview/Draft Mode",
+			"Advanced Options", kOutputLayerParam, "Resize Mode", "Ignore Alpha", kDraftModeParam,
 			"Global Random Seed", kAnimateSeedParam, "Log Verbosity" };
 		for (size_t r = 0; r < sizeof(reservedNames) / sizeof(reservedNames[0]); ++r) {
 			if (name == reservedNames[r]) {
@@ -947,6 +947,12 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		  name, "", t, (float)stringToDouble(minValue), (float)stringToDouble(maxValue), d1, d2, d3, d4, paramText);
 		globalDataP->param[p].flags = flags;
 		if (h) globalDataP->param[p].displayStatus = DisplayStatus::Hidden;
+		if (param.splitPreview) { // (see markSplitPreviewParams)
+			globalDataP->param[p].draftModeOnly = true;
+			globalDataP->param[p].hint = "Used by the filter's preview only, as in G'MIC-Qt: "
+				"turn on Preview/Draft Mode (Advanced Options) to see it. Natron's viewer wipe also "
+				"compares the input and the result.";
+		}
 		if (paramType == "pointenabled") {
 			globalDataP->param[p].hint = (param.removable < 0) ?
 				"Use the point above. Off by default, since G'MIC-Qt starts with this point removed. "
@@ -1019,7 +1025,7 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 	globalDataP->param[p].hint = "Run the filter on the RGB channels only, then give the inputs' alpha back to the results. "
 		"Gray or RGB results of another size than the input (frames, rotation, crop, resize...) are opaque.";
 	++p;
-	globalDataP->param[p] = Parameter("Preview/Draft Mode", "", ParamType::Bool, 0, 1, 0, 0, 0, 0, "");
+	globalDataP->param[p] = Parameter(kDraftModeParam, "", ParamType::Bool, 0, 1, 0, 0, 0, 0, "");
 	if (effectData.command == effectData.preview_command) {
 		globalDataP->param[p].displayStatus = DisplayStatus::Hidden;
 	}
