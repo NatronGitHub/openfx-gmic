@@ -1037,17 +1037,49 @@ static bool isAboutCategory(const string& cat)
 	return c == "<i>About</i>";
 }
 
+// Does the text at s[pos] start with blanks (spaces or tabs) and '#'? (G'MIC-Qt's
+// containsLeadingSpaceAndCrossSign)
+static bool startsWithComment(const string& s, size_t pos)
+{
+	pos = s.find_first_not_of(" \t", pos);
+	return pos != string::npos && s[pos] == '#';
+}
+
+// getline() on content from pos, as G'MIC-Qt reads the filter definitions
+// (FiltersModelReader::readBufferLine): a comment line ending with '\' goes on with the next line
+// if that one is a comment line too, from after its first '#' (e.g. the long notes of "About
+// G'MIC" in G'MIC 4.0.8's unminified gmic_stdlib.gmic go on over "# ..." lines). The '\' is dropped,
+// also before a line that is not a comment, which starts a line of its own. As in G'MIC-Qt, a line
+// ending with "\\\r" (CRLF) does not go on, and the last line keeps its '\' if it has no newline.
+static bool getGuiLine(const string& content, size_t& pos, string& line)
+{
+	if (pos >= content.size()) return false;
+	size_t eol = content.find('\n', pos);
+	line.assign(content, pos, eol == string::npos ? string::npos : eol - pos);
+	pos = (eol == string::npos) ? content.size() : eol + 1;
+	if (!startsWithComment(line, 0)) return true;
+	while (eol != string::npos && !line.empty() && line[line.size() - 1] == '\\') {
+		line.erase(line.size() - 1);
+		if (!startsWithComment(content, pos)) break;
+		const size_t start = content.find('#', pos) + 1;
+		eol = content.find('\n', start);
+		line.append(content, start, eol == string::npos ? string::npos : eol - start);
+		pos = (eol == string::npos) ? content.size() : eol + 1;
+	}
+	return true;
+}
+
 void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<string>* lines, bool checkCurated)
 {
 	const string src_prefix_old = src_prefix_old_c;
 	const string src_prefix = src_prefix_c;
 	const string dst_prefix = dst_prefix_c;
-	stringstream ss(content);
+	size_t pos = 0;
 	string line, cat, command;
 	vector<string> commands;
 	EffectData cd;
 	//printf("content:\n%s\n", content.c_str());
-	while (getline(ss, line)) {
+	while (getGuiLine(content, pos, line)) {
 		//printf("%s\n%s\n", cat.c_str(), line.c_str());
 		if ( (line.substr(0, src_prefix.size() + 1) == src_prefix + " ") ||
 			 (line.substr(0, src_prefix.size() + 4) == src_prefix + "_en ") ||
