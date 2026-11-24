@@ -215,8 +215,8 @@ OfxPointD pointNormalisedDefault(const Parameter& param)
 }
 
 // The increment and number of digits of a float() slider, as G'MIC-Qt derives them from its range
-// (FloatParameter::addTo(), CustomDoubleSpinBox): a hundredth of the range, and 5 significant digits
-// for the integer part of the larger bound, at least 2 decimals.
+// (FloatParameter::addTo(), CustomDoubleSpinBox): a hundredth of the range, and 5 decimals minus the
+// number of integer digits of the bound that has the most, with at least 2 decimals.
 struct FloatSliderSteps
 {
 	double increment;
@@ -229,14 +229,27 @@ int integerPartDigitCount(float value)
 {
 	std::array<char, 64> text {}; // FLT_MAX has 39 digits
 	const int n = std::snprintf(text.data(), text.size(), "%.0f", std::fabs(static_cast<double>(value)));
+	// the guard can't trigger (at most 39 digits, or "inf"/"nan"); it only bounds a truncated count
 	return (n > 0) ? std::min(n, static_cast<int>(text.size()) - 1) : 1;
+}
+
+// value with 6 significant digits: a float difference divided by 100 carries the float's noise
+// (0.1f / 100 is 0.0010000000149...), which Natron's spin box would show at full precision
+double roundToSignificantDigits(double value)
+{
+	std::ostringstream text;
+	text.imbue(std::locale::classic());
+	text.precision(6);
+	text << value;
+	return reduxfx::stringToDouble(text.str());
 }
 
 FloatSliderSteps floatSliderSteps(float minValue, float maxValue)
 {
 	constexpr int kMaxDigits = 5; // CustomDoubleSpinBox::MAX_DIGITS
-	const double increment = static_cast<double>(maxValue - minValue) / 100.;
-	return { (std::isfinite(increment) && increment > 0.) ? increment : 0.01, // empty range: as before
+	const double increment = roundToSignificantDigits(static_cast<double>(maxValue - minValue) / 100.);
+	// an empty, reversed or non-finite (overflowing) range: 0.01, as before
+	return { (std::isfinite(increment) && increment > 0.) ? increment : 0.01,
 		std::max(2, kMaxDigits - std::max(integerPartDigitCount(minValue), integerPartDigitCount(maxValue))) };
 }
 
