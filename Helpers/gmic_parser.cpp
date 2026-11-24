@@ -66,10 +66,8 @@
 #include "gmic_log.h"
 
 using namespace std;
-using namespace reduxfx;
-using namespace gmic_ofx;
 
-namespace reduxfx {
+namespace gmic_ofx {
 
 static const char* const src_prefix_old_c = "#@gimp";
 static const char* const src_prefix_c = "#@gui";

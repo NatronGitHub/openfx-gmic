@@ -1,12 +1,14 @@
 /* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:t; tab-width:2; c-basic-offset: 2 -*- */
 /*
  #
- #  File        : RFX_Parameter.h
+ #  File        : gmic_parameter.h
  #
- #  Description : A self-contained header file with helper functions and structures    
- #                for generic parameter handling in various plugin hosts    
+ #  Description : The parameter model of the plug-in (formerly Helpers/RFX_Parameter.h): the
+ #                parameters of a plug-in (pluginSetup, gmic_plugin.cpp), their values and the
+ #                images of a render, shared by the G'MIC side and the OpenFX glue (gmic_ofx.cpp)
  #
- #  Copyright   : Tobias Fleischer / reduxFX Productions (http://www.reduxfx.com)
+ #  Copyright   : Tobias Fleischer / reduxFX Productions (http://www.reduxfx.com),
+ #                openfx-gmic contributors
  #
  #  Licenses        : This file is 'dual-licensed', you have to choose one
  #                    of the two licenses below to apply.
@@ -47,20 +49,26 @@
  #
 */
 
-#ifndef RFX_PARAMETER_H
-#define RFX_PARAMETER_H
+#ifndef GMIC_PARAMETER_H
+#define GMIC_PARAMETER_H
+
+#include <string>
+#include <utility>
+
+namespace gmic_ofx {
 
 // arbitrary bounds :)
-#define MAX_NOF_LAYERS 32
-#define MAX_NOF_PARAMS 256
+constexpr int kMaxLayers = 32;
+constexpr int kMaxParams = 256;
 
 // flags of a boolean parameter that enables the point parameter just before it (a G'MIC removable
 // point, issue #79): it is not passed to G'MIC, the point is passed as nan,nan when it is off, and
 // the OFX glue disables the point (and so its overlay handle) then
-#define PARAM_FLAGS_POINT_ENABLED 0x100 // distinct from the PT_TEXT flags (1, 2, 5...)
+constexpr int kParamFlagsPointEnabled = 0x100; // distinct from the ParamType::Text flags (1, 2, 5...)
 
-// flags of a color() parameter (PT_COLOR): with an alpha channel (color(R,G,B,A), color(#RRGGBBAA)),
-// an RGBA parameter passing 4 values to G'MIC; without, an RGB parameter passing 3, as in G'MIC-Qt
+// flags of a color() parameter (ParamType::Color): with an alpha channel (color(R,G,B,A),
+// color(#RRGGBBAA)), an RGBA parameter passing 4 values to G'MIC; without, an RGB parameter passing
+// 3, as in G'MIC-Qt
 constexpr int kParamFlagsColorRGB = 3;
 constexpr int kParamFlagsColorRGBA = 4;
 
@@ -68,41 +76,35 @@ constexpr int kParamFlagsColorRGBA = 4;
 // the OFX glue: each layer input (all but Source) has an integer parameter "<clip name> Time
 // Offset" (it is fetched at the render time plus this offset), and the first "Layers from Source"
 // layer inputs are taken from Source instead of their own clip
-#define LAYERS_FROM_SOURCE_PARAM "Layers from Source"
-#define TIME_OFFSET_PARAM_SUFFIX " Time Offset"
+constexpr const char* kLayersFromSourceParam = "Layers from Source";
+constexpr const char* kTimeOffsetParamSuffix = " Time Offset";
 
-#include <string>
-
-namespace reduxfx {
-
-enum ParamType
+enum class ParamType
 {
-	PT_INT = 0,
-	PT_BOOL = 1,
-	PT_SELECT = 2,
-	PT_LAYER = 3,
-	PT_FLOAT = 4,
-	PT_COLOR = 5,
-	PT_ANGLE = 6,
-	PT_POINT = 7,
-	PT_TOPIC_START = 8,
-	PT_TOPIC_END = 9,
-	PT_TEXT = 14,
-	PT_SEPARATOR = 15,
+	Int,
+	Bool,
+	Select,
+	Layer,
+	Float,
+	Color,
+	Point,
+	TopicStart,
+	TopicEnd,
+	Text,
+	Separator,
 };
 
-enum DisplayStatus
+enum class DisplayStatus
 {
-	DS_NORMAL = 0,
-	DS_DISABLED = 1,
-	DS_HIDDEN = 2,
+	Normal,
+	Disabled,
+	Hidden,
 };
 
 // an image given to or made by G'MIC: float planar RGBA (RRR... GGG... BBB... AAA...), rows
 // top-down, of width x height pixels at (origin_x, origin_y) in pixel coordinates (y up)
-class World
+struct World
 {
-public:
 	int width = 0;
 	int height = 0;
 	float* data = nullptr; // not owned, width * height * 4 floats
@@ -110,9 +112,8 @@ public:
 	int origin_y = 0;
 };
 
-class PluginInfo
+struct PluginInfo
 {
-public:
 	std::string name;
 	std::string identifier;
 	std::string category;
@@ -121,75 +122,66 @@ public:
 	int minor_version = 0;
 };
 
-class Parameter
+struct Parameter
 {
-public:
-	Parameter(std::string _paramName = "", std::string _displayName = "", int _paramType = PT_FLOAT, float _minValue = 0.f, float _maxValue = 1.f, float _defaultValue0 = 0.f, float _defaultValue1 = 0.f, float _defaultValue2 = 0.f, float _defaultValue3 = 0.f, std::string _text = "") {
-		displayName = _displayName;
-		paramName = _paramName;
-		if (displayName == "") displayName = paramName;
-		paramType = _paramType;
-		defaultValue[0] = _defaultValue0;
-		defaultValue[1] = _defaultValue1;
-		defaultValue[2] = _defaultValue2;
-		defaultValue[3] = _defaultValue3;
-		minValue = _minValue;
-		maxValue = _maxValue;
-		text = _text;
-		flags = 0;
-		displayStatus = DS_NORMAL;
-	};
-	int paramType;
+	Parameter() = default;
+	Parameter(std::string _paramName, std::string _displayName, ParamType _paramType, float _minValue = 0.f, float _maxValue = 1.f,
+		float _defaultValue0 = 0.f, float _defaultValue1 = 0.f, float _defaultValue2 = 0.f, float _defaultValue3 = 0.f,
+		std::string _text = std::string())
+		: paramType(_paramType)
+		, paramName(std::move(_paramName))
+		, displayName(std::move(_displayName))
+		, text(std::move(_text))
+		, defaultValue{ _defaultValue0, _defaultValue1, _defaultValue2, _defaultValue3 }
+		, minValue(_minValue)
+		, maxValue(_maxValue)
+	{
+		if (displayName.empty()) displayName = paramName;
+	}
+	ParamType paramType = ParamType::Float;
 	std::string paramName;
 	std::string displayName;
 	std::string text;
 	std::string hint; // tooltip (OFX), empty for none
-	float defaultValue[4];
-	float minValue;
-	float maxValue;
-	DisplayStatus displayStatus;
-	int flags;
+	float defaultValue[4] = {};
+	float minValue = 0.f;
+	float maxValue = 1.f;
+	DisplayStatus displayStatus = DisplayStatus::Normal;
+	int flags = 0;
 	// used by the filter's preview command only (G'MIC's split preview, see pluginSetup): the OFX
 	// glue enables it only when Preview/Draft Mode is on
 	bool draftModeOnly = false;
 };
 
 // the values of one render: the parameters at the render time, and the images
-class SequenceData
+struct SequenceData
 {
-public:
-	float floatValue[MAX_NOF_PARAMS][4] = {};
-	std::string textValue[MAX_NOF_PARAMS];
+	float floatValue[kMaxParams][4] = {};
+	std::string textValue[kMaxParams];
 	double time = 0;
 	// the first frame of the main input's frame range (Output Layer "Frame" in G'MIC), 0 if unknown
 	double frameRangeStart = 0;
-	reduxfx::World inWorld[MAX_NOF_LAYERS];
-	reduxfx::World outWorld;
-	bool inputConnected[MAX_NOF_LAYERS] = {};
+	World inWorld[kMaxLayers];
+	World outWorld;
+	bool inputConnected[kMaxLayers] = {};
 	// set by pluginProcess: whether the image copied to outWorld had an alpha channel
 	bool resultHasAlpha = true;
 };
 
-#define PAR_TYPE(idx) globalDataP->param[idx].paramType
-#define PAR_VAL(idx) sequenceDataP->floatValue[idx][0]
-#define PAR_TXT(idx) sequenceDataP->textValue[idx]
-#define PAR_CH(idx, ch) sequenceDataP->floatValue[idx][ch]
-
 // a plug-in: its G'MIC filter's parameters and the ones the plug-in adds (see pluginSetup)
-class GlobalData
+struct GlobalData
 {
-public:
-	reduxfx::Parameter param[MAX_NOF_PARAMS];
+	Parameter param[kMaxParams];
 	int nofParams = 1;
-	int nofInputs = 0; // the PT_LAYER parameters, i.e. the input clips
+	int nofInputs = 0; // the ParamType::Layer parameters, i.e. the input clips
 	PluginInfo pluginInfo;
 	int pluginIndex = 0;
 
 	GlobalData() {
-		param[0] = reduxfx::Parameter("input", "Input", PT_LAYER);
+		param[0] = Parameter("input", "Input", ParamType::Layer);
 	}
 };
 
-}
+} // namespace gmic_ofx
 
 #endif

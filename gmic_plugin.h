@@ -17,7 +17,7 @@
 #include <memory>
 #include <string>
 
-#include "RFX_Parameter.h"
+#include "gmic_parameter.h"
 #include "gmic_libc.h"
 
 namespace OFX {
@@ -42,13 +42,13 @@ int getNofPlugins();
 
 // The identifier, label, grouping and version of plug-in pluginIndex (the description: see
 // pluginSetup).
-reduxfx::PluginInfo getPluginInfo(int pluginIndex);
+gmic_ofx::PluginInfo getPluginInfo(int pluginIndex);
 
 // The parameters of plug-in pluginIndex, whose info is pluginInfo (getPluginInfo): the filter's
 // own, then the layers, layer times and advanced options that the plug-in adds; also makes the
-// description of the plug-in. The PT_LAYER parameters are the input clips, the
+// description of the plug-in. The ParamType::Layer parameters are the input clips, the
 // first one Source.
-std::unique_ptr<reduxfx::GlobalData> pluginSetup(int pluginIndex, const reduxfx::PluginInfo& pluginInfo);
+std::unique_ptr<gmic_ofx::GlobalData> pluginSetup(int pluginIndex, const gmic_ofx::PluginInfo& pluginInfo);
 
 // The G'MIC state of an instance: the options of its G'MIC runs, and its entry in the results
 // kept for Output Layer "Frame" (released on destruction).
@@ -82,7 +82,7 @@ void showRenderWarning(OFX::ImageEffect& effect, const std::string& msg);
 // outWorld buffer, with the parameter values of sequenceData. Polls effect.abort() while G'MIC
 // runs, and reports G'MIC's errors on effect. False if the output is not valid (G'MIC failed,
 // or the render was aborted).
-bool pluginProcess(reduxfx::SequenceData& sequenceData, const reduxfx::GlobalData& globalData, GmicInstanceData& instanceData,
+bool pluginProcess(gmic_ofx::SequenceData& sequenceData, const gmic_ofx::GlobalData& globalData, GmicInstanceData& instanceData,
 	OFX::ImageEffect& effect);
 
 // kOfxActionPurgeCaches: drop the results kept for Output Layer "Frame", of every instance
