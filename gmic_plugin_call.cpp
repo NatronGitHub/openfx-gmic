@@ -122,7 +122,6 @@ void gmicOpenLog(const std::string& path)
 		gmicLog("openfx-gmic: Error: could not open the log file %s: the messages stay on stderr\n", path.c_str());
 		return;
 	}
-	bool emptied = false;
 	if (std::fseek(file, 0, SEEK_END) == 0 && std::ftell(file) > kMaxLogBytes) {
 		std::fclose(file);
 		file = cimg::std_fopen(path.c_str(), "w");
@@ -130,7 +129,15 @@ void gmicOpenLog(const std::string& path)
 			gmicLog("openfx-gmic: Error: could not empty the log file %s: the messages stay on stderr\n", path.c_str());
 			return;
 		}
-		emptied = true;
+		std::fprintf(file, "[openfx-gmic] log emptied: it was larger than %ld MB\n", kMaxLogBytes / (1024L * 1024L));
+		std::fclose(file);
+		// append mode again: each write goes to the end of the file, after the lines that other host
+		// processes append (in "w" mode, this process would write at its own offset, over them)
+		file = cimg::std_fopen(path.c_str(), "a");
+		if (!file) {
+			gmicLog("openfx-gmic: Error: could not open the log file %s: the messages stay on stderr\n", path.c_str());
+			return;
+		}
 	}
 	std::tm local{};
 	const std::time_t now = std::time(nullptr);
@@ -144,7 +151,6 @@ void gmicOpenLog(const std::string& path)
 	gmicSetLogFile(file); // (gmic_log.cpp: never closed)
 	cimg::output(file);
 	gmicLog("\n[openfx-gmic] %s: G'MIC %d, log started\n", date, (int)gmic_version);
-	if (emptied) gmicLog("[openfx-gmic] log emptied: it was larger than %ld MB\n", kMaxLogBytes / (1024L * 1024L));
 }
 
 static void setError(gmic_interface_options* options, const std::string& message)
