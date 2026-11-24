@@ -68,7 +68,6 @@
 #include "gmic_log.h"
 
 using namespace std;
-using namespace gmic_ofx;
 
 namespace gmic_ofx {
 
@@ -834,6 +833,85 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 	}
 }
 
+// The labels of a choice() parameter (stored as "label|label|..."), with runs of blanks as one
+// space (two filters of G'MIC 4.0.8 have "Forward  Horizontal")
+static vector<string> choiceLabels(const string& text)
+{
+	vector<string> labels;
+	string label;
+	bool blank = false;
+	for (size_t i = 0; i <= text.size(); ++i) {
+		const char c = i < text.size() ? text[i] : '|';
+		if (c == '|') {
+			labels.push_back(strTrim(label));
+			label.clear();
+			blank = false;
+		} else if (c == ' ' || c == '\t') {
+			if (!blank) label += ' ';
+			blank = true;
+		} else {
+			label += c;
+			blank = false;
+		}
+	}
+	return labels;
+}
+
+// the choice of G'MIC's split preview: its first label "Full..." (e.g. "Full (Allows
+// Multi-Layers)"), its second "Forward Horizontal", whatever its name ("Preview Type", "Preview",
+// "Type", "24-26. Preview Type"...)
+static bool isSplitPreviewChoice(const EffectParameter& param)
+{
+	if (param.paramType != "choice") return false;
+	static const string kFirstLabelPrefix = "Full";
+	static const string kSecondLabel = "Forward Horizontal";
+	const vector<string> labels = choiceLabels(param.text);
+	return labels.size() >= 2 && labels[0].compare(0, kFirstLabelPrefix.size(), kFirstLabelPrefix) == 0 &&
+		labels[1] == kSecondLabel;
+}
+
+static bool hasSuffix(const string& s, const string& suffix)
+{
+	return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+// a parameter without a value of its own (passes no argument to the commands)
+static bool isNoValueParameter(const EffectParameter& param)
+{
+	return param.paramType == "separator" || param.paramType == "note" || param.paramType == "link";
+}
+
+// Marks the parameters of G'MIC's split preview (EffectParameter::splitPreview): the choice of
+// isSplitPreviewChoice, and its point (the next parameter with a value, or a point whose name ends
+// with "Preview Split"). By G'MIC's convention, they are the last arguments, which the preview
+// command passes to gui_split_preview, and which the main command ignores: they only matter with
+// Preview/Draft Mode. Generic rules only, no list of filters: not in the filters that run their
+// preview command anyway (same command, previewOnly), nor in those that run it before their main
+// command (previewFirst, see markPersistentFilters), where these arguments can change the state
+// that the main command gets. A main command that reads these arguments anyway is a bug of the filter:
+// its parameters are marked too (their values are still passed to G'MIC).
+static void markSplitPreviewParams(vector<EffectData>& cds)
+{
+	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
+		EffectData& cd = *it;
+		if (cd.previewOnly || cd.preview_command == cd.command || cd.previewFirst) continue;
+		bool afterChoice = false; // the previous parameter with a value is a split preview choice
+		for (size_t i = 0; i < cd.param.size(); ++i) {
+			EffectParameter& param = cd.param[i];
+			if (isNoValueParameter(param)) continue;
+			if (isSplitPreviewChoice(param)) {
+				param.splitPreview = true;
+				afterChoice = true;
+				continue;
+			}
+			if (param.paramType == "point" && (afterChoice || hasSuffix(param.name, "Preview Split"))) {
+				param.splitPreview = true;
+			}
+			afterChoice = false;
+		}
+	}
+}
+
 // Filters that need a second input although their #@gui text doesn't say so (see usesSeveralLayers),
 // from the start of the definition of the main command, before its first command that is not a
 // test (after "skip ..." or "check ..." and "var=..." assignments):
@@ -1188,6 +1266,7 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 		return;
 	}
 	markPersistentFilters(content, *cds);
+	markSplitPreviewParams(*cds); // (after markPersistentFilters: previewFirst)
 	markMultiInputFilters(content, *cds);
     // plug-in identifiers must be unique: G'MIC 4 has several filters with the same name in
     // different folders (in 4.0.7: the "About" page of each Testing author, giving About and
