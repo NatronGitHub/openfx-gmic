@@ -116,8 +116,8 @@ def write_input(path, w=160, h=120):
         f.write(b''.join(rows))
 
 
-def fft_plugins(stdlib_header):
-    """Ids of the filters whose command (or its _<command> helpers) uses the FFT."""
+def stdlib_text(stdlib_header):
+    """The text of the G'MIC standard library in stdlib_header (gmic_stdlib_community.h)."""
     with open(stdlib_header, encoding='latin-1') as f:
         src = f.read()
     body = src[src.index('data_gmic[] = {') + len('data_gmic[] = {'):]
@@ -126,7 +126,24 @@ def fft_plugins(stdlib_header):
     nl2 = data.index(b'\n', nl1 + 1)
     m = re.search(rb'#(\d+)', data[nl1 + 1:nl2])  # CImg serialization: compressed size
     payload = data[nl2 + 1:]
-    text = (zlib.decompress(payload[:int(m.group(1))]) if m else payload).decode('latin-1')
+    return (zlib.decompress(payload[:int(m.group(1))]) if m else payload).decode('latin-1').rstrip('\0')
+
+
+def host_demo_path(host, config):
+    """hostDemo's path: host itself, or read from a CMake build directory host (None if not found)."""
+    host = os.path.abspath(host)
+    if not os.path.isdir(host):
+        return host
+    for n in ('hostDemo-path.txt', 'hostDemo-path-%s.txt' % config):
+        if os.path.exists(os.path.join(host, n)):
+            with open(os.path.join(host, n)) as f:
+                return f.read().strip()
+    return None
+
+
+def fft_plugins(stdlib_header):
+    """Ids of the filters whose command (or its _<command> helpers) uses the FFT."""
+    text = stdlib_text(stdlib_header)
     defs, cur = {}, None
     for line in text.split('\n'):
         d = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)\s*:(?!=)', line)
@@ -212,16 +229,10 @@ def main():
     ap.add_argument('--host-arg', action='append', default=[])
     a = ap.parse_args()
 
-    host = os.path.abspath(a.host)
-    if os.path.isdir(host):  # a CMake build directory
-        for n in ('hostDemo-path.txt', 'hostDemo-path-%s.txt' % a.config):
-            if os.path.exists(os.path.join(host, n)):
-                with open(os.path.join(host, n)) as f:
-                    host = f.read().strip()
-                break
-        else:
-            ap.error('no hostDemo-path.txt or hostDemo-path-%s.txt in %s (configure with GMIC_BUILD_TESTS=ON)'
-                     % (a.config, host))
+    host = host_demo_path(a.host, a.config)
+    if host is None:
+        ap.error('no hostDemo-path.txt or hostDemo-path-%s.txt in %s (configure with GMIC_BUILD_TESTS=ON)'
+                 % (a.config, os.path.abspath(a.host)))
     min_rendered = a.min_rendered if a.min_rendered is not None else (700 if a.subset == 'all' else 100)
     commercial = False
     if a.stdlib:

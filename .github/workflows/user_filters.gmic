@@ -1,6 +1,6 @@
 # Filters for user_filters_test.py: a user filter file (~/.config/gmic/gmic_ofx.gmic) whose
 # filters call commands that the file defines (#168), a built-in command, and a built-in command
-# that the file replaces.
+# that the file replaces; it also defines a command that the plug-in hot-fixes.
 #@gui User File Test
 #@gui User File Own Command : fx_userfile_own, fx_userfile_own
 #@gui : Value = float(0.25,0,1)
@@ -22,3 +22,8 @@ fx_userfile_override :
 # replaces the built-in 'fc' (fill_color)
 fc :
   f 128
+
+# a definition of its own of a command that the plug-in hot-fixes (gmic_hotfixes.gmic): it is
+# kept, with a note (no filter here calls it)
+star_tone :
+  f 0
