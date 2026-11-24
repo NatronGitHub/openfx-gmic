@@ -140,6 +140,7 @@ using namespace reduxfx;
 #if defined(cimg_use_fftw3) && !defined(cimg_use_fftw3_singlethread)
 #include <fftw3.h>
 #endif
+#include <atomic>
 #include <system_error>
 #include <thread>
 #ifndef _WIN32
@@ -1027,7 +1028,8 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 	globalDataP->param[p] = Parameter("Global Random Seed", "", PT_INT, 0, 1<<24, 0, 0, 0, 0, "");
 	globalDataP->param[p].hint = "Seed of the random numbers used by the filter. For most filters, results are reproducible "
 		"for a given seed and number of OpenMP threads; filters using patch matching or G'MIC's parallel command, "
-		"and concurrent renders, can still vary.";
+		"and concurrent renders, can still vary. The number of threads depends on the host and on the renders "
+		"running at once: set the OMP_NUM_THREADS environment variable for a fixed one.";
 	++p;
 	globalDataP->param[p] = Parameter(kAnimateSeedParam, "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
 	globalDataP->param[p].hint = "Add the frame number to the Global Random Seed, so that the random numbers change "
@@ -1292,6 +1294,71 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 //	cmd = "_input_mode=1 _output_mode=0 _verbosity_mode=0 _preview_mode=0 _preview_size=0 " + cmd;
 
 	return cmd;
+}
+
+// G'MIC's thread count for one render (issue #188), so that the renders running at once don't each
+// start one OpenMP thread per CPU: N = max(the host's count, fair share), at most the number of
+// hardware threads.
+// - The host's count: its multithread suite (multiThreadNumCPUs; Natron: the threads that its
+//   other renders leave free, or 1 when its multithreading is off).
+// - The fair share: the hardware threads divided by the G'MIC renders running in this process
+//   (RunningRender, this one included). It is a floor because the host's count can be too low:
+//   the plug-in is instance-safe, so Natron runs one G'MIC render per node at a time
+//   (EffectInstance::renderRoI's lock on the node's render instances), and its other frame
+//   threads, waiting on that lock, count as busy: during sequence renders and playback, its
+//   count is often 1.
+// N is given to G'MIC by setting its variable _cpus at the start of the command: G'MIC
+// (gmic::set_variable()) then calls omp_set_num_threads(N) in the interpreter's thread, the
+// worker thread of gmicCallAbortable(), and the stdlib commands that split their work use
+// $_cpus. With libgomp and libomp (OpenMP >= 3.0: the thread count is a per-thread setting),
+// only this render's worker thread is affected (a new thread for each run; MSVC's vcomp doesn't
+// document the scope, and the fallback without a worker thread sets the host's render thread).
+// Limit: G'MIC's 'parallel' command (also used by the stdlib's apply_parallel commands) creates
+// its interpreters with new gmic(*this), whose initialisation sets _cpus back to all the CPUs and
+// calls omp_set_num_threads() on the interpreter's thread: after a filter's first 'parallel', the
+// render uses all the CPUs again, as before this change.
+// No prefix, so that G'MIC uses all the CPUs as before:
+// - if the number of hardware threads is unknown (hardware_concurrency() is 0);
+// - if OMP_NUM_THREADS is set: it stays a fixed thread count (G'MIC then ignores _cpus for
+//   OpenMP, and $_cpus stays G'MIC's CPU count);
+// - if the host's multithread suite call fails. Support's getNumCPUs() returns 1 then, which
+//   can't be told apart from a host's 1, so the suite is called directly. (Support fetches the
+//   suite as mandatory when the plug-in loads: it is never missing in practice.)
+// Results with random numbers depend on the thread count (see the Global Random Seed hint), which
+// may change from one render to the next: it is not part of the Output Layer "Frame" cache key.
+static std::atomic<int> gRunningRenders(0); // the G'MIC renders running in this process
+
+// Counts a G'MIC render in gRunningRenders for its lifetime.
+class RunningRender
+{
+public:
+	RunningRender() noexcept { gRunningRenders.fetch_add(1); }
+	~RunningRender() { gRunningRenders.fetch_sub(1); }
+	RunningRender(const RunningRender&) = delete;
+	RunningRender& operator=(const RunningRender&) = delete;
+	RunningRender(RunningRender&&) = delete;
+	RunningRender& operator=(RunningRender&&) = delete;
+};
+
+// Call with a RunningRender for this render alive (see above).
+static string gmicThreadsPrefix()
+{
+	static const bool ompEnv = std::getenv("OMP_NUM_THREADS") != NULL; // read once
+	if (ompEnv) return string();
+	static const OfxMultiThreadSuiteV1* const suite =
+		static_cast<const OfxMultiThreadSuiteV1*>(OFX::fetchSuite(kOfxMultiThreadSuite, 1, true));
+	unsigned int hostCount = 0;
+	if (!suite || !suite->multiThreadNumCPUs || suite->multiThreadNumCPUs(&hostCount) != kOfxStatOK) {
+		return string();
+	}
+	const unsigned int concurrency = std::thread::hardware_concurrency();
+	if (concurrency == 0) return string(); // unknown: no fair share, and no upper bound
+	// at most INT_MAX: G'MIC reads _cpus with %d
+	const unsigned int hardware = std::min(concurrency, (unsigned int)std::numeric_limits<int>::max());
+	const unsigned int renders = (unsigned int)std::max(1, gRunningRenders.load());
+	const unsigned int fairShare = std::max(1u, hardware / renders);
+	const unsigned int n = std::min(std::max(hostCount, fairShare), hardware);
+	return "_cpus=" + std::to_string(n) + " ";
 }
 
 // Render abort (issue #46): G'MIC polls a flag (p_is_abort), in its interpreter and in CImg's
@@ -1935,7 +2002,11 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	const string frameSelect = frameMode ? " -_openfx_gmic_frame_select " + std::to_string(frame) + "," +
 		intToString(kMaxFrameResults) + "," + std::to_string((unsigned long long)frameCacheBudget()) : string();
 	if (runGmic) {
-		cmd += frameSelect;
+		// counted until both G'MIC runs (the main command and the preview fallback) are done, on
+		// every path; the thread count is added after the cache key was made (see gmicThreadsPrefix)
+		const RunningRender running;
+		const string threads = gmicThreadsPrefix();
+		cmd = threads + cmd + frameSelect;
 		result = gmicCallAbortable(effect, effectData.name, cmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(), &aborted);
 		errmsg = string(instanceDataP->options().error_message_buffer);
 		// The retry needs unchanged inputs: gmic_plugin_call() works on copies (no_inplace_processing)
@@ -1944,7 +2015,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 			fprintf(stderr, "G'MIC: %s: the main command failed (%s), rendering with the preview command\n",
 					effectData.name.c_str(), errmsg.c_str());
 			preview = true;
-			cmd = fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, preview, customCommands) + frameSelect;
+			cmd = threads + fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, preview, customCommands) + frameSelect;
 			result = gmicCallAbortable(effect, effectData.name, cmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(), &aborted);
 			if (result != 0 && !aborted) {
 				errmsg += " (with the preview command: " + string(instanceDataP->options().error_message_buffer) + ")";

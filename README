@@ -299,6 +299,18 @@ Environment
   A decimal number >= 0 ("512", "0.5", "2e3"; '.' as decimal point whatever the locale,
   surrounding whitespace allowed): a sign, inf, nan, hexadecimal, other text or an overflow give
   the default, with a note on stderr.
+- OMP_NUM_THREADS=<n>: a fixed number of OpenMP threads, for each render and for the whole host
+  process (other OpenMP code in it too): the plug-in then leaves G'MIC's thread count alone.
+  OMP_NUM_THREADS=1 makes G'MIC's OpenMP loops single-threaded (its parallel command still
+  starts its own threads). Unset (the default), each render uses at least the number of hardware
+  threads divided by the G'MIC renders running at once in the process, or more if the host's
+  multithread suite gives more (Natron: the threads that its other renders leave free; the floor
+  overrides its "render threads -1" and "threads per effect" settings, which G'MIC ignored
+  before too). A host whose suite always reports 1 thus runs a single render with all the
+  hardware threads, and several renders with their share each. A filter that uses G'MIC's
+  parallel command goes back to all the CPUs after it. Filters with random numbers (Global
+  Random Seed) give results that depend on the number of threads: set OMP_NUM_THREADS for
+  results that don't change with the renders running at once.
 - OFX_GMIC_WRITE_PLUGIN_LIST=<file>: the plug-in writes its list of the plug-ins (see "Choosing
   the plug-ins") to <file> when the host first loads it, from the filters it loaded (e.g. a
   gmic_ofx.gmic), those that the user's list disables commented out. Every process that loads

@@ -45,6 +45,7 @@ Changes in openfx-gmic since Natron 2.5.0 (tag `Natron-2.5.0`). Natron 2.6 polic
 
 ### New
 - Renders can be aborted while G'MIC runs (#46, #56).
+- Renders running at once start fewer threads (#188): each render uses the larger of the number of threads that the host gives (Natron: those its other renders leave free) and a fair share (the hardware threads divided by the G'MIC renders running in the process), at most the hardware threads. Natron's multithreading off (render threads -1), whose count is 1, thus no longer limits G'MIC to one thread. A filter that uses G'MIC's `parallel` command goes back to all the CPUs after it. `OMP_NUM_THREADS` still sets a fixed number. Results with random numbers depend on the number of threads: set `OMP_NUM_THREADS` to keep them fixed.
 - Render progress (#177): the filters that report their progress to G'MIC (its `progress` command, e.g. Upscale [CNN2x], Inpaint [Multi-Scale], Spline Spirograph; most filters don't) show it in the host's progress bar, e.g. Natron's Progress panel for long renders.
 - Layer Times (#63, #70): filters with layer inputs get a "Layer Times" group:
   - "Layer -1 Time Offset" to "Layer -4 Time Offset" (frames, default 0) fetch each layer input at the render time plus its offset;
