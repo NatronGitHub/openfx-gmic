@@ -816,6 +816,19 @@ static void makeFftwThreadSafe()
 }
 #endif
 
+// G'MIC's split preview (gui_split_preview), in the preview command of many filters: "Preview
+// Type", a choice of "Full", "Forward Horizontal"... (how the preview shows the original next to the
+// result), and "Preview Split", the point where they meet. By G'MIC's convention, these are the last
+// arguments, which the main command ignores (issue #184): they only matter with Preview/Draft
+// Mode, which renders with the preview command. Other "Preview Type" choices (e.g. Colorize
+// Lineart [Auto-Fill]'s "Lineart + Colors") are not the split preview's.
+static bool isSplitPreviewParam(const EffectData& effectData, const EffectParameter& param)
+{
+	if (effectData.previewOnly || effectData.preview_command == effectData.command) return false;
+	return (param.name == "Preview Type" && param.paramType == "choice" && param.text.compare(0, 12, "Full|Forward") == 0) ||
+		(param.name == "Preview Split" && param.paramType == "point");
+}
+
 std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& pluginInfo)
 {
 #if defined(cimg_use_fftw3) && !defined(cimg_use_fftw3_singlethread)
@@ -847,7 +860,7 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 			"Layer Times", LAYERS_FROM_SOURCE_PARAM, "Layer -1" TIME_OFFSET_PARAM_SUFFIX,
 			"Layer -2" TIME_OFFSET_PARAM_SUFFIX, "Layer -3" TIME_OFFSET_PARAM_SUFFIX,
 			"Layer -4" TIME_OFFSET_PARAM_SUFFIX, "Command",
-			"Advanced Options", kOutputLayerParam, "Resize Mode", "Ignore Alpha", "Preview/Draft Mode",
+			"Advanced Options", kOutputLayerParam, "Resize Mode", "Ignore Alpha", kDraftModeParam,
 			"Global Random Seed", kAnimateSeedParam, "Log Verbosity" };
 		for (size_t r = 0; r < sizeof(reservedNames) / sizeof(reservedNames[0]); ++r) {
 			if (name == reservedNames[r]) {
@@ -940,6 +953,12 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		  name, "", t, (float)stringToDouble(minValue), (float)stringToDouble(maxValue), d1, d2, d3, d4, paramText);
 		globalDataP->param[p].flags = flags;
 		if (h) globalDataP->param[p].displayStatus = DS_HIDDEN;
+		if (isSplitPreviewParam(effectData, param)) {
+			globalDataP->param[p].draftModeOnly = true;
+			globalDataP->param[p].hint = "Used by the filter's preview only, as in G'MIC-Qt: "
+				"turn on Preview/Draft Mode (Advanced Options) to see it. Natron's viewer wipe also "
+				"compares the input and the result.";
+		}
 		if (paramType == "pointenabled") {
 			globalDataP->param[p].hint = (param.removable < 0) ?
 				"Use the point above. Off by default, since G'MIC-Qt starts with this point removed. "
@@ -1014,7 +1033,7 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 	globalDataP->param[p].hint = "Run the filter on the RGB channels only, then give the inputs' alpha back to the results. "
 		"Gray or RGB results of another size than the input (frames, rotation, crop, resize...) are opaque.";
 	++p;
-	globalDataP->param[p] = Parameter("Preview/Draft Mode", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
+	globalDataP->param[p] = Parameter(kDraftModeParam, "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
 	if (effectData.command == effectData.preview_command) {
 		globalDataP->param[p].displayStatus = DS_HIDDEN;
 	}

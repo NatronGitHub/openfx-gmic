@@ -493,6 +493,7 @@ private:
 	void pointsFromSourceWrite();
 	void pointsMoveToSource(double time, int onlyParam);
 	void pointsUpdateEnabled(int onlyParam);
+	void draftModeUpdateEnabled();
 
 	const GlobalData& _gd;
 	OFX::Clip* _output;
@@ -501,6 +502,7 @@ private:
 	std::vector<ParamPtr> _params; // per _gd.param
 	OFX::ChoiceParam* _outputLayer;
 	OFX::BooleanParam* _animateSeed;
+	OFX::BooleanParam* _draftMode;
 	// layer times (see layerTimesAt), NULL for plug-ins without them
 	OFX::IntParam* _layersFromSource = nullptr;
 	int _lastLayersFromSource = 0; // its value at the previous change (see changedParam)
@@ -519,6 +521,7 @@ GMICEffect::GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData
 	, _params((size_t)globalData.nofParams)
 	, _outputLayer(fetchChoiceParam(kOutputLayerParam))
 	, _animateSeed(fetchBooleanParam(kAnimateSeedParam))
+	, _draftMode(fetchBooleanParam(kDraftModeParam))
 	, _pointFromSource((size_t)globalData.nofParams)
 {
 	using namespace reduxfx;
@@ -571,6 +574,7 @@ GMICEffect::GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData
 		}
 	}
 	pointsUpdateEnabled(-1);
+	draftModeUpdateEnabled();
 }
 
 void GMICEffect::failUnlessAborted() const
@@ -829,6 +833,11 @@ void GMICEffect::changedParam(const OFX::InstanceChangedArgs& args, const std::s
 		}
 	}
 
+	// Preview/Draft Mode changed in any way: the parameters of the preview command only
+	if (paramName == kDraftModeParam) {
+		draftModeUpdateEnabled();
+	}
+
 	// Output Layer changed in any way: no longer Frame, the results kept for it can go
 	if (paramName == kOutputLayerParam) {
 		pluginOutputLayerChanged(_gmic, _outputLayer->getValue());
@@ -1007,7 +1016,42 @@ void GMICEffect::pointsUpdateEnabled(int onlyParam)
 		const std::optional<bool> on = hostQuery([checkbox] { return checkbox->getValue(); });
 		if (!on) continue;
 		OFX::Double2DParam* point = std::get<OFX::Double2DParam*>(_params[i - 1]);
+		if (_gd.param[i - 1].draftModeOnly) {
+			const std::optional<bool> draft = hostQuery([this] { return _draftMode->getValue(); });
+			if (!draft || !*draft) {
+				hostTry([point] { point->setEnabled(false); });
+				continue;
+			}
+		}
 		hostTry([point, on] { point->setEnabled(*on); }); // (also called from createInstance)
+	}
+}
+
+// The parameters that only the filter's preview command uses (G'MIC's split preview, issue #184,
+// Parameter::draftModeOnly) are enabled only when Preview/Draft Mode is on. Their values are passed
+// to G'MIC either way, so renders don't depend on whether they are enabled.
+void GMICEffect::draftModeUpdateEnabled()
+{
+	using namespace reduxfx;
+	const std::optional<bool> draft = hostQuery([this] { return _draftMode->getValue(); });
+	if (!draft) return;
+	for (int i = 1; i < _gd.nofParams; i++) {
+		const Parameter& param = _gd.param[i];
+		if (!param.draftModeOnly) continue;
+		// a removable point: also its checkbox (see pointsUpdateEnabled)
+		if (i + 1 < _gd.nofParams && _gd.param[i + 1].paramType == PT_BOOL && _gd.param[i + 1].flags == PARAM_FLAGS_POINT_ENABLED) {
+			pointsUpdateEnabled(i + 1);
+			continue;
+		}
+		const bool on = *draft;
+		// (isSplitPreviewParam: a choice or a point)
+		if (OFX::ChoiceParam* const* choice = std::get_if<OFX::ChoiceParam*>(&_params[i])) {
+			OFX::ChoiceParam* const c = *choice;
+			hostTry([c, on] { c->setEnabled(on); });
+		} else if (OFX::Double2DParam* const* point = std::get_if<OFX::Double2DParam*>(&_params[i])) {
+			OFX::Double2DParam* const pt = *point;
+			hostTry([pt, on] { pt->setEnabled(on); });
+		}
 	}
 }
 
