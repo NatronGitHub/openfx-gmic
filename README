@@ -4,7 +4,7 @@ openfx-gmic: G'MIC filters as OpenFX plug-ins
 openfx-gmic makes the filters of G'MIC (https://gmic.eu), an open-source image processing
 framework, available as OpenFX plug-ins, mainly for Natron (https://natrongithub.github.io).
 A single GMIC.ofx bundle registers one plug-in per filter of the G'MIC standard library and its
-community filters: 1199 plug-ins with G'MIC 4.0.8 (810 in COMMERCIAL builds). Changes since
+community filters: 1200 plug-ins with G'MIC 4.0.8 (810 in COMMERCIAL builds). Changes since
 Natron 2.5 are in CHANGELOG.md.
 
 It was written by Tobias Fleischer (reduxFX Productions, https://www.reduxfx.com), and is now

@@ -5,7 +5,7 @@ Changes in openfx-gmic since Natron 2.5.0 (tag `Natron-2.5.0`). Natron 2.6 polic
 ## For Natron 2.6
 
 ### G'MIC 4.0.8 (was 2.8.4) — #3, #26
-- The filters now come from G'MIC 4.0.8 and its community filters: 1199 plug-ins (was 360; 810 in COMMERCIAL builds, see Build). Filters that make no sense in an OpenFX host (batch converters, filters that write files, interactive tools) or that upstream disabled as broken are hidden (#64, #70). Many filters' names, parameters and results changed with G'MIC itself.
+- The filters now come from G'MIC 4.0.8 and its community filters: 1200 plug-ins (was 360; 810 in COMMERCIAL builds, see Build). Filters that make no sense in an OpenFX host (batch converters, filters that write files, interactive tools) or that upstream disabled as broken are hidden (#64, #70). Many filters' names, parameters and results changed with G'MIC itself.
 - The build downloads only the G'MIC 4.0.8 release tarball (from GitHub, gmic.eu or the MacPorts mirror, sha256-pinned, #18); gmic-community is no longer fetched separately.
 - Natron no longer quits on macOS when a G'MIC error happens inside an OpenMP loop, e.g. Smooth [Patch-PCA] on a flat image (#41, #56).
 - Bugs found in G'MIC 4.0.7 filters, reported upstream, were patched in the plug-in (hot fixes and CImg patches); G'MIC 4.0.8 has these fixes, and the plug-in's own copies are no longer applied:
