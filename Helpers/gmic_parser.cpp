@@ -267,11 +267,11 @@ void processParam(const string& s, EffectParameter& cp)
 	// (AbstractParameter::parseText, "cannot find closing"): gmic_parse_single() ended it with the
 	// filter's #@gui lines, and it is read as if it were closed there (its last character is not
 	// dropped as a delimiter), with a warning
-	const char close = (r[p1] == '(') ? ')' : (r[p1] == '[') ? ']' : '}';
-	if (r[r.size() - 1] != close) {
+	const char closing = (r[p1] == '(') ? ')' : (r[p1] == '[') ? ']' : '}';
+	if (r[r.size() - 1] != closing) {
 		fprintf(stderr, "openfx-gmic: Warning: %s parameter \"%s\" has no closing '%c': it ends with the filter\n",
-			cp.paramType.c_str(), cp.name.c_str(), close);
-		r += close;
+			cp.paramType.c_str(), cp.name.c_str(), closing);
+		r += closing;
 	}
 	string pval = strTrim(r.substr(p1 + 1));
 	pval = pval.substr(0, pval.size() - 1);
@@ -628,15 +628,25 @@ string gmic_parse_single(const string& content, EffectData& cd)
 			}
 		}
 	}
+	set<string> realNames;
 	for (int i = 0; i < (int)cd.param.size(); i++) {
 		processParam(cd.param[i].name, cd.param[i]);
-		// a parameter without a name ("=float(1,0,2)"): G'MIC-Qt shows it without a label, but a host
-		// parameter needs a name. Name it by its position, so that it keeps its argument.
-		if (cd.param[i].name.empty()) {
-			cd.param[i].name = "Parameter " + intToString(i + 1);
-			fprintf(stderr, "openfx-gmic: Warning: %s parameter without a name: named \"%s\"\n",
-				cd.param[i].paramType.c_str(), cd.param[i].name.c_str());
-		}
+		realNames.insert(cd.param[i].name);
+	}
+	// a parameter without a name ("=float(1,0,2)"): G'MIC-Qt shows it without a label, but a host
+	// parameter needs a name. Name it by its position, so that it keeps its argument, and never with
+	// the name of another parameter of the filter.
+	for (int i = 0; i < (int)cd.param.size(); i++) {
+		if (!cd.param[i].name.empty()) continue;
+		const string base = "Parameter " + intToString(i + 1);
+		string name = base;
+		for (int n = 2; realNames.count(name); n++) name = base + "_" + intToString(n);
+		cd.param[i].name = name;
+		realNames.insert(name);
+		fprintf(stderr, "openfx-gmic: Warning: %s parameter without a name: named \"%s\"\n",
+			cd.param[i].paramType.c_str(), name.c_str());
+	}
+	for (int i = 0; i < (int)cd.param.size(); i++) {
 		bool ok = false;
 		int cnt = 2;
 		string t = cd.param[i].name;
