@@ -1995,8 +1995,9 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	// G'MIC-Qt runs the preview command first, and some main commands need its state: render
 	// these with the preview command when their main command fails (EffectData::previewFallback)
 	const EffectData& effectData = effectDataOf(globalDataP);
-	const bool hasContent = !effectData.command.empty();
-	bool preview = hasContent && (effectData.previewOnly || sequenceDataP->floatValue[PARAM_PREVIEW][0] > 0);
+	// a filter with no command never gets here: render() copies Source (pluginPassesSourceThrough)
+	assert(!effectData.command.empty());
+	bool preview = (effectData.previewOnly || sequenceDataP->floatValue[PARAM_PREVIEW][0] > 0);
 	// the custom commands, set in the options by fullCommand(): must stay valid until the G'MIC calls return
 	string customCommands;
 	// customCommands goes out of scope: reset the pointer on return, also when G'MIC throws

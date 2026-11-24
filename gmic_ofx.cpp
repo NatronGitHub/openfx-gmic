@@ -44,9 +44,9 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <variant>
-#include <type_traits>
 #include <vector>
 
 #include "ofxsImageEffect.h"
