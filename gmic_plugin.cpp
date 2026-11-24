@@ -956,8 +956,6 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		p++;
 	}
 
-//	globalDataP->param[p++] = Parameter("Dummy", ParamType::Float);
-
 	if (effectData.multiLayer) {
 		globalDataP->param[p] = Parameter("Layer -1", "", ParamType::Layer);
 		++p;
@@ -1947,7 +1945,7 @@ static long long frameNumberOf(const SequenceData* sequenceDataP)
 
 bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, GmicInstanceData& instanceData, OFX::ImageEffect& effect)
 {
-	// (the names used by the PAR_* and PARAM_* macros)
+	// (the names used by the PARAM_* macros)
 	SequenceData* const sequenceDataP = &sequenceData;
 	const GlobalData* const globalDataP = &globalData;
 	GmicInstanceData* const instanceDataP = &instanceData;

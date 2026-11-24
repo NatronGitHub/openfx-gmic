@@ -65,7 +65,6 @@
 #include "gmic_log.h"
 
 using namespace std;
-using namespace gmic_ofx;
 
 namespace gmic_ofx {
 
