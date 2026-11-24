@@ -464,28 +464,25 @@ std::set<string> disabledPlugins(const string& list)
 }
 
 // The line that reports a user's list at "path" that disables "disabled": how many of the plug-ins
-// "pluginIds" it disables, and the first of its disabled identifiers that are none of them (a typo,
-// or a filter that G'MIC removed or renamed).
+// "pluginIds" it disables, and the first 10, in sorted order, of its disabled identifiers that are
+// none of them (a typo, or a filter that G'MIC removed or renamed).
 string pluginListSummary(const string& path, const std::set<string>& disabled, const std::set<string>& pluginIds)
 {
 	constexpr size_t kMaxUnknown = 10;
 	size_t nDisabled = 0;
-	vector<const string*> unknown;
+	size_t nUnknown = 0;
+	string unknown;
 	for (const string& id : disabled) {
 		if (pluginIds.count(id)) {
 			++nDisabled;
-		} else {
-			unknown.push_back(&id);
+		} else if (++nUnknown <= kMaxUnknown) {
+			unknown += (nUnknown == 1 ? "; unknown identifiers: " : ", ") + id;
 		}
 	}
-	string summary = "openfx-gmic: " + path + ": " + std::to_string(nDisabled) + (nDisabled == 1 ? " plug-in" : " plug-ins") + " disabled";
-	for (size_t i = 0; i < unknown.size() && i < kMaxUnknown; ++i) {
-		summary += (i == 0 ? "; unknown identifiers: " : ", ") + *unknown[i];
+	if (nUnknown > kMaxUnknown) {
+		unknown += ", ... (" + std::to_string(nUnknown) + " in all)";
 	}
-	if (unknown.size() > kMaxUnknown) {
-		summary += ", ... (" + std::to_string(unknown.size()) + " in all)";
-	}
-	return summary;
+	return "openfx-gmic: " + path + ": " + std::to_string(nDisabled) + (nDisabled == 1 ? " plug-in" : " plug-ins") + " disabled" + unknown;
 }
 
 // Write the list of the plug-ins pluginData to "path": grouped by menu (in their order within
