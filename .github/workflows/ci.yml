@@ -69,7 +69,7 @@ on:
       - 'Licence_*.txt'
       - '.github/ISSUE_TEMPLATE/**'
   pull_request:
-    types: [ opened, synchronize, reopened, ready_for_review ]
+    types: [ opened, synchronize, reopened ]
     paths-ignore:
       - COPYING
       - README
@@ -96,13 +96,13 @@ env:
   UPLOAD_ARTIFACTS: ${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && (contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc'))) }}
 
 jobs:
-  # Which jobs run: draft pull requests run none; "only: windows-arm" (workflow_dispatch) runs just
+  # Which jobs run: every pull request, drafts too (the maintainer relies on CI rather than on
+  # local builds); "only: windows-arm" (workflow_dispatch) runs just
   # the Windows on Arm job. The weekly scheduled run is never skipped: the toolchains (package
   # managers, runner images) move even when master doesn't.
   changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     outputs:
       run: ${{ steps.check.outputs.run }}
       # the Windows ARM64/Arm64EC/Arm64X job: weekly and on demand only
