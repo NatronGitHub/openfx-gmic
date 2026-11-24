@@ -82,6 +82,12 @@ if grep -E "PREVIEW_FALLBACK_UNKNOWN" describe.log; then
     echo "FAIL: update the curated list in markPersistentFilters() (see above)"
     status=1
 fi
+# the curated exceptions of the split preview parameters (Helpers/gmic_parser.cpp) name a command
+# that is no longer a filter's main command
+if grep -E "SPLIT_PREVIEW_UNKNOWN" describe.log; then
+    echo "FAIL: update the curated list in markSplitPreviewParams() (see above)"
+    status=1
+fi
 # the curated list of hidden batch/interactive filters (Helpers/gmic_parser.cpp) names a command
 # that is no longer a filter's main command
 if grep -E "HIDDEN_FILTER_UNKNOWN" describe.log; then

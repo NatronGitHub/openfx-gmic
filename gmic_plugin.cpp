@@ -816,19 +816,6 @@ static void makeFftwThreadSafe()
 }
 #endif
 
-// G'MIC's split preview (gui_split_preview), in the preview command of many filters: "Preview
-// Type", a choice of "Full", "Forward Horizontal"... (how the preview shows the original next to the
-// result), and "Preview Split", the point where they meet. By G'MIC's convention, these are the last
-// arguments, which the main command ignores (issue #184): they only matter with Preview/Draft
-// Mode, which renders with the preview command. Other "Preview Type" choices (e.g. Colorize
-// Lineart [Auto-Fill]'s "Lineart + Colors") are not the split preview's.
-static bool isSplitPreviewParam(const EffectData& effectData, const EffectParameter& param)
-{
-	if (effectData.previewOnly || effectData.preview_command == effectData.command) return false;
-	return (param.name == "Preview Type" && param.paramType == "choice" && param.text.compare(0, 12, "Full|Forward") == 0) ||
-		(param.name == "Preview Split" && param.paramType == "point");
-}
-
 std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& pluginInfo)
 {
 #if defined(cimg_use_fftw3) && !defined(cimg_use_fftw3_singlethread)
@@ -953,7 +940,7 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		  name, "", t, (float)stringToDouble(minValue), (float)stringToDouble(maxValue), d1, d2, d3, d4, paramText);
 		globalDataP->param[p].flags = flags;
 		if (h) globalDataP->param[p].displayStatus = DS_HIDDEN;
-		if (isSplitPreviewParam(effectData, param)) {
+		if (param.splitPreview) { // (see markSplitPreviewParams)
 			globalDataP->param[p].draftModeOnly = true;
 			globalDataP->param[p].hint = "Used by the filter's preview only, as in G'MIC-Qt: "
 				"turn on Preview/Draft Mode (Advanced Options) to see it. Natron's viewer wipe also "

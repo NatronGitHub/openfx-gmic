@@ -838,6 +838,105 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 	}
 }
 
+// The labels of a choice() parameter (stored as "label|label|..."), with runs of blanks as one
+// space (two filters of G'MIC 4.0.8 have "Forward  Horizontal")
+static vector<string> choiceLabels(const string& text)
+{
+	vector<string> labels;
+	string label;
+	bool blank = false;
+	for (size_t i = 0; i <= text.size(); ++i) {
+		const char c = i < text.size() ? text[i] : '|';
+		if (c == '|') {
+			labels.push_back(strTrim(label));
+			label.clear();
+			blank = false;
+		} else if (c == ' ' || c == '\t') {
+			if (!blank) label += ' ';
+			blank = true;
+		} else {
+			label += c;
+			blank = false;
+		}
+	}
+	return labels;
+}
+
+// the choice of G'MIC's split preview: its first label "Full..." (e.g. "Full (Allows
+// Multi-Layers)"), its second "Forward Horizontal", whatever its name ("Preview Type", "Preview",
+// "Type", "24-26. Preview Type"...)
+static bool isSplitPreviewChoice(const EffectParameter& param)
+{
+	if (param.paramType != "choice") return false;
+	static const string kFirstLabelPrefix = "Full";
+	static const string kSecondLabel = "Forward Horizontal";
+	const vector<string> labels = choiceLabels(param.text);
+	return labels.size() >= 2 && labels[0].compare(0, kFirstLabelPrefix.size(), kFirstLabelPrefix) == 0 &&
+		labels[1] == kSecondLabel;
+}
+
+static bool hasSuffix(const string& s, const string& suffix)
+{
+	return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+// a parameter without a value of its own (passes no argument to the commands)
+static bool isNoValueParameter(const EffectParameter& param)
+{
+	return param.paramType == "separator" || param.paramType == "note" || param.paramType == "link";
+}
+
+// Marks the parameters of G'MIC's split preview (EffectParameter::splitPreview): the choice of
+// isSplitPreviewChoice, and its point (the next parameter with a value, or a point whose name ends
+// with "Preview Split"). By G'MIC's convention, they are the last arguments, which the preview
+// command passes to gui_split_preview, and which the main command ignores: they only matter with
+// Preview/Draft Mode. Not in the filters that render with their preview command anyway: same
+// command, previewOnly, previewFallback (e.g. Bit-Plane Shuffler, see markPersistentFilters).
+// Curated exceptions, whose main command uses these arguments too (a listed command that is no
+// longer the main command of a filter is reported on stderr as SPLIT_PREVIEW_UNKNOWN, and makes the
+// describe test fail):
+// - samj_Texture_Granuleuse (Granular Texture): reads its Preview Type, $5, as
+//   "Automatic_color_balance";
+// - fx_custom_code (Custom Code [Full], [Global], [Local]): "Full (Allows Multi-Layers)" also
+//   changes how the main command is run on several layers (left to the maintainer: not marked).
+static void markSplitPreviewParams(vector<EffectData>& cds, bool checkCurated)
+{
+	static const char* const curated[] = { "samj_Texture_Granuleuse", "fx_custom_code" };
+	set<string> mains;
+	for (vector<EffectData>::const_iterator it = cds.begin(); it != cds.end(); ++it) {
+		if (!it->previewOnly && it->preview_command != it->command) mains.insert(it->command);
+	}
+	set<string> excluded;
+	for (size_t c = 0; c < sizeof(curated) / sizeof(curated[0]); ++c) {
+		if (mains.count(curated[c])) {
+			excluded.insert(curated[c]);
+		} else if (checkCurated && !mains.empty()) {
+#ifdef OFX_GMIC_COMMERCIAL
+			continue; // (COMMERCIAL standard libraries may leave out these filters)
+#endif
+			fprintf(stderr, "G'MIC: SPLIT_PREVIEW_UNKNOWN %s: not the main command of a filter, update markSplitPreviewParams()\n", curated[c]);
+		}
+	}
+	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
+		EffectData& cd = *it;
+		if (cd.previewOnly || cd.preview_command == cd.command || cd.previewFallback || excluded.count(cd.command)) continue;
+		bool afterChoice = false; // the previous parameter with a value is a split preview choice
+		for (size_t i = 0; i < cd.param.size(); ++i) {
+			EffectParameter& param = cd.param[i];
+			if (isNoValueParameter(param)) continue;
+			if (isSplitPreviewChoice(param)) {
+				param.splitPreview = true;
+				afterChoice = true;
+				continue;
+			}
+			if (param.paramType == "point" && (afterChoice || hasSuffix(param.name, "Preview Split"))) {
+				param.splitPreview = true;
+			}
+			afterChoice = false;
+		}
+	}
+}
+
 // Filters that need a second input although their #@gui text doesn't say so (see usesSeveralLayers),
 // from the start of the definition of the main command, before its first command that is not a
 // test (after "skip ..." or "check ..." and "var=..." assignments):
@@ -1192,6 +1291,7 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 		return;
 	}
 	markPersistentFilters(content, *cds);
+	markSplitPreviewParams(*cds, checkCurated); // (after markPersistentFilters: previewFallback)
 	markMultiInputFilters(content, *cds);
     // plug-in identifiers must be unique: G'MIC 4 has several filters with the same name in
     // different folders (in 4.0.7: the "About" page of each Testing author, giving About and
