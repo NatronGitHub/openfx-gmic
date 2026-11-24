@@ -46,7 +46,7 @@ PLUGINLIST_TOOL = $(OBJECTPATH)/gmic_ofx_plugin_list$(if $(MINGW_OS),.exe)
 all: $(PLUGINLIST)
 $(PLUGINLIST_TOOL): gmic_ofx_plugin_list.cpp
 	@mkdir -p $(OBJECTPATH)
-	$(CXX) $(BITSFLAG) $(or $(CXXSTD),-std=c++17) -O1 $< -o $@ $(if $(filter Linux,$(OS)),-ldl) $(if $(MINGW_OS),-municode)
+	$(CXX) $(BITSFLAG) $(or $(CXXSTD),$(if $(findstring -std=,$(CXX)),,-std=c++17)) -O1 $< -o $@ $(if $(filter Linux,$(OS)),-ldl) $(if $(MINGW_OS),-municode)
 $(PLUGINLIST): $(OBJECTPATH)/$(PLUGINNAME).ofx $(PLUGINLIST_TOOL) | $(OBJECTPATH)/$(PLUGINNAME).ofx.bundle
 	@mkdir -p $(@D)
 	$(PLUGINLIST_TOOL) $(OBJECTPATH)/$(PLUGINNAME).ofx.bundle/Contents/$(ARCH)/$(PLUGINNAME).ofx $@
@@ -185,9 +185,11 @@ endif
 VPATH += $(SRCDIR) $(SRCDIR)/Helpers
 
 # C++ standard: Plugins/Makefile.master (above) adds it to CXXFLAGS: -std=c++17 by default (the
-# Support library needs C++17), none if CXX or CXXFLAGS already has a -std option (as Natron's build
-# passes it in CXX). Pass e.g. CXXSTD=c++20 to choose one: it comes after CXX on the compile line, so
-# it overrides a -std in CXX. Makefile.master turns CXXSTD into the whole flag (-std=c++20).
+# Support library needs C++17), none if CXX or CXXFLAGS_EXTRA (or CXXFLAGS_ADD) already has a -std
+# option (as Natron's build passes it in CXX). Pass e.g. CXXSTD=c++20 to choose one: it comes after
+# CXX on the compile line, so it overrides a -std in CXX. Makefile.master turns CXXSTD into the
+# whole flag (-std=c++20). The plug-in list tool (PLUGINLIST_TOOL, above) follows the same rule,
+# but it doesn't use CXXFLAGS: with a -std in CXXFLAGS_EXTRA only, it gets -std=c++17.
 
 # openmp
 ifeq ($(OPENMP),1)
