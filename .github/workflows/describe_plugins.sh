@@ -1,6 +1,9 @@
 #!/bin/bash
 # Build a minimal HostSupport host and run describe + describeInContext on every plug-in.
-# Usage: describe_plugins.sh <dir containing GMIC.ofx.bundle> <minimum number of plug-ins>
+# Usage: describe_plugins.sh <dir containing GMIC.ofx.bundle> <number of plug-ins>
+# The number of plug-ins from the built-in standard library must be exactly that one (ci.yml's
+# GMIC_PLUGIN_COUNT): a filter that a G'MIC update shows or hides (e.g. one that the parser's
+# generic rules no longer hide) then fails the test, and is checked before the count is updated.
 # Uses $CXX (default c++) and $HOST_LDFLAGS (extra link flags, e.g. -L/opt/local/lib).
 # PLUGIN_LIST=<file>: also write the plug-ins' ids, contexts and input clips there (for render_plugins.py).
 # The bundle's list of the plug-ins (gmic_ofx_plugins.txt), if any, must be the described plug-ins;
@@ -72,6 +75,11 @@ HOME="$WORK/home" APPDATA="$(native_path "$WORK/home")" OFX_PLUGIN_PATH="$BUNDLE
     ./describe_plugins "$MIN_PLUGINS" 2> describe.log || status=$?
 # $DESCRIBE_LOG (an absolute path): keep a copy of the log (PLUGIN <id> lines, ...)
 if [ -n "${DESCRIBE_LOG:-}" ]; then cp describe.log "$DESCRIBE_LOG"; fi
+described=$(tr -d '\r' < describe.log | grep -c '^PLUGIN ' || true)
+if [ "$status" = 0 ] && [ "$described" != "$MIN_PLUGINS" ]; then
+    echo "FAIL: $described plug-ins, expected exactly $MIN_PLUGINS: check the filters that appeared or disappeared, then update GMIC_PLUGIN_COUNT in ci.yml"
+    status=1
+fi
 if grep -E "DUPLICATE_PARAM|DUPLICATE_CLIP" describe.log; then
     echo "FAIL: duplicate param/clip definitions (see above)"
     status=1

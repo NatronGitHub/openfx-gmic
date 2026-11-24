@@ -5,7 +5,7 @@ Changes in openfx-gmic since Natron 2.5.0 (tag `Natron-2.5.0`). Natron 2.6 polic
 ## For Natron 2.6
 
 ### G'MIC 4.0.8 (was 2.8.4) — #3, #26
-- The filters now come from G'MIC 4.0.8 and its community filters: 1200 plug-ins (was 360; 810 in COMMERCIAL builds, see Build). Filters that make no sense in an OpenFX host (batch converters, filters that write files, interactive tools) or that upstream disabled as broken are hidden (#64, #70). Many filters' names, parameters and results changed with G'MIC itself.
+- The filters now come from G'MIC 4.0.8 and its community filters: 1200 plug-ins (was 360; 811 in COMMERCIAL builds, see Build). Filters that make no sense in an OpenFX host (batch converters, filters that write files, interactive tools) or that upstream disabled as broken are hidden (#64, #70). Many filters' names, parameters and results changed with G'MIC itself.
 - The build downloads only the G'MIC 4.0.8 release tarball (from GitHub, gmic.eu or the MacPorts mirror, sha256-pinned, #18); gmic-community is no longer fetched separately.
 - Natron no longer quits on macOS when a G'MIC error happens inside an OpenMP loop, e.g. Smooth [Patch-PCA] on a flat image (#41, #56).
 - Bugs found in G'MIC 4.0.7 filters, reported upstream, were patched in the plug-in (hot fixes and CImg patches); G'MIC 4.0.8 has these fixes, and the plug-in's own copies are no longer applied:
@@ -101,7 +101,7 @@ Changes in openfx-gmic since Natron 2.5.0 (tag `Natron-2.5.0`). Natron 2.6 polic
 - The scheduled CI run is weekly (Saturday 03:17 UTC; was nightly), never skipped: the toolchains (package managers, runner images) move even when master doesn't. The Windows bundle artifacts (openfx-gmic-windows-msvc, and openfx-gmic-windows-x64-msvc on pre-release tags) are kept for 14 days.
 - The Linux CI artifact (openfx-gmic-linux-release) is now the installed bundle. Every Linux artifact uploaded before (workflow_dispatch and pre-release-tag runs) was the build-tree bundle: its GMIC.ofx had an empty RUNPATH entry, so the loader also searched the current directory. Download a new one if you have an older one.
 - COMMERCIAL builds (#74; `make LICENSE=COMMERCIAL`, `cmake -DOFX_LICENSE=COMMERCIAL`), for Natron's COMMERCIAL builds, contain no GPL code: only code compatible with the CeCILL-C option (pocketfft is BSD-3-Clause, some filters CeCILL-B).
-  - The standard library keeps only the filters whose licence allows it (810 plug-ins); `gmic_stdlib_commercial.txt` lists what is left out, and why. GPL builds are unchanged.
+  - The standard library keeps only the filters whose licence allows it (811 plug-ins); `gmic_stdlib_commercial.txt` lists what is left out, and why. GPL builds are unchanged.
   - COMMERCIAL builds are no longer CI-tested (no CI job, weekly or release build), and are low priority; the build support stays.
 - The bundle ships its licence texts in Contents/Resources (#74): COPYING, CeCILL-C and CeCILL v2.0, plus CeCILL-B in COMMERCIAL builds and pocketfft's licence when it is used.
 - Builds with `-Ofast` or `-ffast-math` keep NaN and infinities, which G'MIC needs (`-fno-finite-math-only` is added after the user's flags, also with Intel icx, whose default `-fp-model=fast` has it; `/fp:precise` with MSVC): with `-ffinite-math-only`, G'MIC's `isnan()` and `isinf()` always returned 0 and points removed in Colorful Blobs were drawn. Compiling with `-ffinite-math-only` or `/fp:fast` in effect is an error. Point parameters no longer become NaN (0/0) when the output rectangle is empty.
