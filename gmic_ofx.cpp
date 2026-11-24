@@ -976,14 +976,14 @@ void GMICEffect::pointsMoveToSource(double time, int onlyParam)
 
 // A removable point (issue #79) is enabled, with its overlay handle, only when its checkbox (the
 // boolean parameter after it, see PARAM_FLAGS_POINT_ENABLED) is on. onlyParam >= 0: only for that
-// checkbox. A point that the filter disables ("_1", see pluginSetup) stays disabled.
+// checkbox.
 void GMICEffect::pointsUpdateEnabled(int onlyParam)
 {
 	using namespace reduxfx;
 	for (int i = 1; i < _gd.nofParams; i++) {
 		const Parameter& param = _gd.param[i];
 		if (param.paramType != PT_BOOL || param.flags != PARAM_FLAGS_POINT_ENABLED || (onlyParam >= 0 && i != onlyParam)) continue;
-		if (_gd.param[i - 1].paramType != PT_POINT || _gd.param[i - 1].displayStatus == DS_DISABLED) continue;
+		if (_gd.param[i - 1].paramType != PT_POINT) continue;
 		OFX::BooleanParam* checkbox = std::get<OFX::BooleanParam*>(_params[i]);
 		const std::optional<bool> on = hostQuery([checkbox] { return checkbox->getValue(); });
 		if (!on) continue;

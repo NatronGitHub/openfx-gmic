@@ -681,6 +681,12 @@ string gmic_parse_single(const string& content, EffectData& cd)
 			for (size_t j = i + 1; j < cd.param.size() && isNoValueParameter(cd.param[j]); j++) cd.param[j].visibility = v;
 		}
 	}
+	// G'MIC-Qt hides only a point's widgets and keeps its handle on the preview, while a host
+	// doesn't draw the overlay of a hidden or disabled parameter (Natron: shouldDrawOverlayInteract):
+	// a point (and its "Enabled" checkbox, added below) stays visible, so that it can be moved
+	for (size_t i = 0; i < cd.param.size(); i++) {
+		if (cd.param[i].paramType == "point") cd.param[i].visibility = EffectParameter::Visibility::Visible;
+	}
 	// A removable point (point(x,y,-1) or point(x,y,1)) can be removed in G'MIC-Qt, which then
 	// passes nan,nan for it (a -1 point starts removed): give it a checkbox right after it, whose
 	// name is the point's (without " (%)", as the plug-in shows it) with " Enabled". It is not a
@@ -704,7 +710,6 @@ string gmic_parse_single(const string& content, EffectData& cd)
 		e.minValue = "0";
 		e.maxValue = "1";
 		e.removable = cd.param[i].removable;
-		e.visibility = cd.param[i].visibility; // hidden or disabled with its point
 		cd.param.insert(cd.param.begin() + i + 1, e);
 	}
 	cd.multiLayer = usesSeveralLayers(content);
@@ -855,6 +860,103 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
 		if (!it->previewOnly && it->preview_command != it->command && flagged.count(it->command)) {
 			it->previewFallback = true;
+		}
+	}
+}
+
+// Does the line set a G'MIC-Qt status with a visibility marker? G'MIC-Qt reads the status that a
+// filter's command sets (with "u" or "status") as "{value}{value}...", where a value may be
+// followed by "_0", "_1" or "_2", its new visibility (FilterThread's status2Visibilities). In the
+// G'MIC code, the argument of "u" starts with {, "{ or \{, and a marker follows the end of a
+// value (} or ") with '_' then a digit or an expression ($var, {expr}, "...), e.g. Marker
+// Drawing's preview: u "{"$b_type"}{"$b_blur"}_"{$b_type==0?2:1}"... A status held in a
+// variable ("u $s") isn't seen.
+static bool setsVisibilityStatus(const vector<string>& items)
+{
+	for (size_t k = 0; k + 1 < items.size(); ++k) {
+		const string& it = items[k];
+		if (it[0] == '#') return false; // comment
+		if (it != "u" && it != "status") continue;
+		const string& a = items[k + 1];
+		if (a.compare(0, 1, "{") != 0 && a.compare(0, 2, "\"{") != 0 && a.compare(0, 2, "\\{") != 0) continue;
+		for (size_t p = a.find('_', 1); p != string::npos && p + 1 < a.size(); p = a.find('_', p + 1)) {
+			const char c = a[p + 1];
+			if ((a[p - 1] == '}' || a[p - 1] == '"') && ((c >= '0' && c <= '2') || c == '"' || c == '$' || c == '{')) return true;
+		}
+	}
+	return false;
+}
+
+// The visibility suffixes ("_0", "_1") are G'MIC-Qt's initial state, which some filters change
+// at run time through their status (see setsVisibilityStatus): e.g. Marker Drawing enables
+// Background Blur when Background Type is "Blur". The plug-in can't follow such changes, and
+// would leave these parameters hidden or disabled for good: in such a filter, every parameter
+// stays visible and enabled. A filter changes the visibility when its main or preview command,
+// or a command that one of them calls directly (one level, e.g. Mitchell Concatenation's
+// _fx_rep_mitchell_concatenation_base), sets such a status. This needs the command definitions
+// in "content": with a gmic_ofx.gmic that has only #@gui lines, every filter is static.
+static void markDynamicVisibilityFilters(const string& content, vector<EffectData>& cds)
+{
+	set<string> filterCommands;
+	for (vector<EffectData>::const_iterator it = cds.begin(); it != cds.end(); ++it) {
+		filterCommands.insert(it->command);
+		filterCommands.insert(it->preview_command);
+	}
+	// pass 1: the defined commands, and those that set a visibility status themselves
+	set<string> defined, dynamic;
+	{
+		stringstream ss(content);
+		string line, cur, rest;
+		while (getline(ss, line)) {
+			if (line.empty() || line[0] == '#') continue;
+			const string name = commandDefinition(line, rest);
+			if (!name.empty()) {
+				cur = name;
+				defined.insert(name);
+			} else {
+				rest = line;
+			}
+			if (cur.empty() || dynamic.count(cur)) continue;
+			vector<string> items;
+			gmicItems(rest, items);
+			if (setsVisibilityStatus(items)) dynamic.insert(cur);
+		}
+	}
+	// pass 2: a filter command that calls one of them
+	set<string> dynamicFilterCommands;
+	{
+		stringstream ss(content);
+		string line, cur, rest;
+		while (getline(ss, line)) {
+			if (line.empty() || line[0] == '#') continue;
+			const string name = commandDefinition(line, rest);
+			if (!name.empty()) {
+				cur = filterCommands.count(name) ? name : string();
+				if (dynamic.count(name) && !cur.empty()) dynamicFilterCommands.insert(name);
+			} else {
+				rest = line;
+			}
+			if (cur.empty() || dynamicFilterCommands.count(cur)) continue;
+			vector<string> items;
+			gmicItems(rest, items);
+			for (size_t k = 0; k < items.size(); ++k) {
+				const string& it = items[k];
+				if (it[0] == '#') break; // comment
+				// the command name of the item: "+cmd", "cmd[0]", "cmd.", "cmd arg"
+				size_t b = (it[0] == '+') ? 1 : 0, e = b;
+				while (e < it.size() && (isalnum((unsigned char)it[e]) || it[e] == '_')) ++e;
+				const string callee = it.substr(b, e - b);
+				if (!callee.empty() && callee != cur && dynamic.count(callee)) {
+					dynamicFilterCommands.insert(cur);
+					break;
+				}
+			}
+		}
+	}
+	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
+		if (!dynamicFilterCommands.count(it->command) && !dynamicFilterCommands.count(it->preview_command)) continue;
+		for (size_t i = 0; i < it->param.size(); ++i) {
+			it->param[i].visibility = EffectParameter::Visibility::Visible;
 		}
 	}
 }
@@ -1175,6 +1277,7 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 	}
 	markPersistentFilters(content, *cds);
 	markMultiInputFilters(content, *cds);
+	markDynamicVisibilityFilters(content, *cds);
     // plug-in identifiers must be unique: G'MIC 4 has several filters with the same name in
     // different folders (in 4.0.7: the "About" page of each Testing author, giving About and
     // About2..About5, and "Color Harmonies", giving ColorHarmonies2). The first one in stdlib
