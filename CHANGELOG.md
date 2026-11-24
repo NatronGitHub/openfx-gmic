@@ -41,7 +41,7 @@ Changes in openfx-gmic since Natron 2.5.0 (tag `Natron-2.5.0`). Natron 2.6 polic
 - **G'MIC errors** (#39) now fail the render with a message on the node, instead of producing garbage.
 - **Output** (#37) is always RGBA, also for an alpha-only input.
 - **Locale** (#59): parameter defaults and numbers in G'MIC commands no longer depend on the system locale (under e.g. a French locale, defaults, seeds and sizes could be wrong). The "Fixed (Inplace)" Resize Mode behaves like "Dynamic" (as it always did in practice).
-- **Plug-in version 2.0: colour parameters** (#178). Colours without alpha in G'MIC (672 of the 1010 `color()` parameters) are RGB instead of RGBA, as in G'MIC-Qt; their alpha was never passed to G'MIC. Saved projects keep the RGB values, animation and expressions; the alpha is dropped (a link to it, e.g. in a cloned node, is reported when Natron loads the project, until it is saved again; Python `getValue(3)` and expressions reading the alpha give 0). As in G'MIC-Qt, colours are passed to G'MIC as integers in [0, 255]: picked colours between two integers are rounded, and colours outside [0, 1] are clamped.
+- **Plug-in version 2.0: colour parameters** (#178). Colours without alpha in G'MIC (672 of the 1010 `color()` parameters) are RGB instead of RGBA, as in G'MIC-Qt; their alpha was never passed to G'MIC. Saved projects keep the RGB values, animation and expressions; the alpha is dropped (a link to it, e.g. in a cloned node, is reported when Natron loads the project, until it is saved again; Python `getValue(3)` and expressions reading the alpha give 0). Colours are passed to G'MIC as before (unclamped, so HDR and negative values still pass through).
 
 ### New
 - Renders can be aborted while G'MIC runs (#46, #56).

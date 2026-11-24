@@ -63,7 +63,6 @@
 // - bug fixes
 // 2.0.0: (OpenFX plug-in)
 // - color(...) without alpha is RGB, as in G'MIC-Qt (issue #178)
-// - colours are passed to G'MIC as integers in [0, 255], as in G'MIC-Qt
 //
 // TODO:
 // - there may be any number of gmic parameters per line, see for example fx_hearts
@@ -883,15 +882,6 @@ effectDataOf(const GlobalData* globalDataP)
     return pluginGlobalData().pluginData[globalDataP->pluginIndex];
 }
 
-// a colour channel (1 is kGmicValueScale) as G'MIC-Qt passes it: the integer in [0, 255] of a QColor
-static
-std::string
-colorChannelToString(float c)
-{
-    const float v = kGmicValueScale * c;
-    return intToString((v >= 0.f) ? static_cast<int>(std::lround(std::min(v, kGmicValueScale))) : 0); // NaN gives 0
-}
-
 // the filter's command line, with its main or preview command
 static
 std::string
@@ -955,11 +945,11 @@ gmicCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, bo
                 cmd += "\"" + s + "\",";
             } else if (PAR_TYPE(i) == PT_COLOR) {
                 cmd +=
-                colorChannelToString(PAR_CH(i, 0)) + "," +
-                colorChannelToString(PAR_CH(i, 1)) + "," +
-                colorChannelToString(PAR_CH(i, 2)) + ",";
+                floatToString(kGmicValueScale * PAR_CH(i, 0)) + "," +
+                floatToString(kGmicValueScale * PAR_CH(i, 1)) + "," +
+                floatToString(kGmicValueScale * PAR_CH(i, 2)) + ",";
                 if (globalDataP->param[i].flags == kParamFlagsColorRGBA) {
-                    cmd += colorChannelToString(PAR_CH(i, 3)) + ",";
+                    cmd += floatToString(kGmicValueScale * PAR_CH(i, 3)) + ",";
                 }
             } else if (PAR_TYPE(i) == PT_POINT) {
                 // a removable point that is off: removed, as G'MIC-Qt passes it (issue #79)
