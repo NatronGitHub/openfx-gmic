@@ -1177,8 +1177,10 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 	// G'MIC-Qt), the filter's #@gui lines, and the hot fixes for G'MIC bugs (gmic_hotfixes.gmic,
 	// after the file: those that still fit its definitions, see gmicGetHotfixes), on every run
 	const PluginGlobalData& data = pluginGlobalData();
-	// (the user's file is followed by a newline, so that a '\' that ends it doesn't continue its
-	// last line into the next definition; its #@gui lines are comments for G'MIC, which the file
+	// (a newline after the user's file ends its last line, if the file doesn't, so that the next
+	// definition starts on a line of its own; a '\' at the end of the file's last command line
+	// still continues it into the next definition, as in G'MIC-Qt, since G'MIC skips the blank and
+	// comment lines in between. The filter's #@gui lines are comments for G'MIC, which the file
 	// already holds)
 	static const string kNoLines;
 	const string& filterLines = data.userCommands.empty() ? data.pluginContent[globalDataP->pluginIndex] : kNoLines;
