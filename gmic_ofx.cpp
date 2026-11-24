@@ -64,8 +64,6 @@ namespace {
 // pi, without relying on the non-standard M_PI
 constexpr double kRfxPi = 3.14159265358979323846;
 
-// G'MIC gets values in [0, 255]: the images are converted to and from that range
-constexpr float kGmicValueScale = 255.f;
 constexpr float kMaxChan8 = 255.f;
 constexpr float kInvMaxChan8 = 1.f / 255.f;
 
@@ -214,11 +212,11 @@ OfxPointD pointNormalisedDefault(const Parameter& param)
 	return { param.defaultValue[0] / 100., 1. - param.defaultValue[1] / 100. };
 }
 
-// whether a color() parameter has an alpha channel: color(R,G,B,A) or color(#RRGGBBAA) (flags 4,
-// see gmic_plugin.cpp), declared as an RGBA parameter; the others (flags 3) are RGB, as in G'MIC-Qt
+// whether a color() parameter has an alpha channel (see kParamFlagsColorRGBA): declared as an RGBA
+// parameter; the others are RGB, as in G'MIC-Qt
 bool colorHasAlpha(const Parameter& param)
 {
-	return param.flags == 4;
+	return param.flags == kParamFlagsColorRGBA;
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -59,6 +59,11 @@
 // the OFX glue disables the point (and so its overlay handle) then
 #define PARAM_FLAGS_POINT_ENABLED 0x100 // distinct from the PT_TEXT flags (1, 2, 5...)
 
+// flags of a color() parameter (PT_COLOR): with an alpha channel (color(R,G,B,A), color(#RRGGBBAA)),
+// an RGBA parameter passing 4 values to G'MIC; without, an RGB parameter passing 3, as in G'MIC-Qt
+constexpr int kParamFlagsColorRGB = 3;
+constexpr int kParamFlagsColorRGBA = 4;
+
 // Layer times (issue #63), defined by the G'MIC plug-in for the filters with layer inputs, used by
 // the OFX glue: each layer input (all but Source) has an integer parameter "<clip name> Time
 // Offset" (it is fetched at the render time plus this offset), and the first "Layers from Source"

@@ -61,6 +61,9 @@
 // - correctly handle multiple parameters on the same line, or multi-line parameters of any kind.
 // - the G'MIC command-line is only computed when rendering, not at each param change (because converting pixel coords to % for point(...) requires image size)
 // - bug fixes
+// 2.0.0: (OpenFX plug-in)
+// - color(...) without alpha is RGB, as in G'MIC-Qt (issue #178)
+// - colours are passed to G'MIC as integers in [0, 255], as in G'MIC-Qt
 //
 // TODO:
 // - there may be any number of gmic parameters per line, see for example fx_hearts
@@ -694,12 +697,12 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 			strSplit(defaultValue, '|', r); // drops empty fields: pad below
 			if (r.size() == 1) { r.push_back(r[0]); r.push_back(r[0]); } // gray: color(V)
 			while (r.size() < 3) r.push_back("0");
-			d1 = (float)stringToDouble(r[0]) / 255.f;
-			d2 = (float)stringToDouble(r[1]) / 255.f;
-			d3 = (float)stringToDouble(r[2]) / 255.f;
+			d1 = (float)stringToDouble(r[0]) / kGmicValueScale;
+			d2 = (float)stringToDouble(r[1]) / kGmicValueScale;
+			d3 = (float)stringToDouble(r[2]) / kGmicValueScale;
 			// color(R,_G,_B,_A): only pass alpha to G'MIC if the filter declares it
-			flags = (r.size() > 3 && !r[3].empty()) ? 4 : 3;
-			d4 = (flags == 4) ? (float)stringToDouble(r[3]) / 255.f : 1.f;
+			flags = (r.size() > 3 && !r[3].empty()) ? kParamFlagsColorRGBA : kParamFlagsColorRGB;
+			d4 = (flags == kParamFlagsColorRGBA) ? (float)stringToDouble(r[3]) / kGmicValueScale : 1.f;
 		} else if (paramType == "point") {
 			vector<string> r;
 			t = PT_POINT;
@@ -880,13 +883,13 @@ effectDataOf(const GlobalData* globalDataP)
     return pluginGlobalData().pluginData[globalDataP->pluginIndex];
 }
 
-// a colour channel (1 is 255) as G'MIC-Qt passes it: the integer in [0, 255] of a QColor
+// a colour channel (1 is kGmicValueScale) as G'MIC-Qt passes it: the integer in [0, 255] of a QColor
 static
 std::string
 colorChannelToString(float c)
 {
-    const float v = 255.f * c;
-    return intToString((v >= 0.f) ? static_cast<int>(std::lround(std::min(v, 255.f))) : 0); // NaN gives 0
+    const float v = kGmicValueScale * c;
+    return intToString((v >= 0.f) ? static_cast<int>(std::lround(std::min(v, kGmicValueScale))) : 0); // NaN gives 0
 }
 
 // the filter's command line, with its main or preview command
@@ -955,7 +958,7 @@ gmicCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, bo
                 colorChannelToString(PAR_CH(i, 0)) + "," +
                 colorChannelToString(PAR_CH(i, 1)) + "," +
                 colorChannelToString(PAR_CH(i, 2)) + ",";
-                if (globalDataP->param[i].flags == 4) {
+                if (globalDataP->param[i].flags == kParamFlagsColorRGBA) {
                     cmd += colorChannelToString(PAR_CH(i, 3)) + ",";
                 }
             } else if (PAR_TYPE(i) == PT_POINT) {
