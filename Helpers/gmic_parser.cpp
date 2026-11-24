@@ -891,36 +891,15 @@ static bool isNoValueParameter(const EffectParameter& param)
 // isSplitPreviewChoice, and its point (the next parameter with a value, or a point whose name ends
 // with "Preview Split"). By G'MIC's convention, they are the last arguments, which the preview
 // command passes to gui_split_preview, and which the main command ignores: they only matter with
-// Preview/Draft Mode. Not in the filters that render with their preview command anyway: same
-// command, previewOnly, previewFallback (e.g. Bit-Plane Shuffler, see markPersistentFilters).
-// Curated exceptions, whose main command uses these arguments too (a listed command that is no
-// longer the main command of a filter is reported on stderr as SPLIT_PREVIEW_UNKNOWN, and makes the
-// describe test fail):
-// - samj_Texture_Granuleuse (Granular Texture): reads its Preview Type, $5, as
-//   "Automatic_color_balance";
-// - fx_custom_code (Custom Code [Full], [Global], [Local]): "Full (Allows Multi-Layers)" also
-//   changes how the main command is run on several layers (left to the maintainer: not marked).
-static void markSplitPreviewParams(vector<EffectData>& cds, bool checkCurated)
+// Preview/Draft Mode. Generic rules only, no list of filters: not in the filters that render with
+// their preview command anyway (same command, previewOnly, previewFallback, see
+// markPersistentFilters). A main command that reads these arguments anyway is a bug of the filter:
+// its parameters are marked too (their values are still passed to G'MIC).
+static void markSplitPreviewParams(vector<EffectData>& cds)
 {
-	static const char* const curated[] = { "samj_Texture_Granuleuse", "fx_custom_code" };
-	set<string> mains;
-	for (vector<EffectData>::const_iterator it = cds.begin(); it != cds.end(); ++it) {
-		if (!it->previewOnly && it->preview_command != it->command) mains.insert(it->command);
-	}
-	set<string> excluded;
-	for (size_t c = 0; c < sizeof(curated) / sizeof(curated[0]); ++c) {
-		if (mains.count(curated[c])) {
-			excluded.insert(curated[c]);
-		} else if (checkCurated && !mains.empty()) {
-#ifdef OFX_GMIC_COMMERCIAL
-			continue; // (COMMERCIAL standard libraries may leave out these filters)
-#endif
-			fprintf(stderr, "G'MIC: SPLIT_PREVIEW_UNKNOWN %s: not the main command of a filter, update markSplitPreviewParams()\n", curated[c]);
-		}
-	}
 	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
 		EffectData& cd = *it;
-		if (cd.previewOnly || cd.preview_command == cd.command || cd.previewFallback || excluded.count(cd.command)) continue;
+		if (cd.previewOnly || cd.preview_command == cd.command || cd.previewFallback) continue;
 		bool afterChoice = false; // the previous parameter with a value is a split preview choice
 		for (size_t i = 0; i < cd.param.size(); ++i) {
 			EffectParameter& param = cd.param[i];
@@ -1292,7 +1271,7 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 		return;
 	}
 	markPersistentFilters(content, *cds);
-	markSplitPreviewParams(*cds, checkCurated); // (after markPersistentFilters: previewFallback)
+	markSplitPreviewParams(*cds); // (after markPersistentFilters: previewFallback)
 	markMultiInputFilters(content, *cds);
     // plug-in identifiers must be unique: G'MIC 4 has several filters with the same name in
     // different folders (in 4.0.7: the "About" page of each Testing author, giving About and

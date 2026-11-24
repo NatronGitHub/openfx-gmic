@@ -240,9 +240,9 @@ read the update file: it has the filters under the GPL, which they leave out.
 Preview/Draft Mode (in Advanced Options) renders with the filter's preview command, as G'MIC-Qt's
 preview does, instead of its main command. The Preview Type and Preview Split parameters that
 many filters have (G'MIC's split preview: the original next to the result) are only used by the
-preview command, so they are greyed out unless Preview/Draft Mode is on (except in the few
-filters whose render uses them too: Bit-Plane Shuffler, Granular Texture, Custom Code). To compare the input and
-the result in Natron, use the viewer's wipe instead.
+preview command, so they are greyed out unless Preview/Draft Mode is on (not in the filters that
+always render with their preview command). To compare the input and the result in Natron, use
+the viewer's wipe instead.
 
 Choosing the plug-ins
 ---------------------
