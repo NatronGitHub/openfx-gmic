@@ -141,6 +141,7 @@ using namespace reduxfx;
 #if defined(cimg_use_fftw3) && !defined(cimg_use_fftw3_singlethread)
 #include <fftw3.h>
 #endif
+#include <atomic>
 #include <system_error>
 #include <thread>
 #ifndef _WIN32
@@ -1035,7 +1036,8 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 	globalDataP->param[p] = Parameter("Global Random Seed", "", PT_INT, 0, 1<<24, 0, 0, 0, 0, "");
 	globalDataP->param[p].hint = "Seed of the random numbers used by the filter. For most filters, results are reproducible "
 		"for a given seed and number of OpenMP threads; filters using patch matching or G'MIC's parallel command, "
-		"and concurrent renders, can still vary.";
+		"and concurrent renders, can still vary. The number of threads depends on the host and on the renders "
+		"running at once: set the OMP_NUM_THREADS environment variable for a fixed one.";
 	++p;
 	globalDataP->param[p] = Parameter(kAnimateSeedParam, "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
 	globalDataP->param[p].hint = "Add the frame number to the Global Random Seed, so that the random numbers change "
@@ -1302,6 +1304,71 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 	return cmd;
 }
 
+// G'MIC's thread count for one render (issue #188), so that the renders running at once don't each
+// start one OpenMP thread per CPU: N = max(the host's count, fair share), at most the number of
+// hardware threads.
+// - The host's count: its multithread suite (multiThreadNumCPUs; Natron: the threads that its
+//   other renders leave free, or 1 when its multithreading is off).
+// - The fair share: the hardware threads divided by the G'MIC renders running in this process
+//   (RunningRender, this one included). It is a floor because the host's count can be too low:
+//   the plug-in is instance-safe, so Natron runs one G'MIC render per node at a time
+//   (EffectInstance::renderRoI's lock on the node's render instances), and its other frame
+//   threads, waiting on that lock, count as busy: during sequence renders and playback, its
+//   count is often 1.
+// N is given to G'MIC by setting its variable _cpus at the start of the command: G'MIC
+// (gmic::set_variable()) then calls omp_set_num_threads(N) in the interpreter's thread, the
+// worker thread of gmicCallAbortable(), and the stdlib commands that split their work use
+// $_cpus. With libgomp and libomp (OpenMP >= 3.0: the thread count is a per-thread setting),
+// only this render's worker thread is affected (a new thread for each run; MSVC's vcomp doesn't
+// document the scope, and the fallback without a worker thread sets the host's render thread).
+// Limit: G'MIC's 'parallel' command (also used by the stdlib's apply_parallel commands) creates
+// its interpreters with new gmic(*this), whose initialisation sets _cpus back to all the CPUs and
+// calls omp_set_num_threads() on the interpreter's thread: after a filter's first 'parallel', the
+// render uses all the CPUs again, as before this change.
+// No prefix, so that G'MIC uses all the CPUs as before:
+// - if the number of hardware threads is unknown (hardware_concurrency() is 0);
+// - if OMP_NUM_THREADS is set: it stays a fixed thread count (G'MIC then ignores _cpus for
+//   OpenMP, and $_cpus stays G'MIC's CPU count);
+// - if the host's multithread suite call fails. Support's getNumCPUs() returns 1 then, which
+//   can't be told apart from a host's 1, so the suite is called directly. (Support fetches the
+//   suite as mandatory when the plug-in loads: it is never missing in practice.)
+// Results with random numbers depend on the thread count (see the Global Random Seed hint), which
+// may change from one render to the next: it is not part of the Output Layer "Frame" cache key.
+static std::atomic<int> gRunningRenders(0); // the G'MIC renders running in this process
+
+// Counts a G'MIC render in gRunningRenders for its lifetime.
+class RunningRender
+{
+public:
+	RunningRender() noexcept { gRunningRenders.fetch_add(1); }
+	~RunningRender() { gRunningRenders.fetch_sub(1); }
+	RunningRender(const RunningRender&) = delete;
+	RunningRender& operator=(const RunningRender&) = delete;
+	RunningRender(RunningRender&&) = delete;
+	RunningRender& operator=(RunningRender&&) = delete;
+};
+
+// Call with a RunningRender for this render alive (see above).
+static string gmicThreadsPrefix()
+{
+	static const bool ompEnv = std::getenv("OMP_NUM_THREADS") != NULL; // read once
+	if (ompEnv) return string();
+	static const OfxMultiThreadSuiteV1* const suite =
+		static_cast<const OfxMultiThreadSuiteV1*>(OFX::fetchSuite(kOfxMultiThreadSuite, 1, true));
+	unsigned int hostCount = 0;
+	if (!suite || !suite->multiThreadNumCPUs || suite->multiThreadNumCPUs(&hostCount) != kOfxStatOK) {
+		return string();
+	}
+	const unsigned int concurrency = std::thread::hardware_concurrency();
+	if (concurrency == 0) return string(); // unknown: no fair share, and no upper bound
+	// at most INT_MAX: G'MIC reads _cpus with %d
+	const unsigned int hardware = std::min(concurrency, (unsigned int)std::numeric_limits<int>::max());
+	const unsigned int renders = (unsigned int)std::max(1, gRunningRenders.load());
+	const unsigned int fairShare = std::max(1u, hardware / renders);
+	const unsigned int n = std::min(std::max(hostCount, fairShare), hardware);
+	return "_cpus=" + std::to_string(n) + " ";
+}
+
 // Render abort (issue #46): G'MIC polls a flag (p_is_abort), in its interpreter and in CImg's
 // OpenMP loops. The host's abort() must be called from the render thread (Natron reads
 // thread-local render state), and G'MIC only returns when it is done. So run G'MIC in a worker
@@ -1349,9 +1416,65 @@ static DWORD WINAPI gmicCallThread(LPVOID arg)
 }
 #endif
 
+// Render progress (issue #177): G'MIC's progress index (p_progress) is set by the filters that
+// use the 'progress' command, from 0 to 100; it is -1 (unknown) when G'MIC starts, and most
+// filters never set it. The render thread passes it to the host's progress suite from its abort
+// poll (see gmicCallAbortable): the host's progress calls, like abort(), come from the render
+// thread. The host's progress starts at the first known value, so that filters without progress
+// show none, and ends when G'MIC returns, also on an exception. The progress is cosmetic: if a
+// progress call throws, the render goes on without progress.
+// The result of progressUpdate() (false: the user cancelled) is ignored, only abort() stops a
+// render: Natron's progress panel returns false to a progressUpdate() from a render thread until
+// its main thread has created the task that progressStart() asked for, which would abort the
+// render at its first update.
+class HostProgress
+{
+public:
+	HostProgress(OFX::ImageEffect& effect, const string& message) : _effect(effect), _message(message) {}
+	~HostProgress() noexcept
+	{
+		if (!_started) return;
+		try {
+			_effect.progressEnd();
+		} catch (...) {
+		}
+	}
+	HostProgress(const HostProgress&) = delete;
+	HostProgress& operator=(const HostProgress&) = delete;
+	HostProgress(HostProgress&&) = delete;
+	HostProgress& operator=(HostProgress&&) = delete;
+
+	// gmicProgress: G'MIC's progress index, from 0 to 100, or negative (unknown)
+	void update(float gmicProgress) noexcept
+	{
+		if (_failed || !(gmicProgress >= 0.f)) return; // unknown (-1), or NaN
+		const double t = std::min(gmicProgress, 100.f) / 100.;
+		try {
+			if (!_started) {
+				_effect.progressStart(_message);
+				_started = true;
+			}
+			if (t != _last) {
+				(void)_effect.progressUpdate(t);
+				_last = t;
+			}
+		} catch (...) {
+			_failed = true; // no more progress for this run (progressEnd() is still called if started)
+		}
+	}
+
+private:
+	OFX::ImageEffect& _effect;
+	string _message;
+	bool _started = false;
+	bool _failed = false;
+	double _last = -1.; // the last value given to the host
+};
+
 // gmic_plugin_call(), aborted when the host aborts the render: then *aborted is set to true, and
-// the result must be discarded.
-static int gmicCallAbortable(const OFX::ImageEffect& effect, const char* cmd, unsigned int* nofImages, gmic_interface_image* images, unsigned int maxImages, gmic_interface_options* options, bool* aborted)
+// the result must be discarded. G'MIC's progress goes to the host's progress bar, with
+// progressMessage (see HostProgress).
+static int gmicCallAbortable(OFX::ImageEffect& effect, const string& progressMessage, const char* cmd, unsigned int* nofImages, gmic_interface_image* images, unsigned int maxImages, gmic_interface_options* options, bool* aborted)
 {
 	*aborted = false;
 	if (effect.abort()) {
@@ -1365,6 +1488,14 @@ static int gmicCallAbortable(const OFX::ImageEffect& effect, const char* cmd, un
 	// not an interpreter's (e.g. an OpenMP worker evaluating the math abort()) gets a static flag
 	// shared by the whole process, which stays set (upstream behavior, not patched here).
 	bool isAbort = false;
+	// G'MIC's progress index: a plain float, written by the main interpreter (its 'progress'
+	// command), on the worker thread, while the render thread reads it: the same upstream design
+	// as the abort flag (issue #136; gmic-qt's ProgressInfoWidget reads its FilterThread's float
+	// the same way). A stale value only delays the progress bar. The interpreters of 'parallel'
+	// are copies with their own private progress (gmic::gmic(const gmic&)): their progress is
+	// never seen.
+	float progress = -1.f;
+	HostProgress hostProgress(effect, progressMessage);
 	GmicCallData d;
 	d.cmd = cmd;
 	d.nofImages = nofImages;
@@ -1374,6 +1505,7 @@ static int gmicCallAbortable(const OFX::ImageEffect& effect, const char* cmd, un
 	d.result = -1;
 	d.done = false;
 	options->p_is_abort = &isAbort;
+	options->p_progress = &progress;
 
 	bool started = false;
 #ifndef _WIN32
@@ -1394,12 +1526,13 @@ static int gmicCallAbortable(const OFX::ImageEffect& effect, const char* cmd, un
 	started = (thread != NULL);
 #endif
 	if (!started) {
-		// no thread: run G'MIC here, without abort
+		// no thread: run G'MIC here, without abort or progress
 		options->p_is_abort = NULL;
+		options->p_progress = NULL;
 		return gmic_plugin_call(cmd, nofImages, images, maxImages, options);
 	}
 
-	// the worker uses d, isAbort and the images: always join it before returning
+	// the worker uses d, isAbort, progress and the images: always join it before returning
 	try {
 		std::unique_lock<std::mutex> lock(d.mutex);
 		while (!d.cond.wait_for(lock, std::chrono::milliseconds(50), [&d] { return d.done; })) {
@@ -1411,6 +1544,7 @@ static int gmicCallAbortable(const OFX::ImageEffect& effect, const char* cmd, un
 				// set it on every poll: G'MIC resets the flag when its interpreter starts
 				isAbort = true;
 			}
+			hostProgress.update(progress);
 			lock.lock();
 		}
 	} catch (...) {
@@ -1423,6 +1557,7 @@ static int gmicCallAbortable(const OFX::ImageEffect& effect, const char* cmd, un
 		CloseHandle(thread);
 #endif
 		options->p_is_abort = NULL;
+		options->p_progress = NULL;
 		throw;
 	}
 #ifndef _WIN32
@@ -1432,12 +1567,14 @@ static int gmicCallAbortable(const OFX::ImageEffect& effect, const char* cmd, un
 	CloseHandle(thread);
 #endif
 	options->p_is_abort = NULL;
+	options->p_progress = NULL;
 	if (!*aborted && effect.abort()) {
 		*aborted = true;
 	}
 	if (*aborted) {
 		return -1;
 	}
+	hostProgress.update(progress); // G'MIC's final value (the worker is joined: no race)
 	if (d.exception) {
 		std::rethrow_exception(d.exception);
 	}
@@ -1891,8 +2028,12 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	const string frameSelect = frameMode ? " -_openfx_gmic_frame_select " + std::to_string(frame) + "," +
 		intToString(kMaxFrameResults) + "," + std::to_string((unsigned long long)frameCacheBudget()) : string();
 	if (runGmic) {
-		cmd += frameSelect;
-		result = gmicCallAbortable(effect, cmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(), &aborted);
+		// counted until both G'MIC runs (the main command and the preview fallback) are done, on
+		// every path; the thread count is added after the cache key was made (see gmicThreadsPrefix)
+		const RunningRender running;
+		const string threads = gmicThreadsPrefix();
+		cmd = threads + cmd + frameSelect;
+		result = gmicCallAbortable(effect, effectData.name, cmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(), &aborted);
 		errmsg = string(instanceDataP->options().error_message_buffer);
 		// The retry needs unchanged inputs: gmic_plugin_call() works on copies (no_inplace_processing)
 		// and leaves images[] unchanged on an error. Not after an abort.
@@ -1900,8 +2041,8 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 			gmicLog("G'MIC: %s: the main command failed (%s), rendering with the preview command\n",
 					effectData.name.c_str(), errmsg.c_str());
 			preview = true;
-			cmd = fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, preview, customCommands) + frameSelect;
-			result = gmicCallAbortable(effect, cmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(), &aborted);
+			cmd = threads + fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, preview, customCommands) + frameSelect;
+			result = gmicCallAbortable(effect, effectData.name, cmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(), &aborted);
 			if (result != 0 && !aborted) {
 				errmsg += " (with the preview command: " + string(instanceDataP->options().error_message_buffer) + ")";
 			}
