@@ -7,7 +7,11 @@ OFX_GMIC_UPDATE_FILE=1, #180), which replaces the built-in filters. Its filters 
 that the file defines ("Unknown command" before #168), a built-in command, and a built-in
 command that the file replaces: each output must be the uniform color that the filter fills it
 with. The file also defines a command that the
-plug-in hot-fixes, which must be kept, with a note.
+plug-in hot-fixes, which must be kept, with a note. Its User File Cpus filter fills its output
+with G'MIC's $_cpus, rendered without OMP_NUM_THREADS so that the plug-in sets it (#188): the
+value, printed, must be the number of CPUs (hostDemo runs one render, whose fair share is all the
+hardware threads). This shows that the count reaches G'MIC, not that the plug-in's prefix is
+applied: the value is also G'MIC's own default.
 
 With --stdlib, the same filters are then rendered with a copy of the whole built-in standard
 library before them in the file, as in a user's copied gmic_stdlib.gmic: the outputs must be the
@@ -45,6 +49,7 @@ DEFINED_BY = ' is defined by '  # the note of a kept definition of a hot-fixed c
 KEPT_NOTE = "'star_tone'" + DEFINED_BY
 HOTFIX_WARNING = 'Warning: hot fix'
 TIMEOUT = 120
+CPUS_PLUGIN = 'eu.gmic.UserFileCpus'  # its output is G'MIC's $_cpus (divided by 255)
 
 
 def update_file_name():
@@ -123,7 +128,7 @@ def render_all(host, plugins, work, runs):
     problems, logs, seconds = [], [], {}
     for pid in sorted(EXPECTED):
         for run in range(runs):
-            _, _, problem, _, t, errors, log = render_plugins.render(
+            _, _, problem, _, t, errors, log, _ = render_plugins.render(
                 host, [], plugins, work, TIMEOUT, (pid, CONTEXT, ['Source']))
             if run == 0:
                 logs.append(log)
@@ -136,6 +141,40 @@ def render_all(host, plugins, work, runs):
                 report = json.load(f)
             problems += ['%s: %s' % (pid, p) for p in check_output(report, EXPECTED[pid])]
     return problems, logs, seconds
+
+
+def check_cpus(host, plugins, work):
+    """Renders CPUS_PLUGIN without OMP_NUM_THREADS, and prints and checks G'MIC's $_cpus.
+
+    The value must be the number of CPUs: this catches a count that falls back to hostDemo's 1,
+    but the plug-in's count for a single render is also G'MIC's own default.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems, empty if $_cpus is the number of CPUs.
+    """
+    result = render_plugins.render(
+        host, [], plugins, work, TIMEOUT, (CPUS_PLUGIN, CONTEXT, ['Source']), host_threads=True)
+    problem, errors = result[2], result[5]  # (independent of the number of results)
+    if problem:
+        return ['%s: %s %s' % (CPUS_PLUGIN, problem, ' '.join(errors))]
+    report_path = os.path.join(work, CPUS_PLUGIN[len('eu.gmic.'):], 'report.json')
+    with open(report_path, encoding='utf-8') as f:
+        report = json.load(f)
+    renders = report.get('renders') or []
+    output = (renders[0].get('output') if renders else None) or {}
+    lows, highs = output.get('min') or [None], output.get('max') or [None]
+    if lows[0] is None or highs[0] is None or abs(highs[0] - lows[0]) > TOLERANCE:
+        return ['%s: not a uniform output (%s, %s)' % (CPUS_PLUGIN, lows, highs)]
+    cpus, ncpu = round(lows[0] * 255), os.cpu_count() or 1
+    print("G'MIC's $_cpus in a render without OMP_NUM_THREADS: %d (%d CPUs)" % (cpus, ncpu))
+    if cpus != ncpu:
+        return ['%s: $_cpus is %d, not the number of CPUs (%d)' % (CPUS_PLUGIN, cpus, ncpu)]
+    return []
 
 
 def run_test(host, plugins, stdlib, runs, work, name):
@@ -158,6 +197,7 @@ def run_test(host, plugins, stdlib, runs, work, name):
 
     install_user_file(work, user_file, name)
     problems, logs, small = render_all(host, plugins, work, runs)
+    problems += check_cpus(host, plugins, work)
     if not any(KEPT_NOTE in log for log in logs):
         problems.append("no note that the file's own definition of 'star_tone' is kept")
     for p in problems:

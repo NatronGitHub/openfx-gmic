@@ -62,10 +62,12 @@
 #include <fstream>
 #include <sstream>
 
-#include "RFX_StringUtils.h"
+#include "gmic_string.h"
+#include "gmic_log.h"
 
 using namespace std;
 using namespace reduxfx;
+using namespace gmic_ofx;
 
 namespace reduxfx {
 
@@ -270,7 +272,7 @@ void processParam(const string& s, EffectParameter& cp)
 	// dropped as a delimiter), with a warning
 	const char closing = (r[p1] == '(') ? ')' : (r[p1] == '[') ? ']' : '}';
 	if (r[r.size() - 1] != closing) {
-		fprintf(stderr, "openfx-gmic: Warning: %s parameter \"%s\" has no closing '%c': it ends with the filter\n",
+		gmicLog("openfx-gmic: Warning: %s parameter \"%s\" has no closing '%c': it ends with the filter\n",
 			cp.paramType.c_str(), cp.name.c_str(), closing);
 		r += closing;
 	}
@@ -309,8 +311,7 @@ void processParam(const string& s, EffectParameter& cp)
 			cp.defaultValue = "0";
 			cp.text = pval;
 		}
-		vector<string> c;
-		strSplit(cp.text, ',', c);
+		vector<string> c = strSplit(cp.text, ',');
 		// no label ("choice()", "choice(,)", "choice(1,)"): don't read c[-1]. G'MIC-Qt
 		// (ChoiceParameter::initFromText) shows one empty label; here the empty label is dropped
 		// when the plug-in splits the labels, so the host gets a choice with no options, passing 0
@@ -322,7 +323,7 @@ void processParam(const string& s, EffectParameter& cp)
 		cp.text += strTrim(c[(int)c.size() - 1]);
 		strReplace(cp.text, "\"", "");
 		cp.minValue = "0";
-		cp.maxValue = intToString((int)c.size() - 1);
+		cp.maxValue = std::to_string((int)c.size() - 1);
 	} else if (cp.paramType == "color") {
 		// 'color(R,_G,_B,_A)', or 'color(#RRGGBB[AA])' (G'MIC >= 3)
 		// Add R,G,B[,A] parameters (as a colorchooser).
@@ -332,7 +333,7 @@ void processParam(const string& s, EffectParameter& cp)
 			cp.defaultValue = "";
 			for (size_t k = 1; k < v.size(); k += 2) {
 				if (k > 1) cp.defaultValue += "|";
-				cp.defaultValue += intToString((int)strtol(v.substr(k, 2).c_str(), NULL, 16));
+				cp.defaultValue += std::to_string((int)strtol(v.substr(k, 2).c_str(), NULL, 16));
 			}
 		} else {
 			cp.defaultValue = v;
@@ -377,7 +378,7 @@ void processParam(const string& s, EffectParameter& cp)
 		const size_t c1 = pval.find(',');
 		const size_t c2 = (c1 == string::npos) ? c1 : pval.find(',', c1 + 1);
 		if (c1 == string::npos || c2 == string::npos || pval.find(',', c2 + 1) != string::npos) {
-			fprintf(stderr, "openfx-gmic: Warning: %s parameter \"%s\" does not have three values (\"%s\"): passed as 0\n",
+			gmicLog("openfx-gmic: Warning: %s parameter \"%s\" does not have three values (\"%s\"): passed as 0\n",
 				cp.paramType.c_str(), cp.name.c_str(), pval.c_str());
 			cp.paramType = "";
 			return;
@@ -441,7 +442,7 @@ void processParam(const string& s, EffectParameter& cp)
 		cp.defaultValue = strTrim(pval, "\"");
 	} else {
 		// e.g. a type added by a newer G'MIC: pluginSetup passes 0 for it (a hidden float)
-		fprintf(stderr, "openfx-gmic: Warning: parameter \"%s\" has an unknown type \"%s\": passed as 0\n",
+		gmicLog("openfx-gmic: Warning: parameter \"%s\" has an unknown type \"%s\": passed as 0\n",
 			cp.name.c_str(), cp.paramType.c_str());
 	}
 }
@@ -453,8 +454,7 @@ static bool usesSeveralLayers(const string& content)
 {
 	// explicit input mode on the filter line: "#@gui Name : cmd, preview : *" (or "+"),
 	// e.g. Align Layers, Blend [Standard], Transfer Colors
-	vector<string> lines;
-	strSplit(content, '\n', lines);
+	const vector<string> lines = strSplit(content, '\n');
 	for (size_t i = 0; i < lines.size(); ++i) {
 		const string& l = lines[i];
 		// the prefix is "#@gui", or "#@gmic_plugin" once gmic_parse_multi() rewrote it; skip
@@ -528,7 +528,8 @@ static VisibilitySuffix parseVisibilitySuffix(const string& s, size_t pos)
 	return r;
 }
 
-// G'MIC-Qt's NoValueParameters: they have no value, and ignore their own suffix
+// a parameter without a value of its own (passes no argument to the commands): G'MIC-Qt's
+// NoValueParameters, which also ignore their own visibility suffix
 static bool isNoValueParameter(const EffectParameter& p)
 {
 	return p.paramType == "note" || p.paramType == "link" || p.paramType == "separator";
@@ -553,8 +554,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	cd.param.clear();
 	vector<VisibilityPropagation> propagation; // one per cd.param entry, until the "pointenabled" ones
 
-	vector<string> lines;
-	strSplit(content, '\n', lines);
+	const vector<string> lines = strSplit(content, '\n');
 	for (int i = 0; i < (int)lines.size(); i++) {
 		//printf("[%d]: %s\n", i,lines[i].c_str());
 		string line = strTrim(lines[i], " \r\n\t");
@@ -679,12 +679,12 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	// the name of another parameter of the filter.
 	for (int i = 0; i < (int)cd.param.size(); i++) {
 		if (!cd.param[i].name.empty()) continue;
-		const string base = "Parameter " + intToString(i + 1);
+		const string base = "Parameter " + std::to_string(i + 1);
 		string name = base;
-		for (int n = 2; realNames.count(name); n++) name = base + "_" + intToString(n);
+		for (int n = 2; realNames.count(name); n++) name = base + "_" + std::to_string(n);
 		cd.param[i].name = name;
 		realNames.insert(name);
-		fprintf(stderr, "openfx-gmic: Warning: %s parameter without a name: named \"%s\"\n",
+		gmicLog("openfx-gmic: Warning: %s parameter without a name: named \"%s\"\n",
 			cd.param[i].paramType.c_str(), name.c_str());
 	}
 	for (int i = 0; i < (int)cd.param.size(); i++) {
@@ -695,7 +695,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 			ok = true;
 			for (int j = 0; j < i; j++) {
 				if (cd.param[j].name == cd.param[i].name) {
-					cd.param[i].name = t + "_" + intToString(cnt++);
+					cd.param[i].name = t + "_" + std::to_string(cnt++);
 					ok = false;
 					break;
 				}
@@ -743,7 +743,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 			bool clash = false;
 			for (int j = 0; j < (int)cd.param.size() && !clash; j++) clash = (cd.param[j].name == e.name);
 			if (!clash) break;
-			e.name = base + "_" + intToString(cnt);
+			e.name = base + "_" + std::to_string(cnt);
 		}
 		e.paramType = "pointenabled";
 		e.defaultValue = (cd.param[i].removable < 0) ? "0" : "1";
@@ -894,7 +894,7 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 #ifdef OFX_GMIC_COMMERCIAL
 			if (!defined.count(curated[c])) continue;
 #endif
-			fprintf(stderr, "G'MIC: PREVIEW_FALLBACK_UNKNOWN %s: not the main command of a filter, update markPersistentFilters()\n", curated[c]);
+			gmicLog("G'MIC: PREVIEW_FALLBACK_UNKNOWN %s: not the main command of a filter, update markPersistentFilters()\n", curated[c]);
 		}
 	}
 	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
@@ -1015,6 +1015,78 @@ static void markDynamicVisibilityFilters(const string& content, vector<EffectDat
 		if (!dynamicFilterCommands.count(it->command) && !dynamicFilterCommands.count(it->preview_command)) continue;
 		for (size_t i = 0; i < it->param.size(); ++i) {
 			it->param[i].visibility = EffectParameter::Visibility::Visible;
+		}
+	}
+}
+
+// The labels of a choice() parameter (stored as "label|label|..."), with runs of blanks as one
+// space (two filters of G'MIC 4.0.8 have "Forward  Horizontal")
+static vector<string> choiceLabels(const string& text)
+{
+	vector<string> labels;
+	string label;
+	bool blank = false;
+	for (size_t i = 0; i <= text.size(); ++i) {
+		const char c = i < text.size() ? text[i] : '|';
+		if (c == '|') {
+			labels.push_back(strTrim(label));
+			label.clear();
+			blank = false;
+		} else if (c == ' ' || c == '\t') {
+			if (!blank) label += ' ';
+			blank = true;
+		} else {
+			label += c;
+			blank = false;
+		}
+	}
+	return labels;
+}
+
+// the choice of G'MIC's split preview: its first label "Full..." (e.g. "Full (Allows
+// Multi-Layers)"), its second "Forward Horizontal", whatever its name ("Preview Type", "Preview",
+// "Type", "24-26. Preview Type"...)
+static bool isSplitPreviewChoice(const EffectParameter& param)
+{
+	if (param.paramType != "choice") return false;
+	static const string kFirstLabelPrefix = "Full";
+	static const string kSecondLabel = "Forward Horizontal";
+	const vector<string> labels = choiceLabels(param.text);
+	return labels.size() >= 2 && labels[0].compare(0, kFirstLabelPrefix.size(), kFirstLabelPrefix) == 0 &&
+		labels[1] == kSecondLabel;
+}
+
+static bool hasSuffix(const string& s, const string& suffix)
+{
+	return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+// Marks the parameters of G'MIC's split preview (EffectParameter::splitPreview): the choice of
+// isSplitPreviewChoice, and its point (the next parameter with a value, or a point whose name ends
+// with "Preview Split"). By G'MIC's convention, they are the last arguments, which the preview
+// command passes to gui_split_preview, and which the main command ignores: they only matter with
+// Preview/Draft Mode. Generic rules only, no list of filters: not in the filters that render with
+// their preview command anyway (same command, previewOnly, previewFallback, see
+// markPersistentFilters). A main command that reads these arguments anyway is a bug of the filter:
+// its parameters are marked too (their values are still passed to G'MIC).
+static void markSplitPreviewParams(vector<EffectData>& cds)
+{
+	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
+		EffectData& cd = *it;
+		if (cd.previewOnly || cd.preview_command == cd.command || cd.previewFallback) continue;
+		bool afterChoice = false; // the previous parameter with a value is a split preview choice
+		for (size_t i = 0; i < cd.param.size(); ++i) {
+			EffectParameter& param = cd.param[i];
+			if (isNoValueParameter(param)) continue;
+			if (isSplitPreviewChoice(param)) {
+				param.splitPreview = true;
+				afterChoice = true;
+				continue;
+			}
+			if (param.paramType == "point" && (afterChoice || hasSuffix(param.name, "Preview Split"))) {
+				param.splitPreview = true;
+			}
+			afterChoice = false;
 		}
 	}
 }
@@ -1220,7 +1292,7 @@ static void hideBatchFilters(const string& content, vector<EffectData>& cds, vec
 			// lines (e.g. fx_tk_video3D, see gmic_stdlib_commercial.txt): the GPL build checks the list
 			continue;
 #endif
-			fprintf(stderr, "G'MIC: HIDDEN_FILTER_UNKNOWN %s: not the main command of a filter, update hideBatchFilters()\n", curated[c]);
+			gmicLog("G'MIC: HIDDEN_FILTER_UNKNOWN %s: not the main command of a filter, update hideBatchFilters()\n", curated[c]);
 		}
 	}
 	for (size_t i = cds.size(); i-- > 0; ) {
@@ -1373,6 +1445,7 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 		return;
 	}
 	markPersistentFilters(content, *cds);
+	markSplitPreviewParams(*cds); // (after markPersistentFilters: previewFallback)
 	markMultiInputFilters(content, *cds);
 	markDynamicVisibilityFilters(content, *cds);
     // plug-in identifiers must be unique: G'MIC 4 has several filters with the same name in
@@ -1391,7 +1464,7 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
     for (vector<EffectData>::iterator it = cds->begin(); it != cds->end(); ++it) {
         string id = it->uniqueId;
         for (int n = 2; ids.count(id) || (id != it->uniqueId && realIds.count(id)); ++n) {
-            id = it->uniqueId + intToString(n);
+            id = it->uniqueId + std::to_string(n);
         }
         it->uniqueId = id;
         ids.insert(id);

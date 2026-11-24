@@ -109,7 +109,8 @@
 #include "gmic_parser.h"
 #include "gmic_libc.h"
 #include "gmic_plugin_call.h"
-#include "RFX_StringUtils.h"
+#include "gmic_log.h"
+#include "gmic_string.h"
 #include "ofxsImageEffect.h"
 #include <algorithm>
 #include <cmath>
@@ -119,6 +120,7 @@
 using std::string;
 using std::vector;
 using namespace reduxfx;
+using namespace gmic_ofx;
 
 #include <sstream>
 #include <map>
@@ -140,6 +142,7 @@ using namespace reduxfx;
 #if defined(cimg_use_fftw3) && !defined(cimg_use_fftw3_singlethread)
 #include <fftw3.h>
 #endif
+#include <atomic>
 #include <system_error>
 #include <thread>
 #ifndef _WIN32
@@ -359,7 +362,7 @@ static string gmicGetHotfixes(const string& stdlib, const string& userCommands, 
 		gmicGetDefinitions(texts[i], own);
 		const string ownChecksum = gmicChecksum(own[command]);
 		if (own[command].empty() || ownChecksum != fixed[i]) {
-			fprintf(stderr, "openfx-gmic: Warning: hot fix for the G'MIC command '%s' not applied: the fixed definition has checksum %s, but its '#@hotfix' line says '%s', update it in gmic_hotfixes.gmic\n",
+			gmicLog("openfx-gmic: Warning: hot fix for the G'MIC command '%s' not applied: the fixed definition has checksum %s, but its '#@hotfix' line says '%s', update it in gmic_hotfixes.gmic\n",
 			        command.c_str(), ownChecksum.c_str(), fixed[i].c_str());
 			continue;
 		}
@@ -379,14 +382,14 @@ static string gmicGetHotfixes(const string& stdlib, const string& userCommands, 
 				ok = false;
 				if (!userDefs[name].empty()) {
 					if (k == 0) {
-						fprintf(stderr, "openfx-gmic: '%s' is defined by %s: its definition is kept\n", name.c_str(), userFile.c_str());
+						gmicLog("openfx-gmic: '%s' is defined by %s: its definition is kept\n", name.c_str(), userFile.c_str());
 					} else {
-						fprintf(stderr, "openfx-gmic: '%s', which the plug-in's fix of '%s' calls, is defined by %s: the definition of '%s' is kept\n",
+						gmicLog("openfx-gmic: '%s', which the plug-in's fix of '%s' calls, is defined by %s: the definition of '%s' is kept\n",
 						        name.c_str(), command.c_str(), userFile.c_str(), command.c_str());
 					}
 					continue;
 				}
-				fprintf(stderr, "openfx-gmic: Warning: hot fix for the G'MIC command '%s' not applied: the built-in definition of '%s' %s (checksum %s, the fix is for %s), review it in gmic_hotfixes.gmic\n",
+				gmicLog("openfx-gmic: Warning: hot fix for the G'MIC command '%s' not applied: the built-in definition of '%s' %s (checksum %s, the fix is for %s), review it in gmic_hotfixes.gmic\n",
 				        command.c_str(), name.c_str(), absent ? "exists" : def.empty() ? "is missing" : "changed", found.c_str(), expected.c_str());
 			}
 		}
@@ -402,6 +405,8 @@ namespace {
 // The list of the plug-ins (README, "Choosing the plug-ins"; issue #157): its name, in the bundle's
 // Resources and in the user's G'MIC configuration directory (get_gmic_rc_path)
 constexpr const char* kPluginListFile = "gmic_ofx_plugins.txt";
+// the log file (gmicOpenLog): in the user's G'MIC configuration directory, if the user made it
+constexpr const char* kLogFile = "gmic_ofx_log";
 
 // "text" as UTF-8 if it is UTF-16 with a byte-order mark (FF FE: little-endian, FE FF: big-endian;
 // e.g. Windows PowerShell 5's "> file"), else unchanged. An unpaired surrogate becomes U+FFFD, an odd
@@ -582,11 +587,11 @@ static FilterFile loadUpdateFile()
 	const char* const optIn = std::getenv("OFX_GMIC_UPDATE_FILE");
 	if (!optIn) return FilterFile();
 	if (string(optIn) != "1") {
-		fprintf(stderr, "openfx-gmic: OFX_GMIC_UPDATE_FILE=\"%s\" is not 1: G'MIC's update file is not read\n", optIn);
+		gmicLog("openfx-gmic: OFX_GMIC_UPDATE_FILE=\"%s\" is not 1: G'MIC's update file is not read\n", optIn);
 		return FilterFile();
 	}
 #ifdef OFX_GMIC_COMMERCIAL
-	fprintf(stderr, "openfx-gmic: OFX_GMIC_UPDATE_FILE ignored: the update file has GPL filters, which COMMERCIAL builds leave out\n");
+	gmicLog("openfx-gmic: OFX_GMIC_UPDATE_FILE ignored: the update file has GPL filters, which COMMERCIAL builds leave out\n");
 	return FilterFile();
 #else
 	const string rcPath = gmicRcPath();
@@ -595,7 +600,7 @@ static FilterFile loadUpdateFile()
 	file.content = loadStringFromFile(file.path);
 	static const string kCImgPrefix = "1 uint8 "; // a serialized CImg (G'MIC-Qt's Updater::isCImgCompressed)
 	if (file.content.compare(0, kCImgPrefix.size(), kCImgPrefix) == 0) {
-		fprintf(stderr, "openfx-gmic: Warning: %s is compressed, the plug-in only reads it as text: ignored\n", file.path.c_str());
+		gmicLog("openfx-gmic: Warning: %s is compressed, the plug-in only reads it as text: ignored\n", file.path.c_str());
 		return FilterFile();
 	}
 	if (file.content.find("#@gui") == string::npos) return FilterFile(); // (as G'MIC-Qt)
@@ -638,6 +643,11 @@ PluginGlobalData loadPluginGlobalData()
 		}
 		bool builtinStdlib = false; // the curated lists of the parser are only checked against it
 		const string rcPath = get_gmic_rc_path();
+		// before the first message (also G'MIC's: the hot fixes, the renders)
+		// (not when the build writes the bundle's plug-in list, OFX_GMIC_WRITE_PLUGIN_LIST: its
+		// messages stay on stderr, in the build log)
+		const char* const writeList = std::getenv("OFX_GMIC_WRITE_PLUGIN_LIST");
+		if (!rcPath.empty() && !(writeList && *writeList)) gmicOpenLog(rcPath + kLogFile);
 		FilterFile file = loadFilterFile(rcPath);
 		string effectContent = std::move(file.content);
 		if (!effectContent.empty()) {
@@ -684,16 +694,16 @@ PluginGlobalData loadPluginGlobalData()
 		// OFX_GMIC_WRITE_PLUGIN_LIST=<file>: write the list there (the build writes the bundle's).
 		const string userList = rcPath.empty() ? string() : loadStringFromFile(rcPath + kPluginListFile);
 		const std::set<string> disabled = disabledPlugins(userList);
-		if (!userList.empty()) { // (for terminal and log users: Natron's GUI doesn't show stderr)
+		if (!userList.empty()) { // (on stderr or in the log file: Natron's GUI shows neither)
 			std::set<string> pluginIds;
 			for (const EffectData& d : pluginData) {
 				pluginIds.insert(d.uniqueId);
 			}
-			fprintf(stderr, "%s\n", pluginListSummary(rcPath + kPluginListFile, disabled, pluginIds).c_str());
+			gmicLog("%s\n", pluginListSummary(rcPath + kPluginListFile, disabled, pluginIds).c_str());
 		}
 		const char* const listPath = std::getenv("OFX_GMIC_WRITE_PLUGIN_LIST");
 		if (listPath && *listPath && !writePluginList(listPath, pluginData, disabled)) {
-			fprintf(stderr, "openfx-gmic: Error: could not write the plug-in list %s\n", listPath);
+			gmicLog("openfx-gmic: Error: could not write the plug-in list %s\n", listPath);
 		}
 		if (!disabled.empty()) {
 			leaveOutFilters([&disabled](const EffectData& d) { return disabled.count(d.uniqueId) > 0; });
@@ -712,9 +722,9 @@ const PluginGlobalData& pluginGlobalData()
 		try {
 			return loadPluginGlobalData();
 		} catch (const std::exception& e) {
-			fprintf(stderr, "openfx-gmic: Error: could not load the G'MIC filters: %s\n", e.what());
+			gmicLog("openfx-gmic: Error: could not load the G'MIC filters: %s\n", e.what());
 		} catch (...) {
-			fprintf(stderr, "openfx-gmic: Error: could not load the G'MIC filters\n");
+			gmicLog("openfx-gmic: Error: could not load the G'MIC filters\n");
 		}
 		return PluginGlobalData();
 	}();
@@ -847,7 +857,7 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 			"Layer Times", LAYERS_FROM_SOURCE_PARAM, "Layer -1" TIME_OFFSET_PARAM_SUFFIX,
 			"Layer -2" TIME_OFFSET_PARAM_SUFFIX, "Layer -3" TIME_OFFSET_PARAM_SUFFIX,
 			"Layer -4" TIME_OFFSET_PARAM_SUFFIX, "Command",
-			"Advanced Options", kOutputLayerParam, "Resize Mode", "Ignore Alpha", "Preview/Draft Mode",
+			"Advanced Options", kOutputLayerParam, "Resize Mode", "Ignore Alpha", kDraftModeParam,
 			"Global Random Seed", kAnimateSeedParam, "Log Verbosity" };
 		for (size_t r = 0; r < sizeof(reservedNames) / sizeof(reservedNames[0]); ++r) {
 			if (name == reservedNames[r]) {
@@ -861,9 +871,8 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		const std::string& text = param.text;
 		const std::string& paramType = param.paramType;
 		if (paramType == "color") {
-			vector<string> r;
 			t = PT_COLOR;
-			strSplit(defaultValue, '|', r); // drops empty fields: pad below
+			vector<string> r = strSplit(defaultValue, '|'); // drops empty fields: pad below
 			if (r.size() == 1) { r.push_back(r[0]); r.push_back(r[0]); } // gray: color(V)
 			while (r.size() < 3) r.push_back("0");
 			d1 = (float)stringToDouble(r[0]) / kGmicValueScale;
@@ -873,9 +882,8 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 			flags = (r.size() > 3 && !r[3].empty()) ? kParamFlagsColorRGBA : kParamFlagsColorRGB;
 			d4 = (flags == kParamFlagsColorRGBA) ? (float)stringToDouble(r[3]) / kGmicValueScale : 1.f;
 		} else if (paramType == "point") {
-			vector<string> r;
 			t = PT_POINT;
-			strSplit(defaultValue, '|', r); // drops empty fields: pad below
+			vector<string> r = strSplit(defaultValue, '|'); // drops empty fields: pad below
 			while (r.size() < 2) r.push_back("50");
 			d1 = (float)stringToDouble(r[0]);
 			d2 = (float)stringToDouble(r[1]);
@@ -945,6 +953,12 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		} else if (param.visibility == EffectParameter::Visibility::Disabled) {
 			globalDataP->param[p].displayStatus = DS_DISABLED;
 		}
+		if (param.splitPreview) { // (see markSplitPreviewParams)
+			globalDataP->param[p].draftModeOnly = true;
+			globalDataP->param[p].hint = "Used by the filter's preview only, as in G'MIC-Qt: "
+				"turn on Preview/Draft Mode (Advanced Options) to see it. Natron's viewer wipe also "
+				"compares the input and the result.";
+		}
 		if (paramType == "pointenabled") {
 			globalDataP->param[p].hint = (param.removable < 0) ?
 				"Use the point above. Off by default, since G'MIC-Qt starts with this point removed. "
@@ -980,9 +994,9 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 			"previous frames with offsets -1, -2... (set when N is raised, for offsets still at 0). 0: off.";
 		++p;
 		for (int k = 1; k <= 4; ++k) {
-			globalDataP->param[p] = Parameter("Layer -" + intToString(k) + TIME_OFFSET_PARAM_SUFFIX, "", PT_INT, -1000, 1000, 0, 0, 0, 0, "");
+			globalDataP->param[p] = Parameter("Layer -" + std::to_string(k) + TIME_OFFSET_PARAM_SUFFIX, "", PT_INT, -1000, 1000, 0, 0, 0, 0, "");
 			globalDataP->param[p].flags = 1;
-			globalDataP->param[p].hint = "Frame offset of Layer -" + intToString(k) + ": its image is fetched at "
+			globalDataP->param[p].hint = "Frame offset of Layer -" + std::to_string(k) + ": its image is fetched at "
 				"the render time plus this offset (-1: the previous frame). Source is always at the render time.";
 			++p;
 		}
@@ -1019,7 +1033,7 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 	globalDataP->param[p].hint = "Run the filter on the RGB channels only, then give the inputs' alpha back to the results. "
 		"Gray or RGB results of another size than the input (frames, rotation, crop, resize...) are opaque.";
 	++p;
-	globalDataP->param[p] = Parameter("Preview/Draft Mode", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
+	globalDataP->param[p] = Parameter(kDraftModeParam, "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
 	if (effectData.command == effectData.preview_command) {
 		globalDataP->param[p].displayStatus = DS_HIDDEN;
 	}
@@ -1032,7 +1046,8 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 	globalDataP->param[p] = Parameter("Global Random Seed", "", PT_INT, 0, 1<<24, 0, 0, 0, 0, "");
 	globalDataP->param[p].hint = "Seed of the random numbers used by the filter. For most filters, results are reproducible "
 		"for a given seed and number of OpenMP threads; filters using patch matching or G'MIC's parallel command, "
-		"and concurrent renders, can still vary.";
+		"and concurrent renders, can still vary. The number of threads depends on the host and on the renders "
+		"running at once: set the OMP_NUM_THREADS environment variable for a fixed one.";
 	++p;
 	globalDataP->param[p] = Parameter(kAnimateSeedParam, "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
 	globalDataP->param[p].hint = "Add the frame number to the Global Random Seed, so that the random numbers change "
@@ -1077,7 +1092,7 @@ gmicCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, bo
             if (PAR_TYPE(i) == PT_BOOL && globalDataP->param[i].flags == PARAM_FLAGS_POINT_ENABLED)
                 continue; // not a G'MIC argument: see the point before it
             if (PAR_TYPE(i) == PT_INT || PAR_TYPE(i) == PT_BOOL || PAR_TYPE(i) == PT_SELECT)
-                cmd += intToString((int)PAR_VAL(i)) + ",";
+                cmd += std::to_string((int)PAR_VAL(i)) + ",";
             else if (PAR_TYPE(i) == PT_FLOAT)
                 cmd += floatToString(PAR_VAL(i)) + ",";
             else if (PAR_TYPE(i) == PT_TEXT) {
@@ -1227,7 +1242,7 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 	if (outputIsFrame(sequenceDataP, globalDataP)) {
 		customCommands += kFrameSelectCommand;
 	} else {
-		cmd += " -if {$!>" + intToString(MAX_NOF_LAYERS) + "} -keep[0-" + intToString(MAX_NOF_LAYERS - 1) + "] -fi";
+		cmd += " -if {$!>" + std::to_string(MAX_NOF_LAYERS) + "} -keep[0-" + std::to_string(MAX_NOF_LAYERS - 1) + "] -fi";
 	}
 
 	instanceDataP->options().custom_commands = customCommands.c_str();
@@ -1259,8 +1274,8 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 			extentH = std::max(extentH, sequenceDataP->inWorld[i].height);
 		}
 	}
-	const string W = intToString(extentW), H = intToString(extentH);
-	string env = "_preview_x0=0 _preview_y0=0 _preview_x1=" + intToString(extentW - 1) + " _preview_y1=" + intToString(extentH - 1) + " ";
+	const string W = std::to_string(extentW), H = std::to_string(extentH);
+	string env = "_preview_x0=0 _preview_y0=0 _preview_x1=" + std::to_string(extentW - 1) + " _preview_y1=" + std::to_string(extentH - 1) + " ";
 	if (isPreview) {
 		env += "_host=ofx _preview_width=" + W + " _preview_height=" + H +
 			" _preview_area_width=" + W + " _preview_area_height=" + H + " ";
@@ -1273,15 +1288,15 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 		// results whose size differs from the processed input get an opaque alpha (see
 		// kOpaqueResizedCommand).
 		float ds = PAR_VAL(PARAM_RESIZE);
-		string processedSize = intToString(sequenceDataP->inWorld[0].width) + "," + intToString(sequenceDataP->inWorld[0].height);
+		string processedSize = std::to_string(sequenceDataP->inWorld[0].width) + "," + std::to_string(sequenceDataP->inWorld[0].height);
 		if (ds >= 2.f) {
 			ds = pow(2.f, ds - 1.f);
-			const string dsSize = intToString(sequenceDataP->inWorld[0].width / (int)ds) + "," + intToString(sequenceDataP->inWorld[0].height / (int)ds);
+			const string dsSize = std::to_string(sequenceDataP->inWorld[0].width / (int)ds) + "," + std::to_string(sequenceDataP->inWorld[0].height / (int)ds);
 			cmd = " -resize " + dsSize + " " + cmd;
 			processedSize = dsSize;
 		}
 		cmd += " -_openfx_gmic_opaque_resized " + processedSize;
-		cmd += " -resize " + intToString(sequenceDataP->inWorld[0].width) + "," + intToString(sequenceDataP->inWorld[0].height);
+		cmd += " -resize " + std::to_string(sequenceDataP->inWorld[0].width) + "," + std::to_string(sequenceDataP->inWorld[0].height);
 	}
 	int verbosity = (int)PAR_VAL(PARAM_VERBOSITY) - 1;
 	int seed = (int)PAR_VAL(PARAM_SRAND);
@@ -1290,13 +1305,78 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 		seed += (int)sequenceDataP->time;
 	}
 
-	cmd = "-v " + intToString(verbosity) + " -srand " + intToString(seed) + " " + cmd;
+	cmd = "-v " + std::to_string(verbosity) + " -srand " + std::to_string(seed) + " " + cmd;
 	// cmd += " -display";
 	// set some variables that are defined globally for the GIMP plugin
 	// not really needed as the effects should work independently of GIMP
 //	cmd = "_input_mode=1 _output_mode=0 _verbosity_mode=0 _preview_mode=0 _preview_size=0 " + cmd;
 
 	return cmd;
+}
+
+// G'MIC's thread count for one render (issue #188), so that the renders running at once don't each
+// start one OpenMP thread per CPU: N = max(the host's count, fair share), at most the number of
+// hardware threads.
+// - The host's count: its multithread suite (multiThreadNumCPUs; Natron: the threads that its
+//   other renders leave free, or 1 when its multithreading is off).
+// - The fair share: the hardware threads divided by the G'MIC renders running in this process
+//   (RunningRender, this one included). It is a floor because the host's count can be too low:
+//   the plug-in is instance-safe, so Natron runs one G'MIC render per node at a time
+//   (EffectInstance::renderRoI's lock on the node's render instances), and its other frame
+//   threads, waiting on that lock, count as busy: during sequence renders and playback, its
+//   count is often 1.
+// N is given to G'MIC by setting its variable _cpus at the start of the command: G'MIC
+// (gmic::set_variable()) then calls omp_set_num_threads(N) in the interpreter's thread, the
+// worker thread of gmicCallAbortable(), and the stdlib commands that split their work use
+// $_cpus. With libgomp and libomp (OpenMP >= 3.0: the thread count is a per-thread setting),
+// only this render's worker thread is affected (a new thread for each run; MSVC's vcomp doesn't
+// document the scope, and the fallback without a worker thread sets the host's render thread).
+// Limit: G'MIC's 'parallel' command (also used by the stdlib's apply_parallel commands) creates
+// its interpreters with new gmic(*this), whose initialisation sets _cpus back to all the CPUs and
+// calls omp_set_num_threads() on the interpreter's thread: after a filter's first 'parallel', the
+// render uses all the CPUs again, as before this change.
+// No prefix, so that G'MIC uses all the CPUs as before:
+// - if the number of hardware threads is unknown (hardware_concurrency() is 0);
+// - if OMP_NUM_THREADS is set: it stays a fixed thread count (G'MIC then ignores _cpus for
+//   OpenMP, and $_cpus stays G'MIC's CPU count);
+// - if the host's multithread suite call fails. Support's getNumCPUs() returns 1 then, which
+//   can't be told apart from a host's 1, so the suite is called directly. (Support fetches the
+//   suite as mandatory when the plug-in loads: it is never missing in practice.)
+// Results with random numbers depend on the thread count (see the Global Random Seed hint), which
+// may change from one render to the next: it is not part of the Output Layer "Frame" cache key.
+static std::atomic<int> gRunningRenders(0); // the G'MIC renders running in this process
+
+// Counts a G'MIC render in gRunningRenders for its lifetime.
+class RunningRender
+{
+public:
+	RunningRender() noexcept { gRunningRenders.fetch_add(1); }
+	~RunningRender() { gRunningRenders.fetch_sub(1); }
+	RunningRender(const RunningRender&) = delete;
+	RunningRender& operator=(const RunningRender&) = delete;
+	RunningRender(RunningRender&&) = delete;
+	RunningRender& operator=(RunningRender&&) = delete;
+};
+
+// Call with a RunningRender for this render alive (see above).
+static string gmicThreadsPrefix()
+{
+	static const bool ompEnv = std::getenv("OMP_NUM_THREADS") != NULL; // read once
+	if (ompEnv) return string();
+	static const OfxMultiThreadSuiteV1* const suite =
+		static_cast<const OfxMultiThreadSuiteV1*>(OFX::fetchSuite(kOfxMultiThreadSuite, 1, true));
+	unsigned int hostCount = 0;
+	if (!suite || !suite->multiThreadNumCPUs || suite->multiThreadNumCPUs(&hostCount) != kOfxStatOK) {
+		return string();
+	}
+	const unsigned int concurrency = std::thread::hardware_concurrency();
+	if (concurrency == 0) return string(); // unknown: no fair share, and no upper bound
+	// at most INT_MAX: G'MIC reads _cpus with %d
+	const unsigned int hardware = std::min(concurrency, (unsigned int)std::numeric_limits<int>::max());
+	const unsigned int renders = (unsigned int)std::max(1, gRunningRenders.load());
+	const unsigned int fairShare = std::max(1u, hardware / renders);
+	const unsigned int n = std::min(std::max(hostCount, fairShare), hardware);
+	return "_cpus=" + std::to_string(n) + " ";
 }
 
 // Render abort (issue #46): G'MIC polls a flag (p_is_abort), in its interpreter and in CImg's
@@ -1346,9 +1426,65 @@ static DWORD WINAPI gmicCallThread(LPVOID arg)
 }
 #endif
 
+// Render progress (issue #177): G'MIC's progress index (p_progress) is set by the filters that
+// use the 'progress' command, from 0 to 100; it is -1 (unknown) when G'MIC starts, and most
+// filters never set it. The render thread passes it to the host's progress suite from its abort
+// poll (see gmicCallAbortable): the host's progress calls, like abort(), come from the render
+// thread. The host's progress starts at the first known value, so that filters without progress
+// show none, and ends when G'MIC returns, also on an exception. The progress is cosmetic: if a
+// progress call throws, the render goes on without progress.
+// The result of progressUpdate() (false: the user cancelled) is ignored, only abort() stops a
+// render: Natron's progress panel returns false to a progressUpdate() from a render thread until
+// its main thread has created the task that progressStart() asked for, which would abort the
+// render at its first update.
+class HostProgress
+{
+public:
+	HostProgress(OFX::ImageEffect& effect, const string& message) : _effect(effect), _message(message) {}
+	~HostProgress() noexcept
+	{
+		if (!_started) return;
+		try {
+			_effect.progressEnd();
+		} catch (...) {
+		}
+	}
+	HostProgress(const HostProgress&) = delete;
+	HostProgress& operator=(const HostProgress&) = delete;
+	HostProgress(HostProgress&&) = delete;
+	HostProgress& operator=(HostProgress&&) = delete;
+
+	// gmicProgress: G'MIC's progress index, from 0 to 100, or negative (unknown)
+	void update(float gmicProgress) noexcept
+	{
+		if (_failed || !(gmicProgress >= 0.f)) return; // unknown (-1), or NaN
+		const double t = std::min(gmicProgress, 100.f) / 100.;
+		try {
+			if (!_started) {
+				_effect.progressStart(_message);
+				_started = true;
+			}
+			if (t != _last) {
+				(void)_effect.progressUpdate(t);
+				_last = t;
+			}
+		} catch (...) {
+			_failed = true; // no more progress for this run (progressEnd() is still called if started)
+		}
+	}
+
+private:
+	OFX::ImageEffect& _effect;
+	string _message;
+	bool _started = false;
+	bool _failed = false;
+	double _last = -1.; // the last value given to the host
+};
+
 // gmic_plugin_call(), aborted when the host aborts the render: then *aborted is set to true, and
-// the result must be discarded.
-static int gmicCallAbortable(const OFX::ImageEffect& effect, const char* cmd, unsigned int* nofImages, gmic_interface_image* images, unsigned int maxImages, gmic_interface_options* options, bool* aborted)
+// the result must be discarded. G'MIC's progress goes to the host's progress bar, with
+// progressMessage (see HostProgress).
+static int gmicCallAbortable(OFX::ImageEffect& effect, const string& progressMessage, const char* cmd, unsigned int* nofImages, gmic_interface_image* images, unsigned int maxImages, gmic_interface_options* options, bool* aborted)
 {
 	*aborted = false;
 	if (effect.abort()) {
@@ -1362,6 +1498,14 @@ static int gmicCallAbortable(const OFX::ImageEffect& effect, const char* cmd, un
 	// not an interpreter's (e.g. an OpenMP worker evaluating the math abort()) gets a static flag
 	// shared by the whole process, which stays set (upstream behavior, not patched here).
 	bool isAbort = false;
+	// G'MIC's progress index: a plain float, written by the main interpreter (its 'progress'
+	// command), on the worker thread, while the render thread reads it: the same upstream design
+	// as the abort flag (issue #136; gmic-qt's ProgressInfoWidget reads its FilterThread's float
+	// the same way). A stale value only delays the progress bar. The interpreters of 'parallel'
+	// are copies with their own private progress (gmic::gmic(const gmic&)): their progress is
+	// never seen.
+	float progress = -1.f;
+	HostProgress hostProgress(effect, progressMessage);
 	GmicCallData d;
 	d.cmd = cmd;
 	d.nofImages = nofImages;
@@ -1371,6 +1515,7 @@ static int gmicCallAbortable(const OFX::ImageEffect& effect, const char* cmd, un
 	d.result = -1;
 	d.done = false;
 	options->p_is_abort = &isAbort;
+	options->p_progress = &progress;
 
 	bool started = false;
 #ifndef _WIN32
@@ -1391,12 +1536,13 @@ static int gmicCallAbortable(const OFX::ImageEffect& effect, const char* cmd, un
 	started = (thread != NULL);
 #endif
 	if (!started) {
-		// no thread: run G'MIC here, without abort
+		// no thread: run G'MIC here, without abort or progress
 		options->p_is_abort = NULL;
+		options->p_progress = NULL;
 		return gmic_plugin_call(cmd, nofImages, images, maxImages, options);
 	}
 
-	// the worker uses d, isAbort and the images: always join it before returning
+	// the worker uses d, isAbort, progress and the images: always join it before returning
 	try {
 		std::unique_lock<std::mutex> lock(d.mutex);
 		while (!d.cond.wait_for(lock, std::chrono::milliseconds(50), [&d] { return d.done; })) {
@@ -1408,6 +1554,7 @@ static int gmicCallAbortable(const OFX::ImageEffect& effect, const char* cmd, un
 				// set it on every poll: G'MIC resets the flag when its interpreter starts
 				isAbort = true;
 			}
+			hostProgress.update(progress);
 			lock.lock();
 		}
 	} catch (...) {
@@ -1420,6 +1567,7 @@ static int gmicCallAbortable(const OFX::ImageEffect& effect, const char* cmd, un
 		CloseHandle(thread);
 #endif
 		options->p_is_abort = NULL;
+		options->p_progress = NULL;
 		throw;
 	}
 #ifndef _WIN32
@@ -1429,12 +1577,14 @@ static int gmicCallAbortable(const OFX::ImageEffect& effect, const char* cmd, un
 	CloseHandle(thread);
 #endif
 	options->p_is_abort = NULL;
+	options->p_progress = NULL;
 	if (!*aborted && effect.abort()) {
 		*aborted = true;
 	}
 	if (*aborted) {
 		return -1;
 	}
+	hostProgress.update(progress); // G'MIC's final value (the worker is joined: no race)
 	if (d.exception) {
 		std::rethrow_exception(d.exception);
 	}
@@ -1518,7 +1668,7 @@ static size_t computeFrameCacheBudget()
 		bytes = mb * 1024. * 1024.;
 	} else {
 		if (env && *env) {
-			fprintf(stderr, "openfx-gmic: OFX_GMIC_FRAME_CACHE_MB=\"%s\" is not a number of megabytes >= 0: using the default budget\n", env);
+			gmicLog("openfx-gmic: OFX_GMIC_FRAME_CACHE_MB=\"%s\" is not a number of megabytes >= 0: using the default budget\n", env);
 		}
 		// leave room for the host's own cache (Natron's RAM cache)
 		bytes = (double)physicalMemoryBytes() / 8.;
@@ -1680,21 +1830,37 @@ static void frameCacheRelease(const void* owner)
 	frameCacheDropIfUnused(c, key, dropped);
 }
 
+// the warning when the results of filterName are too large to keep (see frameCacheStore)
+static std::string frameCacheTooLargeWarning(const std::string& filterName)
+{
+	return "G'MIC: " + filterName + ": the results are too large to keep (more than " + std::to_string(kMaxFrameResults) +
+		", or more than " + std::to_string((frameCacheBudget() + 512 * 1024) / (1024 * 1024)) +
+		" MB): Output Layer Frame runs the filter on every frame";
+}
+
+// the results for key can't be kept: warning is logged (once per key) and returned
+static std::string frameCacheNotKept(const std::string& key, const std::string& warning)
+{
+	if (frameCacheUncacheable(key)) gmicLog("%s\n", warning.c_str());
+	return warning;
+}
+
 // keeps the results images[0..nofImages-1] under key, for the instance: their buffers now belong
 // to the cache, and their data pointers are set to NULL. Results that are not usable or don't fit
-// in the budget are left to the caller.
-static void frameCacheStore(const void* owner, const std::string& key, gmic_interface_image* images, unsigned int nofImages, const std::string& filterName)
+// in the budget are left to the caller. Returns a warning for the user if they are not kept (a
+// result is empty, or they are larger than the budget), else an empty string.
+static std::string frameCacheStore(const void* owner, const std::string& key, gmic_interface_image* images, unsigned int nofImages, const std::string& filterName)
 {
 	size_t bytes = 0;
 	for (unsigned int i = 0; i < nofImages; ++i) {
 		if (!images[i].data || images[i].spectrum == 0) {
-			if (frameCacheUncacheable(key)) fprintf(stderr, "G'MIC: %s: result %u is empty, the results are not kept (Output Layer Frame runs the filter on every frame)\n",
-					filterName.c_str(), i);
-			return;
+			return frameCacheNotKept(key, "G'MIC: " + filterName + ": result " + std::to_string(i) +
+				" is empty, the results are not kept (Output Layer Frame runs the filter on every frame)");
 		}
 		bytes += imageBytes(images[i]);
 	}
-	if (nofImages == 0 || bytes > frameCacheBudget()) return;
+	if (nofImages == 0) return std::string();
+	if (bytes > frameCacheBudget()) return frameCacheNotKept(key, frameCacheTooLargeWarning(filterName));
 	FrameCacheEntry entry;
 	entry.bytes = bytes;
 	entry.lastUse = 0;
@@ -1724,6 +1890,7 @@ static void frameCacheStore(const void* owner, const std::string& key, gmic_inte
 	stored.bytes = bytes;
 	stored.lastUse = ++c.clock;
 	c.bytes += bytes;
+	return std::string();
 }
 
 // a hash of a buffer, appended to key in hex: four independent 64-bit lanes (xxHash64 rounds),
@@ -1754,10 +1921,10 @@ static void appendHash(std::string& key, const void* data, size_t size)
 // the key of the results: the plug-in, the command line and the input images (see above)
 static std::string frameCacheKey(const GlobalData* globalDataP, const std::string& cmd, const SequenceData* sequenceDataP, unsigned int nofImages)
 {
-	std::string key = intToString(globalDataP->pluginIndex) + "\n" + cmd;
+	std::string key = std::to_string(globalDataP->pluginIndex) + "\n" + cmd;
 	for (unsigned int i = 0; i < nofImages; ++i) {
 		const World& w = sequenceDataP->inWorld[i];
-		key += "\n" + intToString(w.width) + "x" + intToString(w.height) + ":";
+		key += "\n" + std::to_string(w.width) + "x" + std::to_string(w.height) + ":";
 		appendHash(key, w.data, (size_t)w.width * (size_t)w.height * 4 * sizeof(float));
 	}
 	return key;
@@ -1827,7 +1994,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		images[i].name[0] = '\0';
 		images[i].format = E_FORMAT_FLOAT;
 		images[i].is_interleaved = false;
-		strncpy(images[i].name, string("input" + intToString(i)).c_str(), sizeof(images[i].name));
+		strncpy(images[i].name, string("input" + std::to_string(i)).c_str(), sizeof(images[i].name));
 	}
 
 	// G'MIC-Qt runs the preview command first, and some main commands need its state: render
@@ -1847,6 +2014,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	bool aborted = false;
 	int result = 0;
 	string errmsg;
+	string warning; // shown on the node after a successful render (showRenderWarning)
 	// Output Layer "Frame": the results kept from a previous render, if the key is the same
 	const long long frame = frameNumberOf(sequenceDataP);
 	string cacheKey;
@@ -1868,19 +2036,23 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	const bool runGmic = !cachedFrame && !aborted;
 	// Frame: at most the results that can be kept (see kFrameSelectCommand), after the key
 	const string frameSelect = frameMode ? " -_openfx_gmic_frame_select " + std::to_string(frame) + "," +
-		intToString(kMaxFrameResults) + "," + std::to_string((unsigned long long)frameCacheBudget()) : string();
+		std::to_string(kMaxFrameResults) + "," + std::to_string((unsigned long long)frameCacheBudget()) : string();
 	if (runGmic) {
-		cmd += frameSelect;
-		result = gmicCallAbortable(effect, cmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(), &aborted);
+		// counted until both G'MIC runs (the main command and the preview fallback) are done, on
+		// every path; the thread count is added after the cache key was made (see gmicThreadsPrefix)
+		const RunningRender running;
+		const string threads = gmicThreadsPrefix();
+		cmd = threads + cmd + frameSelect;
+		result = gmicCallAbortable(effect, effectData.name, cmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(), &aborted);
 		errmsg = string(instanceDataP->options().error_message_buffer);
 		// The retry needs unchanged inputs: gmic_plugin_call() works on copies (no_inplace_processing)
 		// and leaves images[] unchanged on an error. Not after an abort.
 		if (result != 0 && !aborted && !preview && effectData.previewFallback && instanceDataP->options().no_inplace_processing) {
-			fprintf(stderr, "G'MIC: %s: the main command failed (%s), rendering with the preview command\n",
+			gmicLog("G'MIC: %s: the main command failed (%s), rendering with the preview command\n",
 					effectData.name.c_str(), errmsg.c_str());
 			preview = true;
-			cmd = fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, preview, customCommands) + frameSelect;
-			result = gmicCallAbortable(effect, cmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(), &aborted);
+			cmd = threads + fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, preview, customCommands) + frameSelect;
+			result = gmicCallAbortable(effect, effectData.name, cmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(), &aborted);
 			if (result != 0 && !aborted) {
 				errmsg += " (with the preview command: " + string(instanceDataP->options().error_message_buffer) + ")";
 			}
@@ -1964,13 +2136,11 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		if (result == 0 && useCache && runGmic && !selected) {
 			// out of memory: the results not moved to the cache are freed below, as without cache
 			try {
-				frameCacheStore(instanceDataP, cacheKey, images, nofImages, effectData.name);
+				warning = frameCacheStore(instanceDataP, cacheKey, images, nofImages, effectData.name);
 			} catch (const std::bad_alloc&) {
 			}
-		} else if (result == 0 && useCache && selected && frameCacheUncacheable(cacheKey)) {
-			fprintf(stderr, "G'MIC: %s: the results are too large to keep (more than %d, or more than %.0f MB): "
-					"Output Layer Frame runs the filter on every frame\n", effectData.name.c_str(), kMaxFrameResults,
-					(double)frameCacheBudget() / (1024. * 1024.));
+		} else if (result == 0 && useCache && selected) {
+			warning = frameCacheNotKept(cacheKey, frameCacheTooLargeWarning(effectData.name));
 		}
 		if (claim.claimed) { claim.claimed = false; frameCacheRunDone(cacheKey); } // the waiting renders go on
 	}
@@ -1978,6 +2148,9 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		// persistent message on the node, instead of a modal message on every render
 		showRenderError(effect, errmsg, "G'MIC Error");
 		ok = false;
+	}
+	else if (!aborted && !warning.empty()) {
+		showRenderWarning(effect, warning);
 	}
 	else if (!aborted) {
 		effect.clearPersistentMessage();

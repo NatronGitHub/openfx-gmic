@@ -31,6 +31,9 @@ constexpr float kGmicValueScale = 255.f;
 // the parameters that the clip preferences depend on (see pluginSetup and getClipPreferences)
 constexpr const char* kAnimateSeedParam = "Animate Random Seed";
 constexpr const char* kOutputLayerParam = "Output Layer";
+// renders with the filter's preview command (see pluginProcess); the OFX glue enables the
+// parameters that only the preview command uses (Parameter::draftModeOnly) when it is on
+constexpr const char* kDraftModeParam = "Preview/Draft Mode";
 // the last option of the Output Layer parameter, "Frame" (issue #65): see pluginProcess
 constexpr int kOutputLayerFrame = 11;
 
@@ -70,6 +73,10 @@ private:
 // effect.clearPersistentMessage()) if the host has them, else a modal message titled modalId.
 // (Defined in gmic_ofx.cpp.)
 void showRenderError(OFX::ImageEffect& effect, const std::string& msg, const std::string& modalId = std::string());
+// A warning on the node after a successful render: a persistent warning message (cleared, or
+// replaced, by the next render), if the host has them; nothing else, since a modal message would
+// interrupt every render. (Defined in gmic_ofx.cpp.)
+void showRenderWarning(OFX::ImageEffect& effect, const std::string& msg);
 
 // Run G'MIC on sequenceData's input images (float planar RGBA, values up to 255), into its
 // outWorld buffer, with the parameter values of sequenceData. Polls effect.abort() while G'MIC

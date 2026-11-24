@@ -15,7 +15,7 @@ usage: render_plugins.py --host <hostDemo, or the CMake build directory> [--conf
                          --plugins <dir with GMIC.ofx.bundle>
                          --list <plug-in list> [--subset pr|all] [--stdlib <gmic_stdlib_community.h>]
                          [--jobs N] [--timeout S] [--min-rendered N] [--work <dir>]
-                         [--only <id>[,<id>...]] [--host-arg <arg>]...
+                         [--only <id>[,<id>...]] [--host-arg <arg>]... [--host-threads]
 --host <build dir> reads hostDemo-path.txt there (written by CMake with GMIC_BUILD_TESTS=ON), or
 hostDemo-path-<config>.txt with a multi-config generator (--config, default Release).
 The plug-in list (one line per plug-in: id, context and input clips, tab-separated) is written
@@ -25,6 +25,9 @@ library given by --stdlib), the multi-layer filters, and every 30th plug-in (sor
 --only renders just the given plug-ins, also those in SKIP (e.g. the ones that download data),
 and fails unless they all render. --host-arg passes an extra argument to hostDemo (repeatable),
 e.g. --host-arg=--ofx14 (an OFX 1.4-only host).
+hostDemo gets OMP_NUM_THREADS=2 unless it is set; with --host-threads, OMP_NUM_THREADS is unset,
+so that the plug-in sets G'MIC's thread count (hostDemo's multithread suite reports 1 CPU, and the
+plug-in's fair share gives the single render of a hostDemo process all the hardware threads).
 """
 import argparse
 import concurrent.futures
@@ -165,7 +168,28 @@ def fft_plugins(stdlib_header):
     return ids
 
 
-def render(host, host_args, plugins, work, timeout, plugin):
+def _progress_problem(report):
+    """The problem with the host's progress in a hostDemo report (None if there is none).
+
+    Each progress (G'MIC's progress index) must be ended exactly once, and the last value given to
+    the host must be in [0, 1].
+
+    Args:
+        report: the parsed report.json of a render (hostDemo --report).
+
+    Returns:
+        A description of the first problem found, or None.
+    """
+    for pr in report.get('progress', []):
+        last = pr.get('lastValue')
+        if pr.get('ends') != 1:
+            return 'progress ended %s times instead of once' % pr.get('ends')
+        if last is not None and not 0 <= last <= 1:
+            return 'last progress value %s outside [0, 1]' % last
+    return None
+
+
+def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
     pid, context, clips = plugin
     d = os.path.join(work, pid[len('eu.gmic.'):])
     shutil.rmtree(d, ignore_errors=True)
@@ -176,8 +200,11 @@ def render(host, host_args, plugins, work, timeout, plugin):
            '--report', 'report.json']
     for c in clips:
         cmd += ['-i', c + '=file:../input.pfm']
-    env = dict(os.environ, OFX_PLUGIN_PATH=plugins, HOME=os.path.join(work, 'home'),
-               OMP_NUM_THREADS=os.environ.get('OMP_NUM_THREADS', '2'))
+    env = dict(os.environ, OFX_PLUGIN_PATH=plugins, HOME=os.path.join(work, 'home'))
+    if host_threads:
+        env.pop('OMP_NUM_THREADS', None)
+    else:
+        env['OMP_NUM_THREADS'] = os.environ.get('OMP_NUM_THREADS', '2')
     start = time.time()
     try:
         p = subprocess.run(cmd, cwd=d, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -186,7 +213,7 @@ def render(host, host_args, plugins, work, timeout, plugin):
     except subprocess.TimeoutExpired as e:
         rc, log = 'timeout', (e.stdout or b'').decode('utf-8', 'replace')
     t = time.time() - start
-    problem, nan = None, 0
+    problem, nan, updates = None, 0, 0
     if rc != 0:
         if rc == 'timeout':
             problem = 'timeout after %ds' % timeout
@@ -207,10 +234,13 @@ def render(host, host_args, plugins, work, timeout, plugin):
                         if not os.path.exists(os.path.join(d, f)):
                             problem = 'missing output file ' + f
                     nan += sum(o.get('nan') or 0) if isinstance(o.get('nan'), list) else (o.get('nan') or 0)
+            updates = sum(pr.get('updates') or 0 for pr in report.get('progress', []))
+            if problem is None:
+                problem = _progress_problem(report)
         except (OSError, ValueError) as e:
             problem = 'no report: %s' % e
     errors = [l for l in log.splitlines() if ERROR_LINE.search(l)][:3]
-    return pid, rc, problem, nan, t, errors, log
+    return pid, rc, problem, nan, t, errors, log, updates
 
 
 def main():
@@ -227,6 +257,7 @@ def main():
     ap.add_argument('--work')
     ap.add_argument('--only')
     ap.add_argument('--host-arg', action='append', default=[])
+    ap.add_argument('--host-threads', action='store_true')
     a = ap.parse_args()
 
     host = host_demo_path(a.host, a.config)
@@ -277,9 +308,13 @@ def main():
     start = time.time()
     fails, xfails, xpasses, nans, times = [], [], [], [], []
     rendered = 0
+    progressed = 0  # plug-ins that updated the host's progress
     with concurrent.futures.ThreadPoolExecutor(a.jobs) as ex:
-        run = lambda p: render(host, a.host_arg, plugins_dir, work, TIMEOUT.get(p[0], a.timeout), p)
-        for pid, rc, problem, nan, t, errors, log in ex.map(run, todo):
+        def run(p):
+            return render(host, a.host_arg, plugins_dir, work, TIMEOUT.get(p[0], a.timeout), p,
+                          host_threads=a.host_threads)
+
+        for pid, rc, problem, nan, t, errors, log, updates in ex.map(run, todo):
             times.append((t, pid))
             if len(times) % 25 == 0:
                 print('... %d/%d (%.0fs)' % (len(times), len(todo), time.time() - start))
@@ -298,6 +333,8 @@ def main():
                     print('    ' + e)
                 continue
             rendered += 1
+            if updates:
+                progressed += 1
             if pid in EXPECTED_FAIL:
                 xpasses.append(pid)
                 print('XPASS %s: rendered, remove it from EXPECTED_FAIL (%s)' % (pid, EXPECTED_FAIL[pid][1]))
@@ -305,6 +342,7 @@ def main():
                 nans.append((pid, nan))
     print('%d rendered in %.0fs: %d failed, %d expected failures, %d skipped' % (
         len(todo), time.time() - start, len(fails), len(xfails), len(sel) - len(todo)))
+    print('%d reported progress' % progressed)
     print('slowest: ' + ', '.join('%s %.0fs' % (p[len('eu.gmic.'):], t) for t, p in sorted(times)[-5:]))
     for pid, nan in nans:
         print('WARNING: %s: %d NaN values in its output' % (pid, nan))

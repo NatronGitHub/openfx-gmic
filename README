@@ -102,7 +102,8 @@ Options:
 - OPENMP=1: multithreaded G'MIC (off by default). On macOS, libomp is taken from LIBOMP_PREFIX
   (default /opt/local, MacPorts' layout: include/libomp and lib/libomp); with Homebrew's libomp,
   build with CMake and OFX_LIBOMP_ROOT.
-- CXXSTD: e.g. c++17 or c++20 (default: the compiler's).
+- CXXSTD: e.g. c++17 or c++20 (default: c++17, or none if CXX or CXXFLAGS_EXTRA already has a
+  -std option).
 - GMIC_STATIC_DEPS: Linux only, 1 (default): link zlib, libpng and FFTW statically; 0: shared.
 - LICENSE: GPL (default) or COMMERCIAL (see "Licence"; gmic_stdlib_commercial.txt lists the
   filters left out, and why).
@@ -236,6 +237,13 @@ of a given day without this risk, copy the file to ~/.config/gmic/gmic_stdlib.gm
 filters then only change when you copy it again (and clear the cache). COMMERCIAL builds never
 read the update file: it has the filters under the GPL, which they leave out.
 
+Preview/Draft Mode (in Advanced Options) renders with the filter's preview command, as G'MIC-Qt's
+preview does, instead of its main command. The Preview Type and Preview Split parameters that
+many filters have (G'MIC's split preview: the original next to the result) are only used by the
+preview command, so they are greyed out unless Preview/Draft Mode is on (not in the filters that
+always render with their preview command). To compare the input and the result in Natron, use
+the viewer's wipe instead.
+
 Choosing the plug-ins
 ---------------------
 
@@ -259,8 +267,9 @@ endings, and be UTF-8, or UTF-16 with a byte-order mark (Windows PowerShell 5's 
 When it reads the file, the plug-in prints one line on stderr: how many plug-ins the file
 disables, and the disabled identifiers that match no plug-in (typos, or filters that G'MIC
 removed). To see it, run the host from a terminal (on Windows, NatronRenderer: Natron.exe has
-no console). A comment line that is a single word after its '#' (e.g. "#-----") reads as a
-disabled identifier, and is reported as unknown: put a space in it ("# -----").
+no console), or use the log file (see "Messages"). A comment line that is a single word after
+its '#' (e.g. "#-----") reads as a disabled identifier, and is reported as unknown: put a space
+in it ("# -----").
 
 The plug-in reads the file when the host loads it. After a change, restart the host, and clear
 its OpenFX plug-in cache: this is required. Natron: Cache > Clear Plug-ins Load Cache, or start
@@ -277,6 +286,15 @@ The bundle's list is made from the standard library built into the plug-in: it d
 user's gmic_ofx.gmic or G'MIC's update file (see "Filters"). For a list of the filters actually loaded, set
 OFX_GMIC_WRITE_PLUGIN_LIST (see "Environment").
 
+Rendering
+---------
+
+A render can be aborted while G'MIC runs. The filters that report their progress to G'MIC (with
+its progress command; most filters don't) show it in the host's progress bar, e.g. Natron's
+Progress panel, which lists a render once it is expected to last a few seconds. The plug-in
+ignores the panel's Cancel button: abort the render itself (e.g. Natron's viewer or render
+stop button).
+
 Environment
 -----------
 
@@ -289,11 +307,43 @@ Environment
   A decimal number >= 0 ("512", "0.5", "2e3"; '.' as decimal point whatever the locale,
   surrounding whitespace allowed): a sign, inf, nan, hexadecimal, other text or an overflow give
   the default, with a note on stderr.
+- OMP_NUM_THREADS=<n>: a fixed number of OpenMP threads, for each render and for the whole host
+  process (other OpenMP code in it too): the plug-in then leaves G'MIC's thread count alone.
+  OMP_NUM_THREADS=1 makes G'MIC's OpenMP loops single-threaded (its parallel command still
+  starts its own threads). Unset (the default), each render uses at least the number of hardware
+  threads divided by the G'MIC renders running at once in the process, or more if the host's
+  multithread suite gives more (Natron: the threads that its other renders leave free; the floor
+  overrides its "render threads -1" and "threads per effect" settings, which G'MIC ignored
+  before too). A host whose suite always reports 1 thus runs a single render with all the
+  hardware threads, and several renders with their share each. A filter that uses G'MIC's
+  parallel command goes back to all the CPUs after it. Filters with random numbers (Global
+  Random Seed) give results that depend on the number of threads: set OMP_NUM_THREADS for
+  results that don't change with the renders running at once.
 - OFX_GMIC_WRITE_PLUGIN_LIST=<file>: the plug-in writes its list of the plug-ins (see "Choosing
   the plug-ins") to <file> when the host first loads it, from the filters it loaded (e.g. a
   gmic_ofx.gmic), those that the user's list disables commented out. Every process that loads
   the plug-in with it set writes the same file (e.g. a host's render processes): set it for one
   run only. The build makes the bundle's list so.
+
+Messages
+--------
+
+The plug-in prints its messages (when it loads the filters, and some notes while rendering) on
+stderr, as G'MIC does with the messages of the Log Verbosity parameter (Level 1 to 3; Off, the
+default, prints none). A host started from the Dock, the Start menu or a desktop launcher shows
+no stderr: to keep them, create an empty file gmic_ofx_log in ~/.config/gmic (Windows:
+%APPDATA%/gmic), as G'MIC-Qt's "log file" output messages do with gmic_qt_log. Every host
+process that loads the plug-in then appends its messages to that file instead of stderr, from
+the first host start after the file exists; delete it to go back to stderr (on Windows, quit the
+host first: the file can't be deleted while a host has it open). Hosts running at the same time
+(e.g. Natron and its render processes) write to the same file, and their lines may be
+interleaved. G'MIC-Qt empties its log at each start; the plug-in keeps the previous messages,
+and only empties the file when a host starts with it larger than 16 MB. The build, which writes
+the bundle's plug-in list (OFX_GMIC_WRITE_PLUGIN_LIST), keeps its messages on stderr.
+
+After a successful render, a warning on the node (Natron: its persistent message) tells when
+Output Layer "Frame" runs the filter on every frame, because its results are too many or too
+large to keep, or one of them is empty. G'MIC errors stay error messages on the node.
 
 Tests
 -----

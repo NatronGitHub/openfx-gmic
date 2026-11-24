@@ -72,7 +72,11 @@ struct EffectParameter {
 	// changes the visibility at run time (see markDynamicVisibilityFilters in gmic_parser.cpp).
 	enum class Visibility { Hidden = 0, Disabled = 1, Visible = 2 };
 	Visibility visibility = Visibility::Visible;
-	EffectParameter() : removable(0) {}
+	// a parameter of G'MIC's split preview (gui_split_preview: the choice of "Full", "Forward
+	// Horizontal"... and its point), which only the filter's preview command uses (see
+	// markSplitPreviewParams, issue #184)
+	bool splitPreview;
+	EffectParameter() : removable(0), splitPreview(false) {}
 };
 
 struct EffectData {
