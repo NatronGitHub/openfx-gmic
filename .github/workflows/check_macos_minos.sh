@@ -1,8 +1,9 @@
 #!/bin/bash
-# Check that a macOS GMIC.ofx requires macOS 14.0 (its minos, LC_BUILD_VERSION: CMakeLists.txt and
-# openfx's Makefile.master default to 14.0, unless MACOSX_DEPLOYMENT_TARGET is set), and report the
-# minos of the dylibs bundled in Contents/Libraries: MacPorts builds them for the build machine's
-# macOS version, which may be newer (a known limitation, not checked).
+# Check that a macOS GMIC.ofx requires exactly MACOSX_DEPLOYMENT_TARGET, or 14.0 if it is unset (its
+# minos, LC_BUILD_VERSION: CMakeLists.txt and openfx's Makefile.master default to 14.0; CI sets the
+# runner's macOS), and report the minos of the dylibs bundled in Contents/Libraries: MacPorts
+# builds them for the build machine's macOS, so they match in CI but may be newer elsewhere (not
+# checked).
 # Usage: check_macos_minos.sh <GMIC.ofx.bundle>
 set -euo pipefail
 
