@@ -45,7 +45,8 @@ name: Continuous Integration
 #
 # Frugal CI (the NatronGitHub runners are shared by all repos): one run per change. Pushes run CI
 # only on master and tags; feature branches run through their pull request. Draft pull requests
-# don't run CI. Superseded runs are cancelled, except for tags. The weekly run is never skipped:
+# run Linux and Windows; macOS waits until the PR is ready (marking it ready starts a new run).
+# Superseded runs are cancelled, except for tags. The weekly run is never skipped:
 # the toolchains (package managers, runner images) move even when master doesn't. Jobs time out.
 
 on:
@@ -69,7 +70,7 @@ on:
       - 'Licence_*.txt'
       - '.github/ISSUE_TEMPLATE/**'
   pull_request:
-    types: [ opened, synchronize, reopened ]
+    types: [ opened, synchronize, reopened, ready_for_review ]
     paths-ignore:
       - COPYING
       - README
@@ -96,10 +97,9 @@ env:
   UPLOAD_ARTIFACTS: ${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && (contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc'))) }}
 
 jobs:
-  # Which jobs run: every pull request, drafts too (the maintainer relies on CI rather than on
-  # local builds); "only: windows-arm" (workflow_dispatch) runs just
-  # the Windows on Arm job. The weekly scheduled run is never skipped: the toolchains (package
-  # managers, runner images) move even when master doesn't.
+  # Which jobs run: every pull request, drafts included (macOS only once ready); "only:
+  # windows-arm" (workflow_dispatch) runs just the Windows on Arm job. The weekly scheduled run is
+  # never skipped: the toolchains (package managers, runner images) move even when master doesn't.
   changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -334,13 +334,14 @@ jobs:
     name: macOS 15 arm64 (Apple clang, MacPorts libraries)
     runs-on: macos-15
     # macOS arm64 runners are scarce (Natron CI policy): start only once Linux and Windows have
-    # passed. Merging only requires Linux and Windows; macOS also builds weekly.
+    # passed, and not on draft PRs. Merging only requires Linux and Windows; macOS also builds weekly.
     needs: [changes, linux, windows]
     # on the weekly and on-demand runs (which also build the variants), macOS builds even if a
     # Linux/Windows variant (debug, C++20) failed. !cancelled(), not always(): a cancelled run
     # (superseded by a newer push) must also stop a running macOS job.
     if: >-
       !cancelled() && needs.changes.outputs.run == 'true' &&
+      !(github.event_name == 'pull_request' && github.event.pull_request.draft) &&
       (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
        (needs.linux.result == 'success' && needs.windows.result == 'success'))
     timeout-minutes: 60
