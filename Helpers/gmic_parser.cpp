@@ -1037,12 +1037,12 @@ static bool isAboutCategory(const string& cat)
 	return c == "<i>About</i>";
 }
 
-// Does the text at s[pos] start with blanks (spaces or tabs) and '#'? (G'MIC-Qt's
-// containsLeadingSpaceAndCrossSign)
-static bool startsWithComment(const string& s, size_t pos)
+// If the text at s[pos] starts with blanks (spaces or tabs) and '#', the position after the '#',
+// else npos (G'MIC-Qt's containsLeadingSpaceAndCrossSign)
+static size_t commentStart(const string& s, size_t pos)
 {
 	pos = s.find_first_not_of(" \t", pos);
-	return pos != string::npos && s[pos] == '#';
+	return (pos != string::npos && s[pos] == '#') ? pos + 1 : string::npos;
 }
 
 // getline() on content from pos, as G'MIC-Qt reads the filter definitions
@@ -1051,17 +1051,18 @@ static bool startsWithComment(const string& s, size_t pos)
 // G'MIC" in G'MIC 4.0.8's unminified gmic_stdlib.gmic go on over "# ..." lines). The '\' is dropped,
 // also before a line that is not a comment, which starts a line of its own. As in G'MIC-Qt, a line
 // ending with "\\\r" (CRLF) does not go on, and the last line keeps its '\' if it has no newline.
+// Only comment lines are joined here; G'MIC code lines ending with '\' are joined by getCodeLine().
 static bool getGuiLine(const string& content, size_t& pos, string& line)
 {
 	if (pos >= content.size()) return false;
 	size_t eol = content.find('\n', pos);
 	line.assign(content, pos, eol == string::npos ? string::npos : eol - pos);
 	pos = (eol == string::npos) ? content.size() : eol + 1;
-	if (!startsWithComment(line, 0)) return true;
-	while (eol != string::npos && !line.empty() && line[line.size() - 1] == '\\') {
-		line.erase(line.size() - 1);
-		if (!startsWithComment(content, pos)) break;
-		const size_t start = content.find('#', pos) + 1;
+	if (commentStart(line, 0) == string::npos) return true;
+	while (eol != string::npos && !line.empty() && line.back() == '\\') {
+		line.pop_back();
+		const size_t start = commentStart(content, pos);
+		if (start == string::npos) break;
 		eol = content.find('\n', start);
 		line.append(content, start, eol == string::npos ? string::npos : eol - start);
 		pos = (eol == string::npos) ? content.size() : eol + 1;
