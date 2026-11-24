@@ -45,6 +45,7 @@ Changes in openfx-gmic since Natron 2.5.0 (tag `Natron-2.5.0`). Natron 2.6 polic
 
 ### New
 - Renders can be aborted while G'MIC runs (#46, #56).
+- Renders running at once no longer each start one thread per CPU (#188): each render uses the number of threads that the host gives (Natron: those its other renders leave free), unless `OMP_NUM_THREADS` sets a fixed number. Results with random numbers depend on the number of threads, which varies with Natron's load: set `OMP_NUM_THREADS` to keep them fixed.
 - Layer Times (#63, #70): filters with layer inputs get a "Layer Times" group:
   - "Layer -1 Time Offset" to "Layer -4 Time Offset" (frames, default 0) fetch each layer input at the render time plus its offset;
   - "Layers from Source" (0 to 4) takes Layer -1 to Layer -N from Source instead of their own inputs, so a single clip gives a window of frames. Raising it sets the Layer -k offsets still at 0 to -k.

@@ -289,6 +289,11 @@ Environment
   A decimal number >= 0 ("512", "0.5", "2e3"; '.' as decimal point whatever the locale,
   surrounding whitespace allowed): a sign, inf, nan, hexadecimal, other text or an overflow give
   the default, with a note on stderr.
+- OMP_NUM_THREADS=<n>: a fixed number of threads for each render. Unset (the default), each render
+  uses the number of threads that the host's multithread suite gives (Natron: the threads that its
+  other renders leave free, so it varies with its load), or all the CPUs if the host has no such
+  suite. Filters with random numbers (Global Random Seed) give results that depend on the number of
+  threads: set OMP_NUM_THREADS for results that don't change with the host's load.
 - OFX_GMIC_WRITE_PLUGIN_LIST=<file>: the plug-in writes its list of the plug-ins (see "Choosing
   the plug-ins") to <file> when the host first loads it, from the filters it loaded (e.g. a
   gmic_ofx.gmic), those that the user's list disables commented out. Every process that loads

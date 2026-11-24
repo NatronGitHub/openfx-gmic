@@ -1027,7 +1027,8 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 	globalDataP->param[p] = Parameter("Global Random Seed", "", PT_INT, 0, 1<<24, 0, 0, 0, 0, "");
 	globalDataP->param[p].hint = "Seed of the random numbers used by the filter. For most filters, results are reproducible "
 		"for a given seed and number of OpenMP threads; filters using patch matching or G'MIC's parallel command, "
-		"and concurrent renders, can still vary.";
+		"and concurrent renders, can still vary. The number of threads comes from the host, and Natron's varies "
+		"with its load: set the OMP_NUM_THREADS environment variable for a fixed one.";
 	++p;
 	globalDataP->param[p] = Parameter(kAnimateSeedParam, "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
 	globalDataP->param[p].hint = "Add the frame number to the Global Random Seed, so that the random numbers change "
@@ -1292,6 +1293,34 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 //	cmd = "_input_mode=1 _output_mode=0 _verbosity_mode=0 _preview_mode=0 _preview_size=0 " + cmd;
 
 	return cmd;
+}
+
+// G'MIC's thread count for one render (issue #188), from the host's multithread suite
+// (multiThreadNumCPUs: e.g. Natron's count of the threads that its other renders leave free), so
+// that renders running at once don't each start one OpenMP thread per CPU. It is given to G'MIC
+// by setting its variable _cpus at the start of the command: G'MIC (gmic::set_variable()) then
+// calls omp_set_num_threads() in the interpreter's thread, the worker thread of
+// gmicCallAbortable() (a new thread for each run: only this render is affected), and the stdlib
+// commands that split their work ($_cpus) use it too. The threads of G'MIC's 'parallel' command
+// keep OpenMP's default.
+// Empty, so that G'MIC uses all the CPUs as before:
+// - if OMP_NUM_THREADS is set: it stays a fixed thread budget for each render (G'MIC ignores
+//   _cpus for OpenMP then);
+// - if the host has no multithread suite, or the call fails: Support's getNumCPUs() returns 1
+//   then, which can't be told apart from a host's 1, so the suite is called directly.
+// Results with random numbers depend on the thread count (see the Global Random Seed hint), and
+// the host's count may change from one render to the next: it is not part of the Output Layer
+// "Frame" cache key.
+static string gmicThreadsPrefix()
+{
+	static const bool ompEnv = std::getenv("OMP_NUM_THREADS") != NULL; // read once
+	if (ompEnv) return string();
+	const OfxMultiThreadSuiteV1* const suite = static_cast<const OfxMultiThreadSuiteV1*>(OFX::fetchSuite(kOfxMultiThreadSuite, 1, true));
+	unsigned int n = 0;
+	if (!suite || !suite->multiThreadNumCPUs || suite->multiThreadNumCPUs(&n) != kOfxStatOK || n == 0) {
+		return string();
+	}
+	return "_cpus=" + std::to_string(n) + " ";
 }
 
 // Render abort (issue #46): G'MIC polls a flag (p_is_abort), in its interpreter and in CImg's
@@ -1865,7 +1894,9 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	const string frameSelect = frameMode ? " -_openfx_gmic_frame_select " + std::to_string(frame) + "," +
 		intToString(kMaxFrameResults) + "," + std::to_string((unsigned long long)frameCacheBudget()) : string();
 	if (runGmic) {
-		cmd += frameSelect;
+		// the thread count is added after the cache key was made (see gmicThreadsPrefix)
+		const string threads = gmicThreadsPrefix();
+		cmd = threads + cmd + frameSelect;
 		result = gmicCallAbortable(effect, cmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(), &aborted);
 		errmsg = string(instanceDataP->options().error_message_buffer);
 		// The retry needs unchanged inputs: gmic_plugin_call() works on copies (no_inplace_processing)
@@ -1874,7 +1905,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 			fprintf(stderr, "G'MIC: %s: the main command failed (%s), rendering with the preview command\n",
 					effectData.name.c_str(), errmsg.c_str());
 			preview = true;
-			cmd = fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, preview, customCommands) + frameSelect;
+			cmd = threads + fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, preview, customCommands) + frameSelect;
 			result = gmicCallAbortable(effect, cmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(), &aborted);
 			if (result != 0 && !aborted) {
 				errmsg += " (with the preview command: " + string(instanceDataP->options().error_message_buffer) + ")";
