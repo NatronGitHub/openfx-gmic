@@ -380,22 +380,73 @@ namespace {
 // Resources and in the user's G'MIC configuration directory (get_gmic_rc_path)
 constexpr const char* kPluginListFile = "gmic_ofx_plugins.txt";
 
-// The plug-in identifiers that "list" (the contents of a gmic_ofx_plugins.txt) disables. Each line
+// "text" as UTF-8 if it is UTF-16 with a byte-order mark (FF FE: little-endian, FE FF: big-endian;
+// e.g. Windows PowerShell 5's "> file"), else unchanged. An unpaired surrogate becomes U+FFFD, an odd
+// last byte is dropped.
+string utf16ToUtf8(const string& text)
+{
+	const bool le = text.compare(0, 2, "\xFF\xFE") == 0;
+	if (!le && text.compare(0, 2, "\xFE\xFF") != 0) {
+		return text;
+	}
+	const auto unit = [&text, le](size_t i) {
+		const unsigned lo = static_cast<unsigned char>(text[i + (le ? 0 : 1)]);
+		const unsigned hi = static_cast<unsigned char>(text[i + (le ? 1 : 0)]);
+		return hi << 8 | lo;
+	};
+	string utf8;
+	const auto put = [&utf8](unsigned byte) { utf8 += static_cast<char>(byte); };
+	utf8.reserve(text.size() / 2);
+	for (size_t i = 2; i + 1 < text.size(); i += 2) {
+		unsigned c = unit(i);
+		if (c >= 0xD800 && c < 0xDC00 && i + 3 < text.size() && unit(i + 2) >= 0xDC00 && unit(i + 2) < 0xE000) {
+			c = 0x10000 + ((c - 0xD800) << 10) + (unit(i + 2) - 0xDC00);
+			i += 2;
+		} else if (c >= 0xD800 && c < 0xE000) {
+			c = 0xFFFD;
+		}
+		if (c < 0x80) {
+			put(c);
+		} else if (c < 0x800) {
+			put(0xC0 | c >> 6);
+			put(0x80 | (c & 0x3F));
+		} else if (c < 0x10000) {
+			put(0xE0 | c >> 12);
+			put(0x80 | (c >> 6 & 0x3F));
+			put(0x80 | (c & 0x3F));
+		} else {
+			put(0xF0 | c >> 18);
+			put(0x80 | (c >> 12 & 0x3F));
+			put(0x80 | (c >> 6 & 0x3F));
+			put(0x80 | (c & 0x3F));
+		}
+	}
+	return utf8;
+}
+
+// The plug-in identifiers that "list" (the contents of a gmic_ofx_plugins.txt: UTF-8, ASCII, or
+// UTF-16 with a byte-order mark; LF, CRLF or CR line endings) disables. Each line
 // is a plug-in identifier, enabled, or disabled if commented out with one or more '#' (and spaces),
 // either one optionally followed by a '#' comment; any other line is a comment. If an identifier is
-// on several lines, the last one wins. (The identifiers aren't checked: one that is no plug-in, e.g. of a filter
-// that G'MIC removed, changes nothing.)
+// on several lines, the last one wins. (The identifiers aren't checked here: one that is no plug-in,
+// e.g. of a filter that G'MIC removed, changes nothing; see pluginListSummary.)
 std::set<string> disabledPlugins(const string& list)
 {
-	constexpr const char* kSpaces = " \t\r";
+	constexpr const char* kSpaces = " \t";
 	std::set<string> disabled;
-	std::istringstream in(list.compare(0, 3, "\xEF\xBB\xBF") == 0 ? list.substr(3) : list); // (UTF-8 BOM)
-	string line;
-	while (std::getline(in, line)) {
+	string text = utf16ToUtf8(list);
+	if (text.compare(0, 3, "\xEF\xBB\xBF") == 0) { // (UTF-8 BOM)
+		text.erase(0, 3);
+	}
+	// (a CRLF gives an empty line between its CR and LF, which is skipped as any empty line)
+	for (size_t start = 0; start < text.size();) {
+		const size_t end = std::min(text.find_first_of("\r\n", start), text.size());
+		const string line = text.substr(start, end - start);
+		start = end + 1;
 		size_t b = line.find_first_not_of(kSpaces);
 		const bool commented = b != string::npos && line[b] == '#';
 		if (commented) {
-			b = line.find_first_not_of(" \t\r#", b); // ("##eu.gmic.X", "# # eu.gmic.X")
+			b = line.find_first_not_of(" \t#", b); // ("##eu.gmic.X", "# # eu.gmic.X")
 		}
 		if (b == string::npos) {
 			continue;
@@ -412,6 +463,28 @@ std::set<string> disabledPlugins(const string& list)
 		}
 	}
 	return disabled;
+}
+
+// The line that reports a user's list at "path" that disables "disabled": how many of the plug-ins
+// "pluginIds" it disables, and the first 10, in sorted order, of its disabled identifiers that are
+// none of them (a typo, or a filter that G'MIC removed or renamed).
+string pluginListSummary(const string& path, const std::set<string>& disabled, const std::set<string>& pluginIds)
+{
+	constexpr size_t kMaxUnknown = 10;
+	size_t nDisabled = 0;
+	size_t nUnknown = 0;
+	string unknown;
+	for (const string& id : disabled) {
+		if (pluginIds.count(id)) {
+			++nDisabled;
+		} else if (++nUnknown <= kMaxUnknown) {
+			unknown += (nUnknown == 1 ? "; unknown identifiers: " : ", ") + id;
+		}
+	}
+	if (nUnknown > kMaxUnknown) {
+		unknown += ", ... (" + std::to_string(nUnknown) + " in all)";
+	}
+	return "openfx-gmic: " + path + ": " + std::to_string(nDisabled) + (nDisabled == 1 ? " plug-in" : " plug-ins") + " disabled" + unknown;
 }
 
 // Write the list of the plug-ins pluginData to "path": grouped by menu (in their order within
@@ -520,7 +593,15 @@ PluginGlobalData loadPluginGlobalData()
 		// them from the menus). The bundle's list enables every plug-in: it isn't read.
 		// OFX_GMIC_WRITE_PLUGIN_LIST=<file>: write the list there (the build writes the bundle's).
 		const string rcPath = get_gmic_rc_path();
-		const std::set<string> disabled = rcPath.empty() ? std::set<string>() : disabledPlugins(loadStringFromFile(rcPath + kPluginListFile));
+		const string userList = rcPath.empty() ? string() : loadStringFromFile(rcPath + kPluginListFile);
+		const std::set<string> disabled = disabledPlugins(userList);
+		if (!userList.empty()) { // (for terminal and log users: Natron's GUI doesn't show stderr)
+			std::set<string> pluginIds;
+			for (const EffectData& d : pluginData) {
+				pluginIds.insert(d.uniqueId);
+			}
+			fprintf(stderr, "%s\n", pluginListSummary(rcPath + kPluginListFile, disabled, pluginIds).c_str());
+		}
 		const char* const listPath = std::getenv("OFX_GMIC_WRITE_PLUGIN_LIST");
 		if (listPath && *listPath && !writePluginList(listPath, pluginData, disabled)) {
 			fprintf(stderr, "openfx-gmic: Error: could not write the plug-in list %s\n", listPath);

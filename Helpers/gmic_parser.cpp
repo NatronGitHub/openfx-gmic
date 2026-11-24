@@ -263,6 +263,16 @@ void processParam(const string& s, EffectParameter& cp)
 	strReplace(cp.paramType, "_", ""); // "_type": no preview refresh
 	strReplace(cp.paramType, "~", ""); // "~type" (G'MIC >= 3): not randomized
 	cp.paramType = strLowercase(cp.paramType);
+	// a value whose delimiter is never closed ("float(0,1"), which G'MIC-Qt rejects
+	// (AbstractParameter::parseText, "cannot find closing"): gmic_parse_single() ended it with the
+	// filter's #@gui lines, and it is read as if it were closed there (its last character is not
+	// dropped as a delimiter), with a warning
+	const char closing = (r[p1] == '(') ? ')' : (r[p1] == '[') ? ']' : '}';
+	if (r[r.size() - 1] != closing) {
+		fprintf(stderr, "openfx-gmic: Warning: %s parameter \"%s\" has no closing '%c': it ends with the filter\n",
+			cp.paramType.c_str(), cp.name.c_str(), closing);
+		r += closing;
+	}
 	string pval = strTrim(r.substr(p1 + 1));
 	pval = pval.substr(0, pval.size() - 1);
 
@@ -529,6 +539,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 		int sPos2 = (int)line.find("#");
 		if (sPos >= 0 && sPos2 == 0) {
 			if (line.substr(0, dst_prefix.size() + 3) != dst_prefix + " : ") {
+				inMulti = false; // a value left open ends with its filter's #@gui lines (see processParam)
 				processCommand(line, cd);
 			} else {
 				strReplace(line, dst_prefix + " : ", "");
@@ -602,6 +613,9 @@ string gmic_parse_single(const string& content, EffectData& cd)
 				}
 			}
 		} else if (sPos2 == 0) {
+			// a category line, or the line that separates the pages of "About G'MIC" (see
+			// gmic_parse_multi): it ends a value left open, as a filter line does
+			inMulti = false;
 			sPos = (int)n.find(" ");
 			if (sPos >= 0) {
 				n = n.substr(sPos);
@@ -614,8 +628,25 @@ string gmic_parse_single(const string& content, EffectData& cd)
 			}
 		}
 	}
+	set<string> realNames;
 	for (int i = 0; i < (int)cd.param.size(); i++) {
 		processParam(cd.param[i].name, cd.param[i]);
+		realNames.insert(cd.param[i].name);
+	}
+	// a parameter without a name ("=float(1,0,2)"): G'MIC-Qt shows it without a label, but a host
+	// parameter needs a name. Name it by its position, so that it keeps its argument, and never with
+	// the name of another parameter of the filter.
+	for (int i = 0; i < (int)cd.param.size(); i++) {
+		if (!cd.param[i].name.empty()) continue;
+		const string base = "Parameter " + intToString(i + 1);
+		string name = base;
+		for (int n = 2; realNames.count(name); n++) name = base + "_" + intToString(n);
+		cd.param[i].name = name;
+		realNames.insert(name);
+		fprintf(stderr, "openfx-gmic: Warning: %s parameter without a name: named \"%s\"\n",
+			cd.param[i].paramType.c_str(), name.c_str());
+	}
+	for (int i = 0; i < (int)cd.param.size(); i++) {
 		bool ok = false;
 		int cnt = 2;
 		string t = cd.param[i].name;
@@ -1037,17 +1068,50 @@ static bool isAboutCategory(const string& cat)
 	return c == "<i>About</i>";
 }
 
+// If the text at s[pos] starts with blanks (spaces or tabs) and '#', the position after the '#',
+// else npos (G'MIC-Qt's containsLeadingSpaceAndCrossSign)
+static size_t commentStart(const string& s, size_t pos)
+{
+	pos = s.find_first_not_of(" \t", pos);
+	return (pos != string::npos && s[pos] == '#') ? pos + 1 : string::npos;
+}
+
+// getline() on content from pos, as G'MIC-Qt reads the filter definitions
+// (FiltersModelReader::readBufferLine): a comment line ending with '\' goes on with the next line
+// if that one is a comment line too, from after its first '#' (e.g. the long notes of "About
+// G'MIC" in G'MIC 4.0.8's unminified gmic_stdlib.gmic go on over "# ..." lines). The '\' is dropped,
+// also before a line that is not a comment, which starts a line of its own. As in G'MIC-Qt, a line
+// ending with "\\\r" (CRLF) does not go on, and the last line keeps its '\' if it has no newline.
+// Only comment lines are joined here; G'MIC code lines ending with '\' are joined by getCodeLine().
+static bool getGuiLine(const string& content, size_t& pos, string& line)
+{
+	if (pos >= content.size()) return false;
+	size_t eol = content.find('\n', pos);
+	line.assign(content, pos, eol == string::npos ? string::npos : eol - pos);
+	pos = (eol == string::npos) ? content.size() : eol + 1;
+	if (commentStart(line, 0) == string::npos) return true;
+	while (eol != string::npos && !line.empty() && line.back() == '\\') {
+		line.pop_back();
+		const size_t start = commentStart(content, pos);
+		if (start == string::npos) break;
+		eol = content.find('\n', start);
+		line.append(content, start, eol == string::npos ? string::npos : eol - start);
+		pos = (eol == string::npos) ? content.size() : eol + 1;
+	}
+	return true;
+}
+
 void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<string>* lines, bool checkCurated)
 {
 	const string src_prefix_old = src_prefix_old_c;
 	const string src_prefix = src_prefix_c;
 	const string dst_prefix = dst_prefix_c;
-	stringstream ss(content);
+	size_t pos = 0;
 	string line, cat, command;
 	vector<string> commands;
 	EffectData cd;
 	//printf("content:\n%s\n", content.c_str());
-	while (getline(ss, line)) {
+	while (getGuiLine(content, pos, line)) {
 		//printf("%s\n%s\n", cat.c_str(), line.c_str());
 		if ( (line.substr(0, src_prefix.size() + 1) == src_prefix + " ") ||
 			 (line.substr(0, src_prefix.size() + 4) == src_prefix + "_en ") ||
@@ -1075,8 +1139,9 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 					}
 				} else if (col != spc + 1) {
 					if (isAboutCategory(cat)) {
-						// add new title
-						command += "\n#@gui : note = note{" + line.substr(spc+1, col - spc - 1) + '}';
+						// add new title, after a "#@gui" line that ends the previous page (as a filter
+						// line does in G'MIC-Qt), so that a value left open there doesn't take it in
+						command += "\n#@gui\n#@gui : note = note{" + line.substr(spc+1, col - spc - 1) + '}';
 					} else {
 						// new command/Plugin
 						if (!command.empty()) {

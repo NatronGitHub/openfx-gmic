@@ -127,13 +127,21 @@ if [ -f "$SHIPPED_LIST" ] && [ "${DESCRIBE_USER_LIST:-}" = 1 ]; then
     mkdir -p "$WORK/home2/gmic" # (Windows: %APPDATA%/gmic)
     cp "$WORK/home2/.config/gmic/gmic_ofx_plugins.txt" "$WORK/home2/gmic/"
     expected=$(($(wc -l < listed.txt) - 2))
+    # (no "tr ... | grep -q" below: with pipefail, tr fails with SIGPIPE when grep -q stops at a
+    # match, which would hide that match)
     HOME="$WORK/home2" APPDATA="$(native_path "$WORK/home2")" OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
         ./describe_plugins "$expected" > describe2.out 2> describe2.log || true
     tr -d '\r' < describe2.out > describe2.txt
     cat describe2.txt
     if ! grep -qx "plugins=$expected described=$expected failed=0" describe2.txt ||
-        tr -d '\r' < describe2.log | grep -qxF -e "PLUGIN $first" -e "PLUGIN $last"; then
+        tr -d '\r' < describe2.log | grep -xF -e "PLUGIN $first" -e "PLUGIN $last" > /dev/null; then
         echo "FAIL: a user's list that disables $first and $last: expected the $expected other plug-ins"
+        status=1
+    fi
+    # (one stderr line: the disabled plug-ins and the disabled identifiers that are no plug-in)
+    if ! tr -d '\r' < describe2.log | grep -x "openfx-gmic: .*gmic_ofx_plugins.txt: 2 plug-ins disabled; unknown identifiers: eu.gmic.NoSuchPlugin" > /dev/null; then
+        tr -d '\r' < describe2.log | grep '^openfx-gmic: ' || true
+        echo "FAIL: a user's list that disables $first and $last: expected the line that reports it on stderr"
         status=1
     fi
 fi
