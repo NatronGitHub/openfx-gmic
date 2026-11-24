@@ -991,6 +991,9 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		globalDataP->param[p] = Parameter("Layer Times", "", ParamType::TopicEnd);
 		++p;
 	}
+	// Not read: a filter with no command passes Source through (pluginPassesSourceThrough). Hidden
+	// on every plug-in; kept, so that the parameters that the PARAM_* macros count from the end of
+	// the table keep their place.
 	globalDataP->param[p] = Parameter("Command", "", ParamType::Text, 0, 0, 0, 0, 0, 0, "-blur 2");
 	globalDataP->param[p].displayStatus = DisplayStatus::Hidden;
 	++p;
@@ -1068,10 +1071,9 @@ gmicCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, bo
     const EffectData& effectData = effectDataOf(globalDataP);
     string cmd = preview ? effectData.preview_command : effectData.command;
 
-    if (cmd == "") {
-        cmd = sequenceDataP->textValue[PARAM_COMMAND];
-        strReplace(cmd, "\r", " ");
-        strReplace(cmd, "\n", " ");
+    if (cmd.empty()) {
+        // a filter with no command: G'MIC doesn't run (pluginProcess passes Source through)
+        return cmd;
     } else {
         cmd = "-" + strTrim(cmd, " \t\r\n") + " ";
         // the filter parameters only: they come first, the layers and their times follow
@@ -1945,6 +1947,11 @@ static long long frameNumberOf(const SequenceData* sequenceDataP)
 	return (long long)std::floor(sequenceDataP->time - sequenceDataP->frameRangeStart + 0.5);
 }
 
+bool pluginPassesSourceThrough(const GlobalData& globalData)
+{
+	return effectDataOf(&globalData).command.empty();
+}
+
 bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, GmicInstanceData& instanceData, OFX::ImageEffect& effect)
 {
 	// (the names used by the PAR_* and PARAM_* macros)
@@ -1990,6 +1997,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	// G'MIC-Qt runs the preview command first, and some main commands need its state: render
 	// these with the preview command when their main command fails (EffectData::previewFallback)
 	const EffectData& effectData = effectDataOf(globalDataP);
+	// no command: Source passes through, without running G'MIC (see pluginPassesSourceThrough)
 	const bool hasContent = !effectData.command.empty();
 	bool preview = hasContent && (effectData.previewOnly || sequenceDataP->floatValue[PARAM_PREVIEW][0] > 0);
 	// the custom commands, set in the options by fullCommand(): must stay valid until the G'MIC calls return
@@ -2000,7 +2008,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		explicit ResetCustomCommands(gmic_interface_options& o) : options(o) {}
 		~ResetCustomCommands() { options.custom_commands = NULL; }
 	} resetCustomCommands(instanceDataP->options());
-	string cmd = fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, preview, customCommands);
+	string cmd = hasContent ? fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, preview, customCommands) : string();
 	bool aborted = false;
 	int result = 0;
 	string errmsg;
@@ -2016,14 +2024,14 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		explicit RunClaim(const string& k) : key(k), claimed(false) {}
 		~RunClaim() { if (claimed) frameCacheRunDone(key); }
 	} claim(cacheKey);
-	const bool useCache = frameMode && frameCacheBudget() > 0; // OFX_GMIC_FRAME_CACHE_MB=0: no cache
+	const bool useCache = hasContent && frameMode && frameCacheBudget() > 0; // OFX_GMIC_FRAME_CACHE_MB=0: no cache
 	if (useCache) {
 		cacheKey = frameCacheKey(globalDataP, cmd, sequenceDataP, nofImages);
 		cachedFrame = frameCacheFind(instanceDataP, cacheKey, frame, effect, &claim.claimed, &aborted);
 	} else {
 		frameCacheRelease(instanceDataP);
 	}
-	const bool runGmic = !cachedFrame && !aborted;
+	const bool runGmic = hasContent && !cachedFrame && !aborted;
 	// Frame: at most the results that can be kept (see kFrameSelectCommand), after the key
 	const string frameSelect = frameMode ? " -_openfx_gmic_frame_select " + std::to_string(frame) + "," +
 		std::to_string(kMaxFrameResults) + "," + std::to_string((unsigned long long)frameCacheBudget()) : string();
@@ -2069,6 +2077,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		if (!res && nofImages > 0) {
 			int idx = (int)sequenceDataP->floatValue[PARAM_OUTPUT][0] - 1;
 			if (frameMode) idx = selected ? 0 : (int)(((frame % (long long)nofImages) + nofImages) % nofImages);
+			if (!hasContent) idx = 0; // Source
 			if (idx < 0) idx = 0;
 			if ((unsigned)idx >= nofImages) idx = (int)nofImages - 1;
 			res = &images[idx];

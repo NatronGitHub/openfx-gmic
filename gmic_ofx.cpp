@@ -792,13 +792,19 @@ void GMICEffect::getClipPreferences(OFX::ClipPreferencesSetter& clipPreferences)
 }
 
 // are the settings of the effect performing an identity operation
-bool GMICEffect::isIdentity(const OFX::IsIdentityArguments& args, OFX::Clip*& /*identityClip*/, double& /*identityTime*/
+bool GMICEffect::isIdentity(const OFX::IsIdentityArguments& args, OFX::Clip*& identityClip, double& identityTime
 #ifdef OFX_EXTENSIONS_NUKE
 	, int& /*view*/, std::string& /*plane*/
 #endif
 	)
 {
 	refuseRenderScale(args.renderScale);
+	// a filter with no command (most About pages): Source, as G'MIC-Qt leaves the image unchanged
+	if (pluginPassesSourceThrough(_gd)) {
+		identityClip = _inputs[0];
+		identityTime = args.time;
+		return true;
+	}
 	return false;
 }
 
