@@ -53,7 +53,7 @@
 #include "gmic_plugin.h"
 #include "gmic_log.h"
 #include "RFX_Parameter.h"
-#include "RFX_StringUtils.h"
+#include "gmic_string.h"
 
 using reduxfx::GlobalData;
 using reduxfx::Parameter;
@@ -248,7 +248,7 @@ double roundToSignificantDigits(double value)
 	text.imbue(std::locale::classic());
 	text.precision(6);
 	text << value;
-	return reduxfx::stringToDouble(text.str());
+	return gmic_ofx::stringToDouble(text.str());
 }
 
 FloatSliderSteps floatSliderSteps(float minValue, float maxValue)
@@ -431,7 +431,7 @@ std::optional<double> pointValueParse(const std::string& s)
 {
 	if (s.empty() || s.find_first_not_of("0123456789+-.eE") != std::string::npos) return std::nullopt;
 	errno = 0;
-	const double v = reduxfx::stringToDouble(s);
+	const double v = gmic_ofx::stringToDouble(s);
 	if (errno == ERANGE && std::fabs(v) > 1.) return std::nullopt;
 	return v;
 }
@@ -1339,8 +1339,8 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			// file()/folder() defaults are taken as they are: decoding "\n" again would turn the
 			// "\\n" of text("C:\\new") into a newline. Only labels (notes) need it.
 			if (param.flags == 4) {
-				strReplace(txt, "\\r", "\r");
-				strReplace(txt, "\\n", "\n");
+				gmic_ofx::strReplace(txt, "\\r", "\r");
+				gmic_ofx::strReplace(txt, "\\n", "\n");
 			}
 			// force the param to be multiline if there are newlines in the default value
 			int textType = param.flags;
@@ -1348,7 +1348,7 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 				textType = 1;
 			}
 			if (textType == 4) {
-				txt = strTrim(strRemoveXmlTags(txt, true), " \t\r\n'\"");
+				txt = gmic_ofx::strTrim(gmic_ofx::strRemoveXmlTags(txt, true), " \t\r\n'\"");
 			}
 			OFX::StringParamDescriptor* p = desc.defineStringParam(name);
 			if (textType >= 0 && textType <= 4) {
@@ -1408,8 +1408,7 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			paramDesc = p;
 		} break;
 		case PT_SELECT: {
-			std::vector<std::string> choices;
-			strSplit(param.text, '|', choices);
+			const std::vector<std::string> choices = gmic_ofx::strSplit(param.text, '|');
 			OFX::ChoiceParamDescriptor* p = desc.defineChoiceParam(name);
 			const int nofOptions = std::min((int)param.maxValue + 1, (int)choices.size());
 			for (int k = 0; k < nofOptions; k++) {
