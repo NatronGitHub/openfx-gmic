@@ -165,6 +165,21 @@ def fft_plugins(stdlib_header):
     return ids
 
 
+def _progress_problem(report):
+    """The problem with the host's progress in a hostDemo report (None if there is none).
+
+    Each progress (G'MIC's progress index) must be ended exactly once, and the last value given to
+    the host must be in [0, 1].
+    """
+    for pr in report.get('progress', []):
+        last = pr.get('lastValue')
+        if pr.get('ends') != 1:
+            return 'progress ended %s times instead of once' % pr.get('ends')
+        if last is not None and not 0 <= last <= 1:
+            return 'last progress value %s outside [0, 1]' % last
+    return None
+
+
 def render(host, host_args, plugins, work, timeout, plugin):
     pid, context, clips = plugin
     d = os.path.join(work, pid[len('eu.gmic.'):])
@@ -207,14 +222,9 @@ def render(host, host_args, plugins, work, timeout, plugin):
                         if not os.path.exists(os.path.join(d, f)):
                             problem = 'missing output file ' + f
                     nan += sum(o.get('nan') or 0) if isinstance(o.get('nan'), list) else (o.get('nan') or 0)
-            # the host's progress (G'MIC's progress index): ended exactly once, values in [0, 1]
-            for pr in report.get('progress', []):
-                updates += pr.get('updates') or 0
-                last = pr.get('lastValue')
-                if pr.get('ends') != 1:
-                    problem = 'progress ended %s times instead of once' % pr.get('ends')
-                elif last is not None and not 0 <= last <= 1:
-                    problem = 'progress value %s outside [0, 1]' % last
+            updates = sum(pr.get('updates') or 0 for pr in report.get('progress', []))
+            if problem is None:
+                problem = _progress_problem(report)
         except (OSError, ValueError) as e:
             problem = 'no report: %s' % e
     errors = [l for l in log.splitlines() if ERROR_LINE.search(l)][:3]

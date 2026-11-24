@@ -1346,7 +1346,8 @@ static DWORD WINAPI gmicCallThread(LPVOID arg)
 // filters never set it. The render thread passes it to the host's progress suite from its abort
 // poll (see gmicCallAbortable): the host's progress calls, like abort(), come from the render
 // thread. The host's progress starts at the first known value, so that filters without progress
-// show none, and ends when G'MIC returns, also on an exception.
+// show none, and ends when G'MIC returns, also on an exception. The progress is cosmetic: if a
+// progress call throws, the render goes on without progress.
 // The result of progressUpdate() (false: the user cancelled) is ignored, only abort() stops a
 // render: Natron's progress panel returns false to a progressUpdate() from a render thread until
 // its main thread has created the task that progressStart() asked for, which would abort the
@@ -1355,25 +1356,35 @@ class HostProgress
 {
 public:
 	HostProgress(OFX::ImageEffect& effect, const string& message) : _effect(effect), _message(message) {}
-	~HostProgress()
+	~HostProgress() noexcept
 	{
-		if (_started) _effect.progressEnd();
+		if (!_started) return;
+		try {
+			_effect.progressEnd();
+		} catch (...) {
+		}
 	}
 	HostProgress(const HostProgress&) = delete;
 	HostProgress& operator=(const HostProgress&) = delete;
+	HostProgress(HostProgress&&) = delete;
+	HostProgress& operator=(HostProgress&&) = delete;
 
 	// gmicProgress: G'MIC's progress index, from 0 to 100, or negative (unknown)
-	void update(float gmicProgress)
+	void update(float gmicProgress) noexcept
 	{
-		if (!(gmicProgress >= 0.f)) return; // unknown (-1), or NaN
+		if (_failed || !(gmicProgress >= 0.f)) return; // unknown (-1), or NaN
 		const double t = std::min(gmicProgress, 100.f) / 100.;
-		if (!_started) {
-			_effect.progressStart(_message);
-			_started = true;
-		}
-		if (t != _last) {
-			(void)_effect.progressUpdate(t);
-			_last = t;
+		try {
+			if (!_started) {
+				_effect.progressStart(_message);
+				_started = true;
+			}
+			if (t != _last) {
+				(void)_effect.progressUpdate(t);
+				_last = t;
+			}
+		} catch (...) {
+			_failed = true; // no more progress for this run (progressEnd() is still called if started)
 		}
 	}
 
@@ -1381,6 +1392,7 @@ private:
 	OFX::ImageEffect& _effect;
 	string _message;
 	bool _started = false;
+	bool _failed = false;
 	double _last = -1.; // the last value given to the host
 };
 
@@ -1401,10 +1413,12 @@ static int gmicCallAbortable(OFX::ImageEffect& effect, const string& progressMes
 	// not an interpreter's (e.g. an OpenMP worker evaluating the math abort()) gets a static flag
 	// shared by the whole process, which stays set (upstream behavior, not patched here).
 	bool isAbort = false;
-	// G'MIC's progress index: a plain float, written by G'MIC's threads (the 'progress' command)
-	// while the render thread reads it, the same upstream design as the abort flag (issue #136;
-	// gmic-qt's ProgressInfoWidget reads its FilterThread's float the same way). A stale value
-	// only delays the progress bar.
+	// G'MIC's progress index: a plain float, written by the main interpreter (its 'progress'
+	// command), on the worker thread, while the render thread reads it: the same upstream design
+	// as the abort flag (issue #136; gmic-qt's ProgressInfoWidget reads its FilterThread's float
+	// the same way). A stale value only delays the progress bar. The interpreters of 'parallel'
+	// are copies with their own private progress (gmic::gmic(const gmic&)): their progress is
+	// never seen.
 	float progress = -1.f;
 	HostProgress hostProgress(effect, progressMessage);
 	GmicCallData d;
@@ -1485,6 +1499,7 @@ static int gmicCallAbortable(OFX::ImageEffect& effect, const string& progressMes
 	if (*aborted) {
 		return -1;
 	}
+	hostProgress.update(progress); // G'MIC's final value (the worker is joined: no race)
 	if (d.exception) {
 		std::rethrow_exception(d.exception);
 	}
