@@ -66,7 +66,11 @@ struct EffectParameter {
 	// removable). "pointenabled": the checkbox the parser adds after a removable point (see
 	// gmic_parse_single), whose name is the point's with " Enabled".
 	int removable;
-	EffectParameter() : removable(0) {}
+	// a parameter of G'MIC's split preview (gui_split_preview: the choice of "Full", "Forward
+	// Horizontal"... and its point), which only the filter's preview command uses (see
+	// markSplitPreviewParams, issue #184)
+	bool splitPreview;
+	EffectParameter() : removable(0), splitPreview(false) {}
 };
 
 struct EffectData {
