@@ -348,8 +348,9 @@ Tests
 -----
 
 There are no unit tests. The CI scripts can be run locally:
-- .github/workflows/describe_plugins.sh <dir with GMIC.ofx.bundle> <minimum plug-in count>
-  builds a minimal OpenFX host and describes every plug-in.
+- .github/workflows/describe_plugins.sh <dir with GMIC.ofx.bundle> <plug-in count>
+  builds a minimal OpenFX host and describes every plug-in; the built-in standard library must
+  give exactly that number of plug-ins (GMIC_PLUGIN_COUNT in ci.yml).
 - .github/workflows/render_plugins.py renders the plug-ins with openfx's hostDemo (CMake with
   -DGMIC_BUILD_TESTS=ON); see the script's help.
 

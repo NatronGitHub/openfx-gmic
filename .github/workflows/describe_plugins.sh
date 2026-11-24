@@ -71,7 +71,10 @@ mkdir -p "$WORK/home"
 cd "$WORK"
 status=0
 if [ -n "${DESCRIBE_MSVC_EXPAT_LIB:-}" ]; then BUNDLE_DIR=$(cygpath -m "$BUNDLE_DIR"); fi
-HOME="$WORK/home" APPDATA="$(native_path "$WORK/home")" OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
+# without XDG_CONFIG_HOME, GMIC_PATH and OFX_GMIC_UPDATE_FILE (as update_case), so that only the
+# built-in stdlib gives the plug-ins, whose number must be exact
+env -u XDG_CONFIG_HOME -u GMIC_PATH -u OFX_GMIC_UPDATE_FILE HOME="$WORK/home" APPDATA="$(native_path "$WORK/home")" \
+    OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
     ./describe_plugins "$MIN_PLUGINS" 2> describe.log || status=$?
 # $DESCRIBE_LOG (an absolute path): keep a copy of the log (PLUGIN <id> lines, ...)
 if [ -n "${DESCRIBE_LOG:-}" ]; then cp describe.log "$DESCRIBE_LOG"; fi
