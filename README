@@ -110,6 +110,9 @@ Options:
   GPL builds only).
 - POCKETFFT_HEADER: a downloaded pocketfft_hdronly.h, for offline builds (copied, then checked
   against POCKETFFT_SHA256); without it, it is downloaded at POCKETFFTCOMMIT.
+- GMIC_PLUGIN_LIST: 1 (default) or 0: ship the list of the plug-ins (see "Choosing the
+  plug-ins"), which the build makes by loading the plug-in. 0 by default when the compiler
+  targets another processor than the build machine's (not checked on macOS).
 
 Building with CMake
 -------------------
@@ -144,6 +147,11 @@ Options (the Makefile's equivalent in parentheses):
   shipped, target the runner's macOS (15 on macos-15), as do the MacPorts libraries they bundle;
   Natron's release builds, built on macOS 14, target 14.0.
 - GMIC_BUILD_TESTS=ON: also build openfx's hostDemo, for the render test.
+- GMIC_PLUGIN_LIST: ON (default unless cross-compiling without CMAKE_CROSSCOMPILING_EMULATOR) or
+  OFF: ship the list of the plug-ins, which the build makes by loading the plug-in. Set it OFF
+  when the build machine can't load the plug-in but CMake doesn't see it as cross-compiling:
+  MSVC ARM64 or Arm64EC built on an x64 machine, or arm64 built on an Intel Mac. Without the
+  list, every plug-in is registered.
 - GMIC_VCOMP_DLL: MSVC with OpenMP: the vcomp140.dll copied into the bundle (default: the
   redistributable one of the compiler, see below).
 
@@ -204,6 +212,42 @@ The filters come from the first of these that is not empty:
 - ~/.config/gmic/gmic_stdlib.gmic (Windows: %APPDATA%/gmic/gmic_stdlib.gmic);
 - the standard library built into the plug-in.
 A user file replaces the whole filter list. Plug-in identifiers come from the filter names.
+After adding, removing or editing a user file, clear the host's plug-in cache (see "Choosing the
+plug-ins"): a cached list of plug-ins numbers them as the old filter list did.
+
+Choosing the plug-ins
+---------------------
+
+Contents/Resources/gmic_ofx_plugins.txt in the bundle lists every plug-in, one identifier per
+line (the identifier that hosts save in projects), grouped by menu. In a Natron install, the
+bundle is Plugins/OFX/Natron/GMIC.ofx.bundle (macOS: Natron.app/Contents/Plugins/OFX/Natron).
+To disable plug-ins, copy the list to ~/.config/gmic/gmic_ofx_plugins.txt (Windows:
+%APPDATA%/gmic/gmic_ofx_plugins.txt) and comment out their lines with '#':
+
+    # --- G'MIC/Degradations ---
+    # eu.gmic.AddGrain  # G'MIC/Degradations: G'MIC Add Grain
+    eu.gmic.BlurAngular  # G'MIC/Degradations: G'MIC Blur Angular
+
+Here Add Grain is disabled. A line that is only '#' (one or more) and an identifier disables
+that plug-in; after an identifier, '#' starts a comment; any other line is a comment. If an
+identifier is on several lines, the last one wins. Plug-ins that the file doesn't mention are
+enabled, so that the filters that a new version of G'MIC adds appear; an identifier that is no
+longer a plug-in (a filter renamed or removed) is ignored.
+
+The plug-in reads the file when the host loads it. After a change, restart the host, and clear
+its OpenFX plug-in cache: this is required. Natron: Cache > Clear Plug-ins Load Cache, or start
+it once with --clear-openfx-cache. A cache made with another list keeps the old menus and numbers
+the plug-ins differently: after the first disabled plug-in, a node may silently become another
+filter. Other hosts with plug-in caches (Nuke, DaVinci Resolve) need theirs cleared too.
+
+A disabled plug-in is not registered at all (OpenFX has no way to only hide a plug-in from the
+menus). Natron then reports that it can't load the plug-in of a project's node, and doesn't
+create that node: re-enable the plug-in (and clear the cache) before opening and saving such a
+project.
+
+The bundle's list is made from the standard library built into the plug-in: it doesn't follow a
+user's gmic_ofx.gmic (see "Filters"). For a list of the filters actually loaded, set
+OFX_GMIC_WRITE_PLUGIN_LIST (see "Environment").
 
 Environment
 -----------
@@ -213,6 +257,11 @@ Environment
   A decimal number >= 0 ("512", "0.5", "2e3"; '.' as decimal point whatever the locale,
   surrounding whitespace allowed): a sign, inf, nan, hexadecimal, other text or an overflow give
   the default, with a note on stderr.
+- OFX_GMIC_WRITE_PLUGIN_LIST=<file>: the plug-in writes its list of the plug-ins (see "Choosing
+  the plug-ins") to <file> when the host first loads it, from the filters it loaded (e.g. a
+  gmic_ofx.gmic), those that the user's list disables commented out. Every process that loads
+  the plug-in with it set writes the same file (e.g. a host's render processes): set it for one
+  run only. The build makes the bundle's list so.
 
 Tests
 -----
