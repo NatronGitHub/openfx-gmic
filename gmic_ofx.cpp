@@ -38,6 +38,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <exception>
 #include <locale>
 #include <memory>
 #include <optional>
@@ -1443,22 +1444,30 @@ constexpr std::array<OfxPluginEntryPoint*, kMaxNofPlugins> kMainEntries = makeMa
 
 // Lazy registration (lazyRegistration, below): the Support library calls this once, from the first
 // OfxGetNumberOfPlugins or OfxGetPlugin, and keeps the list. The filters are loaded then, not in a
-// static constructor at dlopen (see pluginGlobalData). If it throws, the Support library logs the
-// exception and the host gets no plug-ins.
+// static constructor at dlopen (see pluginGlobalData). If it throws, the host gets no plug-ins (the
+// Support library catches the exception, but only logs it in debug builds): say why on stderr.
 void registerGmicPlugins(OFX::PluginFactoryArray& ids)
 {
-	// no entry point beyond kMainEntries
-	const size_t nofFilters = static_cast<size_t>(std::max(0, getNofPlugins()));
-	const size_t n = std::min(nofFilters, kMaxNofPlugins);
-	if (nofFilters > n) {
-		fprintf(stderr, "openfx-gmic: Warning: %zu G'MIC filters, only the first %zu are plug-ins (kMaxNofPlugins in gmic_ofx.cpp)\n",
-			nofFilters, n);
-	}
-	factories().reserve(n);
-	ids.reserve(ids.size() + n);
-	for (size_t i = 0; i < n; i++) {
-		factories().push_back(std::make_unique<GMICPluginFactory>((int)i, kMainEntries[i]));
-		ids.push_back(factories().back().get());
+	try {
+		// no entry point beyond kMainEntries
+		const size_t nofFilters = static_cast<size_t>(std::max(0, getNofPlugins()));
+		const size_t n = std::min(nofFilters, kMaxNofPlugins);
+		if (nofFilters > n) {
+			std::fprintf(stderr, "openfx-gmic: Warning: %zu G'MIC filters, only the first %zu are plug-ins (kMaxNofPlugins in gmic_ofx.cpp)\n",
+				nofFilters, n);
+		}
+		factories().reserve(n);
+		ids.reserve(ids.size() + n);
+		for (size_t i = 0; i < n; i++) {
+			factories().push_back(std::make_unique<GMICPluginFactory>(static_cast<int>(i), kMainEntries[i]));
+			ids.push_back(factories().back().get());
+		}
+	} catch (const std::exception& e) {
+		std::fprintf(stderr, "openfx-gmic: plug-in registration failed: %s\n", e.what());
+		throw; // the Support library gives the host no plug-ins
+	} catch (...) {
+		std::fprintf(stderr, "openfx-gmic: plug-in registration failed: unknown exception\n");
+		throw;
 	}
 }
 
