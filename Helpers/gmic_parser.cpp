@@ -927,8 +927,10 @@ static bool setsVisibilityStatus(const vector<string>& items)
 	return false;
 }
 
-// getline() for G'MIC code: a code line that ends with '\\' goes on with the next line (the
-// unminified gmic_stdlib.gmic splits long "u" commands this way)
+// getline() for G'MIC code: a code line that ends with '\' goes on with the next line, without
+// its leading blanks (the unminified gmic_stdlib.gmic splits long "u" commands this way). Only code
+// lines are joined here; comment lines, which hold the #@gui definitions, are joined by
+// getGuiLine().
 static bool getCodeLine(istream& in, string& line)
 {
 	if (!getline(in, line)) return false;
