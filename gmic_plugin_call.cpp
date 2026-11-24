@@ -4,9 +4,11 @@
 // the plug-in's fixed array (issue #46).
 // This file also defines the other functions of gmic_libc.h that the plug-in uses, so that
 // gmic_libc.cpp (one more compilation of CImg.h) is not built.
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <string>
 #include "gmic.h"
 #include "gmic_plugin_call.h"
@@ -103,6 +105,38 @@ std::string gmicRcPath()
 	return path ? std::string(path) : std::string();
 }
 
+// the log file, or nullptr: stderr (written once, before the renders, read by any thread)
+static std::atomic<std::FILE*> logFile(nullptr);
+
+std::FILE* gmicLogStream()
+{
+	std::FILE* const file = logFile.load();
+	return file ? file : stderr;
+}
+
+void gmicOpenLog(const std::string& path)
+{
+	if (path.empty() || logFile.load()) return;
+	// opt-in: only a file that the user made (never created here)
+	std::FILE* const exists = std::fopen(path.c_str(), "r");
+	if (!exists) return;
+	std::fclose(exists);
+	std::FILE* const file = std::fopen(path.c_str(), "a");
+	if (!file) {
+		std::fprintf(stderr, "openfx-gmic: Error: could not open the log file %s: the messages stay on stderr\n", path.c_str());
+		return;
+	}
+	// unbuffered: the messages are in the file as soon as they are written, also before a crash
+	std::setvbuf(file, nullptr, _IONBF, 0);
+	char date[64] = "";
+	const std::time_t now = std::time(nullptr);
+	const std::tm* const local = std::localtime(&now); // (once, before the renders)
+	if (local) std::strftime(date, sizeof(date), "%Y-%m-%d %H:%M:%S", local);
+	std::fprintf(file, "\n[openfx-gmic] %s: G'MIC %d, log started\n", date, (int)gmic_version);
+	logFile.store(file);
+	cimg::output(file);
+}
+
 static void setError(gmic_interface_options* options, const std::string& message)
 {
 	if (options->error_message_buffer) {
@@ -148,7 +182,7 @@ int gmic_plugin_call(const char* cmd, unsigned int* nofImages, gmic_interface_im
 	try {
 		gmic(cmd, list, names, options->custom_commands, !options->ignore_stdlib, options->p_progress, options->p_is_abort);
 	} catch (gmic_exception& e) {
-		std::fprintf(stderr, "\n- Error encountered when calling G'MIC : '%s'\n", e.what());
+		std::fprintf(gmicLogStream(), "\n- Error encountered when calling G'MIC : '%s'\n", e.what());
 		setError(options, e.what());
 		return -1;
 	}

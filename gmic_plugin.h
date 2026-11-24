@@ -70,6 +70,10 @@ private:
 // effect.clearPersistentMessage()) if the host has them, else a modal message titled modalId.
 // (Defined in gmic_ofx.cpp.)
 void showRenderError(OFX::ImageEffect& effect, const std::string& msg, const std::string& modalId = std::string());
+// A warning on the node after a successful render: a persistent warning message (cleared, or
+// replaced, by the next render), if the host has them; nothing else, since a modal message would
+// interrupt every render. (Defined in gmic_ofx.cpp.)
+void showRenderWarning(OFX::ImageEffect& effect, const std::string& msg);
 
 // Run G'MIC on sequenceData's input images (float planar RGBA, values up to 255), into its
 // outWorld buffer, with the parameter values of sequenceData. Polls effect.abort() while G'MIC
