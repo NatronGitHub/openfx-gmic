@@ -789,15 +789,28 @@ static string layerTimesNote(const EffectData& effectData)
 		"clips to the layer inputs and set their time offsets.";
 }
 
+// Help note of the filters that run their preview command first (EffectData::previewFirst, see
+// pluginProcess). CI's describe test (describe_plugins.cpp, kPreviewFirstNote) finds these
+// filters from its first sentence: keep them the same (no character that validateXMLString()
+// escapes in it).
+static string previewFirstNote(const EffectData& effectData)
+{
+	if (!effectData.previewFirst) return string();
+	return "\n\nPreview first: this filter runs its preview command before its main command, on the same "
+		"input, as G'MIC-Qt's Apply follows a preview: the main command gets what the preview leaves "
+		"(G'MIC's _persistent variable, and parameter values set by its status). It takes about twice as "
+		"long to render. With Preview/Draft Mode on, only the preview command runs.";
+}
+
 // The plug-in's description: the filter's notes (with those of its note() parameters), the notes
-// on Ignore Alpha and Layer Times, and the plug-in's own.
+// on Ignore Alpha, Layer Times and the preview-first run, and the plug-in's own.
 static string pluginDescription(const EffectData& effectData)
 {
 	// OFX strings are UTF-8, as G'MIC's: no transliteration on the OFX path
 	string d = strRemoveXmlTags(effectData.notes, true);
 	strReplace(d, "<", "(");
 	strReplace(d, ">", ")");
-	return d + ignoreAlphaNote(effectData) + layerTimesNote(effectData) + "\n" + PLUGIN_DESCRIPTION;
+	return d + ignoreAlphaNote(effectData) + layerTimesNote(effectData) + previewFirstNote(effectData) + "\n" + PLUGIN_DESCRIPTION;
 }
 
 #if defined(cimg_use_fftw3) && !defined(cimg_use_fftw3_singlethread)
@@ -1186,6 +1199,7 @@ static string gmicArgument(const SequenceData* sequenceDataP, const GlobalData* 
 		}
 		return std::to_string((int)sequenceDataP->floatValue[i][0]);
 	case ParamType::Bool:
+		// BoolParameter::setValue(): true only for "1" ("true", "2"... are false)
 		if (value) return (*value == "1") ? "1" : "0";
 		return std::to_string((int)sequenceDataP->floatValue[i][0]);
 	case ParamType::Float:
@@ -1266,6 +1280,7 @@ gmicCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, bo
         }
         const bool fromStatus = status && !status->empty() && status->size() == args.size();
         if (status && !status->empty() && !fromStatus) {
+            // (render_plugins.py fails a render whose log has "the preview's status has": keep it)
             gmicLog("G'MIC: %s: the preview's status has %u values, for %u parameters: ignored\n",
                     effectData.name.c_str(), (unsigned int)status->size(), (unsigned int)args.size());
         }
@@ -1304,10 +1319,15 @@ static const char* const kFrameSelectCommand =
 	"  b=0 repeat $! { b={$b+w#$>*h#$>*d#$>*s#$>*4} }\n"
 	"  if $!>$2||$b>$3 k[{(($1%$!)+$!)%$!}] nm openfx_gmic_frame_selected fi\n";
 
-// What a G'MIC command line is for
-enum class RunPurpose
+// in the log line of a failed preview-first run (see pluginProcess), which
+// .github/workflows/render_plugins.py (PREVIEW_FIRST_FAILED) looks for: keep them the same
+static const char* const kPreviewFirstFailed = "run before the main command, failed";
+
+// The G'MIC run that a command line is for
+enum class GmicRun
 {
-	kRender, // the render: its results are the output
+	kMain, // a render with the main command
+	kPreview, // a render with the preview command (Preview/Draft Mode, or a "_none_" main command)
 	// the run of the preview command before the main command (see pluginProcess), for the
 	// _persistent and the status that it leaves: its results are discarded
 	kPreviewState,
@@ -1317,15 +1337,15 @@ enum class RunPurpose
 // defines, the output layer selection, Ignore Alpha, the Resize Mode, verbosity and seed. Sets the
 // custom commands of the options: customCommands (the filter file, the filter's #@gui lines, the
 // hot fixes for G'MIC bugs, the Ignore Alpha helpers and _openfx_gmic_opaque_resized), which
-// must outlive the G'MIC call. status: see gmicCommand. RunPurpose::kPreviewState (with
-// isPreview): the filter's command sees the same images and variables as for a render, but nothing
-// runs after it, so that the status is the filter's own, as in G'MIC-Qt, which runs nothing else
-// (the commands that merge, keep, restore the alpha of or resize the results could change it:
-// gui_merge_layers sets it).
+// must outlive the G'MIC call, and are the same for every GmicRun. status: see gmicCommand.
+// GmicRun::kPreviewState: the preview command sees the same images and variables as with
+// kPreview, but nothing runs after it, so that the status is the filter's own, as in G'MIC-Qt,
+// which runs nothing else (the commands that merge, keep, restore the alpha of or resize the
+// results could change it: gui_merge_layers sets it).
 static
 std::string
-fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, GmicInstanceData* instanceDataP, unsigned int nofImages, bool isPreview, string& customCommands,
-            const std::vector<std::string>* status = nullptr, RunPurpose purpose = RunPurpose::kRender)
+fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, GmicInstanceData* instanceDataP, unsigned int nofImages, GmicRun run, string& customCommands,
+            const std::vector<std::string>* status = nullptr)
 {
 	// the filter file, if the filters come from one (a user file or G'MIC's update file; after the
 	// built-in stdlib, which G'MIC loads first: its definitions replace the built-in ones, as in
@@ -1350,6 +1370,7 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 	customCommands += '\n';
 	customCommands += data.hotfixes;
 	customCommands += kOpaqueResizedCommand;
+	const bool isPreview = run != GmicRun::kMain;
 	string cmd = gmicCommand(sequenceDataP, globalDataP, isPreview, status);
 
 	// Ignore Alpha: the alpha channels of all the images are split off and stored, the command runs
@@ -1358,7 +1379,7 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 	// another size are opaque). The command stays at the top level, as with Ignore Alpha off and in
 	// G'MIC-Qt: inside a custom command, $1, $*, $#... in text parameters would be substituted, and
 	// apply_channels processed the images one by one, keeping a single result for each.
-	const bool render = purpose == RunPurpose::kRender;
+	const bool render = run != GmicRun::kPreviewState;
 	if (sequenceDataP->floatValue[PARAM_NOALPHA][0] > 0.f) {
 		customCommands += kIgnoreAlphaCommands;
 		cmd = "-_openfx_gmic_alpha_split " + cmd + (render ? " -_openfx_gmic_alpha_restore" : "");
@@ -1522,13 +1543,7 @@ static string gmicThreadsPrefix()
 // set G'MIC's flag, and G'MIC stops at its next check.
 struct GmicCallData
 {
-	const char* cmd;
-	unsigned int* nofImages;
-	gmic_interface_image* images;
-	unsigned int maxImages;
-	gmic_interface_options* options;
-	GmicRunState* state;
-	GmicResults results;
+	GmicCall call;
 	int result;
 	std::exception_ptr exception; // an exception from G'MIC, rethrown in the render thread
 	std::mutex mutex;
@@ -1540,7 +1555,7 @@ static void gmicCallRun(GmicCallData* d)
 {
 	int result = -1;
 	try {
-		result = gmic_plugin_call(d->cmd, d->nofImages, d->images, d->maxImages, d->options, d->state, d->results);
+		result = gmic_plugin_call(d->call);
 	} catch (...) {
 		d->exception = std::current_exception();
 	}
@@ -1616,7 +1631,7 @@ public:
 				_last = t;
 			}
 		} catch (...) {
-			_failed = true; // no more progress for this run (progressEnd() is still called if started)
+			_failed = true; // no more progress for this render (progressEnd() is still called if started)
 		}
 	}
 
@@ -1633,8 +1648,9 @@ private:
 // gmic_plugin_call(), aborted when the host aborts the render: then *aborted is set to true, and
 // the result must be discarded. G'MIC's progress goes to the host's progress bar, through
 // hostProgress (one for all the G'MIC runs of a render).
-static int gmicCallAbortable(OFX::ImageEffect& effect, HostProgress& hostProgress, const char* cmd, unsigned int* nofImages, gmic_interface_image* images, unsigned int maxImages, gmic_interface_options* options, GmicRunState* state, GmicResults results, bool* aborted)
+static int gmicCallAbortable(OFX::ImageEffect& effect, HostProgress& hostProgress, const GmicCall& call, bool* aborted)
 {
+	gmic_interface_options* const options = call.options;
 	*aborted = false;
 	if (effect.abort()) {
 		*aborted = true;
@@ -1655,13 +1671,7 @@ static int gmicCallAbortable(OFX::ImageEffect& effect, HostProgress& hostProgres
 	// never seen.
 	float progress = -1.f;
 	GmicCallData d;
-	d.cmd = cmd;
-	d.nofImages = nofImages;
-	d.images = images;
-	d.maxImages = maxImages;
-	d.options = options;
-	d.state = state;
-	d.results = results;
+	d.call = call;
 	d.result = -1;
 	d.done = false;
 	options->p_is_abort = &isAbort;
@@ -1689,7 +1699,7 @@ static int gmicCallAbortable(OFX::ImageEffect& effect, HostProgress& hostProgres
 		// no thread: run G'MIC here, without abort or progress
 		options->p_is_abort = NULL;
 		options->p_progress = NULL;
-		return gmic_plugin_call(cmd, nofImages, images, maxImages, options, state, results);
+		return gmic_plugin_call(call);
 	}
 
 	// the worker uses d, isAbort, progress and the images: always join it before returning
@@ -2154,7 +2164,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	// command gets (FilterThread.cpp, MainWindow.cpp in c-koi/gmic-qt): the filters whose main
 	// command may need them (EffectData::previewFirst) run their preview command first, on the
 	// same inputs and with the same variables as with Preview/Draft Mode, its results discarded
-	// (RunPurpose::kPreviewState: nothing runs after it); then the main command, with the
+	// (GmicRun::kPreviewState: nothing runs after it); then the main command, with the
 	// _persistent that the preview left, and the arguments that its status gives (gmicCommand).
 	// _persistent starts empty on every render, so that a render doesn't depend on the previous
 	// ones (G'MIC-Qt keeps it between its runs of a filter). If the preview command fails, the main
@@ -2168,11 +2178,12 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		explicit ResetCustomCommands(gmic_interface_options& o) : options(o) {}
 		~ResetCustomCommands() { options.custom_commands = NULL; }
 	} resetCustomCommands(instanceDataP->options());
-	string cmd = fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, preview, customCommands);
+	string cmd = fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, preview ? GmicRun::kPreview : GmicRun::kMain, customCommands);
 	bool aborted = false;
 	int result = 0;
 	string errmsg;
 	string warning; // shown on the node after a successful render (showRenderWarning)
+	string previewWarning; // the preview command run first failed (shown with warning)
 	// Output Layer "Frame": the results kept from a previous render, if the key is the same
 	const long long frame = frameNumberOf(sequenceDataP);
 	string cacheKey;
@@ -2203,31 +2214,57 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		const string threads = gmicThreadsPrefix();
 		// one progress for the render: the preview run takes the first half of it
 		HostProgress hostProgress(effect, effectData.name);
-		GmicRunState state; // (empty _persistent)
+		GmicRunState state; // what the preview run left (nothing if it failed)
+		string previewError; // the preview run's error, if it failed
 		bool previewDone = false;
 		if (previewFirst) {
-			const string previewCmd = threads + fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, true, customCommands, nullptr, RunPurpose::kPreviewState);
+			const string previewCmd = threads + fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, GmicRun::kPreviewState, customCommands);
 			hostProgress.setRange(0., 0.5);
-			// (the preview's results are discarded, and the inputs stay unchanged: images[] too)
-			result = gmicCallAbortable(effect, hostProgress, previewCmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(), &state, GmicResults::kDiscard, &aborted);
+			// (the preview's results are discarded, and the inputs stay unchanged: images[] too;
+			// _persistent starts empty: no persistentIn)
+			GmicCall call;
+			call.cmd = previewCmd.c_str();
+			call.nofImages = &nofImages;
+			call.images = images;
+			call.maxImages = maxImages;
+			call.options = &instanceDataP->options();
+			call.stateOut = &state;
+			call.results = GmicResults::kDiscard;
+			result = gmicCallAbortable(effect, hostProgress, call, &aborted);
 			previewDone = result == 0;
 			if (!previewDone && !aborted) {
-				gmicLog("G'MIC: %s: the preview command, run before the main command, failed (%s): the main command runs without its state\n",
-						effectData.name.c_str(), instanceDataP->options().error_message_buffer);
+				previewError = instanceDataP->options().error_message_buffer;
+				// (render_plugins.py fails a render whose log has kPreviewFirstFailed)
+				gmicLog("G'MIC: %s: the preview command, %s (%s): the main command runs without its state\n",
+						effectData.name.c_str(), kPreviewFirstFailed, previewError.c_str());
 			}
 			hostProgress.setRange(0.5, 0.5);
 		}
 		if (!aborted) {
 			// the main command, with the preview's status (the cache key is made without it: the
-			// status only depends on what the key holds; fullCommand() makes the same custom
-			// commands for both runs)
-			if (previewDone && !state.status.empty()) {
-				cmd = fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, false, customCommands, &state.status);
+			// status only depends on what the key holds)
+			if (previewFirst) {
+				cmd = fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, GmicRun::kMain, customCommands,
+				                  previewDone ? &state.status : nullptr);
 			}
 			cmd = threads + cmd + frameSelect;
-			result = gmicCallAbortable(effect, hostProgress, cmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(),
-			                           previewDone ? &state : nullptr, GmicResults::kKeep, &aborted);
+			GmicCall call;
+			call.cmd = cmd.c_str();
+			call.nofImages = &nofImages;
+			call.images = images;
+			call.maxImages = maxImages;
+			call.options = &instanceDataP->options();
+			call.persistentIn = previewDone ? &state.persistent : nullptr;
+			result = gmicCallAbortable(effect, hostProgress, call, &aborted);
 			errmsg = string(instanceDataP->options().error_message_buffer);
+			if (previewFirst && !previewDone && !aborted) {
+				if (result != 0) {
+					errmsg += " (the preview command, run first, failed too: " + previewError + ")";
+				} else {
+					previewWarning = "The preview command, which G'MIC-Qt runs before the main command, failed (" +
+						previewError + "): the main command ran without the state it may need from it.";
+				}
+			}
 		}
 	}
 
@@ -2315,6 +2352,9 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 			warning = frameCacheNotKept(cacheKey, frameCacheTooLargeWarning(effectData.name));
 		}
 		if (claim.claimed) { claim.claimed = false; frameCacheRunDone(cacheKey); } // the waiting renders go on
+	}
+	if (!previewWarning.empty()) {
+		warning = warning.empty() ? previewWarning : previewWarning + "\n" + warning;
 	}
 	if (result != 0 && !aborted) {
 		// persistent message on the node, instead of a modal message on every render

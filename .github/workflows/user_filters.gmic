@@ -1,6 +1,6 @@
 # Filters for user_filters_test.py: a user filter file (~/.config/gmic/gmic_ofx.gmic) whose
 # filters call commands that the file defines (#168), a built-in command, and a built-in command
-# that the file replaces, and one that needs the state of its preview command (#206); it also
+# that the file replaces, and two that need the state of their preview command (#206); it also
 # defines a command that the plug-in hot-fixes.
 #@gui User File Test
 #@gui User File Own Command : fx_userfile_own, fx_userfile_own
@@ -25,24 +25,41 @@ fx_userfile_override :
 fx_userfile_cpus :
   f {$_cpus}
 
-# needs the state that its preview command leaves (#206): the plug-in runs the preview command
+# need the state that their preview command leaves (#206): the plug-in runs the preview command
 # first, as G'MIC-Qt's Apply follows a preview, then the main command with the preview's
-# _persistent (0.75, red) and the value that the preview's status gives Value (0.5, green). The
-# main command reads _persistent in a command that it calls; the preview's own result (magenta)
-# is discarded.
+# _persistent and the values that the preview's status gives the parameters. The preview's own
+# result (magenta) is discarded.
+# - User File Persistent: _persistent is a string (0.75: red), read in a command that the main
+#   command calls; the status "{0.5}{3}" gives Value (green 0.5) and Steps (blue 0.3), past a
+#   note and a separator, which are no arguments.
+# - User File Persistent Store: _persistent is an image (0.25,0.5,0.75), stored with 'store'.
 #@gui User File Persistent : fx_userfile_persistent, fx_userfile_persistent_preview
+#@gui : note = note("The preview command sets the state.")
 #@gui : Value = float(0.25,0,1)
+#@gui : sep = separator()
+#@gui : Steps = int(1,0,10)
 fx_userfile_persistent :
-  _fx_userfile_persistent_fill $1
+  _fx_userfile_persistent_fill $1,$2
 
 _fx_userfile_persistent_fill :
   if !narg($_persistent) error "No state from the preview command" fi
-  fill_color {$_persistent*255},{$1*255},0
+  fill_color {$_persistent*255},{$1*255},{$2*25.5}
 
 fx_userfile_persistent_preview :
   _persistent=0.75
   fill_color 255,0,255
-  u "{0.5}"
+  u "{0.5}{3}"
+
+#@gui User File Persistent Store : fx_userfile_persistent_store, fx_userfile_persistent_store_preview
+fx_userfile_persistent_store :
+  if !narg($_persistent) error "No stored state from the preview command" fi
+  $_persistent
+  fill_color[0] {-1,i[0]*255},{-1,i[1]*255},{-1,i[2]*255}
+  rm.
+
+fx_userfile_persistent_store_preview :
+  (0.25,0.5,0.75) +store. _persistent rm.
+  fill_color 255,0,255
 
 # replaces the built-in 'fc' (fill_color)
 fc :

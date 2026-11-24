@@ -20,10 +20,11 @@ usage: render_plugins.py --host <hostDemo, or the CMake build directory> [--conf
 hostDemo-path-<config>.txt with a multi-config generator (--config, default Release).
 The plug-in list (one line per plug-in: id, context and input clips, tab-separated) is written
 by describe_plugins.sh with PLUGIN_LIST=<file>. --subset pr (the default) renders a
-representative subset: the filters whose command uses the FFT or G'MIC's _persistent variable
-(found in the G'MIC standard library given by --stdlib; the latter run their preview command
-first), the multi-layer filters, and every 30th plug-in (sorted by id). A render whose preview
-command, run first, failed (the plug-in's log says so) is a failure.
+representative subset: the filters whose command uses the FFT (found in the G'MIC standard
+library given by --stdlib), those that run their preview command before their main command (the
+list's "#previewFirst<tab><id>" lines, from their help note), the multi-layer filters, and every
+30th plug-in (sorted by id). A render whose preview command, run first, failed, or whose preview
+status didn't have one value per parameter (the plug-in's log says so), is a failure.
 --only renders just the given plug-ins, also those in SKIP (e.g. the ones that download data),
 and fails unless they all render. --host-arg passes an extra argument to hostDemo (repeatable),
 e.g. --host-arg=--ofx14 (an OFX 1.4-only host).
@@ -100,9 +101,11 @@ TIMEOUT = {
 ERROR_LINE = re.compile(r'\*\*\* Error|\bOfxMessageError\b|\bError\b|\berror:')
 COMMERCIAL_MARKER = ' #  openfx-gmic : COMMERCIAL standard library'
 FFT_COMMANDS = re.compile(r'(?<![A-Za-z0-9_])(fft|ifft|deconvolve|deconvolve_fft|convolve_fft|bandpass|watermark_fourier)(?![A-Za-z0-9_])')
-PERSISTENT = re.compile(r'(?<![A-Za-z0-9_])_persistent(?![A-Za-z0-9_])')
-# the plug-in's log line when the preview command that it runs before the main command fails
+# the plug-in's log lines (gmic_plugin.cpp: kPreviewFirstFailed, gmicCommand()) when the preview
+# command that it runs before the main command fails, or when its status doesn't have one value
+# per parameter: both are render failures
 PREVIEW_FIRST_FAILED = 'run before the main command, failed'
+STATUS_MISMATCH = "the preview's status has"
 EVERY = 30
 
 
@@ -151,19 +154,6 @@ def host_demo_path(host, config):
 
 def fft_plugins(stdlib_header):
     """Ids of the filters whose command (or its _<command> helpers) uses the FFT."""
-    return plugins_using(stdlib_header, FFT_COMMANDS)
-
-
-def plugins_using(stdlib_header, pattern):
-    """Ids of the filters whose command (or its _<command> helpers) matches pattern.
-
-    Args:
-        stdlib_header: gmic_stdlib_community.h.
-        pattern: a compiled regular expression, searched in the command definitions.
-
-    Returns:
-        The set of the plug-in ids (eu.gmic.<name>) of these filters.
-    """
     text = stdlib_text(stdlib_header)
     defs, cur = {}, None
     for line in text.split('\n'):
@@ -181,7 +171,7 @@ def plugins_using(stdlib_header, pattern):
             continue
         cmd = g.group(2)
         b = bodies.get(cmd, '') + ''.join(v for k, v in bodies.items() if k.startswith('_' + cmd))
-        if pattern.search(b):
+        if FFT_COMMANDS.search(b):
             ids.add('eu.gmic.' + re.sub(r'[^A-Za-z0-9]', '', g.group(1)))
     return ids
 
@@ -259,7 +249,10 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
             problem = 'no report: %s' % e
     if problem is None and PREVIEW_FIRST_FAILED in log:
         problem = 'the preview command, run before the main command, failed'
-    errors = [l for l in log.splitlines() if ERROR_LINE.search(l) or PREVIEW_FIRST_FAILED in l][:3]
+    if problem is None and STATUS_MISMATCH in log:
+        problem = "the preview's status doesn't have one value per parameter"
+    errors = [l for l in log.splitlines()
+              if ERROR_LINE.search(l) or PREVIEW_FIRST_FAILED in l or STATUS_MISMATCH in l][:3]
     return pid, rc, problem, nan, t, errors, log, updates
 
 
@@ -295,10 +288,13 @@ def main():
     write_input(os.path.join(work, 'input.pfm'))
 
     allp = {}
+    preview_first = set()  # the plug-ins that run their preview command first
     with open(a.list, encoding='utf-8') as lst:
         for line in lst:
             f = line.rstrip('\r\n').split('\t')
-            if f and f[0]:
+            if f[0] == '#previewFirst' and len(f) > 1:
+                preview_first.add(f[1])
+            elif f and f[0] and not f[0].startswith('#'):
                 allp[f[0]] = (f[0], f[1] if len(f) > 1 else 'filter', f[2:])
     ids = sorted(allp)
     for pid in sorted(set(SKIP) | set(EXPECTED_FAIL) | set(TIMEOUT)):
@@ -316,12 +312,12 @@ def main():
         if not a.stdlib:
             ap.error('--subset pr needs --stdlib')
         fft = fft_plugins(a.stdlib)
-        persistent = plugins_using(a.stdlib, PERSISTENT)
         multi = {p for p in ids if any(c.startswith('Layer ') for c in allp[p][2])}
         every = set(ids[::EVERY])
-        sel = sorted(((fft & set(ids)) | (persistent & set(ids)) | multi | every) - set(TIMEOUT))  # slow ones: --subset all only
-        print('subset: %d plug-ins (%d using the FFT, %d using _persistent, %d multi-layer, every %dth of %d)' % (
-            len(sel), len(fft & set(ids)), len(persistent & set(ids)), len(multi), EVERY, len(ids)))
+        first = preview_first & set(ids)
+        sel = sorted(((fft & set(ids)) | first | multi | every) - set(TIMEOUT))  # slow ones: --subset all only
+        print('subset: %d plug-ins (%d using the FFT, %d running their preview command first, %d multi-layer, '
+              'every %dth of %d)' % (len(sel), len(fft & set(ids)), len(first), len(multi), EVERY, len(ids)))
     todo = [allp[p] for p in sel if a.only or p not in SKIP]
     print('rendering %d plug-ins (%d skipped), %d at a time, in %s' % (len(todo), len(sel) - len(todo), a.jobs, work))
     sys.stdout.flush()

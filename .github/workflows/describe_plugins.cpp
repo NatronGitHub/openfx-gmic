@@ -18,6 +18,10 @@
 
 using namespace OFX::Host;
 
+// the start of the help note of the plug-ins that run their preview command before their main
+// command (gmic_plugin.cpp, previewFirstNote()): such a plug-in gets a PREVIEWFIRST line
+static const char* const kPreviewFirstNote = "Preview first: this filter runs its preview command before its main command";
+
 class DescribeHost : public ImageEffect::Host
 {
 public:
@@ -72,6 +76,10 @@ int main(int argc, char** argv)
                 clips += "\t" + byOrder[c]->getName();
             }
             fprintf(stderr, "RENDERINFO %s\t%s%s\n", id.c_str(), context.c_str(), clips.c_str());
+            const std::string& description = plugins[i]->getDescriptor().getProps().getStringProperty(kOfxPropPluginDescription);
+            if (description.find(kPreviewFirstNote) != std::string::npos) {
+                fprintf(stderr, "PREVIEWFIRST %s\n", id.c_str());
+            }
         } else {
             ++failed;
             printf("DESCRIBE_FAILED %s (context: %s)\n", id.c_str(), context.empty() ? "no Filter or General context" : context.c_str());

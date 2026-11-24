@@ -90,6 +90,9 @@ permissions:
 env:
   # number of plug-ins expected from the pinned G'MIC version: update when upgrading G'MIC
   GMIC_PLUGIN_COUNT: 1199
+  # of them, those that run their preview command before their main command (#206; read by
+  # describe_plugins.sh): update when upgrading G'MIC or changing the rule (Helpers/gmic_parser.cpp)
+  PREVIEW_FIRST_COUNT: 10
   # extra variants (debug, C++20) only on the weekly schedule or on demand
   BUILD_VARIANTS: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
   # artifacts only on demand or for pre-release tags (containing "alpha", "beta" or "rc", e.g.

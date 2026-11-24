@@ -8,6 +8,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <algorithm>
+#include <limits>
+#include <utility>
 #include <string>
 #include "gmic.h"
 #include "gmic_plugin_call.h"
@@ -164,10 +167,10 @@ static void setError(gmic_interface_options* options, const std::string& message
 // G'MIC-Qt's FilterThread::status2StringList(): the values of a status "{a}{b}_1{c}..." (with
 // G'MIC's codes for the braces), each with G'MIC's other codes replaced back; empty if the status
 // is not such a list
-static std::vector<std::string> statusValues(const char* status)
+static std::vector<std::string> statusValues(const gmic_image<char>& status)
 {
 	std::vector<std::string> values;
-	const std::string s = status ? status : "";
+	const std::string s = status._data ? std::string(status._data) : std::string();
 	// "{" first, "}" last, maybe followed by a visibility "_0", "_1" or "_2"
 	size_t end = s.size();
 	if (end >= 3 && s[end - 3] == gmic_rbrace && s[end - 2] == '_' && s[end - 1] >= '0' && s[end - 1] <= '2') {
@@ -193,7 +196,7 @@ static std::vector<std::string> statusValues(const char* status)
 	}
 	values.push_back(value);
 	for (std::string& v : values) {
-		gmic::strreplace_fw(&v[0]); // (in place, with v's own terminating null; same length)
+		gmic::strreplace_fw(v.data()); // (in place: the same length, up to v's terminating null)
 	}
 	return values;
 }
@@ -204,15 +207,22 @@ static void setPersistent(gmic& interpreter, const std::string& persistent)
 {
 	if (persistent.empty()) return;
 	if (persistent[0] == gmic_store) {
-		const gmic_image<unsigned char> value((const unsigned char*)persistent.data(), (unsigned int)persistent.size(), 1, 1, 1, true);
+		// a view of the bytes, which set_variable() copies (CImg's shared images take a non-const
+		// pointer: no write happens through it)
+		const auto size = static_cast<unsigned int>(std::min<size_t>(persistent.size(), std::numeric_limits<unsigned int>::max()));
+		const gmic_image<unsigned char> value(reinterpret_cast<const unsigned char*>(persistent.data()), size, 1, 1, 1, true);
 		interpreter.set_variable("_persistent", value);
 	} else {
 		interpreter.set_variable("_persistent", '=', persistent.c_str());
 	}
 }
 
-int gmic_plugin_call(const char* cmd, unsigned int* nofImages, gmic_interface_image* images, unsigned int maxImages, gmic_interface_options* options, GmicRunState* state, GmicResults results)
+int gmic_plugin_call(const GmicCall& call)
 {
+	gmic_interface_options* const options = call.options;
+	gmic_interface_image* const images = call.images;
+	const GmicResults results = call.results;
+	if (options->error_message_buffer) options->error_message_buffer[0] = '\0';
 #if defined(_WIN32) && defined(_OPENMP)
 	// MSVC's OpenMP runtime (vcomp140.dll) must never be unloaded once its worker threads exist:
 	// when the host unloads the plug-in (FreeLibrary), the loader unmaps VCOMP140.DLL under the idle
@@ -235,7 +245,7 @@ int gmic_plugin_call(const char* cmd, unsigned int* nofImages, gmic_interface_im
 	}();
 	(void)vcompPinned;
 #endif
-	const unsigned int nofInputs = *nofImages;
+	const unsigned int nofInputs = *call.nofImages;
 	gmic_list<float> list(nofInputs);
 	gmic_list<char> names(nofInputs);
 	// planar float images: shared (processed in place), or copied with no_inplace_processing, and
@@ -247,42 +257,42 @@ int gmic_plugin_call(const char* cmd, unsigned int* nofImages, gmic_interface_im
 		std::strcpy(names[i], images[i].name);
 	}
 
-	std::string persistent;
-	std::vector<std::string> status;
+	GmicRunState state;
 	try {
 		// as G'MIC-Qt's FilterThread::run(): an interpreter (with the standard library and the
 		// custom commands), _persistent, then the command
 		gmic interpreter(nullptr, options->custom_commands, !options->ignore_stdlib, options->p_progress, options->p_is_abort, 0.f);
-		if (state) setPersistent(interpreter, state->persistent);
-		interpreter.run(cmd, list, names);
-		if (state) {
-			status = statusValues(interpreter.status._data);
+		if (call.persistentIn) {
+			setPersistent(interpreter, *call.persistentIn);
+			std::string().swap(*call.persistentIn); // (G'MIC has its own copy)
+		}
+		interpreter.run(call.cmd, list, names);
+		if (call.stateOut) {
+			state.status = statusValues(interpreter.status);
 			const gmic_image<char> value = interpreter.get_variable("_persistent");
-			if (value._data) persistent.assign(value._data, value.size());
+			if (value._data) state.persistent.assign(value._data, value.size());
 		}
 	} catch (gmic_exception& e) {
 		gmicLog("\n- Error encountered when calling G'MIC : '%s'\n", e.what());
 		setError(options, e.what());
 		return -1;
 	}
-	if (state) {
-		state->persistent.swap(persistent);
-		state->status.swap(status);
-	}
 	if (results == GmicResults::kDiscard) {
+		if (call.stateOut) *call.stateOut = std::move(state);
 		return 0; // (list frees the images that G'MIC made)
 	}
 	// G'MIC also returns normally when aborted, or after 'quit' (which sets the abort flag too):
 	// the result is the image list as it was then. Whether the render was aborted is for the caller
 	// to tell, from the host.
-	if (list._width > maxImages) {
+	if (list._width > call.maxImages) {
 		char message[256];
-		std::snprintf(message, sizeof(message), "G'MIC returned %u images, more than the maximum of %u.", list._width, maxImages);
+		std::snprintf(message, sizeof(message), "G'MIC returned %u images, more than the maximum of %u.", list._width, call.maxImages);
 		setError(options, message);
 		return -1;
 	}
+	if (call.stateOut) *call.stateOut = std::move(state);
 
-	*nofImages = list._width;
+	*call.nofImages = list._width;
 	for (unsigned int i = 0; i < list._width; ++i) {
 		gmic_image<float>& img = list[i];
 		images[i].is_interleaved = false;

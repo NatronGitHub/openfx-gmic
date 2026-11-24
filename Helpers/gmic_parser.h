@@ -76,9 +76,9 @@ struct EffectData {
 	std::string command;
 	std::string preview_command;
 	std::string notes;
-	bool multiLayer;
+	bool multiLayer = false;
 	// "_none_" main command: always render with the preview command, as G'MIC-Qt's preview
-	bool previewOnly;
+	bool previewOnly = false;
 	// "_none_" preview command: G'MIC-Qt shows no preview (preview_command is then the main command)
 	bool noPreview = false;
 	// the main command may need the state left by G'MIC-Qt's preview (_persistent, or the status

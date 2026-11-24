@@ -2,7 +2,9 @@
 # Build a minimal HostSupport host and run describe + describeInContext on every plug-in.
 # Usage: describe_plugins.sh <dir containing GMIC.ofx.bundle> <minimum number of plug-ins>
 # Uses $CXX (default c++) and $HOST_LDFLAGS (extra link flags, e.g. -L/opt/local/lib).
-# PLUGIN_LIST=<file>: also write the plug-ins' ids, contexts and input clips there (for render_plugins.py).
+# PLUGIN_LIST=<file>: also write the plug-ins' ids, contexts and input clips there (for render_plugins.py),
+# and the plug-ins that run their preview command first. PREVIEW_FIRST_COUNT=<n>: fail unless n
+# plug-ins run their preview command first.
 # The bundle's list of the plug-ins (gmic_ofx_plugins.txt), if any, must be the described plug-ins;
 # DESCRIBE_USER_LIST=1 (once per CI job: it describes them all again) requires the list, and also
 # checks that a user's list that disables two plug-ins leaves them out.
@@ -210,9 +212,21 @@ fx_update_file_test :
     # (not a hot fix warning)
     printf '%sstar_tone :\n  f 64\n' "$one_filter" | update_case hot-fixed-command 1 1 "'star_tone' is defined by "
 fi
-# PLUGIN_LIST=<file>: the plug-ins, their context and input clips, for render_plugins.py
+# the plug-ins that run their preview command before their main command (#206; their help note
+# says so): listed, and checked against $PREVIEW_FIRST_COUNT if set (ci.yml: a G'MIC bump or a
+# change of the rule in Helpers/gmic_parser.cpp changes it)
+sed -n -e 's/^PREVIEWFIRST //p' describe.log | tr -d '\r' > preview_first.txt
+preview_first=$(($(wc -l < preview_first.txt)))
+echo "$preview_first plug-ins run their preview command first:" $(cat preview_first.txt)
+if [ -n "${PREVIEW_FIRST_COUNT:-}" ] && [ "$preview_first" != "$PREVIEW_FIRST_COUNT" ]; then
+    echo "FAIL: $preview_first plug-ins run their preview command first, expected PREVIEW_FIRST_COUNT=$PREVIEW_FIRST_COUNT (update it in ci.yml if the change is right)"
+    status=1
+fi
+# PLUGIN_LIST=<file>: the plug-ins, their context and input clips, for render_plugins.py, then a
+# "#previewFirst<tab><id>" line for each plug-in that runs its preview command first
 if [ -n "${PLUGIN_LIST:-}" ]; then
     sed -n -e 's/^RENDERINFO //p' describe.log > "$PLUGIN_LIST"
+    awk '{ printf "#previewFirst\t%s\n", $0 }' preview_first.txt >> "$PLUGIN_LIST"
 fi
 if [ $status != 0 ]; then
     echo "--- last lines of the host log:"

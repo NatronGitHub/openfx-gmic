@@ -296,7 +296,9 @@ preview's _persistent and status, so they take about twice as long. A filter is 
 main command, or a command that it calls, uses _persistent, or if it has a hidden value()
 parameter that the preview's status fills. _persistent starts empty on every render (G'MIC-Qt
 keeps it from one run of a filter to the next), so that a render doesn't depend on the previous
-ones. With Preview/Draft Mode on, only the preview command runs, as before.
+ones. With Preview/Draft Mode on, only the preview command runs, as before. The help of these
+filters says that they run their preview command first. If the preview command fails, the main
+command runs without its state, and a warning on the node says so.
 
 Environment
 -----------
