@@ -50,6 +50,7 @@
 
 #include "gmic_parser.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstring>
 #include <cstdlib>
@@ -895,6 +896,19 @@ static bool setsVisibilityStatus(const vector<string>& items)
 	return false;
 }
 
+// getline() for G'MIC code: a code line that ends with '\\' goes on with the next line (the
+// unminified gmic_stdlib.gmic splits long "u" commands this way)
+static bool getCodeLine(istream& in, string& line)
+{
+	if (!getline(in, line)) return false;
+	string next;
+	while (!line.empty() && line[0] != '#' && line[line.size() - 1] == '\\' && getline(in, next)) {
+		line.erase(line.size() - 1);
+		line += next.substr(min(next.find_first_not_of(" \t"), next.size()));
+	}
+	return true;
+}
+
 // The visibility suffixes ("_0", "_1") are G'MIC-Qt's initial state, which some filters change
 // at run time through their status (see setsVisibilityStatus): e.g. Marker Drawing enables
 // Background Blur when Background Type is "Blur". The plug-in can't follow such changes, and
@@ -915,7 +929,7 @@ static void markDynamicVisibilityFilters(const string& content, vector<EffectDat
 	{
 		stringstream ss(content);
 		string line, cur, rest;
-		while (getline(ss, line)) {
+		while (getCodeLine(ss, line)) {
 			if (line.empty() || line[0] == '#') continue;
 			const string name = commandDefinition(line, rest);
 			if (!name.empty()) {
@@ -935,7 +949,7 @@ static void markDynamicVisibilityFilters(const string& content, vector<EffectDat
 	{
 		stringstream ss(content);
 		string line, cur, rest;
-		while (getline(ss, line)) {
+		while (getCodeLine(ss, line)) {
 			if (line.empty() || line[0] == '#') continue;
 			const string name = commandDefinition(line, rest);
 			if (!name.empty()) {
@@ -961,6 +975,9 @@ static void markDynamicVisibilityFilters(const string& content, vector<EffectDat
 			}
 		}
 	}
+	// About G'MIC gathers the pages of the About folder (see gmic_parse_multi), whose own commands
+	// are not kept: one of them, What's New?, changes the visibility at run time
+	dynamicFilterCommands.insert("fx_gmicky");
 	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
 		if (!dynamicFilterCommands.count(it->command) && !dynamicFilterCommands.count(it->preview_command)) continue;
 		for (size_t i = 0; i < it->param.size(); ++i) {
