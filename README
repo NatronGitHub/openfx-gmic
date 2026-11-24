@@ -216,9 +216,12 @@ The filters come from the first of these that the plug-in can use:
 A user file (or the update file) replaces the whole filter list. Plug-in identifiers come from
 the filter names.
 The commands that the file defines are passed to G'MIC on every render, as in G'MIC-Qt, so its
-filters can call them; they replace the built-in commands of the same name. The plug-in's hot
-fixes for G'MIC bugs still apply after them, except to a command that the file defines another
-way (e.g. fixed in a newer update): the file's definition is kept.
+filters can call them; they replace the built-in commands of the same name. A copy of an older
+gmic_stdlib.gmic thus runs its own, older commands, not those of the plug-in's G'MIC. The
+plug-in's hot fixes for G'MIC bugs still apply to the commands that the file copies unchanged
+from the plug-in's G'MIC; a command that the file defines another way (e.g. fixed in a newer
+update file) keeps its definition (the plug-in prints a note when it loads: "'<command>' is
+defined by <file>: its definition is kept").
 After adding, removing or editing a user file, clear the host's plug-in cache (see "Choosing the
 plug-ins"): a cached list of plug-ins numbers them as the old filter list did.
 
@@ -250,7 +253,14 @@ Here Add Grain is disabled. A line that is only '#' (one or more) and an identif
 that plug-in; after an identifier, '#' starts a comment; any other line is a comment. If an
 identifier is on several lines, the last one wins. Plug-ins that the file doesn't mention are
 enabled, so that the filters that a new version of G'MIC adds appear; an identifier that is no
-longer a plug-in (a filter renamed or removed) is ignored.
+longer a plug-in (a filter renamed or removed) is ignored. The file may have LF, CRLF or CR line
+endings, and be UTF-8, or UTF-16 with a byte-order mark (Windows PowerShell 5's "> file").
+
+When it reads the file, the plug-in prints one line on stderr: how many plug-ins the file
+disables, and the disabled identifiers that match no plug-in (typos, or filters that G'MIC
+removed). To see it, run the host from a terminal (on Windows, NatronRenderer: Natron.exe has
+no console). A comment line that is a single word after its '#' (e.g. "#-----") reads as a
+disabled identifier, and is reported as unknown: put a space in it ("# -----").
 
 The plug-in reads the file when the host loads it. After a change, restart the host, and clear
 its OpenFX plug-in cache: this is required. Natron: Cache > Clear Plug-ins Load Cache, or start
