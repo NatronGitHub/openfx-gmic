@@ -1112,6 +1112,11 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 			doOutput = false;
 		} else if (cd.category == "Sequences" || (int)strLowercase(line2).find("[animated]") >= 0) {
 			doOutput = false;
+		} else if (line2.find("[ New Version Available! ]") != string::npos) {
+			// The page that G'MIC's update_deprecate inserts into the update file of an older
+			// G'MIC version (update408.gmic once a newer G'MIC is out), which tells G'MIC-Qt users to
+			// upgrade: no filter, and a plug-in there would shift the index of every other one.
+			doOutput = false;
 		}
 		if (doOutput && !cd.name.empty()) {
 			if (cds) cds->push_back(cd);

@@ -469,21 +469,48 @@ struct PluginGlobalData
 	string hotfixes; // custom commands for every run, see gmicGetHotfixes()
 };
 
-// The filter update file of this G'MIC version in the G'MIC folder rcPath (update408.gmic for
-// G'MIC 4.0.8), which G'MIC-Qt and G'MIC's 'update' command download there as text (the plug-in
-// never downloads it). Its contents, or an empty string if it is missing, has no filter (G'MIC-Qt
-// leaves an empty file after a failed download), or is still CImg-compressed, which only G'MIC
-// could read.
-static string loadUpdateFile(const string& rcPath)
+// G'MIC's filter update file of this G'MIC version (update408.gmic for G'MIC 4.0.8), in G'MIC's
+// own folder (gmicRcPath()), where G'MIC-Qt and G'MIC's 'update' command download it as text (the
+// plug-in never downloads it). Read only if OFX_GMIC_UPDATE_FILE is 1, since G'MIC-Qt rewrites it
+// on its own and a host's stale plug-in cache would then swap filters (README, "Environment"),
+// and never in COMMERCIAL builds, since it brings back the filters under the GPL. Its contents,
+// or an empty string if it is not read, missing, has no filter (G'MIC-Qt leaves an empty file
+// after a failed download), or is still CImg-compressed, which only G'MIC could read.
+static string loadUpdateFile()
 {
+	const char* const optIn = std::getenv("OFX_GMIC_UPDATE_FILE");
+	if (!optIn || string(optIn) != "1") return string();
+#ifdef OFX_GMIC_COMMERCIAL
+	fprintf(stderr, "openfx-gmic: OFX_GMIC_UPDATE_FILE ignored: the update file has GPL filters, which COMMERCIAL builds leave out\n");
+	return string();
+#else
+	const string rcPath = gmicRcPath();
 	if (rcPath.empty()) return string();
 	const string path = rcPath + gmicUpdateFileName();
 	string content = loadStringFromFile(path);
-	if (content.compare(0, 8, "1 uint8 ") == 0) { // (as G'MIC-Qt's Updater::isCImgCompressed)
+	static const string kCImgPrefix = "1 uint8 "; // a serialized CImg (G'MIC-Qt's Updater::isCImgCompressed)
+	if (content.compare(0, kCImgPrefix.size(), kCImgPrefix) == 0) {
 		fprintf(stderr, "openfx-gmic: Warning: %s is compressed, the plug-in only reads it as text: ignored\n", path.c_str());
 		return string();
 	}
 	if (content.find("#@gui") == string::npos) return string(); // (as G'MIC-Qt)
+	return content;
+#endif
+}
+
+// The filter file the filters come from, the first of these that the plug-in can use (README,
+// "Filters"): ~/.config/gmic/gmic_ofx.gmic or gmic_stdlib.gmic (in rcPath, from
+// get_gmic_rc_path()) if not empty, then G'MIC's update file (loadUpdateFile). Empty if none:
+// the filters then come from the built-in stdlib.
+static string loadFilterFile(const string& rcPath)
+{
+	string content = loadStringFromFile(rcPath + "gmic_ofx.gmic");
+	if (content.empty()) {
+		content = loadStringFromFile(rcPath + "gmic_stdlib.gmic");
+	}
+	if (content.empty()) {
+		content = loadUpdateFile();
+	}
 	return content;
 }
 
@@ -504,14 +531,7 @@ PluginGlobalData loadPluginGlobalData()
 		}
 		bool builtinStdlib = false; // the curated lists of the parser are only checked against it
 		const string rcPath = get_gmic_rc_path();
-		// the first that isn't empty: the user's own files, then the update of the built-in filters
-		string effectContent = loadStringFromFile(rcPath + "gmic_ofx.gmic");
-		if (effectContent.empty()) {
-			effectContent = loadStringFromFile(rcPath + "gmic_stdlib.gmic");
-		}
-		if (effectContent.empty()) {
-			effectContent = loadUpdateFile(rcPath);
-		}
+		string effectContent = loadFilterFile(rcPath);
 		if (effectContent.empty()) {
 			effectContent.swap(stdlib);
 			builtinStdlib = true;

@@ -1,7 +1,7 @@
 // gmic_plugin_call(): run G'MIC on the plug-in's images, like gmic_call() from gmic_libc, but
 // never writing more than maxImages results. gmic_plugin_call.cpp also defines
 // gmic_delete_external() and gmic_get_stdlib() from gmic_libc.h (gmic_libc.cpp is not built), and
-// gmicUpdateFileName(), which needs gmic.h's version.
+// gmicUpdateFileName() and gmicRcPath(), which need gmic.h.
 #ifndef GMIC_PLUGIN_CALL_H
 #define GMIC_PLUGIN_CALL_H
 
@@ -24,5 +24,11 @@ int gmic_plugin_call(const char* cmd, unsigned int* nofImages, gmic_interface_im
 // "update<gmic_version>.gmic" (update408.gmic for G'MIC 4.0.8), as G'MIC's 'update' command and
 // G'MIC-Qt name it in the G'MIC folder.
 std::string gmicUpdateFileName();
+
+// G'MIC's own folder, with a trailing separator, as G'MIC and G'MIC-Qt find it (gmic::path_rc()):
+// $GMIC_PATH, else $XDG_CONFIG_HOME/gmic, else $HOME/.config/gmic if $HOME/.config exists, else
+// $HOME/gmic (Windows: %APPDATA%/gmic), else the temporary folder. G'MIC-Qt downloads the update
+// file there. (The plug-in's own files, gmic_ofx.gmic..., are looked up in get_gmic_rc_path().)
+std::string gmicRcPath();
 
 #endif

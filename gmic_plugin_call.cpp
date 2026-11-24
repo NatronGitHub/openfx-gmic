@@ -86,6 +86,12 @@ std::string gmicUpdateFileName()
 	return "update" + std::to_string(gmic_version) + ".gmic";
 }
 
+std::string gmicRcPath()
+{
+	const char* const path = gmic::path_rc();
+	return path ? std::string(path) : std::string();
+}
+
 static void setError(gmic_interface_options* options, const std::string& message)
 {
 	if (options->error_message_buffer) {

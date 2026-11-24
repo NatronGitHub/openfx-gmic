@@ -165,7 +165,7 @@ jobs:
           .github/workflows/check_linux_deps.sh install/OFX/Plugins/GMIC.ofx.bundle
       # the tests run on the installed bundle, the one that is shipped (see "Upload bundle")
       - name: Describe all plug-ins
-        run: DESCRIBE_USER_LIST=1 PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
+        run: DESCRIBE_USER_LIST=1 DESCRIBE_UPDATE_FILE=1 PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
       # the default FFT (pocketfft) on a non-power-of-two image, with an interpreter built from the
       # same sources
       - name: Render FFT filters (720x576)
@@ -330,7 +330,7 @@ jobs:
           openfx/Support/include/linuxCheckBundle.sh install/OFX/Plugins
           .github/workflows/check_linux_deps.sh install/OFX/Plugins/GMIC.ofx.bundle
       - name: Describe all plug-ins
-        run: DESCRIBE_USER_LIST=1 PLUGIN_LIST=plugins.txt CXX=g++ .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
+        run: DESCRIBE_USER_LIST=1 DESCRIBE_UPDATE_FILE=1 PLUGIN_LIST=plugins.txt CXX=g++ .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
       - name: Render plug-ins (subset)
         run: |
           python3 .github/workflows/render_plugins.py --host build \
@@ -397,7 +397,7 @@ jobs:
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
           CXX="/usr/bin/clang++ -I/opt/local/include" \
-            HOST_LDFLAGS=-L/opt/local/lib DESCRIBE_USER_LIST=1 PLUGIN_LIST=plugins.txt \
+            HOST_LDFLAGS=-L/opt/local/lib DESCRIBE_USER_LIST=1 DESCRIBE_UPDATE_FILE=1 PLUGIN_LIST=plugins.txt \
             .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
       - name: Render plug-ins (subset)
         run: |
@@ -569,7 +569,7 @@ jobs:
         run: |
           export DESCRIBE_MSVC_EXPAT_LIB=$(ls build/vcpkg_installed/$VCPKG_TRIPLET/lib/libexpat*MT.lib | head -1)
           export DESCRIBE_MSVC_CFLAGS="-I$(cygpath -m "$PWD/build/vcpkg_installed/$VCPKG_TRIPLET/include")"
-          DESCRIBE_USER_LIST=1 PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
+          DESCRIBE_USER_LIST=1 DESCRIBE_UPDATE_FILE=1 PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
       - name: Render plug-ins (subset)
         run: |
           python .github/workflows/render_plugins.py --host build \
@@ -690,7 +690,7 @@ jobs:
       - name: Describe all plug-ins
         run: |
           set -eo pipefail
-          DESCRIBE_USER_LIST=1 PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh build/Plugins $GMIC_PLUGIN_COUNT
+          DESCRIBE_USER_LIST=1 DESCRIBE_UPDATE_FILE=1 PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh build/Plugins $GMIC_PLUGIN_COUNT
       - name: Render plug-ins (subset)
         run: |
           set -eo pipefail

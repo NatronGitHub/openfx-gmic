@@ -3,7 +3,8 @@
 
 The file is installed as ~/.config/gmic/gmic_ofx.gmic in a temporary HOME (render_plugins.py's
 <work>/home), or with --update-file as G'MIC's filter update file (update408.gmic for the
-GMICVER 4.0.8 of the Makefile, #180), which replaces the built-in filters. Its filters call commands that the file
+GMICVER 4.0.8 of the Makefile, #180; read with OFX_GMIC_UPDATE_FILE=1), which replaces the
+built-in filters. Its filters call commands that the file
 defines (#168: "Unknown command" before), a built-in command, and a built-in command that the
 file replaces; each output must be the uniform color that the filter fills it with.
 
@@ -88,9 +89,14 @@ def main():
     with open(plugin_list, 'w', encoding='utf-8') as f:
         for pid in sorted(EXPECTED):
             f.write('%s\tOfxImageEffectContextFilter\tSource\n' % pid)
+    # G'MIC's folder (gmic::path_rc(), where the plug-in looks for the update file) is the HOME's
+    # .config/gmic only without GMIC_PATH and XDG_CONFIG_HOME
+    env = {k: v for k, v in os.environ.items() if k not in ('GMIC_PATH', 'XDG_CONFIG_HOME')}
+    if a.update_file:
+        env['OFX_GMIC_UPDATE_FILE'] = '1'
     rc = subprocess.call([sys.executable, os.path.join(HERE, 'render_plugins.py'),
                           '--host', a.host, '--plugins', a.plugins, '--list', plugin_list,
-                          '--only', ','.join(sorted(EXPECTED)), '--work', work])
+                          '--only', ','.join(sorted(EXPECTED)), '--work', work], env=env)
     if rc != 0:
         print('FAIL: the user file filters did not all render (see above)')
         return 1
