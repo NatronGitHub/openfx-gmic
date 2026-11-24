@@ -1311,17 +1311,14 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 // (gmic::set_variable()) then calls omp_set_num_threads(N) in the interpreter's thread, the
 // worker thread of gmicCallAbortable(), and the stdlib commands that split their work use
 // $_cpus. With libgomp and libomp (OpenMP >= 3.0: the thread count is a per-thread setting),
-// only this render's worker thread is affected (a new thread for each run). MSVC's vcomp
-// (OpenMP 2.0) doesn't document the scope of omp_set_num_threads(): if it is process-wide there,
-// concurrent renders run with whichever count was set last (each render sets its own, and G'MIC
-// sets all the CPUs when it creates an interpreter), at most all the CPUs, as before this change.
-// Without a worker thread (see gmicCallAbortable), G'MIC runs on the host's render thread, whose
-// later OpenMP regions then keep the count (as they kept G'MIC's own setting, all the CPUs).
+// only this render's worker thread is affected (a new thread for each run; MSVC's vcomp doesn't
+// document the scope, and the fallback without a worker thread sets the host's render thread).
 // Limit: G'MIC's 'parallel' command (also used by the stdlib's apply_parallel commands) creates
 // its interpreters with new gmic(*this), whose initialisation sets _cpus back to all the CPUs and
 // calls omp_set_num_threads() on the interpreter's thread: after a filter's first 'parallel', the
 // render uses all the CPUs again, as before this change.
 // No prefix, so that G'MIC uses all the CPUs as before:
+// - if the number of hardware threads is unknown (hardware_concurrency() is 0);
 // - if OMP_NUM_THREADS is set: it stays a fixed thread count (G'MIC then ignores _cpus for
 //   OpenMP, and $_cpus stays G'MIC's CPU count);
 // - if the host's multithread suite call fails. Support's getNumCPUs() returns 1 then, which
@@ -1354,9 +1351,10 @@ static string gmicThreadsPrefix()
 	if (!suite || !suite->multiThreadNumCPUs || suite->multiThreadNumCPUs(&hostCount) != kOfxStatOK) {
 		return string();
 	}
+	const unsigned int concurrency = std::thread::hardware_concurrency();
+	if (concurrency == 0) return string(); // unknown: no fair share, and no upper bound
 	// at most INT_MAX: G'MIC reads _cpus with %d
-	const unsigned int hardware = std::min(std::max(1u, std::thread::hardware_concurrency()),
-	                                       (unsigned int)std::numeric_limits<int>::max());
+	const unsigned int hardware = std::min(concurrency, (unsigned int)std::numeric_limits<int>::max());
 	const unsigned int renders = (unsigned int)std::max(1, gRunningRenders.load());
 	const unsigned int fairShare = std::max(1u, hardware / renders);
 	const unsigned int n = std::min(std::max(hostCount, fairShare), hardware);

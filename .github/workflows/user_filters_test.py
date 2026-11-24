@@ -9,7 +9,9 @@ command that the file replaces: each output must be the uniform color that the f
 with. The file also defines a command that the
 plug-in hot-fixes, which must be kept, with a note. Its User File Cpus filter fills its output
 with G'MIC's $_cpus, rendered without OMP_NUM_THREADS so that the plug-in sets it (#188): the
-value, printed, must be a thread count between 1 and the number of CPUs.
+value, printed, must be the number of CPUs (hostDemo runs one render, whose fair share is all the
+hardware threads). This shows that the count reaches G'MIC, not that the plug-in's prefix is
+applied: the value is also G'MIC's own default.
 
 With --stdlib, the same filters are then rendered with a copy of the whole built-in standard
 library before them in the file, as in a user's copied gmic_stdlib.gmic: the outputs must be the
@@ -144,16 +146,20 @@ def render_all(host, plugins, work, runs):
 def check_cpus(host, plugins, work):
     """Renders CPUS_PLUGIN without OMP_NUM_THREADS, and prints and checks G'MIC's $_cpus.
 
+    The value must be the number of CPUs: this catches a count that falls back to hostDemo's 1,
+    but the plug-in's count for a single render is also G'MIC's own default.
+
     Args:
         host: the path of hostDemo.
         plugins: the directory with GMIC.ofx.bundle.
         work: the work directory, with the user file installed.
 
     Returns:
-        A list of problems, empty if $_cpus is between 1 and the number of CPUs.
+        A list of problems, empty if $_cpus is the number of CPUs.
     """
-    _, _, problem, _, _, errors, _ = render_plugins.render(
+    result = render_plugins.render(
         host, [], plugins, work, TIMEOUT, (CPUS_PLUGIN, CONTEXT, ['Source']), host_threads=True)
+    problem, errors = result[2], result[5]  # (independent of the number of results)
     if problem:
         return ['%s: %s %s' % (CPUS_PLUGIN, problem, ' '.join(errors))]
     report_path = os.path.join(work, CPUS_PLUGIN[len('eu.gmic.'):], 'report.json')
@@ -166,8 +172,8 @@ def check_cpus(host, plugins, work):
         return ['%s: not a uniform output (%s, %s)' % (CPUS_PLUGIN, lows, highs)]
     cpus, ncpu = round(lows[0] * 255), os.cpu_count() or 1
     print("G'MIC's $_cpus in a render without OMP_NUM_THREADS: %d (%d CPUs)" % (cpus, ncpu))
-    if not 1 <= cpus <= ncpu:
-        return ['%s: $_cpus is %d, not between 1 and %d' % (CPUS_PLUGIN, cpus, ncpu)]
+    if cpus != ncpu:
+        return ['%s: $_cpus is %d, not the number of CPUs (%d)' % (CPUS_PLUGIN, cpus, ncpu)]
     return []
 
 
