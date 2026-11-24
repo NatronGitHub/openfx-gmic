@@ -296,15 +296,19 @@ static string gmicChecksum(const string& def)
 	return s;
 }
 
-// The hot fixes that apply to the G'MIC standard library stdlib. Each block of gmic_hotfixes.gmic
-// starts with '#@hotfix <command> <original> <fixed> [<callee>:<checksum>...]': the FNV-1a 64-bit
-// hashes of the built-in definition the fix was made from, of the fixed definition (the block's
-// own), and of the built-in definitions of the commands the fix relies on; <original> is "-" for
-// a command that the built-in G'MIC no longer defines (but still calls). A block is applied if the
-// built-in command is the original one (or, for "-", is not defined) and the callees are
-// unchanged, skipped silently if the built-in command already is the fixed one (fixed upstream),
-// and otherwise skipped with a warning.
-static string gmicGetHotfixes(const string& stdlib)
+// The hot fixes that apply to the commands that G'MIC runs: those of the standard library stdlib,
+// replaced by those that userCommands defines again (the user's filter file userFile, passed as
+// custom commands, see PluginGlobalData::userCommands; empty with the built-in filters). Each
+// block of gmic_hotfixes.gmic starts with '#@hotfix <command> <original> <fixed>
+// [<callee>:<checksum>...]': the FNV-1a 64-bit hashes of the built-in definition the fix was made
+// from, of the fixed definition (the block's own), and of the built-in definitions of the commands
+// the fix relies on; <original> is "-" for a command that the built-in G'MIC no longer defines
+// (but still calls). A block is applied if the command is the original one (or, for "-", is not
+// defined) and the callees are unchanged, and skipped silently if the command already is the fixed
+// one (fixed upstream). Otherwise it is skipped: with a note if the user's file defines the
+// command or a callee another way (its definition is kept: a copy of the built-in definition
+// still gets the fix), else with a warning for the developers.
+static string gmicGetHotfixes(const string& stdlib, const string& userCommands, const string& userFile)
 {
 	static const string marker = "#@hotfix ";
 	vector<vector<std::pair<string, string> > > checks; // per block: (command, checksum)
@@ -337,6 +341,16 @@ static string gmicGetHotfixes(const string& stdlib)
 		}
 	}
 	gmicGetDefinitions(stdlib, defs);
+	std::map<string, string> userDefs;
+	for (const auto& d : defs) {
+		userDefs[d.first];
+	}
+	gmicGetDefinitions(userCommands, userDefs);
+	for (const auto& d : userDefs) {
+		if (!d.second.empty()) {
+			defs[d.first] = d.second; // (G'MIC loads the user's file after the built-in stdlib)
+		}
+	}
 	string hotfixes;
 	for (size_t i = 0; i < checks.size(); ++i) {
 		const string& command = checks[i][0].first;
@@ -350,7 +364,7 @@ static string gmicGetHotfixes(const string& stdlib)
 			continue;
 		}
 		if (!defs[command].empty() && gmicChecksum(defs[command]) == ownChecksum) {
-			continue; // already fixed in the built-in G'MIC (then the callees do not matter)
+			continue; // already fixed in G'MIC (then the callees do not matter)
 		}
 		bool ok = true;
 		for (size_t k = 0; k < checks[i].size(); ++k) {
@@ -363,6 +377,15 @@ static string gmicGetHotfixes(const string& stdlib)
 			const bool absent = (k == 0 && expected == "-");
 			if (absent ? !def.empty() : (def.empty() || ((k == 0 || !expected.empty()) && expected != found))) {
 				ok = false;
+				if (!userDefs[name].empty()) {
+					if (k == 0) {
+						fprintf(stderr, "openfx-gmic: '%s' is defined by %s: its definition is kept\n", name.c_str(), userFile.c_str());
+					} else {
+						fprintf(stderr, "openfx-gmic: '%s', which the plug-in's fix of '%s' calls, is defined by %s: the definition of '%s' is kept\n",
+						        name.c_str(), command.c_str(), userFile.c_str(), command.c_str());
+					}
+					continue;
+				}
 				fprintf(stderr, "openfx-gmic: Warning: hot fix for the G'MIC command '%s' not applied: the built-in definition of '%s' %s (checksum %s, the fix is for %s), review it in gmic_hotfixes.gmic\n",
 				        command.c_str(), name.c_str(), absent ? "exists" : def.empty() ? "is missing" : "changed", found.c_str(), expected.c_str());
 			}
@@ -533,6 +556,10 @@ struct PluginGlobalData
 {
 	vector<EffectData> pluginData;
 	vector<string> pluginContent;
+	// The user's filter file (gmic_ofx.gmic or gmic_stdlib.gmic), when the filters come from it:
+	// custom commands for every run, so that its filters find the commands it defines, as in
+	// G'MIC-Qt. Empty with the built-in stdlib, which G'MIC loads itself.
+	string userCommands;
 	string hotfixes; // custom commands for every run, see gmicGetHotfixes()
 };
 
@@ -542,21 +569,26 @@ PluginGlobalData loadPluginGlobalData()
 	vector<EffectData>& pluginData = data.pluginData;
 	vector<string>& pluginContent = data.pluginContent;
 	{
-		// The hot fixes are checked against the built-in stdlib, which G'MIC always loads: decompress
-		// it once here (~35 ms), even when the filters come from a user file (gmic_ofx.gmic).
+		// The hot fixes are checked against the built-in stdlib, which G'MIC always loads, and the
+		// user's filter file, whose commands replace its own: decompress it once here (~35 ms),
+		// even when the filters come from a user file (gmic_ofx.gmic).
 		string stdlib;
 		{
 			const char* lib = gmic_get_stdlib();
 			stdlib = string(lib);
 			gmic_delete_external((float*)lib);
 		}
-		data.hotfixes = gmicGetHotfixes(stdlib);
 		bool builtinStdlib = false; // the curated lists of the parser are only checked against it
-		string effectContent = loadStringFromFile(get_gmic_rc_path() + "gmic_ofx.gmic");
+		string userFile = get_gmic_rc_path() + "gmic_ofx.gmic";
+		string effectContent = loadStringFromFile(userFile);
 		if (effectContent.empty()) {
-			effectContent = loadStringFromFile(get_gmic_rc_path() + "gmic_stdlib.gmic");
+			userFile = get_gmic_rc_path() + "gmic_stdlib.gmic";
+			effectContent = loadStringFromFile(userFile);
 		}
-		if (effectContent.empty()) {
+		if (!effectContent.empty()) {
+			data.hotfixes = gmicGetHotfixes(stdlib, effectContent, userFile);
+		} else {
+			data.hotfixes = gmicGetHotfixes(stdlib, string(), string());
 			effectContent.swap(stdlib);
 			builtinStdlib = true;
 			if (
@@ -567,6 +599,9 @@ PluginGlobalData loadPluginGlobalData()
 			}
 		} 
 		gmic_parse_multi(effectContent, &pluginData, &pluginContent, builtinStdlib);
+		if (!builtinStdlib) {
+			data.userCommands = std::move(effectContent);
+		}
 		// leave out the filters for which leaveOut(filter) is true
 		const auto leaveOutFilters = [&pluginData, &pluginContent](const auto& leaveOut) {
 			size_t n = 0;
@@ -1078,14 +1113,35 @@ static const char* const kFrameSelectCommand =
 
 // The whole command line: the filter's command (main or preview), with the variables G'MIC-Qt
 // defines, the output layer selection, Ignore Alpha, the Resize Mode, verbosity and seed. Sets the
-// custom commands of the options: customCommands (the filter's #@gui lines, the hot fixes for G'MIC
-// bugs, the Ignore Alpha helpers and _openfx_gmic_opaque_resized), which must outlive the G'MIC call.
+// custom commands of the options: customCommands (the user's filter file, the filter's #@gui lines,
+// the hot fixes for G'MIC bugs, the Ignore Alpha helpers and _openfx_gmic_opaque_resized), which
+// must outlive the G'MIC call.
 static
 std::string
 fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, GmicInstanceData* instanceDataP, unsigned int nofImages, bool isPreview, string& customCommands)
 {
-	// the filter's #@gui lines, and the hot fixes for G'MIC bugs (gmic_hotfixes.gmic), on every run
-	customCommands = pluginGlobalData().pluginContent[globalDataP->pluginIndex] + '\n' + pluginGlobalData().hotfixes;
+	// the user's filter file, if the filters come from one (after the built-in stdlib, which G'MIC
+	// loads first: its definitions replace the built-in ones, as in G'MIC-Qt), the filter's #@gui
+	// lines, and the hot fixes for G'MIC bugs (gmic_hotfixes.gmic, after the user's file: those
+	// that still fit its definitions, see gmicGetHotfixes), on every run
+	const PluginGlobalData& data = pluginGlobalData();
+	// (a newline after the user's file ends its last line, if the file doesn't, so that the next
+	// definition starts on a line of its own; a '\' at the end of the file's last command line
+	// still continues it into the next definition, as in G'MIC-Qt, since G'MIC skips the blank and
+	// comment lines in between. The filter's #@gui lines are comments for G'MIC, which the file
+	// already holds)
+	static const string kNoLines;
+	const string& filterLines = data.userCommands.empty() ? data.pluginContent[globalDataP->pluginIndex] : kNoLines;
+	customCommands.clear();
+	// (and the few helper commands added below)
+	customCommands.reserve(data.userCommands.size() + filterLines.size() + data.hotfixes.size() + 4096);
+	customCommands += data.userCommands;
+	if (!data.userCommands.empty()) {
+		customCommands += '\n';
+	}
+	customCommands += filterLines;
+	customCommands += '\n';
+	customCommands += data.hotfixes;
 	customCommands += kOpaqueResizedCommand;
 	string cmd = gmicCommand(sequenceDataP, globalDataP, isPreview);
 

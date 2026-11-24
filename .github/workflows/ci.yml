@@ -183,6 +183,13 @@ jobs:
           python3 .github/workflows/render_plugins.py --host build --host-arg=--ofx14 \
             --plugins install/OFX/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset pr --jobs 2 --work render-ofx14
+      # a user filter file (~/.config/gmic/gmic_ofx.gmic) whose filters call the commands it
+      # defines, and replace a built-in one (#168): checks the pixels and the hot-fix notes, and
+      # prints the render times with a small file and with a copy of the standard library
+      - name: Render filters of a user filter file
+        run: |
+          python3 .github/workflows/user_filters_test.py --host build --plugins install/OFX/Plugins \
+            --stdlib build/gmic/gmic_stdlib_community.h --work render-user-file
       # no libcurl: G'MIC downloads with the curl command (cimg::load_network). Add Grain
       # downloads its grain images (gmic_grain.gmz, from gmic.eu) into G'MIC's cache, here an empty
       # GMIC_CACHE_PATH (Color Presets downloads only for a preset other than the default).
