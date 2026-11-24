@@ -55,7 +55,7 @@ if [ -n "${DESCRIBE_MSVC_EXPAT_LIB:-}" ]; then
         { tail -n 50 "$WORK/cl.log"; exit 1; }
 else
     # shellcheck disable=SC2086
-    $CXX -std=c++11 -O1 -w -DOFX_EXTENSIONS_NUKE -DOFX_EXTENSIONS_NATRON \
+    $CXX -std=c++17 -O1 -w -DOFX_EXTENSIONS_NUKE -DOFX_EXTENSIONS_NATRON \
         -I"$WORK/include" -I"$WORK/ofxinclude" \
         "$WORK"/src/*.cpp "$SRC/.github/workflows/describe_plugins.cpp" \
         ${HOST_LDFLAGS:-} -lexpat ${HOST_LIBS:-} -o "$WORK/describe_plugins"
@@ -151,6 +151,29 @@ if [ -f "$SHIPPED_LIST" ] && [ "${DESCRIBE_USER_LIST:-}" = 1 ]; then
     if ! tr -d '\r' < describe2.log | grep -x "openfx-gmic: .*gmic_ofx_plugins.txt: 2 plug-ins disabled; unknown identifiers: eu.gmic.NoSuchPlugin" > /dev/null; then
         tr -d '\r' < describe2.log | grep '^openfx-gmic: ' || true
         echo "FAIL: a user's list that disables $first and $last: expected the line that reports it on stderr"
+        status=1
+    fi
+    # The same with the user's log file (README, "Messages"): the line goes to it, not to stderr
+    mkdir -p "$WORK/home3/.config/gmic" "$WORK/home3/gmic"
+    cp "$WORK/home2/.config/gmic/gmic_ofx_plugins.txt" "$WORK/home3/.config/gmic/"
+    cp "$WORK/home2/.config/gmic/gmic_ofx_plugins.txt" "$WORK/home3/gmic/"
+    : > "$WORK/home3/.config/gmic/gmic_ofx_log"
+    : > "$WORK/home3/gmic/gmic_ofx_log"
+    HOME="$WORK/home3" APPDATA="$(native_path "$WORK/home3")" OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
+        ./describe_plugins "$expected" > describe3.out 2> describe3.log || true
+    cat "$WORK/home3/.config/gmic/gmic_ofx_log" "$WORK/home3/gmic/gmic_ofx_log" | tr -d '\r' > describe3.gmiclog
+    summary="openfx-gmic: .*gmic_ofx_plugins.txt: 2 plug-ins disabled; unknown identifiers: eu.gmic.NoSuchPlugin"
+    if ! tr -d '\r' < describe3.out | grep -qx "plugins=$expected described=$expected failed=0"; then
+        echo "FAIL: with a log file: expected the $expected plug-ins of the user's list"
+        status=1
+    fi
+    if ! grep -x "$summary" describe3.gmiclog > /dev/null; then
+        cat describe3.gmiclog
+        echo "FAIL: with a log file: expected the line that reports the user's list in gmic_ofx_log"
+        status=1
+    fi
+    if tr -d '\r' < describe3.log | grep -x "$summary" > /dev/null; then
+        echo "FAIL: with a log file: the line that reports the user's list is still on stderr"
         status=1
     fi
 fi

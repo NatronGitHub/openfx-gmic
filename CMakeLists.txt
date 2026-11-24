@@ -585,6 +585,8 @@ add_ofx_plugin(GMIC
     gmic_plugin_call.cpp
     gmic_plugin_call.h
     Helpers/gmic_parser.cpp
+    Helpers/gmic_log.cpp
+    Helpers/gmic_log.h
     Helpers/RFX_StringUtils.cpp)
 # The OpenFX C++ Support library (gmic_ofx.cpp): the plug-ins are the G'MIC filters, registered
 # lazily, at the first OfxGetNumberOfPlugins (OFX::PluginFactories in gmic_ofx.cpp)
