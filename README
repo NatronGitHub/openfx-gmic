@@ -288,6 +288,16 @@ Progress panel, which lists a render once it is expected to last a few seconds. 
 ignores the panel's Cancel button: abort the render itself (e.g. Natron's viewer or render
 stop button).
 
+In G'MIC-Qt, Apply follows a preview, and some filters need what their preview command leaves:
+G'MIC's _persistent variable, or parameter values that the preview's status sets (e.g. Bit-Plane
+Shuffler, Tupper's Self-Referential Formula, Shear). The plug-in renders these the same way: it
+runs the filter's preview command first, on the same input, then its main command with the
+preview's _persistent and status, so they take about twice as long. A filter is rendered so if its
+main command, or a command that it calls, uses _persistent, or if it has a hidden value()
+parameter that the preview's status fills. _persistent starts empty on every render (G'MIC-Qt
+keeps it from one run of a filter to the next), so that a render doesn't depend on the previous
+ones. With Preview/Draft Mode on, only the preview command runs, as before.
+
 Environment
 -----------
 

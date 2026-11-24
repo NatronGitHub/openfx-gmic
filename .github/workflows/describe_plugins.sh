@@ -76,12 +76,6 @@ if grep -E "DUPLICATE_PARAM|DUPLICATE_CLIP" describe.log; then
     echo "FAIL: duplicate param/clip definitions (see above)"
     status=1
 fi
-# the curated list of filters rendered with their preview command when the main one fails
-# (Helpers/gmic_parser.cpp) names a command that is no longer a filter's main command
-if grep -E "PREVIEW_FALLBACK_UNKNOWN" describe.log; then
-    echo "FAIL: update the curated list in markPersistentFilters() (see above)"
-    status=1
-fi
 # the curated list of hidden batch/interactive filters (Helpers/gmic_parser.cpp) names a command
 # that is no longer a filter's main command
 if grep -E "HIDDEN_FILTER_UNKNOWN" describe.log; then
