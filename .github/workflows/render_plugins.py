@@ -22,7 +22,7 @@ The plug-in list (one line per plug-in: id, context and input clips, tab-separat
 by describe_plugins.sh with PLUGIN_LIST=<file>. --subset pr (the default) renders a
 representative subset: the filters whose command uses the FFT (found in the G'MIC standard
 library given by --stdlib), those that run their preview command before their main command (the
-list's "#previewFirst<tab><id>" lines, from their help note), the multi-layer filters, and every
+list's "#previewFirst<tab><id>" lines, from the plug-in's log), the multi-layer filters, and every
 30th plug-in (sorted by id). A render whose preview command, run first, failed, or whose preview
 status didn't have one value per parameter (the plug-in's log says so), is a failure.
 --only renders just the given plug-ins, also those in SKIP (e.g. the ones that download data),
@@ -315,9 +315,11 @@ def main():
         multi = {p for p in ids if any(c.startswith('Layer ') for c in allp[p][2])}
         every = set(ids[::EVERY])
         first = preview_first & set(ids)
-        sel = sorted(((fft & set(ids)) | first | multi | every) - set(TIMEOUT))  # slow ones: --subset all only
-        print('subset: %d plug-ins (%d using the FFT, %d running their preview command first, %d multi-layer, '
-              'every %dth of %d)' % (len(sel), len(fft & set(ids)), len(first), len(multi), EVERY, len(ids)))
+        # (the slow ones: --subset all only)
+        sel = sorted(((fft & set(ids)) | first | multi | every) - set(TIMEOUT))
+        print('subset: %d plug-ins (%d using the FFT, %d running their preview command first, '
+              '%d multi-layer, every %dth of %d)'
+              % (len(sel), len(fft & set(ids)), len(first), len(multi), EVERY, len(ids)))
     todo = [allp[p] for p in sel if a.only or p not in SKIP]
     print('rendering %d plug-ins (%d skipped), %d at a time, in %s' % (len(todo), len(sel) - len(todo), a.jobs, work))
     sys.stdout.flush()

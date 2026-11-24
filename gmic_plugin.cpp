@@ -707,6 +707,11 @@ PluginGlobalData loadPluginGlobalData()
 		if (!disabled.empty()) {
 			leaveOutFilters([&disabled](const EffectData& d) { return disabled.count(d.uniqueId) > 0; });
 		}
+		// the plug-ins that run their preview command first (#206), one line each. CI's describe
+		// test (.github/workflows/describe_plugins.sh) reads these lines: keep their text the same
+		for (const EffectData& d : pluginData) {
+			if (d.previewFirst) gmicLog("openfx-gmic: previewFirst %s\n", d.uniqueId.c_str());
+		}
 	}
 	return data;
 }
@@ -789,28 +794,15 @@ static string layerTimesNote(const EffectData& effectData)
 		"clips to the layer inputs and set their time offsets.";
 }
 
-// Help note of the filters that run their preview command first (EffectData::previewFirst, see
-// pluginProcess). CI's describe test (describe_plugins.cpp, kPreviewFirstNote) finds these
-// filters from its first sentence: keep them the same (no character that validateXMLString()
-// escapes in it).
-static string previewFirstNote(const EffectData& effectData)
-{
-	if (!effectData.previewFirst) return string();
-	return "\n\nPreview first: this filter runs its preview command before its main command, on the same "
-		"input, as G'MIC-Qt's Apply follows a preview: the main command gets what the preview leaves "
-		"(G'MIC's _persistent variable, and parameter values set by its status). It takes about twice as "
-		"long to render. With Preview/Draft Mode on, only the preview command runs.";
-}
-
 // The plug-in's description: the filter's notes (with those of its note() parameters), the notes
-// on Ignore Alpha, Layer Times and the preview-first run, and the plug-in's own.
+// on Ignore Alpha and Layer Times, and the plug-in's own.
 static string pluginDescription(const EffectData& effectData)
 {
 	// OFX strings are UTF-8, as G'MIC's: no transliteration on the OFX path
 	string d = strRemoveXmlTags(effectData.notes, true);
 	strReplace(d, "<", "(");
 	strReplace(d, ">", ")");
-	return d + ignoreAlphaNote(effectData) + layerTimesNote(effectData) + previewFirstNote(effectData) + "\n" + PLUGIN_DESCRIPTION;
+	return d + ignoreAlphaNote(effectData) + layerTimesNote(effectData) + "\n" + PLUGIN_DESCRIPTION;
 }
 
 #if defined(cimg_use_fftw3) && !defined(cimg_use_fftw3_singlethread)
@@ -1861,6 +1853,9 @@ struct FrameCacheEntry
 	CachedFrames frames;
 	size_t bytes;
 	unsigned long long lastUse;
+	// the warning of the run that made the frames (a failed preview-first run), shown again for
+	// the frames taken from the cache; empty for none
+	std::string warning;
 };
 
 struct FrameCache
@@ -1919,12 +1914,12 @@ static void frameCacheSetOwnerKey(FrameCache& c, const void* owner, const std::s
 	if (!previous.empty()) frameCacheDropIfUnused(c, previous, dropped);
 }
 
-// result [frame mod N] of the entry of key (frame: any integer), or NULL if there is none; the
-// instance now refers to key. If another render is running G'MIC for key, waits for it first,
+// result [frame mod N] of the entry of key (frame: any integer), or NULL if there is none (then
+// with the entry's warning in *warning); the instance now refers to key. If another render is running G'MIC for key, waits for it first,
 // polling the host's abort (then sets *aborted). On NULL without abort, the caller runs G'MIC; if
 // *claimed is set, other renders wait for it: it must call frameCacheRunDone(key) whatever happens.
 static std::shared_ptr<const CachedFrame> frameCacheFind(const void* owner, const std::string& key, long long frame,
-	const OFX::ImageEffect& effect, bool* claimed, bool* aborted)
+	const OFX::ImageEffect& effect, bool* claimed, bool* aborted, std::string* warning)
 {
 	std::vector<CachedFrames> dropped; // freed after unlocking
 	FrameCache& c = frameCache();
@@ -1934,6 +1929,7 @@ static std::shared_ptr<const CachedFrame> frameCacheFind(const void* owner, cons
 		std::map<std::string, FrameCacheEntry>::iterator it = c.entries.find(key);
 		if (it != c.entries.end() && !it->second.frames.empty()) {
 			it->second.lastUse = ++c.clock;
+			*warning = it->second.warning;
 			const long long n = (long long)it->second.frames.size();
 			return it->second.frames[(size_t)(((frame % n) + n) % n)];
 		}
@@ -2005,11 +2001,13 @@ static std::string frameCacheNotKept(const std::string& key, const std::string& 
 	return warning;
 }
 
-// keeps the results images[0..nofImages-1] under key, for the instance: their buffers now belong
-// to the cache, and their data pointers are set to NULL. Results that are not usable or don't fit
+// keeps the results images[0..nofImages-1] under key, for the instance, with the run's warning
+// (FrameCacheEntry::warning): their buffers now belong to the cache, and their data pointers are
+// set to NULL. Results that are not usable or don't fit
 // in the budget are left to the caller. Returns a warning for the user if they are not kept (a
 // result is empty, or they are larger than the budget), else an empty string.
-static std::string frameCacheStore(const void* owner, const std::string& key, gmic_interface_image* images, unsigned int nofImages, const std::string& filterName)
+static std::string frameCacheStore(const void* owner, const std::string& key, gmic_interface_image* images, unsigned int nofImages, const std::string& filterName,
+                                   const std::string& runWarning)
 {
 	size_t bytes = 0;
 	for (unsigned int i = 0; i < nofImages; ++i) {
@@ -2024,6 +2022,7 @@ static std::string frameCacheStore(const void* owner, const std::string& key, gm
 	FrameCacheEntry entry;
 	entry.bytes = bytes;
 	entry.lastUse = 0;
+	entry.warning = runWarning; // (before the results are moved: may throw)
 	entry.frames.reserve(nofImages);
 	for (unsigned int i = 0; i < nofImages; ++i) {
 		std::shared_ptr<CachedFrame> f = std::make_shared<CachedFrame>();
@@ -2049,6 +2048,7 @@ static std::string frameCacheStore(const void* owner, const std::string& key, gm
 	stored.frames.swap(entry.frames);
 	stored.bytes = bytes;
 	stored.lastUse = ++c.clock;
+	stored.warning.swap(entry.warning);
 	c.bytes += bytes;
 	return std::string();
 }
@@ -2183,7 +2183,9 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	int result = 0;
 	string errmsg;
 	string warning; // shown on the node after a successful render (showRenderWarning)
-	string previewWarning; // the preview command run first failed (shown with warning)
+	// the preview command run first failed (shown with warning; kept with Output Layer "Frame"
+	// results, and shown again for the frames taken from them)
+	string previewWarning;
 	// Output Layer "Frame": the results kept from a previous render, if the key is the same
 	const long long frame = frameNumberOf(sequenceDataP);
 	string cacheKey;
@@ -2198,7 +2200,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	const bool useCache = frameMode && frameCacheBudget() > 0; // OFX_GMIC_FRAME_CACHE_MB=0: no cache
 	if (useCache) {
 		cacheKey = frameCacheKey(globalDataP, cmd, sequenceDataP, nofImages);
-		cachedFrame = frameCacheFind(instanceDataP, cacheKey, frame, effect, &claim.claimed, &aborted);
+		cachedFrame = frameCacheFind(instanceDataP, cacheKey, frame, effect, &claim.claimed, &aborted, &previewWarning);
 	} else {
 		frameCacheRelease(instanceDataP);
 	}
@@ -2345,7 +2347,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		if (result == 0 && useCache && runGmic && !selected) {
 			// out of memory: the results not moved to the cache are freed below, as without cache
 			try {
-				warning = frameCacheStore(instanceDataP, cacheKey, images, nofImages, effectData.name);
+				warning = frameCacheStore(instanceDataP, cacheKey, images, nofImages, effectData.name, previewWarning);
 			} catch (const std::bad_alloc&) {
 			}
 		} else if (result == 0 && useCache && selected) {

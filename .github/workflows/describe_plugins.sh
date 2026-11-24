@@ -212,10 +212,12 @@ fx_update_file_test :
     # (not a hot fix warning)
     printf '%sstar_tone :\n  f 64\n' "$one_filter" | update_case hot-fixed-command 1 1 "'star_tone' is defined by "
 fi
-# the plug-ins that run their preview command before their main command (#206; their help note
-# says so): listed, and checked against $PREVIEW_FIRST_COUNT if set (ci.yml: a G'MIC bump or a
-# change of the rule in Helpers/gmic_parser.cpp changes it)
-sed -n -e 's/^PREVIEWFIRST //p' describe.log | tr -d '\r' > preview_first.txt
+# the plug-ins that run their preview command before their main command (#206): the plug-in logs
+# "openfx-gmic: previewFirst <id>" for each when it loads (gmic_plugin.cpp,
+# loadPluginGlobalData(): keep the text the same). Listed, and checked against
+# $PREVIEW_FIRST_COUNT if set (ci.yml: a G'MIC bump or a change of the rule in
+# Helpers/gmic_parser.cpp changes it)
+tr -d '\r' < describe.log | sed -n -e 's/^openfx-gmic: previewFirst //p' > preview_first.txt
 preview_first=$(($(wc -l < preview_first.txt)))
 echo "$preview_first plug-ins run their preview command first:" $(cat preview_first.txt)
 if [ -n "${PREVIEW_FIRST_COUNT:-}" ] && [ "$preview_first" != "$PREVIEW_FIRST_COUNT" ]; then

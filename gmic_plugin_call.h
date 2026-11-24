@@ -42,15 +42,18 @@ struct GmicCall
 	gmic_interface_image* images = nullptr; // maxImages entries: the inputs, then the results
 	unsigned int maxImages = 0;
 	gmic_interface_options* options = nullptr;
-	// if not null and not empty: G'MIC's _persistent before the run (GmicRunState::persistent of
-	// an earlier run), emptied (its memory freed) once G'MIC has its copy
+	// In-out (C++ Core Guidelines F.17), although GmicCall is passed as const: the call modifies
+	// the string that this points to, not the struct. If not null and not empty: G'MIC's
+	// _persistent before the run (GmicRunState::persistent of an earlier run). gmic_plugin_call()
+	// then empties the string (frees its memory) once G'MIC has its copy, also if the run fails
+	// later; it fails with an error if the string has more than UINT_MAX bytes (G'MIC's limit).
 	std::string* persistentIn = nullptr;
 	// if not null: set after a successful run (only then), with what the run left
 	GmicRunState* stateOut = nullptr;
 	GmicResults results = GmicResults::kKeep;
 };
 
-// Runs call.cmd in a new G'MIC interpreter. Returns:
+// Runs call.cmd in a new G'MIC interpreter. Empties *call.persistentIn (see GmicCall). Returns:
 // - 0 on success: with GmicResults::kKeep, *nofImages and images[0..*nofImages-1] hold the result
 //   (free each data pointer that is not an input's with gmic_delete_external()). G'MIC also
 //   returns normally when it was aborted through options->p_is_abort, or after the 'quit' command

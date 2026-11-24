@@ -8,8 +8,9 @@ that the file defines ("Unknown command" before #168), a built-in command, and a
 command that the file replaces: each output must be the uniform color that the filter fills it
 with. User File Persistent and User File Persistent Store need the _persistent variable (a
 string, or an image from 'store') and the status that their preview command sets (#206): their
-outputs show that the plug-in ran the preview command first, and gave both to the main command. The file also defines a command that the
-plug-in hot-fixes, which must be kept, with a note. Its User File Cpus filter fills its output
+outputs show that the plug-in ran the preview command first, and gave both to the main
+command. The file also defines a command that the plug-in hot-fixes, which must be kept, with a
+note. Its User File Cpus filter fills its output
 with G'MIC's $_cpus, rendered without OMP_NUM_THREADS so that the plug-in sets it (#188): the
 value, printed, must be the number of CPUs (hostDemo runs one render, whose fair share is all the
 hardware threads). This shows that the count reaches G'MIC, not that the plug-in's prefix is

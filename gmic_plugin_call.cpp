@@ -8,7 +8,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
-#include <algorithm>
 #include <limits>
 #include <utility>
 #include <string>
@@ -208,8 +207,8 @@ static void setPersistent(gmic& interpreter, const std::string& persistent)
 	if (persistent.empty()) return;
 	if (persistent[0] == gmic_store) {
 		// a view of the bytes, which set_variable() copies (CImg's shared images take a non-const
-		// pointer: no write happens through it)
-		const auto size = static_cast<unsigned int>(std::min<size_t>(persistent.size(), std::numeric_limits<unsigned int>::max()));
+		// pointer: no write happens through it). Its size fits: see gmic_plugin_call()
+		const auto size = static_cast<unsigned int>(persistent.size());
 		const gmic_image<unsigned char> value(reinterpret_cast<const unsigned char*>(persistent.data()), size, 1, 1, 1, true);
 		interpreter.set_variable("_persistent", value);
 	} else {
@@ -223,6 +222,12 @@ int gmic_plugin_call(const GmicCall& call)
 	gmic_interface_image* const images = call.images;
 	const GmicResults results = call.results;
 	if (options->error_message_buffer) options->error_message_buffer[0] = '\0';
+	// a G'MIC variable has at most UINT_MAX bytes (a CImg width): fail rather than truncate (ES.46)
+	if (call.persistentIn && call.persistentIn->size() > std::numeric_limits<unsigned int>::max()) {
+		setError(options, "The _persistent variable left by the preview command is too large (" +
+		                  std::to_string(call.persistentIn->size()) + " bytes).");
+		return -1;
+	}
 #if defined(_WIN32) && defined(_OPENMP)
 	// MSVC's OpenMP runtime (vcomp140.dll) must never be unloaded once its worker threads exist:
 	// when the host unloads the plug-in (FreeLibrary), the loader unmaps VCOMP140.DLL under the idle
