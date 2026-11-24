@@ -52,19 +52,23 @@
 
 #include "gmic_plugin.h"
 #include "gmic_log.h"
-#include "RFX_Parameter.h"
+#include "gmic_parameter.h"
 #include "gmic_string.h"
 
-using reduxfx::GlobalData;
-using reduxfx::Parameter;
-using reduxfx::PluginInfo;
-using reduxfx::SequenceData;
-using reduxfx::World;
+using gmic_ofx::DisplayStatus;
+using gmic_ofx::GlobalData;
+using gmic_ofx::kLayersFromSourceParam;
+using gmic_ofx::kMaxLayers;
+using gmic_ofx::kParamFlagsColorRGBA;
+using gmic_ofx::kParamFlagsPointEnabled;
+using gmic_ofx::kTimeOffsetParamSuffix;
+using gmic_ofx::Parameter;
+using gmic_ofx::ParamType;
+using gmic_ofx::PluginInfo;
+using gmic_ofx::SequenceData;
+using gmic_ofx::World;
 
 namespace {
-
-// pi, without relying on the non-standard M_PI
-constexpr double kRfxPi = 3.14159265358979323846;
 
 constexpr float kMaxChan8 = 255.f;
 constexpr float kInvMaxChan8 = 1.f / 255.f;
@@ -186,14 +190,14 @@ std::string validateXMLString(const std::string& s)
 bool hasLayerTimes(const GlobalData& gd)
 {
 	return std::any_of(gd.param, gd.param + gd.nofParams, [](const Parameter& p) {
-		return p.paramType == reduxfx::PT_INT && p.paramName == LAYERS_FROM_SOURCE_PARAM;
+		return p.paramType == ParamType::Int && p.paramName == kLayersFromSourceParam;
 	});
 }
 
 // does the plug-in have point parameters? (see pointsMoveToSource)
 bool hasPoints(const GlobalData& gd)
 {
-	return std::any_of(gd.param, gd.param + gd.nofParams, [](const Parameter& p) { return p.paramType == reduxfx::PT_POINT; });
+	return std::any_of(gd.param, gd.param + gd.nofParams, [](const Parameter& p) { return p.paramType == ParamType::Point; });
 }
 
 bool isEmpty(const OfxRectD& r)
@@ -437,16 +441,16 @@ std::optional<double> pointValueParse(const std::string& s)
 }
 
 // Layer times (issue #63): the plug-in may define, for its layer inputs (all but the first one,
-// Source), the integer parameters LAYERS_FROM_SOURCE_PARAM and "<clip name>"
-// TIME_OFFSET_PARAM_SUFFIX (RFX_Parameter.h). Layer input i is fetched at the render time plus its
+// Source), the integer parameters kLayersFromSourceParam and "<clip name>"
+// kTimeOffsetParamSuffix (gmic_parameter.h). Layer input i is fetched at the render time plus its
 // offset; the first "Layers from Source" layer inputs are then taken from Source instead of their
 // own clip, so that a single clip gives a window of frames. Without these parameters, every input
 // is fetched at the render time.
 struct LayerTimes
 {
 	int nofInputs = 0;
-	std::array<bool, MAX_NOF_LAYERS> fromSource{}; // per input: taken from Source (input 0)
-	std::array<int, MAX_NOF_LAYERS> offset{}; // per input, 0 for Source
+	std::array<bool, kMaxLayers> fromSource{}; // per input: taken from Source (input 0)
+	std::array<int, kMaxLayers> offset{}; // per input, 0 for Source
 	// the input whose clip input i is fetched from (the time: see inputTime)
 	int clipIndex(int i) const { return fromSource[i] ? 0 : i; }
 };
@@ -505,7 +509,7 @@ private:
 	// layer times (see layerTimesAt), NULL for plug-ins without them
 	OFX::IntParam* _layersFromSource = nullptr;
 	int _lastLayersFromSource = 0; // its value at the previous change (see changedParam)
-	std::array<OFX::IntParam*, MAX_NOF_LAYERS> _timeOffset{}; // per input, NULL for Source
+	std::array<OFX::IntParam*, kMaxLayers> _timeOffset{}; // per input, NULL for Source
 	// point parameters: the value the plug-in gave each within Source, if any (see
 	// pointsMoveToSource), also kept in the hidden parameter kPointsFromSourceParam
 	OFX::StringParam* _pointsFromSource = nullptr;
@@ -522,39 +526,37 @@ GMICEffect::GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData
 	, _animateSeed(fetchBooleanParam(kAnimateSeedParam))
 	, _pointFromSource((size_t)globalData.nofParams)
 {
-	using namespace reduxfx;
 	for (int i = 0; i < _gd.nofParams; i++) {
 		const Parameter& param = _gd.param[i];
 		const std::string& name = param.paramName;
 		switch (param.paramType) {
-		case PT_LAYER:
+		case ParamType::Layer:
 			_inputs.push_back(fetchClip(name));
 			_inputParam.push_back(i);
 			break;
-		case PT_FLOAT:
-		case PT_ANGLE:
+		case ParamType::Float:
 			_params[i] = fetchDoubleParam(name);
 			break;
-		case PT_INT:
+		case ParamType::Int:
 			_params[i] = fetchIntParam(name);
 			break;
-		case PT_BOOL:
+		case ParamType::Bool:
 			_params[i] = fetchBooleanParam(name);
 			break;
-		case PT_SELECT:
+		case ParamType::Select:
 			_params[i] = fetchChoiceParam(name);
 			break;
-		case PT_COLOR:
+		case ParamType::Color:
 			if (colorHasAlpha(param)) {
 				_params[i] = fetchRGBAParam(name);
 			} else {
 				_params[i] = fetchRGBParam(name);
 			}
 			break;
-		case PT_POINT:
+		case ParamType::Point:
 			_params[i] = fetchDouble2DParam(name);
 			break;
-		case PT_TEXT:
+		case ParamType::Text:
 			_params[i] = fetchStringParam(name);
 			break;
 		default:
@@ -565,10 +567,10 @@ GMICEffect::GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData
 		_pointsFromSource = fetchStringParam(kPointsFromSourceParam);
 	}
 	if (hasLayerTimes(_gd)) {
-		_layersFromSource = fetchIntParam(LAYERS_FROM_SOURCE_PARAM);
+		_layersFromSource = fetchIntParam(kLayersFromSourceParam);
 		_layersFromSource->getValue(_lastLayersFromSource);
-		for (size_t l = 1; l < _inputs.size() && l < MAX_NOF_LAYERS; l++) {
-			_timeOffset[l] = fetchIntParam(inputName((int)l) + TIME_OFFSET_PARAM_SUFFIX);
+		for (size_t l = 1; l < _inputs.size() && l < kMaxLayers; l++) {
+			_timeOffset[l] = fetchIntParam(inputName((int)l) + kTimeOffsetParamSuffix);
 		}
 	}
 	pointsUpdateEnabled(-1);
@@ -590,18 +592,17 @@ void GMICEffect::failUnlessAborted() const
 // image dstRect belongs to)
 void GMICEffect::fetchParamValues(SequenceData& sd, const OfxRectI& dstRect, double par, double t, const OfxPointD& renderScale) const
 {
-	using namespace reduxfx;
 	for (int i = 0; i < _gd.nofParams; i++) {
 		const Parameter& param = _gd.param[i];
 		float* const value = sd.floatValue[i];
 		switch (param.paramType) {
-		case PT_FLOAT:
+		case ParamType::Float:
 			value[0] = static_cast<float>(std::get<OFX::DoubleParam*>(_params[i])->getValueAtTime(t));
 			break;
-		case PT_INT:
+		case ParamType::Int:
 			value[0] = static_cast<float>(std::get<OFX::IntParam*>(_params[i])->getValueAtTime(t));
 			break;
-		case PT_COLOR:
+		case ParamType::Color:
 			if (colorHasAlpha(param)) {
 				const OfxRGBAColourD c = std::get<OFX::RGBAParam*>(_params[i])->getValueAtTime(t);
 				value[0] = static_cast<float>(c.r);
@@ -616,7 +617,7 @@ void GMICEffect::fetchParamValues(SequenceData& sd, const OfxRectI& dstRect, dou
 				value[3] = 1.f; // not passed to G'MIC
 			}
 			break;
-		case PT_POINT: {
+		case ParamType::Point: {
 			// percent of the image, from its top-left corner (G'MIC's y goes down); an empty dstRect
 			// (no input, empty output) counts as 1 pixel, so as not to divide by 0
 			const OfxPointD p = std::get<OFX::Double2DParam*>(_params[i])->getValueAtTime(t);
@@ -624,17 +625,13 @@ void GMICEffect::fetchParamValues(SequenceData& sd, const OfxRectI& dstRect, dou
 			value[0] = static_cast<float>((p.x * renderScale.x / par - dstRect.x1) * 100. / w);
 			value[1] = 100.f - static_cast<float>((p.y * renderScale.y - dstRect.y1) * 100. / h);
 		} break;
-		case PT_ANGLE: {
-			const float v = static_cast<float>(std::get<OFX::DoubleParam*>(_params[i])->getValueAtTime(t));
-			value[0] = static_cast<float>((param.flags > 0) ? -kRfxPi * v / 180.0f : v);
-		} break;
-		case PT_SELECT:
+		case ParamType::Select:
 			value[0] = static_cast<float>(std::get<OFX::ChoiceParam*>(_params[i])->getValueAtTime(t));
 			break;
-		case PT_BOOL:
+		case ParamType::Bool:
 			value[0] = std::get<OFX::BooleanParam*>(_params[i])->getValueAtTime(t) ? 1.f : 0.f;
 			break;
-		case PT_TEXT:
+		case ParamType::Text:
 			std::get<OFX::StringParam*>(_params[i])->getValueAtTime(t, sd.textValue[i]);
 			break;
 		default:
@@ -648,7 +645,7 @@ void GMICEffect::fetchParamValues(SequenceData& sd, const OfxRectI& dstRect, dou
 LayerTimes GMICEffect::layerTimesAt(double t) const
 {
 	LayerTimes lt;
-	lt.nofInputs = std::min(_gd.nofInputs, MAX_NOF_LAYERS);
+	lt.nofInputs = std::min(_gd.nofInputs, kMaxLayers);
 	int fromSource = 0;
 	if (_layersFromSource) {
 		_layersFromSource->getValueAtTime(t, fromSource);
@@ -701,7 +698,7 @@ void GMICEffect::getRegionsOfInterest(const OFX::RegionsOfInterestArguments& arg
 	// With layer times, the region of definition of each frame fetched (see render): the union of
 	// them for Source, whose frames may also be layers.
 	const LayerTimes lt = layerTimesAt(args.time);
-	const int n = std::min((int)_inputs.size(), MAX_NOF_LAYERS);
+	const int n = std::min((int)_inputs.size(), kMaxLayers);
 	std::vector<std::optional<OfxRectD>> roi((size_t)n);
 	for (int i = 0; i < n; ++i) {
 		const int c = lt.clipIndex(i);
@@ -739,7 +736,7 @@ void GMICEffect::getFramesNeeded(const OFX::FramesNeededArguments& args, OFX::Fr
 		return; // the host's default
 	}
 	const LayerTimes lt = layerTimesAt(args.time);
-	const int n = std::min((int)_inputs.size(), MAX_NOF_LAYERS);
+	const int n = std::min((int)_inputs.size(), kMaxLayers);
 	std::vector<std::vector<double>> times((size_t)n);
 	for (int i = 0; i < n; ++i) {
 		std::vector<double>& f = times[lt.clipIndex(i)];
@@ -809,12 +806,11 @@ bool GMICEffect::isIdentity(const OFX::IsIdentityArguments& args, OFX::Clip*& /*
 // render, and should only be set in the instance changed action or in interacts)
 void GMICEffect::changedParam(const OFX::InstanceChangedArgs& args, const std::string& paramName)
 {
-	using namespace reduxfx;
 	// Layers from Source raised by the user: give the layers it adds whose offset is still 0 the
 	// previous frames (Layer -k at -k), a frame window instead of copies of the current frame. Not
 	// when it is lowered or changed otherwise (undo, redo, reset, project load, a script): its value is
 	// tracked on every change. Natron reports some internal edits as user edits.
-	if (_layersFromSource && paramName == LAYERS_FROM_SOURCE_PARAM) {
+	if (_layersFromSource && paramName == kLayersFromSourceParam) {
 		const int previous = _lastLayersFromSource;
 		_layersFromSource->getValue(_lastLayersFromSource);
 		if (args.reason == OFX::eChangeUserEdit && _lastLayersFromSource > previous) {
@@ -840,7 +836,7 @@ void GMICEffect::changedParam(const OFX::InstanceChangedArgs& args, const std::s
 	for (int i = 1; i < _gd.nofParams; i++) {
 		const Parameter& param = _gd.param[i];
 		if (param.paramName != paramName) continue;
-		if (param.paramType == PT_BOOL && param.flags == PARAM_FLAGS_POINT_ENABLED) {
+		if (param.paramType == ParamType::Bool && param.flags == kParamFlagsPointEnabled) {
 			pointsUpdateEnabled(i);
 		}
 		break;
@@ -853,7 +849,7 @@ void GMICEffect::changedParam(const OFX::InstanceChangedArgs& args, const std::s
 	// parameters: the instance changed actions this causes are plug-in edits, ignored here)
 	for (int i = 0; i < _gd.nofParams; i++) {
 		const Parameter& param = _gd.param[i];
-		if (param.paramType != PT_POINT || param.paramName != paramName) continue;
+		if (param.paramType != ParamType::Point || param.paramName != paramName) continue;
 		OFX::Double2DParam* point = std::get<OFX::Double2DParam*>(_params[i]);
 		const std::optional<OfxPointD> v = hostQuery([point] { return point->getValue(); });
 		if (!v) break;
@@ -938,7 +934,7 @@ void GMICEffect::pointsFromSourceRead()
 		if (eq == std::string::npos || comma == std::string::npos || comma < eq) continue;
 		const std::string name = item.substr(0, eq);
 		for (int i = 0; i < _gd.nofParams; i++) {
-			if (_gd.param[i].paramType == reduxfx::PT_POINT && _gd.param[i].paramName == name) {
+			if (_gd.param[i].paramType == ParamType::Point && _gd.param[i].paramName == name) {
 				const std::optional<double> px = pointValueParse(item.substr(eq + 1, comma - eq - 1));
 				const std::optional<double> py = pointValueParse(item.substr(comma + 1));
 				if (px && py) {
@@ -954,7 +950,7 @@ void GMICEffect::pointsFromSourceWrite()
 	if (!_pointsFromSource) return;
 	std::string str;
 	for (int i = 0; i < _gd.nofParams; i++) {
-		if (_gd.param[i].paramType != reduxfx::PT_POINT || !_pointFromSource[i]) continue;
+		if (_gd.param[i].paramType != ParamType::Point || !_pointFromSource[i]) continue;
 		str += _gd.param[i].paramName + "=" + pointValueToString(_pointFromSource[i]->x) + "," +
 			pointValueToString(_pointFromSource[i]->y) + ";";
 	}
@@ -975,7 +971,7 @@ void GMICEffect::pointsMoveToSource(double time, int onlyParam)
 	bool moved = false;
 	for (int i = 0; i < _gd.nofParams; i++) {
 		const Parameter& param = _gd.param[i];
-		if (param.paramType != reduxfx::PT_POINT || (onlyParam >= 0 && i != onlyParam)) continue;
+		if (param.paramType != ParamType::Point || (onlyParam >= 0 && i != onlyParam)) continue;
 		OFX::Double2DParam* point = std::get<OFX::Double2DParam*>(_params[i]);
 		const std::optional<unsigned int> keys = hostQuery([point] { return point->getNumKeys(); });
 		if (keys && *keys > 0) continue; // (not all hosts count keys)
@@ -995,15 +991,14 @@ void GMICEffect::pointsMoveToSource(double time, int onlyParam)
 }
 
 // A removable point (issue #79) is enabled, with its overlay handle, only when its checkbox (the
-// boolean parameter after it, see PARAM_FLAGS_POINT_ENABLED) is on. onlyParam >= 0: only for that
+// boolean parameter after it, see kParamFlagsPointEnabled) is on. onlyParam >= 0: only for that
 // checkbox.
 void GMICEffect::pointsUpdateEnabled(int onlyParam)
 {
-	using namespace reduxfx;
 	for (int i = 1; i < _gd.nofParams; i++) {
 		const Parameter& param = _gd.param[i];
-		if (param.paramType != PT_BOOL || param.flags != PARAM_FLAGS_POINT_ENABLED || (onlyParam >= 0 && i != onlyParam)) continue;
-		if (_gd.param[i - 1].paramType != PT_POINT) continue;
+		if (param.paramType != ParamType::Bool || param.flags != kParamFlagsPointEnabled || (onlyParam >= 0 && i != onlyParam)) continue;
+		if (_gd.param[i - 1].paramType != ParamType::Point) continue;
 		OFX::BooleanParam* checkbox = std::get<OFX::BooleanParam*>(_params[i]);
 		const std::optional<bool> on = hostQuery([checkbox] { return checkbox->getValue(); });
 		if (!on) continue;
@@ -1024,7 +1019,6 @@ void checkImageFormat(const OFX::Image& image)
 // the process code that the host sees
 void GMICEffect::render(const OFX::RenderArguments& args)
 {
-	using namespace reduxfx;
 	refuseRenderScale(args.renderScale);
 	// the render window is not used: tiles are not supported, and the whole output image is rendered
 	const double time = args.time;
@@ -1060,7 +1054,7 @@ void GMICEffect::render(const OFX::RenderArguments& args)
 	double firstSrcPAR = outputImg->getPixelAspectRatio();
 	bool firstSrcPremultiplied = false;
 	const LayerTimes layerTimes = layerTimesAt(time);
-	const int nofInputs = std::min((int)_inputs.size(), MAX_NOF_LAYERS);
+	const int nofInputs = std::min((int)_inputs.size(), kMaxLayers);
 	// the host images and their float planar copies, given to G'MIC (released on return)
 	std::vector<std::unique_ptr<OFX::Image>> sourceImg((size_t)nofInputs);
 	std::vector<std::vector<float>> sourceBuffer((size_t)nofInputs);
@@ -1271,7 +1265,6 @@ void GMICPluginFactory::describe(OFX::ImageEffectDescriptor& desc)
 // describe the plugin in context
 void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX::ContextEnum /*context*/)
 {
-	using namespace reduxfx;
 	const GlobalData& gd = globalData();
 	const bool layerTimes = hasLayerTimes(gd);
 
@@ -1309,7 +1302,7 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 		const std::string& name = param.paramName;
 		OFX::ParamDescriptor* paramDesc = nullptr;
 		switch (param.paramType) {
-		case PT_FLOAT: {
+		case ParamType::Float: {
 			OFX::DoubleParamDescriptor* p = desc.defineDoubleParam(name);
 			if (param.flags > 0) p->setDoubleType(OFX::eDoubleTypeScale);
 			p->setDefault(param.defaultValue[0]);
@@ -1320,7 +1313,7 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			p->setDigits(steps.digits);
 			paramDesc = p;
 		} break;
-		case PT_COLOR:
+		case ParamType::Color:
 			// Natron loads the RGB colour of the projects saved with the RGBA one (of plug-in versions
 			// that declared all colours RGBA) and drops the alpha, which G'MIC never got
 			if (colorHasAlpha(param)) {
@@ -1333,7 +1326,7 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 				paramDesc = p;
 			}
 			break;
-		case PT_TEXT: {
+		case ParamType::Text: {
 			std::string txt = param.text;
 			// as G'MIC-Qt, the parser already unescaped the defaults of text() and value(), and
 			// file()/folder() defaults are taken as they are: decoding "\n" again would turn the
@@ -1381,7 +1374,7 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			}
 			paramDesc = p;
 		} break;
-		case PT_INT: {
+		case ParamType::Int: {
 			OFX::IntParamDescriptor* p = desc.defineIntParam(name);
 			p->setDefault((int)param.defaultValue[0]);
 			p->setRange((int)param.minValue, (int)param.maxValue);
@@ -1391,7 +1384,7 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			}
 			paramDesc = p;
 		} break;
-		case PT_POINT: {
+		case ParamType::Point: {
 			// point parameter is in % (percent) in gmic: the default is normalised
 			const OfxPointD n = pointNormalisedDefault(param);
 			OFX::Double2DParamDescriptor* p = desc.defineDouble2DParam(name);
@@ -1401,13 +1394,13 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			p->setUseHostNativeOverlayHandle(true);
 			paramDesc = p;
 		} break;
-		case PT_BOOL: {
+		case ParamType::Bool: {
 			OFX::BooleanParamDescriptor* p = desc.defineBooleanParam(name);
 			p->setDefault((int)param.defaultValue[0] != 0);
 			p->setAnimates(false);
 			paramDesc = p;
 		} break;
-		case PT_SELECT: {
+		case ParamType::Select: {
 			const std::vector<std::string> choices = gmic_ofx::strSplit(param.text, '|');
 			OFX::ChoiceParamDescriptor* p = desc.defineChoiceParam(name);
 			const int nofOptions = std::min((int)param.maxValue + 1, (int)choices.size());
@@ -1418,20 +1411,14 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			p->setAnimates(false);
 			paramDesc = p;
 		} break;
-		case PT_ANGLE: {
-			OFX::DoubleParamDescriptor* p = desc.defineDoubleParam(name);
-			p->setDefault(param.defaultValue[0]);
-			p->setDoubleType(OFX::eDoubleTypeAngle);
-			paramDesc = p;
-		} break;
-		case PT_SEPARATOR:
+		case ParamType::Separator:
 #ifdef OFX_EXTENSIONS_NUKE
 			if (previous) {
 				previous->setLayoutHint(OFX::eLayoutHintDivider);
 			}
 #endif
 			continue;
-		case PT_LAYER: {
+		case ParamType::Layer: {
 			OFX::ClipDescriptor* clip = desc.defineClip(name);
 			if (i > 0) {
 				clip->setOptional(true);
@@ -1445,22 +1432,22 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			previous = nullptr; // (a clip has no layout hint)
 			continue;
 		}
-		case PT_TOPIC_START: {
+		case ParamType::TopicStart: {
 			OFX::GroupParamDescriptor* p = desc.defineGroupParam(name);
 			p->setOpen(param.flags <= 0);
 			group = p;
 			paramDesc = p;
 		} break;
-		case PT_TOPIC_END:
+		case ParamType::TopicEnd:
 			group = nullptr;
 			continue;
 		default:
 			continue;
 		}
 
-		if (param.displayStatus == DS_DISABLED) {
+		if (param.displayStatus == DisplayStatus::Disabled) {
 			paramDesc->setEnabled(false);
-		} else if (param.displayStatus == DS_HIDDEN) {
+		} else if (param.displayStatus == DisplayStatus::Hidden) {
 			paramDesc->setIsSecret(true);
 		}
 		paramDesc->setScriptName(name);
@@ -1468,7 +1455,7 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 		if (!param.hint.empty()) {
 			paramDesc->setHint(param.hint);
 		}
-		if (group && param.paramType != PT_TOPIC_START) {
+		if (group && param.paramType != ParamType::TopicStart) {
 			paramDesc->setParent(*group);
 		}
 		previous = paramDesc;
