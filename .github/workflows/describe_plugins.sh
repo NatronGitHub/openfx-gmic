@@ -136,6 +136,13 @@ if [ -f "$SHIPPED_LIST" ] && [ "${DESCRIBE_USER_LIST:-}" = 1 ]; then
         echo "FAIL: a user's list that disables $first and $last: expected the $expected other plug-ins"
         status=1
     fi
+    # (one stderr line: the disabled plug-ins and the disabled identifiers that are no plug-in; no
+    # grep -q: with pipefail, tr would fail with SIGPIPE when grep stops early)
+    if ! tr -d '\r' < describe2.log | grep -x "openfx-gmic: .*gmic_ofx_plugins.txt: 2 plug-ins disabled; unknown identifiers: eu.gmic.NoSuchPlugin" > /dev/null; then
+        tr -d '\r' < describe2.log | grep '^openfx-gmic: ' || true
+        echo "FAIL: a user's list that disables $first and $last: expected the line that reports it on stderr"
+        status=1
+    fi
 fi
 # PLUGIN_LIST=<file>: the plug-ins, their context and input clips, for render_plugins.py
 if [ -n "${PLUGIN_LIST:-}" ]; then
