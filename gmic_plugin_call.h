@@ -1,10 +1,12 @@
 // gmic_plugin_call(): run G'MIC on the plug-in's images, like gmic_call() from gmic_libc, but
 // never writing more than maxImages results. gmic_plugin_call.cpp also defines
-// gmic_delete_external() and gmic_get_stdlib() from gmic_libc.h (gmic_libc.cpp is not built).
+// gmic_delete_external() and gmic_get_stdlib() from gmic_libc.h (gmic_libc.cpp is not built), and
+// gmicUpdateFileName(), which needs gmic.h's version.
 #ifndef GMIC_PLUGIN_CALL_H
 #define GMIC_PLUGIN_CALL_H
 
 #include "gmic_libc.h"
+#include <string>
 
 // The input images must be planar float images (E_FORMAT_FLOAT, not interleaved), and the result
 // images are planar float images: options->interleave_output and options->output_format are
@@ -17,5 +19,10 @@
 //   options->error_message_buffer (at least 256 bytes), and *nofImages and images[] are left
 //   unchanged.
 int gmic_plugin_call(const char* cmd, unsigned int* nofImages, gmic_interface_image* images, unsigned int maxImages, gmic_interface_options* options);
+
+// The name of the filter update file of the G'MIC version the plug-in is built with,
+// "update<gmic_version>.gmic" (update408.gmic for G'MIC 4.0.8), as G'MIC's 'update' command and
+// G'MIC-Qt name it in the G'MIC folder.
+std::string gmicUpdateFileName();
 
 #endif

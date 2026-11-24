@@ -210,13 +210,23 @@ Filters
 The filters come from the first of these that is not empty:
 - ~/.config/gmic/gmic_ofx.gmic (Windows: %APPDATA%/gmic/gmic_ofx.gmic);
 - ~/.config/gmic/gmic_stdlib.gmic (Windows: %APPDATA%/gmic/gmic_stdlib.gmic);
+- ~/.config/gmic/update408.gmic (Windows: %APPDATA%/gmic/update408.gmic; 408 is the G'MIC
+  version the plug-in is built with, 4.0.8): the update of the built-in filters that G'MIC-Qt
+  (when its filter updates are on) or the command "gmic update" downloads. The plug-in never
+  downloads it, it only reads the file that is there, as text;
 - the standard library built into the plug-in.
-A user file replaces the whole filter list. Plug-in identifiers come from the filter names.
-The commands that a user file defines are passed to G'MIC on every render, as in G'MIC-Qt, so its
-filters can call them; they replace the built-in commands of the same name (the plug-in's hot
-fixes for G'MIC bugs still apply after them).
+A user file (or the update file) replaces the whole filter list. Plug-in identifiers come from
+the filter names.
+The commands that the file defines are passed to G'MIC on every render, as in G'MIC-Qt, so its
+filters can call them; they replace the built-in commands of the same name. The plug-in's hot
+fixes for G'MIC bugs still apply after them, except to a command that the file defines another
+way (e.g. fixed in a newer update): the file's definition is kept.
 After adding, removing or editing a user file, clear the host's plug-in cache (see "Choosing the
-plug-ins"): a cached list of plug-ins numbers them as the old filter list did.
+plug-ins"): a cached list of plug-ins numbers them as the old filter list did. This also holds for
+the update file, which G'MIC-Qt rewrites when it updates its filters (by default, once a month,
+when it is used): clear the cache after such an update, or the plug-in's nodes may become other
+filters. To keep the built-in filters, delete update408.gmic, or turn off filter updates in
+G'MIC-Qt.
 
 Choosing the plug-ins
 ---------------------
@@ -249,7 +259,7 @@ create that node: re-enable the plug-in (and clear the cache) before opening and
 project.
 
 The bundle's list is made from the standard library built into the plug-in: it doesn't follow a
-user's gmic_ofx.gmic (see "Filters"). For a list of the filters actually loaded, set
+user's gmic_ofx.gmic or G'MIC's update file (see "Filters"). For a list of the filters actually loaded, set
 OFX_GMIC_WRITE_PLUGIN_LIST (see "Environment").
 
 Environment

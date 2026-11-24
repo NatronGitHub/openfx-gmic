@@ -2,15 +2,18 @@
 """Render the filters of a user filter file (user_filters.gmic), and check their pixels.
 
 The file is installed as ~/.config/gmic/gmic_ofx.gmic in a temporary HOME (render_plugins.py's
-<work>/home), which replaces the built-in filters. Its filters call commands that the file
+<work>/home), or with --update-file as G'MIC's filter update file (update408.gmic for the
+GMICVER 4.0.8 of the Makefile, #180), which replaces the built-in filters. Its filters call commands that the file
 defines (#168: "Unknown command" before), a built-in command, and a built-in command that the
 file replaces; each output must be the uniform color that the filter fills it with.
 
 usage: user_filters_test.py --host <hostDemo, or the CMake build directory>
                             --plugins <dir with GMIC.ofx.bundle> [--work <dir>]
+                            [--update-file]
 """
 import argparse
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -25,6 +28,15 @@ EXPECTED = {
     'eu.gmic.UserFileOverride': (128 / 255.0,) * 3,
 }
 TOLERANCE = 1e-4
+
+
+def update_file_name():
+    """Returns the name of G'MIC's update file for the Makefile's GMICVER (4.0.8: update408.gmic)."""
+    with open(os.path.join(HERE, '..', '..', 'Makefile'), encoding='utf-8') as f:
+        match = re.search(r'^GMICVER\s*=\s*(\d+)\.(\d+)\.(\d+)\s*$', f.read(), re.MULTILINE)
+    if not match:
+        raise ValueError('no GMICVER=<major>.<minor>.<patch> in the Makefile')
+    return 'update%s.gmic' % ''.join(match.groups())
 
 
 def read_pfm(path):
@@ -64,11 +76,14 @@ def main():
     ap.add_argument('--host', required=True)
     ap.add_argument('--plugins', required=True)
     ap.add_argument('--work')
+    ap.add_argument('--update-file', action='store_true',
+                    help="install the file as G'MIC's update file, not as gmic_ofx.gmic")
     a = ap.parse_args()
     work = os.path.abspath(a.work) if a.work else tempfile.mkdtemp(prefix='user_filters.')
     rc_dir = os.path.join(work, 'home', '.config', 'gmic')
     os.makedirs(rc_dir, exist_ok=True)
-    shutil.copy(os.path.join(HERE, 'user_filters.gmic'), os.path.join(rc_dir, 'gmic_ofx.gmic'))
+    name = update_file_name() if a.update_file else 'gmic_ofx.gmic'
+    shutil.copy(os.path.join(HERE, 'user_filters.gmic'), os.path.join(rc_dir, name))
     plugin_list = os.path.join(work, 'plugins.txt')
     with open(plugin_list, 'w', encoding='utf-8') as f:
         for pid in sorted(EXPECTED):
@@ -84,7 +99,7 @@ def main():
         print('FAIL: ' + p)
     if problems:
         return 1
-    print('user file filters: %d rendered with the expected pixels' % len(EXPECTED))
+    print('%s filters: %d rendered with the expected pixels' % (name, len(EXPECTED)))
     return 0
 
 

@@ -81,6 +81,11 @@ GMIC_DLLINTERFACE const char* GMIC_CALLCONV gmic_get_stdlib()
 	return lib.data();
 }
 
+std::string gmicUpdateFileName()
+{
+	return "update" + std::to_string(gmic_version) + ".gmic";
+}
+
 static void setError(gmic_interface_options* options, const std::string& message)
 {
 	if (options->error_message_buffer) {
