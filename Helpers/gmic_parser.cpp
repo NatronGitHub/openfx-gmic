@@ -263,6 +263,16 @@ void processParam(const string& s, EffectParameter& cp)
 	strReplace(cp.paramType, "_", ""); // "_type": no preview refresh
 	strReplace(cp.paramType, "~", ""); // "~type" (G'MIC >= 3): not randomized
 	cp.paramType = strLowercase(cp.paramType);
+	// a value whose delimiter is never closed ("float(0,1"), which G'MIC-Qt rejects
+	// (AbstractParameter::parseText, "cannot find closing"): gmic_parse_single() ended it with the
+	// filter's #@gui lines, and it is read as if it were closed there (its last character is not
+	// dropped as a delimiter), with a warning
+	const char close = (r[p1] == '(') ? ')' : (r[p1] == '[') ? ']' : '}';
+	if (r[r.size() - 1] != close) {
+		fprintf(stderr, "openfx-gmic: Warning: %s parameter \"%s\" has no closing '%c': it ends with the filter\n",
+			cp.paramType.c_str(), cp.name.c_str(), close);
+		r += close;
+	}
 	string pval = strTrim(r.substr(p1 + 1));
 	pval = pval.substr(0, pval.size() - 1);
 
@@ -529,6 +539,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 		int sPos2 = (int)line.find("#");
 		if (sPos >= 0 && sPos2 == 0) {
 			if (line.substr(0, dst_prefix.size() + 3) != dst_prefix + " : ") {
+				inMulti = false; // a value left open ends with its filter's #@gui lines (see processParam)
 				processCommand(line, cd);
 			} else {
 				strReplace(line, dst_prefix + " : ", "");
@@ -602,6 +613,9 @@ string gmic_parse_single(const string& content, EffectData& cd)
 				}
 			}
 		} else if (sPos2 == 0) {
+			// a category line, or the line that separates the pages of "About G'MIC" (see
+			// gmic_parse_multi): it ends a value left open, as a filter line does
+			inMulti = false;
 			sPos = (int)n.find(" ");
 			if (sPos >= 0) {
 				n = n.substr(sPos);
@@ -616,6 +630,13 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	}
 	for (int i = 0; i < (int)cd.param.size(); i++) {
 		processParam(cd.param[i].name, cd.param[i]);
+		// a parameter without a name ("=float(1,0,2)"): G'MIC-Qt shows it without a label, but a host
+		// parameter needs a name. Name it by its position, so that it keeps its argument.
+		if (cd.param[i].name.empty()) {
+			cd.param[i].name = "Parameter " + intToString(i + 1);
+			fprintf(stderr, "openfx-gmic: Warning: %s parameter without a name: named \"%s\"\n",
+				cd.param[i].paramType.c_str(), cd.param[i].name.c_str());
+		}
 		bool ok = false;
 		int cnt = 2;
 		string t = cd.param[i].name;
@@ -1075,8 +1096,9 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 					}
 				} else if (col != spc + 1) {
 					if (isAboutCategory(cat)) {
-						// add new title
-						command += "\n#@gui : note = note{" + line.substr(spc+1, col - spc - 1) + '}';
+						// add new title, after a "#@gui" line that ends the previous page (as a filter
+						// line does in G'MIC-Qt), so that a value left open there doesn't take it in
+						command += "\n#@gui\n#@gui : note = note{" + line.substr(spc+1, col - spc - 1) + '}';
 					} else {
 						// new command/Plugin
 						if (!command.empty()) {
