@@ -82,12 +82,6 @@ if grep -E "PREVIEW_FALLBACK_UNKNOWN" describe.log; then
     echo "FAIL: update the curated list in markPersistentFilters() (see above)"
     status=1
 fi
-# the curated list of hidden batch/interactive filters (Helpers/gmic_parser.cpp) names a command
-# that is no longer a filter's main command
-if grep -E "HIDDEN_FILTER_UNKNOWN" describe.log; then
-    echo "FAIL: update the curated list in hideBatchFilters() (see above)"
-    status=1
-fi
 # a parameter type the parser doesn't know (e.g. new in a G'MIC bump): pluginSetup passes 0 for it
 if grep "has an unknown type" describe.log; then
     echo "FAIL: unknown G'MIC parameter types, support them in Helpers/gmic_parser.cpp and pluginSetup (see above)"

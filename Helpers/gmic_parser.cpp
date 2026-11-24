@@ -975,18 +975,22 @@ static bool testsKey(const string& item)
 }
 
 // Filters that make no sense when rendering frame by frame in an OpenFX host (issue #64): batch
-// converters that read or write image sequences on disk on every render, filters that write files,
-// and interactive tools that open a window. Rules on the #@gui definition and on the definition of
-// the main command (not the commands it calls):
+// converters that read or write image sequences on disk on every render, filters that write files
+// into G'MIC's own folder, and interactive tools that open a window. Generic rules only (issue
+// #204), on the #@gui definition and on the definition of the main command (not the commands it
+// calls):
 // - a parameter that reads files or folders (file(), filein(), folder()) together with the word
 //   "video" or "frame(s)" in the filter name or a parameter name: Stereo Video, 3D Video Conversion;
 // - the main command writes a file into G'MIC's own folder ("output ...$_path_rc..."): Layers To PNG;
 // - the main command waits for keys in a display window ({*,ESC}...): Diaporama.
 // (The parser already leaves out the Sequences category and the [animated] and [interactive]
 // filters.) Removed after the plug-in identifiers are assigned, so that the others keep theirs.
+// There is no list of filters: as in G'MIC-Qt, which hides none, a filter that these rules miss is
+// shown (e.g. Intarsia, which writes its HTML page and images into the Output Directory that the
+// user chooses), and if it really can't work in a host, it is for upstream to mark it.
 // This needs the command definitions in "content": with a gmic_ofx.gmic that only has #@gui lines,
-// only the parameter rule and the curated list below apply.
-static void hideBatchFilters(const string& content, vector<EffectData>& cds, vector<string>* lines, bool checkCurated)
+// only the parameter rule applies.
+static void hideBatchFilters(const string& content, vector<EffectData>& cds, vector<string>* lines)
 {
 	set<string> mains;
 	for (vector<EffectData>::const_iterator it = cds.begin(); it != cds.end(); ++it) {
@@ -1016,31 +1020,6 @@ static void hideBatchFilters(const string& content, vector<EffectData>& cds, vec
 			} else if (testsKey(it)) {
 				hidden.insert(cur);
 			}
-		}
-	}
-	// Main commands hidden whatever the rules say, so that they stay hidden if their definition
-	// changes. A listed command that no longer is the main command of a filter (e.g. after a G'MIC
-	// update) is reported on stderr, and makes the describe test fail
-	// (.github/workflows/describe_plugins.sh).
-	// Also hidden:
-	// - Intarsia (fx_intarsia) writes an HTML page and PNG images into its Output Directory ($1,
-	//   by default empty, so the root folder) on every render, which the rule above misses.
-	// The filters that upstream disabled as broken after G'MIC 4.0.7, and that were hidden here
-	// (Color Region, Prime Surface, Reverse Engineer Color Curve, Layer Manipulation, Halftone
-	// Shapes, Montage Multi Rows), are no longer in G'MIC 4.0.8; Beauty Retouch (fx_tk_retouch,
-	// https://github.com/GreycLab/gmic-community/issues/308) is fixed there.
-	static const char* const curated[] = { "gcd_stereo_vid", "fx_tk_video3D", "samj_diaporama", "samj_Layers_To_PNG",
-		"fx_intarsia" };
-	for (size_t c = 0; c < sizeof(curated) / sizeof(curated[0]); ++c) {
-		if (mains.count(curated[c])) {
-			hidden.insert(curated[c]);
-		} else if (checkCurated && !mains.empty()) {
-#ifdef OFX_GMIC_COMMERCIAL
-			// COMMERCIAL standard libraries leave out some of these filters, or only their #@gui
-			// lines (e.g. fx_tk_video3D, see gmic_stdlib_commercial.txt): the GPL build checks the list
-			continue;
-#endif
-			gmicLog("G'MIC: HIDDEN_FILTER_UNKNOWN %s: not the main command of a filter, update hideBatchFilters()\n", curated[c]);
 		}
 	}
 	for (size_t i = cds.size(); i-- > 0; ) {
@@ -1102,7 +1081,7 @@ static bool getGuiLine(const string& content, size_t& pos, string& line)
 	return true;
 }
 
-void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<string>* lines, bool checkCurated)
+void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<string>* lines)
 {
 	const string src_prefix_old = src_prefix_old_c;
 	const string src_prefix = src_prefix_c;
@@ -1215,7 +1194,7 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
         it->uniqueId = id;
         ids.insert(id);
     }
-    hideBatchFilters(content, *cds, lines, checkCurated);
+    hideBatchFilters(content, *cds, lines);
     for (vector<EffectData>::iterator it = cds->begin(); it != cds->end(); ++it) {
         // post-process
         EffectData& cd = *it;
