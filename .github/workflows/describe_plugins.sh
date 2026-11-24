@@ -55,7 +55,7 @@ if [ -n "${DESCRIBE_MSVC_EXPAT_LIB:-}" ]; then
         { tail -n 50 "$WORK/cl.log"; exit 1; }
 else
     # shellcheck disable=SC2086
-    $CXX -std=c++11 -O1 -w -DOFX_EXTENSIONS_NUKE -DOFX_EXTENSIONS_NATRON \
+    $CXX -std=c++17 -O1 -w -DOFX_EXTENSIONS_NUKE -DOFX_EXTENSIONS_NATRON \
         -I"$WORK/include" -I"$WORK/ofxinclude" \
         "$WORK"/src/*.cpp "$SRC/.github/workflows/describe_plugins.cpp" \
         ${HOST_LDFLAGS:-} -lexpat ${HOST_LIBS:-} -o "$WORK/describe_plugins"
