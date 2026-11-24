@@ -76,7 +76,8 @@ void showRenderError(OFX::ImageEffect& effect, const std::string& msg, const std
 void showRenderWarning(OFX::ImageEffect& effect, const std::string& msg);
 
 // Does the plug-in pass Source through, without running G'MIC? (A filter with no command, e.g. most
-// About pages: EffectData::command is empty.) Its effect is then the identity (isIdentity).
+// About pages: EffectData::command is empty.) Its effect is then the identity (isIdentity), and
+// render copies Source without calling pluginProcess.
 bool pluginPassesSourceThrough(const gmic_ofx::GlobalData& globalData);
 
 // Run G'MIC on sequenceData's input images (float planar RGBA, values up to 255), into its

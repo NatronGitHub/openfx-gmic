@@ -46,6 +46,7 @@
 #include <string>
 #include <utility>
 #include <variant>
+#include <type_traits>
 #include <vector>
 
 #include "ofxsImageEffect.h"
@@ -302,6 +303,37 @@ void convertToPlanar(const OFX::Image& src, float* dst, float factor)
 			}
 		}
 	}
+}
+
+// The interleaved RGBA image src, of SrcPixels, copied into dst, of DstPixels, where their bounds
+// overlap (8-bit values are in [0, 1] as floats); transparent black elsewhere.
+template <class SrcPixel, class DstPixel>
+void copyImage(const OFX::Image& src, OFX::Image& dst)
+{
+	const float factor = std::is_same<SrcPixel, unsigned char>::value ? kInvMaxChan8 : 1.f;
+	const OfxRectI& s = src.getBounds();
+	const OfxRectI& d = dst.getBounds();
+	const int x1 = std::max(s.x1, d.x1), x2 = std::min(s.x2, d.x2);
+	for (int y = d.y1; y < d.y2; ++y) {
+		DstPixel* out = static_cast<DstPixel*>(dst.getPixelAddress(d.x1, y));
+		for (int x = d.x1; x < d.x2; ++x) {
+			const SrcPixel* in = (y >= s.y1 && y < s.y2 && x >= x1 && x < x2)
+				? static_cast<const SrcPixel*>(src.getPixelAddress(x, y)) : nullptr;
+			for (size_t c = 0; c < 4; ++c) {
+				*out++ = in ? toPixel<DstPixel>(static_cast<float>(in[c]) * factor) : DstPixel();
+			}
+		}
+	}
+}
+
+// copyImage for the bit depths of src and dst (8-bit or float)
+void copyImage(const OFX::Image& src, OFX::Image& dst)
+{
+	const bool src8 = src.getPixelDepth() == OFX::eBitDepthUByte, dst8 = dst.getPixelDepth() == OFX::eBitDepthUByte;
+	if (src8 && dst8) copyImage<unsigned char, unsigned char>(src, dst);
+	else if (src8) copyImage<unsigned char, float>(src, dst);
+	else if (dst8) copyImage<float, unsigned char>(src, dst);
+	else copyImage<float, float>(src, dst);
 }
 
 // the planar buffer src (the bounds' size of dst), multiplied by factor, to the interleaved RGBA
@@ -798,13 +830,13 @@ bool GMICEffect::isIdentity(const OFX::IsIdentityArguments& args, OFX::Clip*& id
 #endif
 	)
 {
-	refuseRenderScale(args.renderScale);
 	// a filter with no command (most About pages): Source, as G'MIC-Qt leaves the image unchanged
 	if (pluginPassesSourceThrough(_gd)) {
 		identityClip = _inputs[0];
 		identityTime = args.time;
 		return true;
 	}
+	refuseRenderScale(args.renderScale);
 	return false;
 }
 
@@ -1034,6 +1066,19 @@ void GMICEffect::render(const OFX::RenderArguments& args)
 		return;
 	}
 	checkImageFormat(*outputImg);
+	// a filter with no command, for hosts that render an identity anyway: Source as it is, without
+	// G'MIC (nor the unpremultiplication and conversion for it)
+	if (pluginPassesSourceThrough(_gd)) {
+		const std::unique_ptr<OFX::Image> sourceImg(_inputs[0]->isConnected() ? _inputs[0]->fetchImage(time) : nullptr);
+		if (!sourceImg) {
+			failUnlessAborted();
+			return;
+		}
+		checkImageFormat(*sourceImg);
+		copyImage(*sourceImg, *outputImg);
+		clearPersistentMessage();
+		return;
+	}
 	const OfxRectI dstRect = outputImg->getBounds();
 	const float scale = kGmicValueScale;
 

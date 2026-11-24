@@ -720,14 +720,22 @@ static string commandDefinition(const string& line, string& rest)
 	return line.substr(b, e - b);
 }
 
-// Split a G'MIC command line into items (separated by blanks outside double quotes).
+// Split a G'MIC command line into items, separated by blanks outside double quotes. As G'MIC's
+// command_line_to_CImgList, a character after '\' is part of the item ("${-quote\ $1}" is one
+// item), and an escaped '"' doesn't start or end a quoted text.
 static void gmicItems(const string& line, vector<string>& items)
 {
 	string item;
-	bool quoted = false;
+	bool quoted = false, escaped = false;
 	for (size_t k = 0; k < line.size(); ++k) {
 		const char c = line[k];
-		if (c == '"' && (k == 0 || line[k - 1] != '\\')) quoted = !quoted;
+		if (escaped) {
+			item += c;
+			escaped = false;
+			continue;
+		}
+		if (c == '\\') escaped = true;
+		else if (c == '"') quoted = !quoted;
 		if (!quoted && (c == ' ' || c == '\t' || c == '\r')) {
 			if (!item.empty()) items.push_back(item);
 			item.clear();
@@ -1006,29 +1014,44 @@ static void substitutedVariables(const string& s, vector<string>& names)
 	}
 }
 
-// Is the item a command that writes a file: "o", "ot", "output", "output_text", "outputn",
-// "output_cube"..., maybe with a "-" or "+" prefix, a selection ("o[0]") or dots ("ot..")?
-static bool isOutputCommand(const string& item)
+// The command name of an item: without a "-" or "+" prefix, a selection ("o[0]") or dots ("ot..")
+static string commandName(const string& item)
 {
 	const size_t b = (!item.empty() && (item[0] == '-' || item[0] == '+')) ? 1 : 0;
-	string cmd = item.substr(b, item.find('[') == string::npos ? string::npos : item.find('[') - b);
+	const size_t sel = item.find('[');
+	string cmd = item.substr(b, sel == string::npos ? string::npos : sel - b);
 	while (!cmd.empty() && cmd[cmd.size() - 1] == '.') cmd.erase(cmd.size() - 1);
-	return cmd == "o" || cmd == "ot" || cmd.compare(0, 6, "output") == 0;
+	return cmd;
 }
 
-// Does the definition (its items) write a file at a path that G'MIC chooses, not the user: into
-// G'MIC's own folders ($_path_rc, ${-path_rc}, ${-path_cache}), or at a path that another G'MIC
-// command returns ("${-command}") and that no argument of the command (i.e. no parameter of the
-// filter) names? The file name is checked with the values that the definition assigns to the
-// variables it substitutes (one level: "file=${-path_cache}x.txt ... ot $file"). These writes are
-// how the pages that download or post keep their data: the downloaded files (Download External
-// Data), the update file and the list of filters seen (What's New?), the count of messages sent
-// (Send Feedback, whose address and file name are encoded, so that no network command shows);
-// Layers To PNG and SVG Symetries A write their result into $_path_rc. Not these: a file in a
-// folder that a parameter gives (Intarsia's Output Directory, the export of CLUT from After -
-// Before Layers, Pack, Variable-Density Hilbert Curve's SVG), a GIMP gradient that the user names
-// (Gradient [Custom Shape], Gradient [from Curve]: "${-path_gimp}gradients/<name>.ggr"), a file
-// name of the filter's own (Save Noise Print's noiseprint.cimg).
+// Is the item a command that writes a file: "output" and its shortcuts in G'MIC 4.0.8's command
+// table ("o", "on", "op", "ot", "ow", "ox"), "output_text", "outputn", "output_cube"...?
+static bool isOutputCommand(const string& item)
+{
+	static const char* const shortcuts[] = { "o", "on", "op", "ot", "ow", "ox" };
+	const string cmd = commandName(item);
+	for (size_t i = 0; i < sizeof(shortcuts) / sizeof(shortcuts[0]); ++i) {
+		if (cmd == shortcuts[i]) return true;
+	}
+	return cmd.compare(0, 6, "output") == 0;
+}
+
+// Is the path a temporary file (${-path_tmp}, ${-filename_rand}), which isn't kept?
+static bool isTemporaryPath(const string& path)
+{
+	return path.find("${-path_tmp}") != string::npos || path.find("${-filename_rand") != string::npos;
+}
+
+// Does the definition (its items) write a file that the user doesn't choose: into G'MIC's own
+// folders ($_path_rc, ${-path_rc}, ${-path_cache}), or at a path that a command computes
+// ("${-command}") and that no argument of the command (i.e. no parameter of the filter) names?
+// Temporary files (${-path_tmp}, ${-filename_rand}) don't count. A variable in the file name is
+// replaced by the values that the definition assigns to it, and so on for the variables in these
+// ("file=${-path_cache}x.txt ... ot $file"). This is a rule on the files written, not on network
+// access: filters that download data into G'MIC's cache with input_cached are not caught (they
+// write nothing themselves), while the pages that download or post are, through the files where
+// they keep their data. A file in a folder that a parameter gives, or with a name of the filter's
+// own in the current folder, doesn't count.
 static bool writesGmicChosenFile(const vector<string>& items)
 {
 	map<string, string> values; // variable -> the values assigned to it
@@ -1043,32 +1066,37 @@ static bool writesGmicChosenFile(const vector<string>& items)
 	}
 	for (size_t k = 0; k + 1 < items.size(); ++k) {
 		if (!isOutputCommand(items[k])) continue;
-		string path = items[k + 1];
+		// the file name, followed by the values of the variables it substitutes (to a fixpoint)
+		string fileName = items[k + 1];
+		set<string> expanded;
 		vector<string> vars;
-		substitutedVariables(path, vars);
+		substitutedVariables(fileName, vars);
 		for (size_t v = 0; v < vars.size(); ++v) {
+			if (!expanded.insert(vars[v]).second) continue;
 			const map<string, string>::const_iterator val = values.find(vars[v]);
-			if (val != values.end()) path += val->second;
+			if (val == values.end()) continue;
+			fileName += val->second;
+			substitutedVariables(val->second, vars);
 		}
-		const bool gmicFolder = path.find("path_rc") != string::npos || path.find("path_cache") != string::npos;
-		if (gmicFolder || (path.find("${-") != string::npos && !readsArgument(path))) {
-			return true;
-		}
+		const bool gmicFolder = fileName.find("path_rc") != string::npos || fileName.find("path_cache") != string::npos;
+		const bool computed = fileName.find("${-") != string::npos && !isTemporaryPath(fileName) && !readsArgument(fileName);
+		if (gmicFolder || computed) return true;
 	}
 	return false;
 }
 
 // Filters that make no sense when rendering frame by frame in an OpenFX host (issue #64): batch
-// converters that read or write image sequences on disk on every render, filters that write files,
-// and interactive tools that open a window. Rules on the #@gui definition and on the definition of
-// the main command (not the commands it calls):
+// converters that read or write image sequences on disk on every render, filters that write files
+// that the user doesn't choose, and interactive tools that open a window. Rules on the #@gui
+// definition and on the definitions of the commands that the filter runs (its main command, or the
+// preview command of a preview-only filter, called "main" here):
 // - a parameter that reads files or folders (file(), filein(), folder()) together with the word
 //   "video" or "frame(s)" in the filter name or a parameter name: Stereo Video, 3D Video Conversion;
-// - the main command, or one of its helpers "_<main>" (G'MIC's naming convention), writes a file
-//   at a path that G'MIC chooses (writesGmicChosenFile): the pages that download or post (Download
-//   External Data, Send Feedback, What's New?), Layers To PNG, SVG Symetries A;
-// - the main command waits for keys in a display window ({*,ESC}...): Diaporama.
-// For a preview-only filter, the main command is its preview command (the one the plug-in runs).
+// - the main command, its helper "_<main>" (G'MIC's naming convention), or a command that the main
+//   command calls and that the library doesn't document (no "#@cli" line; one level), writes a file
+//   into G'MIC's folders or at a path that a command computes (writesGmicChosenFile): e.g. Layers
+//   To PNG, and the pages that download or post through the files where they keep their data;
+// - the main command (only) waits for keys in a display window ({*,ESC}...): Diaporama.
 // (The parser already leaves out the Sequences category and the [animated] and [interactive]
 // filters.) Removed after the plug-in identifiers are assigned, so that the others keep theirs.
 // This needs the command definitions in "content": with a gmic_ofx.gmic that only has #@gui lines,
@@ -1076,26 +1104,25 @@ static bool writesGmicChosenFile(const vector<string>& items)
 static void hideBatchFilters(const string& content, vector<EffectData>& cds, vector<string>* lines, bool checkCurated)
 {
 	set<string> mains;
-	map<string, string> owners; // the main commands and their helpers ("_<main>") -> the main command
 	for (vector<EffectData>::const_iterator it = cds.begin(); it != cds.end(); ++it) {
-		if (it->command.empty()) continue; // a page with no command
-		mains.insert(it->command);
-		owners[it->command] = it->command;
+		if (!it->command.empty()) mains.insert(it->command); // (not a page with no command)
 	}
-	for (set<string>::const_iterator it = mains.begin(); it != mains.end(); ++it) {
-		owners.insert(make_pair("_" + *it, *it)); // (a main command stays its own owner)
-	}
-	// the items of their definitions, without the comments
+	// the items of every definition, without the comments, and the documented commands (#@cli)
 	map<string, vector<string> > bodies;
+	set<string> documented;
 	{
 		stringstream ss(content);
 		string line, rest;
 		vector<string>* body = nullptr;
 		while (getline(ss, line)) {
+			if (line.compare(0, 6, "#@cli ") == 0) {
+				const size_t b = line.find_first_not_of(' ', 6), e = line.find_first_of(" :", b);
+				if (b != string::npos && e != b) documented.insert(line.substr(b, e == string::npos ? string::npos : e - b));
+			}
 			if (line.empty() || line[0] == '#') continue;
 			const string name = commandDefinition(line, rest);
 			if (!name.empty()) {
-				body = owners.count(name) ? &bodies[name] : nullptr;
+				body = &bodies[name];
 			} else {
 				rest = line;
 			}
@@ -1105,11 +1132,24 @@ static void hideBatchFilters(const string& content, vector<EffectData>& cds, vec
 			for (size_t k = 0; k < items.size() && items[k][0] != '#'; ++k) body->push_back(items[k]);
 		}
 	}
+	map<string, bool> writes; // command -> writesGmicChosenFile(its definition), computed once
+	const auto writesFile = [&bodies, &writes](const string& cmd) {
+		const map<string, bool>::const_iterator w = writes.find(cmd);
+		if (w != writes.end()) return w->second;
+		const map<string, vector<string> >::const_iterator d = bodies.find(cmd);
+		return writes[cmd] = (d != bodies.end() && writesGmicChosenFile(d->second));
+	};
 	set<string> hidden;
-	for (map<string, vector<string> >::const_iterator d = bodies.begin(); d != bodies.end(); ++d) {
-		const string& owner = owners[d->first];
-		const bool isMain = (owner == d->first);
-		if (writesGmicChosenFile(d->second) || (isMain && testsKeys(d->second))) hidden.insert(owner);
+	for (set<string>::const_iterator m = mains.begin(); m != mains.end(); ++m) {
+		const map<string, vector<string> >::const_iterator d = bodies.find(*m);
+		if (d == bodies.end()) continue;
+		bool hide = testsKeys(d->second) || writesFile(*m) || writesFile("_" + *m);
+		// the commands that it calls and that the library doesn't document (one level)
+		for (size_t k = 0; k < d->second.size() && !hide; ++k) {
+			const string cmd = commandName(d->second[k]);
+			hide = cmd != *m && bodies.count(cmd) && !documented.count(cmd) && writesFile(cmd);
+		}
+		if (hide) hidden.insert(*m);
 	}
 	// Main commands hidden whatever the rules say, so that they stay hidden if their definition
 	// changes. A listed command that no longer is the main command of a filter (e.g. after a G'MIC
