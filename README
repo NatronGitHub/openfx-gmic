@@ -305,12 +305,16 @@ default, prints none). A host started from the Dock, the Start menu or a desktop
 no stderr: to keep them, create an empty file gmic_ofx_log in ~/.config/gmic (Windows:
 %APPDATA%/gmic), as G'MIC-Qt's "log file" output messages do with gmic_qt_log. Every host
 process that loads the plug-in then appends its messages to that file instead of stderr, from
-the first host start after the file exists; delete it to go back to stderr. The file is never
-truncated: empty it from time to time.
+the first host start after the file exists; delete it to go back to stderr (on Windows, quit the
+host first: the file can't be deleted while a host has it open). Hosts running at the same time
+(e.g. Natron and its render processes) write to the same file, and their lines may be
+interleaved. G'MIC-Qt empties its log at each start; the plug-in keeps the previous messages,
+and only empties the file when a host starts with it larger than 16 MB. The build, which writes
+the bundle's plug-in list (OFX_GMIC_WRITE_PLUGIN_LIST), keeps its messages on stderr.
 
 After a successful render, a warning on the node (Natron: its persistent message) tells when
-Output Layer "Frame" runs the filter on every frame, because its results are too large to keep or
-one of them is empty. G'MIC errors stay error messages on the node.
+Output Layer "Frame" runs the filter on every frame, because its results are too many or too
+large to keep, or one of them is empty. G'MIC errors stay error messages on the node.
 
 Tests
 -----

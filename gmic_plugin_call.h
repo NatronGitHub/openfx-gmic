@@ -6,7 +6,6 @@
 #define GMIC_PLUGIN_CALL_H
 
 #include "gmic_libc.h"
-#include <cstdio>
 #include <string>
 
 // The input images must be planar float images (E_FORMAT_FLOAT, not interleaved), and the result
@@ -33,13 +32,11 @@ std::string gmicUpdateFileName();
 // files, gmic_ofx.gmic..., are looked up in get_gmic_rc_path().)
 std::string gmicRcPath();
 
-// Where the plug-in and G'MIC write their messages: stderr, or the log file that gmicOpenLog()
-// opened. Thread-safe.
-std::FILE* gmicLogStream();
-// If the file "path" exists, appends the plug-in's and G'MIC's messages (cimg::output) to it from
-// now on, as G'MIC-Qt's "log file" output messages do with its gmic_qt_log; else they stay on
-// stderr. For hosts started from a menu, which show no stderr. Called once, when the plug-in loads
-// the filters (the file stays open until the process exits).
+// If the file "path" (UTF-8) exists, the plug-in's messages (gmicLog, Helpers/gmic_log.h) and
+// G'MIC's (cimg::output) are appended to it from now on, as G'MIC-Qt's "log file" output messages
+// do with its gmic_qt_log; else they stay on stderr. For hosts started from a menu, which show no
+// stderr. A file larger than 16 MB is emptied first. Called once, when the plug-in loads the
+// filters (the file stays open until the process exits).
 void gmicOpenLog(const std::string& path);
 
 #endif
