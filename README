@@ -207,19 +207,34 @@ Arm64EC with a CMake that doesn't report ARM64EC as the compiler's architecture:
 Filters
 -------
 
-The filters come from the first of these that is not empty:
-- ~/.config/gmic/gmic_ofx.gmic (Windows: %APPDATA%/gmic/gmic_ofx.gmic);
-- ~/.config/gmic/gmic_stdlib.gmic (Windows: %APPDATA%/gmic/gmic_stdlib.gmic);
+The filters come from the first of these that the plug-in can use:
+- ~/.config/gmic/gmic_ofx.gmic (Windows: %APPDATA%/gmic/gmic_ofx.gmic), if not empty;
+- ~/.config/gmic/gmic_stdlib.gmic (Windows: %APPDATA%/gmic/gmic_stdlib.gmic), if not empty;
+- only with OFX_GMIC_UPDATE_FILE=1 (see "Environment"), G'MIC's update file, update408.gmic
+  (408: the G'MIC version the plug-in is built with, 4.0.8), if it has filters;
 - the standard library built into the plug-in.
-A user file replaces the whole filter list. Plug-in identifiers come from the filter names.
-The commands that a user file defines are passed to G'MIC on every render, as in G'MIC-Qt, so its
+A user file (or the update file) replaces the whole filter list. Plug-in identifiers come from
+the filter names.
+The commands that the file defines are passed to G'MIC on every render, as in G'MIC-Qt, so its
 filters can call them; they replace the built-in commands of the same name. A copy of an older
 gmic_stdlib.gmic thus runs its own, older commands, not those of the plug-in's G'MIC. The
 plug-in's hot fixes for G'MIC bugs still apply to the commands that the file copies unchanged
-from the plug-in's G'MIC; a command that the file defines another way keeps its definition (the
-plug-in prints a note when it loads: "'<command>' is defined by <file>: its definition is kept").
+from the plug-in's G'MIC; a command that the file defines another way (e.g. fixed in a newer
+update file) keeps its definition (the plug-in prints a note when it loads: "'<command>' is
+defined by <file>: its definition is kept").
 After adding, removing or editing a user file, clear the host's plug-in cache (see "Choosing the
 plug-ins"): a cached list of plug-ins numbers them as the old filter list did.
+
+G'MIC's update file is the update of the built-in filters that G'MIC-Qt (when its filter updates
+are on) or the command "gmic update" downloads into G'MIC's folder: $GMIC_PATH if set, else
+$XDG_CONFIG_HOME/gmic, else ~/.config/gmic if ~/.config exists, else ~/gmic (Windows:
+%APPDATA%/gmic). The plug-in never downloads it, and only reads it as text. It is off by
+default: G'MIC-Qt rewrites it on its own (by default, once a month, when it is used), and after
+such an update a host's stale plug-in cache may silently make the plug-in's nodes other filters.
+With OFX_GMIC_UPDATE_FILE=1, clear the host's plug-in cache after each update. To use the update
+of a given day without this risk, copy the file to ~/.config/gmic/gmic_stdlib.gmic instead: the
+filters then only change when you copy it again (and clear the cache). COMMERCIAL builds never
+read the update file: it has the filters under the GPL, which they leave out.
 
 Choosing the plug-ins
 ---------------------
@@ -259,12 +274,16 @@ create that node: re-enable the plug-in (and clear the cache) before opening and
 project.
 
 The bundle's list is made from the standard library built into the plug-in: it doesn't follow a
-user's gmic_ofx.gmic (see "Filters"). For a list of the filters actually loaded, set
+user's gmic_ofx.gmic or G'MIC's update file (see "Filters"). For a list of the filters actually loaded, set
 OFX_GMIC_WRITE_PLUGIN_LIST (see "Environment").
 
 Environment
 -----------
 
+- OFX_GMIC_UPDATE_FILE: 1 makes the plug-in read G'MIC's filter update file, update408.gmic, if
+  no user filter file comes first (see "Filters"); unset (the default) or any other value (with a
+  note on stderr): the file is ignored. After G'MIC-Qt updates the file, clear the host's plug-in cache. Ignored by
+  COMMERCIAL builds.
 - OFX_GMIC_FRAME_CACHE_MB: memory budget, in MB, of the cache of Output Layer "Frame" results
   (default: 1/8 of the physical memory, between 1 and 4 GiB; 0 disables the cache).
   A decimal number >= 0 ("512", "0.5", "2e3"; '.' as decimal point whatever the locale,

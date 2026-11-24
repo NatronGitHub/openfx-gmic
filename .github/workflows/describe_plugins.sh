@@ -6,6 +6,9 @@
 # The bundle's list of the plug-ins (gmic_ofx_plugins.txt), if any, must be the described plug-ins;
 # DESCRIBE_USER_LIST=1 (once per CI job: it describes them all again) requires the list, and also
 # checks that a user's list that disables two plug-ins leaves them out.
+# DESCRIBE_UPDATE_FILE=1 (once per CI job too) also checks G'MIC's update file (update<GMICVER>.gmic,
+# read with OFX_GMIC_UPDATE_FILE=1): ignored when empty, without #@gui or without the opt-in, used
+# otherwise, and the hot fixes leave a command that it defines another way alone.
 # If $HOST_RUN_PATH is set, the host runs with PATH=$HOST_RUN_PATH (the build still uses the
 # current PATH): on Windows, with a statically linked host and a PATH without the MSYS2 bin
 # directory, this checks that the plug-in finds the DLLs bundled with it.
@@ -144,6 +147,51 @@ if [ -f "$SHIPPED_LIST" ] && [ "${DESCRIBE_USER_LIST:-}" = 1 ]; then
         echo "FAIL: a user's list that disables $first and $last: expected the line that reports it on stderr"
         status=1
     fi
+fi
+if [ "${DESCRIBE_UPDATE_FILE:-}" = 1 ]; then
+    builtin_count=$(tr -d '\r' < describe.log | grep -c '^PLUGIN ' || true)
+    update_name="update$(sed -n -e 's/^GMICVER *= *//p' "$SRC/Makefile" | tr -d '.\r ').gmic"
+    # update_case <name> <OFX_GMIC_UPDATE_FILE> <expected number of plug-ins> [<text the log must
+    #   have>] < <update file contents>
+    # G'MIC's folder (gmic::path_rc()): $HOME/.config/gmic, %APPDATA%/gmic on Windows; without
+    # XDG_CONFIG_HOME and GMIC_PATH, which would move it
+    update_case() {
+        local home="$WORK/home-update-$1"
+        mkdir -p "$home/.config/gmic" "$home/gmic"
+        cat > "$home/.config/gmic/$update_name"
+        cp "$home/.config/gmic/$update_name" "$home/gmic/"
+        env -u XDG_CONFIG_HOME -u GMIC_PATH OFX_GMIC_UPDATE_FILE="$2" HOME="$home" APPDATA="$(native_path "$home")" \
+            OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
+            ./describe_plugins "$3" > "update-$1.out" 2> "update-$1.log" || true
+        if ! tr -d '\r' < "update-$1.out" | grep -qx "plugins=$3 described=$3 failed=0"; then
+            echo "FAIL: update file, $1: expected $3 plug-ins, got: $(tr -d '\r' < "update-$1.out" | tail -n 1)"
+            status=1
+        elif grep "openfx-gmic: Warning: hot fix" "update-$1.log"; then
+            echo "FAIL: update file, $1: hot fix warnings (see above)"
+            status=1
+        elif [ -n "${4:-}" ] && ! grep -qF -- "$4" "update-$1.log"; then
+            echo "FAIL: update file, $1: no \"$4\" in the plug-in's log"
+            status=1
+        else
+            echo "update file, $1: $3 plug-ins, as expected"
+        fi
+    }
+    one_filter='#@gui Update File Test : fx_update_file_test, fx_update_file_test
+fx_update_file_test :
+  f 128
+'
+    update_case empty 1 "$builtin_count" < /dev/null
+    printf 'fx_update_file_test :\n  f 128\n' | update_case no-gui 1 "$builtin_count"
+    printf '%s' "$one_filter" | update_case opt-in-off 0 "$builtin_count" "OFX_GMIC_UPDATE_FILE"
+    # a serialized CImg (still compressed): ignored, with a warning
+    printf '1 uint8 little_endian\n%s' "$one_filter" | update_case compressed 1 "$builtin_count" "is compressed"
+    printf '%s' "$one_filter" | update_case used 1 1
+    # the page that G'MIC's update_deprecate inserts into older update files is no plug-in
+    printf '%s#@gui ________\n#@gui !<b><i>[ New Version Available! ]</i></b> : _none_, _none_\n' "$one_filter" |
+        update_case new-version-page 1 1
+    # star_tone is hot-fixed (gmic_hotfixes.gmic): the file's own definition is kept, with a note
+    # (not a hot fix warning)
+    printf '%sstar_tone :\n  f 64\n' "$one_filter" | update_case hot-fixed-command 1 1 "'star_tone' is defined by "
 fi
 # PLUGIN_LIST=<file>: the plug-ins, their context and input clips, for render_plugins.py
 if [ -n "${PLUGIN_LIST:-}" ]; then

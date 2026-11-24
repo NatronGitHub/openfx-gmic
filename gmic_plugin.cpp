@@ -556,12 +556,70 @@ struct PluginGlobalData
 {
 	vector<EffectData> pluginData;
 	vector<string> pluginContent;
-	// The user's filter file (gmic_ofx.gmic or gmic_stdlib.gmic), when the filters come from it:
-	// custom commands for every run, so that its filters find the commands it defines, as in
-	// G'MIC-Qt. Empty with the built-in stdlib, which G'MIC loads itself.
+	// The filter file (gmic_ofx.gmic, gmic_stdlib.gmic or G'MIC's update file), when the filters
+	// come from one: custom commands for every run, so that its filters find the commands it
+	// defines, as in G'MIC-Qt. Empty with the built-in stdlib, which G'MIC loads itself.
 	string userCommands;
 	string hotfixes; // custom commands for every run, see gmicGetHotfixes()
 };
+
+// A filter file: its path, for messages, and its contents.
+struct FilterFile
+{
+	string path;
+	string content;
+};
+
+// G'MIC's filter update file of this G'MIC version (update408.gmic for G'MIC 4.0.8), in G'MIC's
+// own folder (gmicRcPath()), where G'MIC-Qt and G'MIC's 'update' command download it as text (the
+// plug-in never downloads it). Read only if OFX_GMIC_UPDATE_FILE is 1, since G'MIC-Qt rewrites it
+// on its own and a host's stale plug-in cache would then swap filters (README, "Environment"),
+// and never in COMMERCIAL builds, since it brings back the filters under the GPL. Its path and
+// contents, or an empty content if it is not read, missing, has no filter (G'MIC-Qt leaves an
+// empty file after a failed download), or is still CImg-compressed, which only G'MIC could read.
+static FilterFile loadUpdateFile()
+{
+	const char* const optIn = std::getenv("OFX_GMIC_UPDATE_FILE");
+	if (!optIn) return FilterFile();
+	if (string(optIn) != "1") {
+		fprintf(stderr, "openfx-gmic: OFX_GMIC_UPDATE_FILE=\"%s\" is not 1: G'MIC's update file is not read\n", optIn);
+		return FilterFile();
+	}
+#ifdef OFX_GMIC_COMMERCIAL
+	fprintf(stderr, "openfx-gmic: OFX_GMIC_UPDATE_FILE ignored: the update file has GPL filters, which COMMERCIAL builds leave out\n");
+	return FilterFile();
+#else
+	const string rcPath = gmicRcPath();
+	if (rcPath.empty()) return FilterFile();
+	FilterFile file{rcPath + gmicUpdateFileName(), string()};
+	file.content = loadStringFromFile(file.path);
+	static const string kCImgPrefix = "1 uint8 "; // a serialized CImg (G'MIC-Qt's Updater::isCImgCompressed)
+	if (file.content.compare(0, kCImgPrefix.size(), kCImgPrefix) == 0) {
+		fprintf(stderr, "openfx-gmic: Warning: %s is compressed, the plug-in only reads it as text: ignored\n", file.path.c_str());
+		return FilterFile();
+	}
+	if (file.content.find("#@gui") == string::npos) return FilterFile(); // (as G'MIC-Qt)
+	return file;
+#endif
+}
+
+// The filter file the filters come from, the first of these that the plug-in can use (README,
+// "Filters"): ~/.config/gmic/gmic_ofx.gmic or gmic_stdlib.gmic (in rcPath, from
+// get_gmic_rc_path()) if not empty, then G'MIC's update file (loadUpdateFile). An empty content
+// if none: the filters then come from the built-in stdlib.
+static FilterFile loadFilterFile(const string& rcPath)
+{
+	FilterFile file{rcPath + "gmic_ofx.gmic", string()};
+	file.content = loadStringFromFile(file.path);
+	if (file.content.empty()) {
+		file.path = rcPath + "gmic_stdlib.gmic";
+		file.content = loadStringFromFile(file.path);
+	}
+	if (file.content.empty()) {
+		file = loadUpdateFile();
+	}
+	return file;
+}
 
 PluginGlobalData loadPluginGlobalData()
 {
@@ -570,8 +628,8 @@ PluginGlobalData loadPluginGlobalData()
 	vector<string>& pluginContent = data.pluginContent;
 	{
 		// The hot fixes are checked against the built-in stdlib, which G'MIC always loads, and the
-		// user's filter file, whose commands replace its own: decompress it once here (~35 ms),
-		// even when the filters come from a user file (gmic_ofx.gmic).
+		// filter file's commands, which replace its own: decompress it once here (~35 ms), even
+		// when the filters come from a file.
 		string stdlib;
 		{
 			const char* lib = gmic_get_stdlib();
@@ -579,14 +637,11 @@ PluginGlobalData loadPluginGlobalData()
 			gmic_delete_external((float*)lib);
 		}
 		bool builtinStdlib = false; // the curated lists of the parser are only checked against it
-		string userFile = get_gmic_rc_path() + "gmic_ofx.gmic";
-		string effectContent = loadStringFromFile(userFile);
-		if (effectContent.empty()) {
-			userFile = get_gmic_rc_path() + "gmic_stdlib.gmic";
-			effectContent = loadStringFromFile(userFile);
-		}
+		const string rcPath = get_gmic_rc_path();
+		FilterFile file = loadFilterFile(rcPath);
+		string effectContent = std::move(file.content);
 		if (!effectContent.empty()) {
-			data.hotfixes = gmicGetHotfixes(stdlib, effectContent, userFile);
+			data.hotfixes = gmicGetHotfixes(stdlib, effectContent, file.path);
 		} else {
 			data.hotfixes = gmicGetHotfixes(stdlib, string(), string());
 			effectContent.swap(stdlib);
@@ -597,7 +652,7 @@ PluginGlobalData loadPluginGlobalData()
 				(int)effectContent.find("#@gui :") < 0) {
 				effectContent = "";
 			}
-		} 
+		}
 		gmic_parse_multi(effectContent, &pluginData, &pluginContent, builtinStdlib);
 		if (!builtinStdlib) {
 			data.userCommands = std::move(effectContent);
@@ -627,7 +682,6 @@ PluginGlobalData loadPluginGlobalData()
 		// The plug-ins that the user's list disables are not registered (OFX has no way to only hide
 		// them from the menus). The bundle's list enables every plug-in: it isn't read.
 		// OFX_GMIC_WRITE_PLUGIN_LIST=<file>: write the list there (the build writes the bundle's).
-		const string rcPath = get_gmic_rc_path();
 		const string userList = rcPath.empty() ? string() : loadStringFromFile(rcPath + kPluginListFile);
 		const std::set<string> disabled = disabledPlugins(userList);
 		if (!userList.empty()) { // (for terminal and log users: Natron's GUI doesn't show stderr)
@@ -1113,17 +1167,17 @@ static const char* const kFrameSelectCommand =
 
 // The whole command line: the filter's command (main or preview), with the variables G'MIC-Qt
 // defines, the output layer selection, Ignore Alpha, the Resize Mode, verbosity and seed. Sets the
-// custom commands of the options: customCommands (the user's filter file, the filter's #@gui lines,
-// the hot fixes for G'MIC bugs, the Ignore Alpha helpers and _openfx_gmic_opaque_resized), which
+// custom commands of the options: customCommands (the filter file, the filter's #@gui lines, the
+// hot fixes for G'MIC bugs, the Ignore Alpha helpers and _openfx_gmic_opaque_resized), which
 // must outlive the G'MIC call.
 static
 std::string
 fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, GmicInstanceData* instanceDataP, unsigned int nofImages, bool isPreview, string& customCommands)
 {
-	// the user's filter file, if the filters come from one (after the built-in stdlib, which G'MIC
-	// loads first: its definitions replace the built-in ones, as in G'MIC-Qt), the filter's #@gui
-	// lines, and the hot fixes for G'MIC bugs (gmic_hotfixes.gmic, after the user's file: those
-	// that still fit its definitions, see gmicGetHotfixes), on every run
+	// the filter file, if the filters come from one (a user file or G'MIC's update file; after the
+	// built-in stdlib, which G'MIC loads first: its definitions replace the built-in ones, as in
+	// G'MIC-Qt), the filter's #@gui lines, and the hot fixes for G'MIC bugs (gmic_hotfixes.gmic,
+	// after the file: those that still fit its definitions, see gmicGetHotfixes), on every run
 	const PluginGlobalData& data = pluginGlobalData();
 	// (a newline after the user's file ends its last line, if the file doesn't, so that the next
 	// definition starts on a line of its own; a '\' at the end of the file's last command line

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Render the filters of a user filter file (user_filters.gmic) and check their output (#168).
 
-The file is installed as ~/.config/gmic/gmic_ofx.gmic in a temporary HOME, which replaces the
-built-in filters. Its filters call a command that the file defines ("Unknown command" before
-#168), a built-in command, and a built-in command that the file replaces: each output must be
-the uniform color that the filter fills it with. The file also defines a command that the
+The file is installed as ~/.config/gmic/gmic_ofx.gmic in a temporary HOME, or with --update-file
+as G'MIC's filter update file (update408.gmic for the Makefile's GMICVER 4.0.8, read with
+OFX_GMIC_UPDATE_FILE=1, #180), which replaces the built-in filters. Its filters call a command
+that the file defines ("Unknown command" before #168), a built-in command, and a built-in
+command that the file replaces: each output must be the uniform color that the filter fills it
+with. The file also defines a command that the
 plug-in hot-fixes, which must be kept, with a note.
 
 With --stdlib, the same filters are then rendered with a copy of the whole built-in standard
@@ -16,10 +18,12 @@ render).
 usage: user_filters_test.py --host <hostDemo, or the CMake build directory> [--config <config>]
                             --plugins <dir with GMIC.ofx.bundle>
                             [--stdlib <gmic_stdlib_community.h>] [--runs N] [--work <dir>]
+                            [--update-file]
 """
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -43,17 +47,34 @@ HOTFIX_WARNING = 'Warning: hot fix'
 TIMEOUT = 120
 
 
-def install_user_file(work, text):
-    """Makes work/home/.config/gmic hold only a gmic_ofx.gmic with the given text.
+def update_file_name():
+    """Returns the name of G'MIC's update file for the Makefile's GMICVER.
+
+    Returns:
+        update<major><minor><patch>.gmic, e.g. update408.gmic for G'MIC 4.0.8.
+
+    Raises:
+        ValueError: the Makefile has no GMICVER=<major>.<minor>.<patch> line.
+    """
+    with open(os.path.join(HERE, '..', '..', 'Makefile'), encoding='utf-8') as f:
+        match = re.search(r'^GMICVER\s*=\s*(\d+)\.(\d+)\.(\d+)\s*$', f.read(), re.MULTILINE)
+    if not match:
+        raise ValueError('no GMICVER=<major>.<minor>.<patch> in the Makefile')
+    return 'update%s.gmic' % ''.join(match.groups())
+
+
+def install_user_file(work, text, name):
+    """Makes work/home/.config/gmic hold only a filter file with the given name and text.
 
     Args:
         work: the work directory (render_plugins.render() sets HOME to work/home).
-        text: the contents of the user filter file.
+        text: the contents of the filter file.
+        name: its name: gmic_ofx.gmic, or G'MIC's update file (update_file_name()).
     """
     rc_dir = os.path.join(work, 'home', '.config', 'gmic')
     shutil.rmtree(rc_dir, ignore_errors=True)
     os.makedirs(rc_dir)
-    path = os.path.join(rc_dir, 'gmic_ofx.gmic')
+    path = os.path.join(rc_dir, name)
     with open(path, 'w', encoding='latin-1', newline='') as f:
         f.write(text)
 
@@ -117,7 +138,7 @@ def render_all(host, plugins, work, runs):
     return problems, logs, seconds
 
 
-def run_test(host, plugins, stdlib, runs, work):
+def run_test(host, plugins, stdlib, runs, work, name):
     """Runs both renders of the test (see the module docstring).
 
     Args:
@@ -126,6 +147,7 @@ def run_test(host, plugins, stdlib, runs, work):
         stdlib: gmic_stdlib_community.h, or None to skip the copy of the standard library.
         runs: the number of renders of each plug-in with each file.
         work: the work directory.
+        name: the name of the filter file (see install_user_file()).
 
     Returns:
         True if the test passed.
@@ -134,7 +156,7 @@ def run_test(host, plugins, stdlib, runs, work):
     with open(os.path.join(HERE, 'user_filters.gmic'), encoding='latin-1') as f:
         user_file = f.read()
 
-    install_user_file(work, user_file)
+    install_user_file(work, user_file, name)
     problems, logs, small = render_all(host, plugins, work, runs)
     if not any(KEPT_NOTE in log for log in logs):
         problems.append("no note that the file's own definition of 'star_tone' is kept")
@@ -144,7 +166,7 @@ def run_test(host, plugins, stdlib, runs, work):
     if not stdlib:
         return passed
 
-    install_user_file(work, render_plugins.stdlib_text(stdlib) + '\n' + user_file)
+    install_user_file(work, render_plugins.stdlib_text(stdlib) + '\n' + user_file, name)
     problems, logs, full = render_all(host, plugins, work, runs)
     for log in logs:
         problems += ['unexpected: ' + line.strip() for line in log.splitlines()
@@ -173,7 +195,17 @@ def main():
     parser.add_argument('--stdlib')
     parser.add_argument('--runs', type=int, default=3)
     parser.add_argument('--work')
+    parser.add_argument('--update-file', action='store_true',
+                        help="install the file as G'MIC's update file, not as gmic_ofx.gmic")
     args = parser.parse_args()
+    # G'MIC's folder (gmic::path_rc(), where the plug-in looks for the update file) is the HOME's
+    # .config/gmic only without GMIC_PATH and XDG_CONFIG_HOME; the renders inherit this environment
+    for var in ('GMIC_PATH', 'XDG_CONFIG_HOME', 'OFX_GMIC_UPDATE_FILE'):
+        os.environ.pop(var, None)
+    name = 'gmic_ofx.gmic'
+    if args.update_file:
+        name = update_file_name()
+        os.environ['OFX_GMIC_UPDATE_FILE'] = '1'
     host = render_plugins.host_demo_path(args.host, args.config)
     if host is None:
         parser.error('no hostDemo-path.txt or hostDemo-path-%s.txt in %s'
@@ -184,14 +216,14 @@ def main():
     else:
         work = tempfile.mkdtemp(prefix='user_filters.')
     try:
-        passed = run_test(host, os.path.abspath(args.plugins), args.stdlib, args.runs, work)
+        passed = run_test(host, os.path.abspath(args.plugins), args.stdlib, args.runs, work, name)
     finally:
         if not args.work:
             shutil.rmtree(work, ignore_errors=True)
     if not passed:
         print('FAIL: see above' + (' (renders in %s)' % work if args.work else ''))
         return 1
-    print('user file filters: %d rendered with the expected output' % len(EXPECTED))
+    print('%s filters: %d rendered with the expected output' % (name, len(EXPECTED)))
     return 0
 
 
