@@ -260,8 +260,9 @@ endings, and be UTF-8, or UTF-16 with a byte-order mark (Windows PowerShell 5's 
 When it reads the file, the plug-in prints one line on stderr: how many plug-ins the file
 disables, and the disabled identifiers that match no plug-in (typos, or filters that G'MIC
 removed). To see it, run the host from a terminal (on Windows, NatronRenderer: Natron.exe has
-no console). A comment line that is a single word after its '#' (e.g. "#-----") reads as a
-disabled identifier, and is reported as unknown: put a space in it ("# -----").
+no console), or use the log file (see "Messages"). A comment line that is a single word after
+its '#' (e.g. "#-----") reads as a disabled identifier, and is reported as unknown: put a space
+in it ("# -----").
 
 The plug-in reads the file when the host loads it. After a change, restart the host, and clear
 its OpenFX plug-in cache: this is required. Natron: Cache > Clear Plug-ins Load Cache, or start
@@ -316,6 +317,26 @@ Environment
   gmic_ofx.gmic), those that the user's list disables commented out. Every process that loads
   the plug-in with it set writes the same file (e.g. a host's render processes): set it for one
   run only. The build makes the bundle's list so.
+
+Messages
+--------
+
+The plug-in prints its messages (when it loads the filters, and some notes while rendering) on
+stderr, as G'MIC does with the messages of the Log Verbosity parameter (Level 1 to 3; Off, the
+default, prints none). A host started from the Dock, the Start menu or a desktop launcher shows
+no stderr: to keep them, create an empty file gmic_ofx_log in ~/.config/gmic (Windows:
+%APPDATA%/gmic), as G'MIC-Qt's "log file" output messages do with gmic_qt_log. Every host
+process that loads the plug-in then appends its messages to that file instead of stderr, from
+the first host start after the file exists; delete it to go back to stderr (on Windows, quit the
+host first: the file can't be deleted while a host has it open). Hosts running at the same time
+(e.g. Natron and its render processes) write to the same file, and their lines may be
+interleaved. G'MIC-Qt empties its log at each start; the plug-in keeps the previous messages,
+and only empties the file when a host starts with it larger than 16 MB. The build, which writes
+the bundle's plug-in list (OFX_GMIC_WRITE_PLUGIN_LIST), keeps its messages on stderr.
+
+After a successful render, a warning on the node (Natron: its persistent message) tells when
+Output Layer "Frame" runs the filter on every frame, because its results are too many or too
+large to keep, or one of them is empty. G'MIC errors stay error messages on the node.
 
 Tests
 -----

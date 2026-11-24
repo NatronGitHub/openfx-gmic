@@ -62,6 +62,7 @@
 #include <sstream>
 
 #include "RFX_StringUtils.h"
+#include "gmic_log.h"
 
 using namespace std;
 using namespace reduxfx;
@@ -269,7 +270,7 @@ void processParam(const string& s, EffectParameter& cp)
 	// dropped as a delimiter), with a warning
 	const char closing = (r[p1] == '(') ? ')' : (r[p1] == '[') ? ']' : '}';
 	if (r[r.size() - 1] != closing) {
-		fprintf(stderr, "openfx-gmic: Warning: %s parameter \"%s\" has no closing '%c': it ends with the filter\n",
+		gmicLog("openfx-gmic: Warning: %s parameter \"%s\" has no closing '%c': it ends with the filter\n",
 			cp.paramType.c_str(), cp.name.c_str(), closing);
 		r += closing;
 	}
@@ -376,7 +377,7 @@ void processParam(const string& s, EffectParameter& cp)
 		const size_t c1 = pval.find(',');
 		const size_t c2 = (c1 == string::npos) ? c1 : pval.find(',', c1 + 1);
 		if (c1 == string::npos || c2 == string::npos || pval.find(',', c2 + 1) != string::npos) {
-			fprintf(stderr, "openfx-gmic: Warning: %s parameter \"%s\" does not have three values (\"%s\"): passed as 0\n",
+			gmicLog("openfx-gmic: Warning: %s parameter \"%s\" does not have three values (\"%s\"): passed as 0\n",
 				cp.paramType.c_str(), cp.name.c_str(), pval.c_str());
 			cp.paramType = "";
 			return;
@@ -440,7 +441,7 @@ void processParam(const string& s, EffectParameter& cp)
 		cp.defaultValue = strTrim(pval, "\"");
 	} else {
 		// e.g. a type added by a newer G'MIC: pluginSetup passes 0 for it (a hidden float)
-		fprintf(stderr, "openfx-gmic: Warning: parameter \"%s\" has an unknown type \"%s\": passed as 0\n",
+		gmicLog("openfx-gmic: Warning: parameter \"%s\" has an unknown type \"%s\": passed as 0\n",
 			cp.name.c_str(), cp.paramType.c_str());
 	}
 }
@@ -643,7 +644,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 		for (int n = 2; realNames.count(name); n++) name = base + "_" + intToString(n);
 		cd.param[i].name = name;
 		realNames.insert(name);
-		fprintf(stderr, "openfx-gmic: Warning: %s parameter without a name: named \"%s\"\n",
+		gmicLog("openfx-gmic: Warning: %s parameter without a name: named \"%s\"\n",
 			cd.param[i].paramType.c_str(), name.c_str());
 	}
 	for (int i = 0; i < (int)cd.param.size(); i++) {
@@ -828,7 +829,7 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 #ifdef OFX_GMIC_COMMERCIAL
 			if (!defined.count(curated[c])) continue;
 #endif
-			fprintf(stderr, "G'MIC: PREVIEW_FALLBACK_UNKNOWN %s: not the main command of a filter, update markPersistentFilters()\n", curated[c]);
+			gmicLog("G'MIC: PREVIEW_FALLBACK_UNKNOWN %s: not the main command of a filter, update markPersistentFilters()\n", curated[c]);
 		}
 	}
 	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
@@ -1039,7 +1040,7 @@ static void hideBatchFilters(const string& content, vector<EffectData>& cds, vec
 			// lines (e.g. fx_tk_video3D, see gmic_stdlib_commercial.txt): the GPL build checks the list
 			continue;
 #endif
-			fprintf(stderr, "G'MIC: HIDDEN_FILTER_UNKNOWN %s: not the main command of a filter, update hideBatchFilters()\n", curated[c]);
+			gmicLog("G'MIC: HIDDEN_FILTER_UNKNOWN %s: not the main command of a filter, update hideBatchFilters()\n", curated[c]);
 		}
 	}
 	for (size_t i = cds.size(); i-- > 0; ) {

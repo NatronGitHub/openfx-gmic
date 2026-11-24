@@ -109,6 +109,7 @@
 #include "gmic_parser.h"
 #include "gmic_libc.h"
 #include "gmic_plugin_call.h"
+#include "gmic_log.h"
 #include "RFX_StringUtils.h"
 #include "ofxsImageEffect.h"
 #include <algorithm>
@@ -360,7 +361,7 @@ static string gmicGetHotfixes(const string& stdlib, const string& userCommands, 
 		gmicGetDefinitions(texts[i], own);
 		const string ownChecksum = gmicChecksum(own[command]);
 		if (own[command].empty() || ownChecksum != fixed[i]) {
-			fprintf(stderr, "openfx-gmic: Warning: hot fix for the G'MIC command '%s' not applied: the fixed definition has checksum %s, but its '#@hotfix' line says '%s', update it in gmic_hotfixes.gmic\n",
+			gmicLog("openfx-gmic: Warning: hot fix for the G'MIC command '%s' not applied: the fixed definition has checksum %s, but its '#@hotfix' line says '%s', update it in gmic_hotfixes.gmic\n",
 			        command.c_str(), ownChecksum.c_str(), fixed[i].c_str());
 			continue;
 		}
@@ -380,14 +381,14 @@ static string gmicGetHotfixes(const string& stdlib, const string& userCommands, 
 				ok = false;
 				if (!userDefs[name].empty()) {
 					if (k == 0) {
-						fprintf(stderr, "openfx-gmic: '%s' is defined by %s: its definition is kept\n", name.c_str(), userFile.c_str());
+						gmicLog("openfx-gmic: '%s' is defined by %s: its definition is kept\n", name.c_str(), userFile.c_str());
 					} else {
-						fprintf(stderr, "openfx-gmic: '%s', which the plug-in's fix of '%s' calls, is defined by %s: the definition of '%s' is kept\n",
+						gmicLog("openfx-gmic: '%s', which the plug-in's fix of '%s' calls, is defined by %s: the definition of '%s' is kept\n",
 						        name.c_str(), command.c_str(), userFile.c_str(), command.c_str());
 					}
 					continue;
 				}
-				fprintf(stderr, "openfx-gmic: Warning: hot fix for the G'MIC command '%s' not applied: the built-in definition of '%s' %s (checksum %s, the fix is for %s), review it in gmic_hotfixes.gmic\n",
+				gmicLog("openfx-gmic: Warning: hot fix for the G'MIC command '%s' not applied: the built-in definition of '%s' %s (checksum %s, the fix is for %s), review it in gmic_hotfixes.gmic\n",
 				        command.c_str(), name.c_str(), absent ? "exists" : def.empty() ? "is missing" : "changed", found.c_str(), expected.c_str());
 			}
 		}
@@ -403,6 +404,8 @@ namespace {
 // The list of the plug-ins (README, "Choosing the plug-ins"; issue #157): its name, in the bundle's
 // Resources and in the user's G'MIC configuration directory (get_gmic_rc_path)
 constexpr const char* kPluginListFile = "gmic_ofx_plugins.txt";
+// the log file (gmicOpenLog): in the user's G'MIC configuration directory, if the user made it
+constexpr const char* kLogFile = "gmic_ofx_log";
 
 // "text" as UTF-8 if it is UTF-16 with a byte-order mark (FF FE: little-endian, FE FF: big-endian;
 // e.g. Windows PowerShell 5's "> file"), else unchanged. An unpaired surrogate becomes U+FFFD, an odd
@@ -583,11 +586,11 @@ static FilterFile loadUpdateFile()
 	const char* const optIn = std::getenv("OFX_GMIC_UPDATE_FILE");
 	if (!optIn) return FilterFile();
 	if (string(optIn) != "1") {
-		fprintf(stderr, "openfx-gmic: OFX_GMIC_UPDATE_FILE=\"%s\" is not 1: G'MIC's update file is not read\n", optIn);
+		gmicLog("openfx-gmic: OFX_GMIC_UPDATE_FILE=\"%s\" is not 1: G'MIC's update file is not read\n", optIn);
 		return FilterFile();
 	}
 #ifdef OFX_GMIC_COMMERCIAL
-	fprintf(stderr, "openfx-gmic: OFX_GMIC_UPDATE_FILE ignored: the update file has GPL filters, which COMMERCIAL builds leave out\n");
+	gmicLog("openfx-gmic: OFX_GMIC_UPDATE_FILE ignored: the update file has GPL filters, which COMMERCIAL builds leave out\n");
 	return FilterFile();
 #else
 	const string rcPath = gmicRcPath();
@@ -596,7 +599,7 @@ static FilterFile loadUpdateFile()
 	file.content = loadStringFromFile(file.path);
 	static const string kCImgPrefix = "1 uint8 "; // a serialized CImg (G'MIC-Qt's Updater::isCImgCompressed)
 	if (file.content.compare(0, kCImgPrefix.size(), kCImgPrefix) == 0) {
-		fprintf(stderr, "openfx-gmic: Warning: %s is compressed, the plug-in only reads it as text: ignored\n", file.path.c_str());
+		gmicLog("openfx-gmic: Warning: %s is compressed, the plug-in only reads it as text: ignored\n", file.path.c_str());
 		return FilterFile();
 	}
 	if (file.content.find("#@gui") == string::npos) return FilterFile(); // (as G'MIC-Qt)
@@ -639,6 +642,11 @@ PluginGlobalData loadPluginGlobalData()
 		}
 		bool builtinStdlib = false; // the curated lists of the parser are only checked against it
 		const string rcPath = get_gmic_rc_path();
+		// before the first message (also G'MIC's: the hot fixes, the renders)
+		// (not when the build writes the bundle's plug-in list, OFX_GMIC_WRITE_PLUGIN_LIST: its
+		// messages stay on stderr, in the build log)
+		const char* const writeList = std::getenv("OFX_GMIC_WRITE_PLUGIN_LIST");
+		if (!rcPath.empty() && !(writeList && *writeList)) gmicOpenLog(rcPath + kLogFile);
 		FilterFile file = loadFilterFile(rcPath);
 		string effectContent = std::move(file.content);
 		if (!effectContent.empty()) {
@@ -685,16 +693,16 @@ PluginGlobalData loadPluginGlobalData()
 		// OFX_GMIC_WRITE_PLUGIN_LIST=<file>: write the list there (the build writes the bundle's).
 		const string userList = rcPath.empty() ? string() : loadStringFromFile(rcPath + kPluginListFile);
 		const std::set<string> disabled = disabledPlugins(userList);
-		if (!userList.empty()) { // (for terminal and log users: Natron's GUI doesn't show stderr)
+		if (!userList.empty()) { // (on stderr or in the log file: Natron's GUI shows neither)
 			std::set<string> pluginIds;
 			for (const EffectData& d : pluginData) {
 				pluginIds.insert(d.uniqueId);
 			}
-			fprintf(stderr, "%s\n", pluginListSummary(rcPath + kPluginListFile, disabled, pluginIds).c_str());
+			gmicLog("%s\n", pluginListSummary(rcPath + kPluginListFile, disabled, pluginIds).c_str());
 		}
 		const char* const listPath = std::getenv("OFX_GMIC_WRITE_PLUGIN_LIST");
 		if (listPath && *listPath && !writePluginList(listPath, pluginData, disabled)) {
-			fprintf(stderr, "openfx-gmic: Error: could not write the plug-in list %s\n", listPath);
+			gmicLog("openfx-gmic: Error: could not write the plug-in list %s\n", listPath);
 		}
 		if (!disabled.empty()) {
 			leaveOutFilters([&disabled](const EffectData& d) { return disabled.count(d.uniqueId) > 0; });
@@ -713,9 +721,9 @@ const PluginGlobalData& pluginGlobalData()
 		try {
 			return loadPluginGlobalData();
 		} catch (const std::exception& e) {
-			fprintf(stderr, "openfx-gmic: Error: could not load the G'MIC filters: %s\n", e.what());
+			gmicLog("openfx-gmic: Error: could not load the G'MIC filters: %s\n", e.what());
 		} catch (...) {
-			fprintf(stderr, "openfx-gmic: Error: could not load the G'MIC filters\n");
+			gmicLog("openfx-gmic: Error: could not load the G'MIC filters\n");
 		}
 		return PluginGlobalData();
 	}();
@@ -1650,7 +1658,7 @@ static size_t computeFrameCacheBudget()
 		bytes = mb * 1024. * 1024.;
 	} else {
 		if (env && *env) {
-			fprintf(stderr, "openfx-gmic: OFX_GMIC_FRAME_CACHE_MB=\"%s\" is not a number of megabytes >= 0: using the default budget\n", env);
+			gmicLog("openfx-gmic: OFX_GMIC_FRAME_CACHE_MB=\"%s\" is not a number of megabytes >= 0: using the default budget\n", env);
 		}
 		// leave room for the host's own cache (Natron's RAM cache)
 		bytes = (double)physicalMemoryBytes() / 8.;
@@ -1812,21 +1820,37 @@ static void frameCacheRelease(const void* owner)
 	frameCacheDropIfUnused(c, key, dropped);
 }
 
+// the warning when the results of filterName are too large to keep (see frameCacheStore)
+static std::string frameCacheTooLargeWarning(const std::string& filterName)
+{
+	return "G'MIC: " + filterName + ": the results are too large to keep (more than " + std::to_string(kMaxFrameResults) +
+		", or more than " + std::to_string((frameCacheBudget() + 512 * 1024) / (1024 * 1024)) +
+		" MB): Output Layer Frame runs the filter on every frame";
+}
+
+// the results for key can't be kept: warning is logged (once per key) and returned
+static std::string frameCacheNotKept(const std::string& key, const std::string& warning)
+{
+	if (frameCacheUncacheable(key)) gmicLog("%s\n", warning.c_str());
+	return warning;
+}
+
 // keeps the results images[0..nofImages-1] under key, for the instance: their buffers now belong
 // to the cache, and their data pointers are set to NULL. Results that are not usable or don't fit
-// in the budget are left to the caller.
-static void frameCacheStore(const void* owner, const std::string& key, gmic_interface_image* images, unsigned int nofImages, const std::string& filterName)
+// in the budget are left to the caller. Returns a warning for the user if they are not kept (a
+// result is empty, or they are larger than the budget), else an empty string.
+static std::string frameCacheStore(const void* owner, const std::string& key, gmic_interface_image* images, unsigned int nofImages, const std::string& filterName)
 {
 	size_t bytes = 0;
 	for (unsigned int i = 0; i < nofImages; ++i) {
 		if (!images[i].data || images[i].spectrum == 0) {
-			if (frameCacheUncacheable(key)) fprintf(stderr, "G'MIC: %s: result %u is empty, the results are not kept (Output Layer Frame runs the filter on every frame)\n",
-					filterName.c_str(), i);
-			return;
+			return frameCacheNotKept(key, "G'MIC: " + filterName + ": result " + std::to_string(i) +
+				" is empty, the results are not kept (Output Layer Frame runs the filter on every frame)");
 		}
 		bytes += imageBytes(images[i]);
 	}
-	if (nofImages == 0 || bytes > frameCacheBudget()) return;
+	if (nofImages == 0) return std::string();
+	if (bytes > frameCacheBudget()) return frameCacheNotKept(key, frameCacheTooLargeWarning(filterName));
 	FrameCacheEntry entry;
 	entry.bytes = bytes;
 	entry.lastUse = 0;
@@ -1856,6 +1880,7 @@ static void frameCacheStore(const void* owner, const std::string& key, gmic_inte
 	stored.bytes = bytes;
 	stored.lastUse = ++c.clock;
 	c.bytes += bytes;
+	return std::string();
 }
 
 // a hash of a buffer, appended to key in hex: four independent 64-bit lanes (xxHash64 rounds),
@@ -1979,6 +2004,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	bool aborted = false;
 	int result = 0;
 	string errmsg;
+	string warning; // shown on the node after a successful render (showRenderWarning)
 	// Output Layer "Frame": the results kept from a previous render, if the key is the same
 	const long long frame = frameNumberOf(sequenceDataP);
 	string cacheKey;
@@ -2012,7 +2038,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		// The retry needs unchanged inputs: gmic_plugin_call() works on copies (no_inplace_processing)
 		// and leaves images[] unchanged on an error. Not after an abort.
 		if (result != 0 && !aborted && !preview && effectData.previewFallback && instanceDataP->options().no_inplace_processing) {
-			fprintf(stderr, "G'MIC: %s: the main command failed (%s), rendering with the preview command\n",
+			gmicLog("G'MIC: %s: the main command failed (%s), rendering with the preview command\n",
 					effectData.name.c_str(), errmsg.c_str());
 			preview = true;
 			cmd = threads + fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, preview, customCommands) + frameSelect;
@@ -2100,13 +2126,11 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		if (result == 0 && useCache && runGmic && !selected) {
 			// out of memory: the results not moved to the cache are freed below, as without cache
 			try {
-				frameCacheStore(instanceDataP, cacheKey, images, nofImages, effectData.name);
+				warning = frameCacheStore(instanceDataP, cacheKey, images, nofImages, effectData.name);
 			} catch (const std::bad_alloc&) {
 			}
-		} else if (result == 0 && useCache && selected && frameCacheUncacheable(cacheKey)) {
-			fprintf(stderr, "G'MIC: %s: the results are too large to keep (more than %d, or more than %.0f MB): "
-					"Output Layer Frame runs the filter on every frame\n", effectData.name.c_str(), kMaxFrameResults,
-					(double)frameCacheBudget() / (1024. * 1024.));
+		} else if (result == 0 && useCache && selected) {
+			warning = frameCacheNotKept(cacheKey, frameCacheTooLargeWarning(effectData.name));
 		}
 		if (claim.claimed) { claim.claimed = false; frameCacheRunDone(cacheKey); } // the waiting renders go on
 	}
@@ -2114,6 +2138,9 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		// persistent message on the node, instead of a modal message on every render
 		showRenderError(effect, errmsg, "G'MIC Error");
 		ok = false;
+	}
+	else if (!aborted && !warning.empty()) {
+		showRenderWarning(effect, warning);
 	}
 	else if (!aborted) {
 		effect.clearPersistentMessage();

@@ -7,9 +7,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <string>
 #include "gmic.h"
 #include "gmic_plugin_call.h"
+#include "gmic_log.h"
 #if defined(_WIN32) && defined(_OPENMP)
 #include <omp.h>
 #endif
@@ -103,6 +105,54 @@ std::string gmicRcPath()
 	return path ? std::string(path) : std::string();
 }
 
+// the log file is emptied when it is opened if it is larger than this, so that it doesn't grow
+// without bounds (G'MIC-Qt empties its gmic_qt_log at each start)
+constexpr long kMaxLogBytes = 16L * 1024L * 1024L;
+
+void gmicOpenLog(const std::string& path)
+{
+	if (path.empty()) return;
+	// opt-in: only a file that the user made (never created here). cimg::std_fopen: on Windows, also
+	// a UTF-8 path (_wfopen), e.g. in a profile folder with non-ASCII characters
+	std::FILE* file = cimg::std_fopen(path.c_str(), "r");
+	if (!file) return;
+	std::fclose(file);
+	file = cimg::std_fopen(path.c_str(), "a");
+	if (!file) {
+		gmicLog("openfx-gmic: Error: could not open the log file %s: the messages stay on stderr\n", path.c_str());
+		return;
+	}
+	if (std::fseek(file, 0, SEEK_END) == 0 && std::ftell(file) > kMaxLogBytes) {
+		std::fclose(file);
+		file = cimg::std_fopen(path.c_str(), "w");
+		if (!file) {
+			gmicLog("openfx-gmic: Error: could not empty the log file %s: the messages stay on stderr\n", path.c_str());
+			return;
+		}
+		std::fprintf(file, "[openfx-gmic] log emptied: it was larger than %ld MB\n", kMaxLogBytes / (1024L * 1024L));
+		std::fclose(file);
+		// append mode again: each write goes to the end of the file, after the lines that other host
+		// processes append (in "w" mode, this process would write at its own offset, over them)
+		file = cimg::std_fopen(path.c_str(), "a");
+		if (!file) {
+			gmicLog("openfx-gmic: Error: could not open the log file %s: the messages stay on stderr\n", path.c_str());
+			return;
+		}
+	}
+	std::tm local{};
+	const std::time_t now = std::time(nullptr);
+#if defined(_WIN32)
+	const bool dated = localtime_s(&local, &now) == 0;
+#else
+	const bool dated = localtime_r(&now, &local) != nullptr;
+#endif
+	char date[64] = "";
+	if (dated) std::strftime(date, sizeof(date), "%Y-%m-%d %H:%M:%S", &local);
+	gmicSetLogFile(file); // (gmic_log.cpp: never closed)
+	cimg::output(file);
+	gmicLog("\n[openfx-gmic] %s: G'MIC %d, log started\n", date, (int)gmic_version);
+}
+
 static void setError(gmic_interface_options* options, const std::string& message)
 {
 	if (options->error_message_buffer) {
@@ -148,7 +198,7 @@ int gmic_plugin_call(const char* cmd, unsigned int* nofImages, gmic_interface_im
 	try {
 		gmic(cmd, list, names, options->custom_commands, !options->ignore_stdlib, options->p_progress, options->p_is_abort);
 	} catch (gmic_exception& e) {
-		std::fprintf(stderr, "\n- Error encountered when calling G'MIC : '%s'\n", e.what());
+		gmicLog("\n- Error encountered when calling G'MIC : '%s'\n", e.what());
 		setError(options, e.what());
 		return -1;
 	}
