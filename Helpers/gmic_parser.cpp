@@ -300,6 +300,10 @@ void processParam(const string& s, EffectParameter& cp)
 		}
 		vector<string> c;
 		strSplit(cp.text, ',', c);
+		// no label ("choice()", "choice(,)", "choice(1,)"): don't read c[-1]. G'MIC-Qt
+		// (ChoiceParameter::initFromText) shows one empty label; here the empty label is dropped
+		// when the plug-in splits the labels, so the host gets a choice with no options, passing 0
+		if (c.empty()) c.push_back(string());
 		cp.text = "";
 		for (int i = 0; i < (int)c.size() - 1; i++) {
 			cp.text += strTrim(c[i]) + "|";
@@ -355,17 +359,21 @@ void processParam(const string& s, EffectParameter& cp)
 		// Add a float-valued parameter (as a float slider).
 		// 'int(default_value,min_value,max_value)'
 		// Add a integer parameter (as an integer slider).
-		p1 = (int)pval.find(",");
-		p2 = (int)pval.rfind(",");
-		if (p1 == p2) {
-			cp.minValue = pval.substr(0, p1);
-			cp.maxValue = pval.substr(p1);
-			cp.defaultValue = cp.minValue;
-		} else {
-			cp.defaultValue = pval.substr(0, p1);
-			cp.maxValue = pval.substr(p2 + 1);
-			cp.minValue = pval.substr(p1 + 1, p2 - p1 - 1);
+		// As G'MIC-Qt (FloatParameter/IntParameter::initFromText), which rejects any other count
+		// of values (e.g. "float(1)" or "float(0,1)"): exactly three. A malformed one is left
+		// without a type, as an unknown type: a hidden parameter passing 0, so that the later
+		// arguments keep their positions.
+		const size_t c1 = pval.find(',');
+		const size_t c2 = (c1 == string::npos) ? c1 : pval.find(',', c1 + 1);
+		if (c1 == string::npos || c2 == string::npos || pval.find(',', c2 + 1) != string::npos) {
+			fprintf(stderr, "openfx-gmic: Warning: %s parameter \"%s\" does not have three values (\"%s\"): passed as 0\n",
+				cp.paramType.c_str(), cp.name.c_str(), pval.c_str());
+			cp.paramType = "";
+			return;
 		}
+		cp.defaultValue = pval.substr(0, c1);
+		cp.minValue = pval.substr(c1 + 1, c2 - c1 - 1);
+		cp.maxValue = pval.substr(c2 + 1);
 	} else if (cp.paramType == "folder") {
 		// 'folder(_default_foldername)'
 		// Add a foldername parameter (as a folderchooser).
