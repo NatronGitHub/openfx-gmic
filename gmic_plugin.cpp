@@ -880,6 +880,15 @@ effectDataOf(const GlobalData* globalDataP)
     return pluginGlobalData().pluginData[globalDataP->pluginIndex];
 }
 
+// a colour channel (1 is 255) as G'MIC-Qt passes it: the integer in [0, 255] of a QColor
+static
+std::string
+colorChannelToString(float c)
+{
+    const float v = 255.f * c;
+    return intToString((v >= 0.f) ? static_cast<int>(std::lround(std::min(v, 255.f))) : 0); // NaN gives 0
+}
+
 // the filter's command line, with its main or preview command
 static
 std::string
@@ -943,11 +952,11 @@ gmicCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, bo
                 cmd += "\"" + s + "\",";
             } else if (PAR_TYPE(i) == PT_COLOR) {
                 cmd +=
-                floatToString((255.f * PAR_CH(i, 0))) + "," +
-                floatToString((255.f * PAR_CH(i, 1))) + "," +
-                floatToString((255.f * PAR_CH(i, 2))) + ",";
+                colorChannelToString(PAR_CH(i, 0)) + "," +
+                colorChannelToString(PAR_CH(i, 1)) + "," +
+                colorChannelToString(PAR_CH(i, 2)) + ",";
                 if (globalDataP->param[i].flags == 4) {
-                    cmd += floatToString((255.f * PAR_CH(i, 3))) + ",";
+                    cmd += colorChannelToString(PAR_CH(i, 3)) + ",";
                 }
             } else if (PAR_TYPE(i) == PT_POINT) {
                 // a removable point that is off: removed, as G'MIC-Qt passes it (issue #79)
