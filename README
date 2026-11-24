@@ -102,7 +102,8 @@ Options:
 - OPENMP=1: multithreaded G'MIC (off by default). On macOS, libomp is taken from LIBOMP_PREFIX
   (default /opt/local, MacPorts' layout: include/libomp and lib/libomp); with Homebrew's libomp,
   build with CMake and OFX_LIBOMP_ROOT.
-- CXXSTD: e.g. c++17 or c++20 (default: the compiler's).
+- CXXSTD: e.g. c++17 or c++20 (default: c++17, or none if CXX or CXXFLAGS_EXTRA already has a
+  -std option).
 - GMIC_STATIC_DEPS: Linux only, 1 (default): link zlib, libpng and FFTW statically; 0: shared.
 - LICENSE: GPL (default) or COMMERCIAL (see "Licence"; gmic_stdlib_commercial.txt lists the
   filters left out, and why).
