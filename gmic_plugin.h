@@ -31,6 +31,9 @@ constexpr float kGmicValueScale = 255.f;
 // the parameters that the clip preferences depend on (see pluginSetup and getClipPreferences)
 constexpr const char* kAnimateSeedParam = "Animate Random Seed";
 constexpr const char* kOutputLayerParam = "Output Layer";
+// renders with the filter's preview command (see pluginProcess); the OFX glue enables the
+// parameters that only the preview command uses (Parameter::draftModeOnly) when it is on
+constexpr const char* kDraftModeParam = "Preview/Draft Mode";
 // the last option of the Output Layer parameter, "Frame" (issue #65): see pluginProcess
 constexpr int kOutputLayerFrame = 11;
 

@@ -529,7 +529,12 @@ private:
 	void pointsFromSourceRead();
 	void pointsFromSourceWrite();
 	void pointsMoveToSource(double time, int onlyParam);
+	bool isPointCheckbox(int i) const;
+	bool mayBeEnabled(int i, bool draft) const;
+	std::optional<bool> draftModeValue() const;
+	void pointUpdateEnabled(int checkbox, bool draft);
 	void pointsUpdateEnabled(int onlyParam);
+	void draftModeUpdateEnabled();
 
 	const GlobalData& _gd;
 	OFX::Clip* _output;
@@ -538,6 +543,7 @@ private:
 	std::vector<ParamPtr> _params; // per _gd.param
 	OFX::ChoiceParam* _outputLayer;
 	OFX::BooleanParam* _animateSeed;
+	OFX::BooleanParam* _draftMode;
 	// layer times (see layerTimesAt), NULL for plug-ins without them
 	OFX::IntParam* _layersFromSource = nullptr;
 	int _lastLayersFromSource = 0; // its value at the previous change (see changedParam)
@@ -556,6 +562,7 @@ GMICEffect::GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData
 	, _params((size_t)globalData.nofParams)
 	, _outputLayer(fetchChoiceParam(kOutputLayerParam))
 	, _animateSeed(fetchBooleanParam(kAnimateSeedParam))
+	, _draftMode(fetchBooleanParam(kDraftModeParam))
 	, _pointFromSource((size_t)globalData.nofParams)
 {
 	for (int i = 0; i < _gd.nofParams; i++) {
@@ -606,6 +613,7 @@ GMICEffect::GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData
 		}
 	}
 	pointsUpdateEnabled(-1);
+	draftModeUpdateEnabled();
 }
 
 void GMICEffect::failUnlessAborted() const
@@ -864,6 +872,11 @@ void GMICEffect::changedParam(const OFX::InstanceChangedArgs& args, const std::s
 		}
 	}
 
+	// Preview/Draft Mode changed in any way: the parameters of the preview command only
+	if (paramName == kDraftModeParam) {
+		draftModeUpdateEnabled();
+	}
+
 	// Output Layer changed in any way: no longer Frame, the results kept for it can go
 	if (paramName == kOutputLayerParam) {
 		pluginOutputLayerChanged(_gmic, _outputLayer->getValue());
@@ -874,7 +887,7 @@ void GMICEffect::changedParam(const OFX::InstanceChangedArgs& args, const std::s
 	for (int i = 1; i < _gd.nofParams; i++) {
 		const Parameter& param = _gd.param[i];
 		if (param.paramName != paramName) continue;
-		if (param.paramType == ParamType::Bool && param.flags == kParamFlagsPointEnabled) {
+		if (isPointCheckbox(i)) {
 			pointsUpdateEnabled(i);
 		}
 		break;
@@ -1028,20 +1041,76 @@ void GMICEffect::pointsMoveToSource(double time, int onlyParam)
 	if (moved) pointsFromSourceWrite();
 }
 
-// A removable point (issue #79) is enabled, with its overlay handle, only when its checkbox (the
-// boolean parameter after it, see kParamFlagsPointEnabled) is on. onlyParam >= 0: only for that
-// checkbox.
+// param i is the checkbox of a removable point (issue #79): the boolean parameter right after the
+// point, see kParamFlagsPointEnabled
+bool GMICEffect::isPointCheckbox(int i) const
+{
+	return i > 0 && i < _gd.nofParams && _gd.param[i].paramType == ParamType::Bool && _gd.param[i].flags == kParamFlagsPointEnabled &&
+		_gd.param[i - 1].paramType == ParamType::Point;
+}
+
+// whether a parameter may be enabled at all: not disabled in its descriptor
+// (DisplayStatus::Disabled), and, for the parameters of the preview command only
+// (Parameter::draftModeOnly), Preview/Draft Mode on (draft, its value)
+bool GMICEffect::mayBeEnabled(int i, bool draft) const
+{
+	const Parameter& param = _gd.param[i];
+	return param.displayStatus != DisplayStatus::Disabled && (!param.draftModeOnly || draft);
+}
+
+// Preview/Draft Mode, at the current time (none if the host fails)
+std::optional<bool> GMICEffect::draftModeValue() const
+{
+	return hostQuery([this] { return _draftMode->getValue(); });
+}
+
+// The point of the removable point checkbox i is enabled, with its overlay handle, only when the
+// checkbox is on (and mayBeEnabled).
+void GMICEffect::pointUpdateEnabled(int checkbox, bool draft)
+{
+	OFX::BooleanParam* const box = std::get<OFX::BooleanParam*>(_params[checkbox]);
+	const std::optional<bool> on = hostQuery([box] { return box->getValue(); });
+	if (!on) return;
+	OFX::Double2DParam* const point = std::get<OFX::Double2DParam*>(_params[checkbox - 1]);
+	const bool enabled = *on && mayBeEnabled(checkbox - 1, draft);
+	hostTry([point, enabled] { point->setEnabled(enabled); }); // (also called from createInstance)
+}
+
+// The removable points (see pointUpdateEnabled). onlyParam >= 0: only for that checkbox.
 void GMICEffect::pointsUpdateEnabled(int onlyParam)
 {
+	const std::optional<bool> draft = draftModeValue();
+	if (!draft) return;
 	for (int i = 1; i < _gd.nofParams; i++) {
-		const Parameter& param = _gd.param[i];
-		if (param.paramType != ParamType::Bool || param.flags != kParamFlagsPointEnabled || (onlyParam >= 0 && i != onlyParam)) continue;
-		if (_gd.param[i - 1].paramType != ParamType::Point) continue;
-		OFX::BooleanParam* checkbox = std::get<OFX::BooleanParam*>(_params[i]);
-		const std::optional<bool> on = hostQuery([checkbox] { return checkbox->getValue(); });
-		if (!on) continue;
-		OFX::Double2DParam* point = std::get<OFX::Double2DParam*>(_params[i - 1]);
-		hostTry([point, on] { point->setEnabled(*on); }); // (also called from createInstance)
+		if (isPointCheckbox(i) && (onlyParam < 0 || i == onlyParam)) pointUpdateEnabled(i, *draft);
+	}
+}
+
+// The parameters that only the filter's preview command uses (G'MIC's split preview, issue #184,
+// Parameter::draftModeOnly) are enabled only when Preview/Draft Mode is on (and mayBeEnabled).
+// Their values are passed to G'MIC either way, so renders don't depend on whether they are
+// enabled. Updated when the instance is created and when Preview/Draft Mode changes, from its
+// value at that time: an animated Preview/Draft Mode, or one driven by an expression, doesn't
+// update them when the time or the expression's inputs change.
+void GMICEffect::draftModeUpdateEnabled()
+{
+	const std::optional<bool> draft = draftModeValue();
+	if (!draft) return;
+	for (int i = 1; i < _gd.nofParams; i++) {
+		if (!_gd.param[i].draftModeOnly) continue;
+		if (isPointCheckbox(i + 1)) { // a removable point: also its checkbox
+			pointUpdateEnabled(i + 1, *draft);
+			continue;
+		}
+		const bool enabled = mayBeEnabled(i, *draft);
+		// (markSplitPreviewParams: a choice or a point)
+		if (OFX::ChoiceParam* const* choice = std::get_if<OFX::ChoiceParam*>(&_params[i])) {
+			OFX::ChoiceParam* const c = *choice;
+			hostTry([c, enabled] { c->setEnabled(enabled); });
+		} else if (OFX::Double2DParam* const* point = std::get_if<OFX::Double2DParam*>(&_params[i])) {
+			OFX::Double2DParam* const pt = *point;
+			hostTry([pt, enabled] { pt->setEnabled(enabled); });
+		}
 	}
 }
 
