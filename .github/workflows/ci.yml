@@ -177,9 +177,10 @@ jobs:
             --plugins install/OFX/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset "$([ "$BUILD_VARIANTS" = true ] && echo all || echo pr)" --jobs 2
       # an OFX 1.4-only host (hostDemo --ofx14, openfx#170): only the OFX 1.4 host properties and
-      # suites. Without OMP_NUM_THREADS (--host-threads), the thread count comes from the host's
-      # multithread suite (#188; hostDemo's reports 1 CPU): the step's time compares with the one
-      # above (2 threads)
+      # suites. Without OMP_NUM_THREADS (--host-threads), the plug-in sets G'MIC's thread count
+      # (#188): hostDemo's multithread suite reports 1 CPU, and each hostDemo process runs one
+      # render, so the fair share gives it all the hardware threads. Baseline: this step on master,
+      # with OMP_NUM_THREADS=2, took about 65 s
       - name: Render plug-ins (subset, OFX 1.4 host)
         run: |
           python3 .github/workflows/render_plugins.py --host build --host-arg=--ofx14 --host-threads \

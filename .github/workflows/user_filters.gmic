@@ -19,6 +19,11 @@ fx_userfile_builtin :
 fx_userfile_override :
   fc 10,20,30
 
+# fills the image with G'MIC's $_cpus, the thread count that the plug-in sets (#188)
+#@gui User File Cpus : fx_userfile_cpus, fx_userfile_cpus
+fx_userfile_cpus :
+  f {$_cpus}
+
 # replaces the built-in 'fc' (fill_color)
 fc :
   f 128

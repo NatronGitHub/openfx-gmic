@@ -26,7 +26,8 @@ library given by --stdlib), the multi-layer filters, and every 30th plug-in (sor
 and fails unless they all render. --host-arg passes an extra argument to hostDemo (repeatable),
 e.g. --host-arg=--ofx14 (an OFX 1.4-only host).
 hostDemo gets OMP_NUM_THREADS=2 unless it is set; with --host-threads, OMP_NUM_THREADS is unset,
-so that the plug-in takes its thread count from the host's multithread suite (hostDemo's: 1).
+so that the plug-in sets G'MIC's thread count (hostDemo's multithread suite reports 1 CPU, and the
+plug-in's fair share gives the single render of a hostDemo process all the hardware threads).
 """
 import argparse
 import concurrent.futures
@@ -167,7 +168,7 @@ def fft_plugins(stdlib_header):
     return ids
 
 
-def render(host, host_args, host_threads, plugins, work, timeout, plugin):
+def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
     pid, context, clips = plugin
     d = os.path.join(work, pid[len('eu.gmic.'):])
     shutil.rmtree(d, ignore_errors=True)
@@ -284,7 +285,10 @@ def main():
     fails, xfails, xpasses, nans, times = [], [], [], [], []
     rendered = 0
     with concurrent.futures.ThreadPoolExecutor(a.jobs) as ex:
-        run = lambda p: render(host, a.host_arg, a.host_threads, plugins_dir, work, TIMEOUT.get(p[0], a.timeout), p)
+        def run(p):
+            return render(host, a.host_arg, plugins_dir, work, TIMEOUT.get(p[0], a.timeout), p,
+                          host_threads=a.host_threads)
+
         for pid, rc, problem, nan, t, errors, log in ex.map(run, todo):
             times.append((t, pid))
             if len(times) % 25 == 0:
