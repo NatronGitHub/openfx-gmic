@@ -151,7 +151,8 @@ fi
 if [ "${DESCRIBE_UPDATE_FILE:-}" = 1 ]; then
     builtin_count=$(tr -d '\r' < describe.log | grep -c '^PLUGIN ' || true)
     update_name="update$(sed -n -e 's/^GMICVER *= *//p' "$SRC/Makefile" | tr -d '.\r ').gmic"
-    # update_case <name> <OFX_GMIC_UPDATE_FILE> <expected number of plug-ins> < <update file contents>
+    # update_case <name> <OFX_GMIC_UPDATE_FILE> <expected number of plug-ins> [<text the log must
+    #   have>] < <update file contents>
     # G'MIC's folder (gmic::path_rc()): $HOME/.config/gmic, %APPDATA%/gmic on Windows; without
     # XDG_CONFIG_HOME and GMIC_PATH, which would move it
     update_case() {
@@ -168,6 +169,9 @@ if [ "${DESCRIBE_UPDATE_FILE:-}" = 1 ]; then
         elif grep "openfx-gmic: Warning: hot fix" "update-$1.log"; then
             echo "FAIL: update file, $1: hot fix warnings (see above)"
             status=1
+        elif [ -n "${4:-}" ] && ! grep -qF -- "$4" "update-$1.log"; then
+            echo "FAIL: update file, $1: no \"$4\" in the plug-in's log"
+            status=1
         else
             echo "update file, $1: $3 plug-ins, as expected"
         fi
@@ -178,10 +182,16 @@ fx_update_file_test :
 '
     update_case empty 1 "$builtin_count" < /dev/null
     printf 'fx_update_file_test :\n  f 128\n' | update_case no-gui 1 "$builtin_count"
-    printf '%s' "$one_filter" | update_case opt-in-off 0 "$builtin_count"
+    printf '%s' "$one_filter" | update_case opt-in-off 0 "$builtin_count" "OFX_GMIC_UPDATE_FILE"
+    # a serialized CImg (still compressed): ignored, with a warning
+    printf '1 uint8 little_endian\n%s' "$one_filter" | update_case compressed 1 "$builtin_count" "is compressed"
     printf '%s' "$one_filter" | update_case used 1 1
-    # star_tone is hot-fixed (gmic_hotfixes.gmic): the file's own definition is kept, silently
-    printf '%sstar_tone :\n  f 64\n' "$one_filter" | update_case hot-fixed-command 1 1
+    # the page that G'MIC's update_deprecate inserts into older update files is no plug-in
+    printf '%s#@gui ________\n#@gui !<b><i>[ New Version Available! ]</i></b> : _none_, _none_\n' "$one_filter" |
+        update_case new-version-page 1 1
+    # star_tone is hot-fixed (gmic_hotfixes.gmic): the file's own definition is kept, with a note
+    # (not a hot fix warning)
+    printf '%sstar_tone :\n  f 64\n' "$one_filter" | update_case hot-fixed-command 1 1 "'star_tone' is defined by "
 fi
 # PLUGIN_LIST=<file>: the plug-ins, their context and input clips, for render_plugins.py
 if [ -n "${PLUGIN_LIST:-}" ]; then

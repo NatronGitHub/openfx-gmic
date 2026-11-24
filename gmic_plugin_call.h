@@ -27,8 +27,9 @@ std::string gmicUpdateFileName();
 
 // G'MIC's own folder, with a trailing separator, as G'MIC and G'MIC-Qt find it (gmic::path_rc()):
 // $GMIC_PATH, else $XDG_CONFIG_HOME/gmic, else $HOME/.config/gmic if $HOME/.config exists, else
-// $HOME/gmic (Windows: %APPDATA%/gmic), else the temporary folder. G'MIC-Qt downloads the update
-// file there. (The plug-in's own files, gmic_ofx.gmic..., are looked up in get_gmic_rc_path().)
+// $HOME/gmic (Windows: %APPDATA%/gmic); empty when none of these variables is set, where G'MIC
+// would use the temporary folder. G'MIC-Qt downloads the update file there. (The plug-in's own
+// files, gmic_ofx.gmic..., are looked up in get_gmic_rc_path().)
 std::string gmicRcPath();
 
 #endif

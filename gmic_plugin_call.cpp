@@ -88,7 +88,18 @@ std::string gmicUpdateFileName()
 
 std::string gmicRcPath()
 {
-	const char* const path = gmic::path_rc();
+	// gmic::path_rc() falls back to the temporary folder (TMP, TEMP, TMPDIR) when none of these is
+	// set: never read a filter file from a folder that other users can write to
+#if cimg_OS == 2
+	static const char* const kVars[] = { "GMIC_PATH", "XDG_CONFIG_HOME", "APPDATA" };
+#else
+	static const char* const kVars[] = { "GMIC_PATH", "XDG_CONFIG_HOME", "HOME" };
+#endif
+	bool set = false;
+	for (const char* const var : kVars) {
+		set = set || std::getenv(var) != nullptr;
+	}
+	const char* const path = set ? gmic::path_rc() : nullptr;
 	return path ? std::string(path) : std::string();
 }
 

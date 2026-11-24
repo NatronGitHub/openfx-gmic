@@ -578,7 +578,11 @@ struct FilterFile
 static FilterFile loadUpdateFile()
 {
 	const char* const optIn = std::getenv("OFX_GMIC_UPDATE_FILE");
-	if (!optIn || string(optIn) != "1") return FilterFile();
+	if (!optIn) return FilterFile();
+	if (string(optIn) != "1") {
+		fprintf(stderr, "openfx-gmic: OFX_GMIC_UPDATE_FILE=\"%s\" is not 1: G'MIC's update file is not read\n", optIn);
+		return FilterFile();
+	}
 #ifdef OFX_GMIC_COMMERCIAL
 	fprintf(stderr, "openfx-gmic: OFX_GMIC_UPDATE_FILE ignored: the update file has GPL filters, which COMMERCIAL builds leave out\n");
 	return FilterFile();

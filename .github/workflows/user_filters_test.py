@@ -3,9 +3,10 @@
 
 The file is installed as ~/.config/gmic/gmic_ofx.gmic in a temporary HOME, or with --update-file
 as G'MIC's filter update file (update408.gmic for the Makefile's GMICVER 4.0.8, read with
-OFX_GMIC_UPDATE_FILE=1, #180), which replaces the built-in filters. Its filters call a command that the file defines ("Unknown command" before
-#168), a built-in command, and a built-in command that the file replaces: each output must be
-the uniform color that the filter fills it with. The file also defines a command that the
+OFX_GMIC_UPDATE_FILE=1, #180), which replaces the built-in filters. Its filters call a command
+that the file defines ("Unknown command" before #168), a built-in command, and a built-in
+command that the file replaces: each output must be the uniform color that the filter fills it
+with. The file also defines a command that the
 plug-in hot-fixes, which must be kept, with a note.
 
 With --stdlib, the same filters are then rendered with a copy of the whole built-in standard

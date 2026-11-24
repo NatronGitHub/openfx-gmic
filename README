@@ -281,8 +281,8 @@ Environment
 -----------
 
 - OFX_GMIC_UPDATE_FILE: 1 makes the plug-in read G'MIC's filter update file, update408.gmic, if
-  no user filter file comes first (see "Filters"); any other value, or unset (the default): the
-  file is ignored. After G'MIC-Qt updates the file, clear the host's plug-in cache. Ignored by
+  no user filter file comes first (see "Filters"); unset (the default) or any other value (with a
+  note on stderr): the file is ignored. After G'MIC-Qt updates the file, clear the host's plug-in cache. Ignored by
   COMMERCIAL builds.
 - OFX_GMIC_FRAME_CACHE_MB: memory budget, in MB, of the cache of Output Layer "Frame" results
   (default: 1/8 of the physical memory, between 1 and 4 GiB; 0 disables the cache).
