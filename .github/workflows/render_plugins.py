@@ -170,6 +170,12 @@ def _progress_problem(report):
 
     Each progress (G'MIC's progress index) must be ended exactly once, and the last value given to
     the host must be in [0, 1].
+
+    Args:
+        report: the parsed report.json of a render (hostDemo --report).
+
+    Returns:
+        A description of the first problem found, or None.
     """
     for pr in report.get('progress', []):
         last = pr.get('lastValue')
