@@ -38,6 +38,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <exception>
 #include <locale>
 #include <memory>
 #include <optional>
@@ -64,8 +65,6 @@ namespace {
 // pi, without relying on the non-standard M_PI
 constexpr double kRfxPi = 3.14159265358979323846;
 
-// G'MIC gets values in [0, 255]: the images are converted to and from that range
-constexpr float kGmicValueScale = 255.f;
 constexpr float kMaxChan8 = 255.f;
 constexpr float kInvMaxChan8 = 1.f / 255.f;
 
@@ -214,22 +213,55 @@ OfxPointD pointNormalisedDefault(const Parameter& param)
 	return { param.defaultValue[0] / 100., 1. - param.defaultValue[1] / 100. };
 }
 
+// whether a color() parameter has an alpha channel (see kParamFlagsColorRGBA): declared as an RGBA
+// parameter; the others are RGB, as in G'MIC-Qt
+bool colorHasAlpha(const Parameter& param)
+{
+	return param.flags == kParamFlagsColorRGBA;
+}
+
+// The increment and number of digits of a float() slider, as G'MIC-Qt derives them from its range
+// (FloatParameter::addTo(), CustomDoubleSpinBox): a hundredth of the range, and 5 decimals minus the
+// number of integer digits of the bound that has the most, with at least 2 decimals.
+struct FloatSliderSteps
+{
+	double increment;
+	int digits;
+};
+
+// the number of digits of |value| rounded to an integer, as G'MIC-Qt's
+// CustomDoubleSpinBox::integerPartDigitCount() (QString::number(value, 'f', 0) without its '-')
+int integerPartDigitCount(float value)
+{
+	std::array<char, 64> text {}; // FLT_MAX has 39 digits
+	const int n = std::snprintf(text.data(), text.size(), "%.0f", std::fabs(static_cast<double>(value)));
+	// the guard can't trigger (at most 39 digits, or "inf"/"nan"); it only bounds a truncated count
+	return (n > 0) ? std::min(n, static_cast<int>(text.size()) - 1) : 1;
+}
+
+// value with 6 significant digits: a float difference divided by 100 carries the float's noise
+// (0.1f / 100 is 0.0010000000149...), which Natron's spin box would show at full precision
+double roundToSignificantDigits(double value)
+{
+	std::ostringstream text;
+	text.imbue(std::locale::classic());
+	text.precision(6);
+	text << value;
+	return reduxfx::stringToDouble(text.str());
+}
+
+FloatSliderSteps floatSliderSteps(float minValue, float maxValue)
+{
+	constexpr int kMaxDigits = 5; // CustomDoubleSpinBox::MAX_DIGITS
+	const double increment = roundToSignificantDigits(static_cast<double>(maxValue - minValue) / 100.);
+	// an empty, reversed or non-finite (overflowing) range: 0.01, as before
+	return { (std::isfinite(increment) && increment > 0.) ? increment : 0.01,
+		std::max(2, kMaxDigits - std::max(integerPartDigitCount(minValue), integerPartDigitCount(maxValue))) };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Pixel conversions. The G'MIC buffers are float planar RGBA (RRR... GGG... BBB... AAA...), rows
 // top-down; the OFX images are interleaved RGBA, rows bottom-up (rowBytes may be negative).
-
-// row y of an image (rows top-down in the planar buffer, bottom-up in the OFX image), as T
-template <class T>
-T* rowOf(void* data, int rowBytes, int height, int y)
-{
-	return static_cast<T*>(static_cast<void*>(static_cast<char*>(data) + static_cast<ptrdiff_t>(height - 1 - y) * rowBytes));
-}
-
-template <class T>
-const T* rowOf(const void* data, int rowBytes, int height, int y)
-{
-	return static_cast<const T*>(static_cast<const void*>(static_cast<const char*>(data) + static_cast<ptrdiff_t>(height - 1 - y) * rowBytes));
-}
 
 // a planar value (in [0, 1] for 8-bit pixels) as a Pixel: 8-bit values are rounded, clamped, and
 // NaN gives 0 (a float-to-integer conversion of NaN or of a value out of range is undefined)
@@ -248,13 +280,16 @@ unsigned char toPixel<unsigned char>(float v)
 	return !(v > 0.f) ? 0 : v >= 1.f ? 255 : static_cast<unsigned char>(v * kMaxChan8 + 0.5f);
 }
 
-// an interleaved RGBA image of Pixels to the planar buffer dst, multiplied by factor
+// the interleaved RGBA image src, of Pixels, to the planar buffer dst (its bounds' size), multiplied
+// by factor. Row y of the planar buffer (top-down) is row bounds.y2 - 1 - y of the image.
 template <class Pixel>
-void convertToPlanar(const void* src, int srcRowBytes, float* dst, int width, int height, float factor)
+void convertToPlanar(const OFX::Image& src, float* dst, float factor)
 {
+	const OfxRectI& b = src.getBounds();
+	const int width = b.x2 - b.x1, height = b.y2 - b.y1;
 	const size_t plane = static_cast<size_t>(width) * static_cast<size_t>(height);
 	for (int y = 0; y < height; y++) {
-		const Pixel* in = rowOf<Pixel>(src, srcRowBytes, height, y);
+		const Pixel* in = static_cast<const Pixel*>(src.getPixelAddress(b.x1, b.y2 - 1 - y));
 		float* out = dst + static_cast<size_t>(width) * y;
 		for (int x = 0; x < width; x++) {
 			for (size_t c = 0; c < 4; ++c) {
@@ -264,14 +299,17 @@ void convertToPlanar(const void* src, int srcRowBytes, float* dst, int width, in
 	}
 }
 
-// the planar buffer src, multiplied by factor, to an interleaved RGBA image of Pixels
+// the planar buffer src (the bounds' size of dst), multiplied by factor, to the interleaved RGBA
+// image dst, of Pixels
 template <class Pixel>
-void convertFromPlanar(const float* src, void* dst, int dstRowBytes, int width, int height, float factor)
+void convertFromPlanar(const float* src, OFX::Image& dst, float factor)
 {
+	const OfxRectI& b = dst.getBounds();
+	const int width = b.x2 - b.x1, height = b.y2 - b.y1;
 	const size_t plane = static_cast<size_t>(width) * static_cast<size_t>(height);
 	for (int y = 0; y < height; y++) {
 		const float* in = src + static_cast<size_t>(width) * y;
-		Pixel* out = rowOf<Pixel>(dst, dstRowBytes, height, y);
+		Pixel* out = static_cast<Pixel*>(dst.getPixelAddress(b.x1, b.y2 - 1 - y));
 		for (int x = 0; x < width; x++) {
 			for (size_t c = 0; c < 4; ++c) {
 				*out++ = toPixel<Pixel>(in[plane * c + x] * factor);
@@ -415,40 +453,7 @@ struct LayerTimes
 // a parameter of the plug-in, of the type of its GlobalData entry (none for the layers, groups and
 // separators)
 using ParamPtr = std::variant<std::monostate, OFX::DoubleParam*, OFX::IntParam*, OFX::BooleanParam*, OFX::ChoiceParam*,
-	OFX::RGBAParam*, OFX::Double2DParam*, OFX::StringParam*>;
-
-// An undo block opened on the first change: the plug-in's own parameter changes (see
-// pointsMoveToSource) undo in one step. Closed on destruction, never throwing from there.
-class LazyEditBlock
-{
-public:
-	LazyEditBlock(OFX::ParamSet& paramSet, std::string name) : _paramSet(paramSet), _name(std::move(name)) {}
-	~LazyEditBlock()
-	{
-		if (_open) {
-			try {
-				_paramSet.endEditBlock();
-			} catch (...) {
-			}
-		}
-	}
-	LazyEditBlock(const LazyEditBlock&) = delete;
-	LazyEditBlock& operator=(const LazyEditBlock&) = delete;
-	// best-effort: without an undo block if the host refuses it
-	void open()
-	{
-		if (!_tried) {
-			_tried = true;
-			_open = hostTry([this] { _paramSet.beginEditBlock(_name); });
-		}
-	}
-
-private:
-	OFX::ParamSet& _paramSet;
-	std::string _name;
-	bool _tried = false;
-	bool _open = false;
-};
+	OFX::RGBParam*, OFX::RGBAParam*, OFX::Double2DParam*, OFX::StringParam*>;
 
 // ---------------------------------------------------------------------------------------------
 // The effect instance
@@ -539,7 +544,11 @@ GMICEffect::GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData
 			_params[i] = fetchChoiceParam(name);
 			break;
 		case PT_COLOR:
-			_params[i] = fetchRGBAParam(name);
+			if (colorHasAlpha(param)) {
+				_params[i] = fetchRGBAParam(name);
+			} else {
+				_params[i] = fetchRGBParam(name);
+			}
 			break;
 		case PT_POINT:
 			_params[i] = fetchDouble2DParam(name);
@@ -591,13 +600,21 @@ void GMICEffect::fetchParamValues(SequenceData& sd, const OfxRectI& dstRect, dou
 		case PT_INT:
 			value[0] = static_cast<float>(std::get<OFX::IntParam*>(_params[i])->getValueAtTime(t));
 			break;
-		case PT_COLOR: {
-			const OfxRGBAColourD c = std::get<OFX::RGBAParam*>(_params[i])->getValueAtTime(t);
-			value[0] = static_cast<float>(c.r);
-			value[1] = static_cast<float>(c.g);
-			value[2] = static_cast<float>(c.b);
-			value[3] = static_cast<float>(c.a);
-		} break;
+		case PT_COLOR:
+			if (colorHasAlpha(param)) {
+				const OfxRGBAColourD c = std::get<OFX::RGBAParam*>(_params[i])->getValueAtTime(t);
+				value[0] = static_cast<float>(c.r);
+				value[1] = static_cast<float>(c.g);
+				value[2] = static_cast<float>(c.b);
+				value[3] = static_cast<float>(c.a);
+			} else {
+				const OfxRGBColourD c = std::get<OFX::RGBParam*>(_params[i])->getValueAtTime(t);
+				value[0] = static_cast<float>(c.r);
+				value[1] = static_cast<float>(c.g);
+				value[2] = static_cast<float>(c.b);
+				value[3] = 1.f; // not passed to G'MIC
+			}
+			break;
 		case PT_POINT: {
 			// percent of the image, from its top-left corner (G'MIC's y goes down); an empty dstRect
 			// (no input, empty output) counts as 1 pixel, so as not to divide by 0
@@ -951,7 +968,9 @@ void GMICEffect::pointsMoveToSource(double time, int onlyParam)
 	const std::optional<OfxRectD> rod = sourceRoD(time);
 	if (!rod) return;
 	pointsFromSourceRead(); // the parameter may have been loaded, or undone
-	LazyEditBlock editBlock(*this, "Point defaults on Source");
+	// one undo step, begun at the first change only; best-effort: without an undo block if the host
+	// refuses it
+	EditBlock editBlock(*this, "Point defaults on Source", EditBlock::eBeginOnChange, EditBlock::eHostErrorsIgnore);
 	bool moved = false;
 	for (int i = 0; i < _gd.nofParams; i++) {
 		const Parameter& param = _gd.param[i];
@@ -1098,9 +1117,9 @@ void GMICEffect::render(const OFX::RenderArguments& args)
 		buffer.resize((size_t)in.width * (size_t)in.height * 4);
 		in.data = buffer.data();
 		if (img.getPixelDepth() == OFX::eBitDepthUByte) {
-			convertToPlanar<unsigned char>(img.getPixelData(), img.getRowBytes(), buffer.data(), in.width, in.height, kInvMaxChan8 * scale);
+			convertToPlanar<unsigned char>(img, buffer.data(), kInvMaxChan8 * scale);
 		} else {
-			convertToPlanar<float>(img.getPixelData(), img.getRowBytes(), buffer.data(), in.width, in.height, scale);
+			convertToPlanar<float>(img, buffer.data(), scale);
 		}
 		// G'MIC works on straight colours: unpremultiply premultiplied inputs (the converted buffer
 		// is float planar for both 8-bit and float images, so this also covers 8-bit inputs)
@@ -1140,9 +1159,9 @@ void GMICEffect::render(const OFX::RenderArguments& args)
 	}
 
 	if (outputImg->getPixelDepth() == OFX::eBitDepthUByte) {
-		convertFromPlanar<unsigned char>(outBuffer.data(), outputImg->getPixelData(), outputImg->getRowBytes(), out.width, out.height, 1.f / scale);
+		convertFromPlanar<unsigned char>(outBuffer.data(), *outputImg, 1.f / scale);
 	} else {
-		convertFromPlanar<float>(outBuffer.data(), outputImg->getPixelData(), outputImg->getRowBytes(), out.width, out.height, 1.f / scale);
+		convertFromPlanar<float>(outBuffer.data(), *outputImg, 1.f / scale);
 	}
 }
 
@@ -1295,15 +1314,24 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			p->setDefault(param.defaultValue[0]);
 			p->setRange(param.minValue, param.maxValue);
 			p->setDisplayRange(param.minValue, param.maxValue);
-			p->setIncrement(0.01);
-			p->setDigits(2);
+			const FloatSliderSteps steps = floatSliderSteps(param.minValue, param.maxValue);
+			p->setIncrement(steps.increment);
+			p->setDigits(steps.digits);
 			paramDesc = p;
 		} break;
-		case PT_COLOR: {
-			OFX::RGBAParamDescriptor* p = desc.defineRGBAParam(name);
-			p->setDefault(param.defaultValue[0], param.defaultValue[1], param.defaultValue[2], param.defaultValue[3]);
-			paramDesc = p;
-		} break;
+		case PT_COLOR:
+			// Natron loads the RGB colour of the projects saved with the RGBA one (of plug-in versions
+			// that declared all colours RGBA) and drops the alpha, which G'MIC never got
+			if (colorHasAlpha(param)) {
+				OFX::RGBAParamDescriptor* p = desc.defineRGBAParam(name);
+				p->setDefault(param.defaultValue[0], param.defaultValue[1], param.defaultValue[2], param.defaultValue[3]);
+				paramDesc = p;
+			} else {
+				OFX::RGBParamDescriptor* p = desc.defineRGBParam(name);
+				p->setDefault(param.defaultValue[0], param.defaultValue[1], param.defaultValue[2]);
+				paramDesc = p;
+			}
+			break;
 		case PT_TEXT: {
 			std::string txt = param.text;
 			// as G'MIC-Qt, the parser already unescaped the defaults of text() and value(), and
@@ -1454,7 +1482,7 @@ OFX::ImageEffect* GMICPluginFactory::createInstance(OfxImageEffectHandle handle,
 }
 
 // The factories, one per G'MIC filter, made on the first OfxGetNumberOfPlugins (see
-// OFX::Plugin::getPluginIDs) and kept until the binary is unloaded: the host may keep the
+// registerGmicPlugins) and kept until the binary is unloaded: the host may keep the
 // identifiers, and the Support library the factories.
 std::vector<std::unique_ptr<GMICPluginFactory>>& factories()
 {
@@ -1479,6 +1507,39 @@ constexpr std::array<OfxPluginEntryPoint*, sizeof...(N)> makeMainEntries(std::in
 
 constexpr std::array<OfxPluginEntryPoint*, kMaxNofPlugins> kMainEntries = makeMainEntries(std::make_index_sequence<kMaxNofPlugins>());
 
+// Lazy registration (lazyRegistration, below): the Support library calls this once, from the first
+// OfxGetNumberOfPlugins or OfxGetPlugin, and keeps the list. The filters are loaded then, not in a
+// static constructor at dlopen (see pluginGlobalData). If it throws, the host gets no plug-ins (the
+// Support library catches the exception, but only logs it in debug builds): say why on stderr.
+void registerGmicPlugins(OFX::PluginFactoryArray& ids)
+{
+	try {
+		// no entry point beyond kMainEntries
+		const size_t nofFilters = static_cast<size_t>(std::max(0, getNofPlugins()));
+		const size_t n = std::min(nofFilters, kMaxNofPlugins);
+		if (nofFilters > n) {
+			std::fprintf(stderr, "openfx-gmic: Warning: %zu G'MIC filters, only the first %zu are plug-ins (kMaxNofPlugins in gmic_ofx.cpp)\n",
+				nofFilters, n);
+		}
+		factories().reserve(n);
+		ids.reserve(ids.size() + n);
+		for (size_t i = 0; i < n; i++) {
+			factories().push_back(std::make_unique<GMICPluginFactory>(static_cast<int>(i), kMainEntries[i]));
+			ids.push_back(factories().back().get());
+		}
+	} catch (const std::exception& e) {
+		std::fprintf(stderr, "openfx-gmic: plug-in registration failed: %s\n", e.what());
+		throw; // the Support library gives the host no plug-ins
+	} catch (...) {
+		std::fprintf(stderr, "openfx-gmic: plug-in registration failed: unknown exception\n");
+		throw;
+	}
+}
+
+// the plug-ins are the G'MIC filters, only known once they are loaded: not static factory objects
+// registered at dlopen
+const OFX::PluginFactories lazyRegistration(&registerGmicPlugins);
+
 } // namespace
 
 void showRenderError(OFX::ImageEffect& effect, const std::string& msg, const std::string& modalId)
@@ -1488,36 +1549,3 @@ void showRenderError(OFX::ImageEffect& effect, const std::string& msg, const std
 		effect.sendMessage(OFX::Message::eMessageError, modalId, msg);
 	}
 }
-
-namespace OFX {
-namespace Plugin {
-
-// Manual registration (OFXS_MANUAL_REGISTRATION): the Support library calls this once, from the
-// first OfxGetNumberOfPlugins or OfxGetPlugin, and keeps the list. The filters are loaded then,
-// not in a static constructor at dlopen (see pluginGlobalData). No exception may reach the host (a
-// C caller): if this fails, there are no plug-ins.
-void getPluginIDs(OFX::PluginFactoryArray& ids)
-{
-	const size_t first = ids.size();
-	try {
-		// no entry point beyond kMainEntries
-		const size_t nofFilters = static_cast<size_t>(std::max(0, getNofPlugins()));
-		const size_t n = std::min(nofFilters, kMaxNofPlugins);
-		if (nofFilters > n) {
-			fprintf(stderr, "openfx-gmic: Warning: %zu G'MIC filters, only the first %zu are plug-ins (kMaxNofPlugins in gmic_ofx.cpp)\n",
-				nofFilters, n);
-		}
-		factories().reserve(n);
-		ids.reserve(first + n);
-		for (size_t i = 0; i < n; i++) {
-			factories().push_back(std::make_unique<GMICPluginFactory>((int)i, kMainEntries[i]));
-			ids.push_back(factories().back().get());
-		}
-	} catch (...) {
-		ids.resize(first);
-		factories().clear();
-	}
-}
-
-} // namespace Plugin
-} // namespace OFX

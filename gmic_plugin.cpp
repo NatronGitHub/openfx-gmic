@@ -61,6 +61,8 @@
 // - correctly handle multiple parameters on the same line, or multi-line parameters of any kind.
 // - the G'MIC command-line is only computed when rendering, not at each param change (because converting pixel coords to % for point(...) requires image size)
 // - bug fixes
+// 2.0.0: (OpenFX plug-in)
+// - color(...) without alpha is RGB, as in G'MIC-Qt (issue #178)
 //
 // TODO:
 // - there may be any number of gmic parameters per line, see for example fx_hearts
@@ -294,15 +296,19 @@ static string gmicChecksum(const string& def)
 	return s;
 }
 
-// The hot fixes that apply to the G'MIC standard library stdlib. Each block of gmic_hotfixes.gmic
-// starts with '#@hotfix <command> <original> <fixed> [<callee>:<checksum>...]': the FNV-1a 64-bit
-// hashes of the built-in definition the fix was made from, of the fixed definition (the block's
-// own), and of the built-in definitions of the commands the fix relies on; <original> is "-" for
-// a command that the built-in G'MIC no longer defines (but still calls). A block is applied if the
-// built-in command is the original one (or, for "-", is not defined) and the callees are
-// unchanged, skipped silently if the built-in command already is the fixed one (fixed upstream),
-// and otherwise skipped with a warning.
-static string gmicGetHotfixes(const string& stdlib)
+// The hot fixes that apply to the commands that G'MIC runs: those of the standard library stdlib,
+// replaced by those that userCommands defines again (the user's filter file userFile, passed as
+// custom commands, see PluginGlobalData::userCommands; empty with the built-in filters). Each
+// block of gmic_hotfixes.gmic starts with '#@hotfix <command> <original> <fixed>
+// [<callee>:<checksum>...]': the FNV-1a 64-bit hashes of the built-in definition the fix was made
+// from, of the fixed definition (the block's own), and of the built-in definitions of the commands
+// the fix relies on; <original> is "-" for a command that the built-in G'MIC no longer defines
+// (but still calls). A block is applied if the command is the original one (or, for "-", is not
+// defined) and the callees are unchanged, and skipped silently if the command already is the fixed
+// one (fixed upstream). Otherwise it is skipped: with a note if the user's file defines the
+// command or a callee another way (its definition is kept: a copy of the built-in definition
+// still gets the fix), else with a warning for the developers.
+static string gmicGetHotfixes(const string& stdlib, const string& userCommands, const string& userFile)
 {
 	static const string marker = "#@hotfix ";
 	vector<vector<std::pair<string, string> > > checks; // per block: (command, checksum)
@@ -335,6 +341,16 @@ static string gmicGetHotfixes(const string& stdlib)
 		}
 	}
 	gmicGetDefinitions(stdlib, defs);
+	std::map<string, string> userDefs;
+	for (const auto& d : defs) {
+		userDefs[d.first];
+	}
+	gmicGetDefinitions(userCommands, userDefs);
+	for (const auto& d : userDefs) {
+		if (!d.second.empty()) {
+			defs[d.first] = d.second; // (G'MIC loads the user's file after the built-in stdlib)
+		}
+	}
 	string hotfixes;
 	for (size_t i = 0; i < checks.size(); ++i) {
 		const string& command = checks[i][0].first;
@@ -348,7 +364,7 @@ static string gmicGetHotfixes(const string& stdlib)
 			continue;
 		}
 		if (!defs[command].empty() && gmicChecksum(defs[command]) == ownChecksum) {
-			continue; // already fixed in the built-in G'MIC (then the callees do not matter)
+			continue; // already fixed in G'MIC (then the callees do not matter)
 		}
 		bool ok = true;
 		for (size_t k = 0; k < checks[i].size(); ++k) {
@@ -361,6 +377,15 @@ static string gmicGetHotfixes(const string& stdlib)
 			const bool absent = (k == 0 && expected == "-");
 			if (absent ? !def.empty() : (def.empty() || ((k == 0 || !expected.empty()) && expected != found))) {
 				ok = false;
+				if (!userDefs[name].empty()) {
+					if (k == 0) {
+						fprintf(stderr, "openfx-gmic: '%s' is defined by %s: its definition is kept\n", name.c_str(), userFile.c_str());
+					} else {
+						fprintf(stderr, "openfx-gmic: '%s', which the plug-in's fix of '%s' calls, is defined by %s: the definition of '%s' is kept\n",
+						        name.c_str(), command.c_str(), userFile.c_str(), command.c_str());
+					}
+					continue;
+				}
 				fprintf(stderr, "openfx-gmic: Warning: hot fix for the G'MIC command '%s' not applied: the built-in definition of '%s' %s (checksum %s, the fix is for %s), review it in gmic_hotfixes.gmic\n",
 				        command.c_str(), name.c_str(), absent ? "exists" : def.empty() ? "is missing" : "changed", found.c_str(), expected.c_str());
 			}
@@ -378,22 +403,73 @@ namespace {
 // Resources and in the user's G'MIC configuration directory (get_gmic_rc_path)
 constexpr const char* kPluginListFile = "gmic_ofx_plugins.txt";
 
-// The plug-in identifiers that "list" (the contents of a gmic_ofx_plugins.txt) disables. Each line
+// "text" as UTF-8 if it is UTF-16 with a byte-order mark (FF FE: little-endian, FE FF: big-endian;
+// e.g. Windows PowerShell 5's "> file"), else unchanged. An unpaired surrogate becomes U+FFFD, an odd
+// last byte is dropped.
+string utf16ToUtf8(const string& text)
+{
+	const bool le = text.compare(0, 2, "\xFF\xFE") == 0;
+	if (!le && text.compare(0, 2, "\xFE\xFF") != 0) {
+		return text;
+	}
+	const auto unit = [&text, le](size_t i) {
+		const unsigned lo = static_cast<unsigned char>(text[i + (le ? 0 : 1)]);
+		const unsigned hi = static_cast<unsigned char>(text[i + (le ? 1 : 0)]);
+		return hi << 8 | lo;
+	};
+	string utf8;
+	const auto put = [&utf8](unsigned byte) { utf8 += static_cast<char>(byte); };
+	utf8.reserve(text.size() / 2);
+	for (size_t i = 2; i + 1 < text.size(); i += 2) {
+		unsigned c = unit(i);
+		if (c >= 0xD800 && c < 0xDC00 && i + 3 < text.size() && unit(i + 2) >= 0xDC00 && unit(i + 2) < 0xE000) {
+			c = 0x10000 + ((c - 0xD800) << 10) + (unit(i + 2) - 0xDC00);
+			i += 2;
+		} else if (c >= 0xD800 && c < 0xE000) {
+			c = 0xFFFD;
+		}
+		if (c < 0x80) {
+			put(c);
+		} else if (c < 0x800) {
+			put(0xC0 | c >> 6);
+			put(0x80 | (c & 0x3F));
+		} else if (c < 0x10000) {
+			put(0xE0 | c >> 12);
+			put(0x80 | (c >> 6 & 0x3F));
+			put(0x80 | (c & 0x3F));
+		} else {
+			put(0xF0 | c >> 18);
+			put(0x80 | (c >> 12 & 0x3F));
+			put(0x80 | (c >> 6 & 0x3F));
+			put(0x80 | (c & 0x3F));
+		}
+	}
+	return utf8;
+}
+
+// The plug-in identifiers that "list" (the contents of a gmic_ofx_plugins.txt: UTF-8, ASCII, or
+// UTF-16 with a byte-order mark; LF, CRLF or CR line endings) disables. Each line
 // is a plug-in identifier, enabled, or disabled if commented out with one or more '#' (and spaces),
 // either one optionally followed by a '#' comment; any other line is a comment. If an identifier is
-// on several lines, the last one wins. (The identifiers aren't checked: one that is no plug-in, e.g. of a filter
-// that G'MIC removed, changes nothing.)
+// on several lines, the last one wins. (The identifiers aren't checked here: one that is no plug-in,
+// e.g. of a filter that G'MIC removed, changes nothing; see pluginListSummary.)
 std::set<string> disabledPlugins(const string& list)
 {
-	constexpr const char* kSpaces = " \t\r";
+	constexpr const char* kSpaces = " \t";
 	std::set<string> disabled;
-	std::istringstream in(list.compare(0, 3, "\xEF\xBB\xBF") == 0 ? list.substr(3) : list); // (UTF-8 BOM)
-	string line;
-	while (std::getline(in, line)) {
+	string text = utf16ToUtf8(list);
+	if (text.compare(0, 3, "\xEF\xBB\xBF") == 0) { // (UTF-8 BOM)
+		text.erase(0, 3);
+	}
+	// (a CRLF gives an empty line between its CR and LF, which is skipped as any empty line)
+	for (size_t start = 0; start < text.size();) {
+		const size_t end = std::min(text.find_first_of("\r\n", start), text.size());
+		const string line = text.substr(start, end - start);
+		start = end + 1;
 		size_t b = line.find_first_not_of(kSpaces);
 		const bool commented = b != string::npos && line[b] == '#';
 		if (commented) {
-			b = line.find_first_not_of(" \t\r#", b); // ("##eu.gmic.X", "# # eu.gmic.X")
+			b = line.find_first_not_of(" \t#", b); // ("##eu.gmic.X", "# # eu.gmic.X")
 		}
 		if (b == string::npos) {
 			continue;
@@ -410,6 +486,28 @@ std::set<string> disabledPlugins(const string& list)
 		}
 	}
 	return disabled;
+}
+
+// The line that reports a user's list at "path" that disables "disabled": how many of the plug-ins
+// "pluginIds" it disables, and the first 10, in sorted order, of its disabled identifiers that are
+// none of them (a typo, or a filter that G'MIC removed or renamed).
+string pluginListSummary(const string& path, const std::set<string>& disabled, const std::set<string>& pluginIds)
+{
+	constexpr size_t kMaxUnknown = 10;
+	size_t nDisabled = 0;
+	size_t nUnknown = 0;
+	string unknown;
+	for (const string& id : disabled) {
+		if (pluginIds.count(id)) {
+			++nDisabled;
+		} else if (++nUnknown <= kMaxUnknown) {
+			unknown += (nUnknown == 1 ? "; unknown identifiers: " : ", ") + id;
+		}
+	}
+	if (nUnknown > kMaxUnknown) {
+		unknown += ", ... (" + std::to_string(nUnknown) + " in all)";
+	}
+	return "openfx-gmic: " + path + ": " + std::to_string(nDisabled) + (nDisabled == 1 ? " plug-in" : " plug-ins") + " disabled" + unknown;
 }
 
 // Write the list of the plug-ins pluginData to "path": grouped by menu (in their order within
@@ -458,8 +556,70 @@ struct PluginGlobalData
 {
 	vector<EffectData> pluginData;
 	vector<string> pluginContent;
+	// The filter file (gmic_ofx.gmic, gmic_stdlib.gmic or G'MIC's update file), when the filters
+	// come from one: custom commands for every run, so that its filters find the commands it
+	// defines, as in G'MIC-Qt. Empty with the built-in stdlib, which G'MIC loads itself.
+	string userCommands;
 	string hotfixes; // custom commands for every run, see gmicGetHotfixes()
 };
+
+// A filter file: its path, for messages, and its contents.
+struct FilterFile
+{
+	string path;
+	string content;
+};
+
+// G'MIC's filter update file of this G'MIC version (update408.gmic for G'MIC 4.0.8), in G'MIC's
+// own folder (gmicRcPath()), where G'MIC-Qt and G'MIC's 'update' command download it as text (the
+// plug-in never downloads it). Read only if OFX_GMIC_UPDATE_FILE is 1, since G'MIC-Qt rewrites it
+// on its own and a host's stale plug-in cache would then swap filters (README, "Environment"),
+// and never in COMMERCIAL builds, since it brings back the filters under the GPL. Its path and
+// contents, or an empty content if it is not read, missing, has no filter (G'MIC-Qt leaves an
+// empty file after a failed download), or is still CImg-compressed, which only G'MIC could read.
+static FilterFile loadUpdateFile()
+{
+	const char* const optIn = std::getenv("OFX_GMIC_UPDATE_FILE");
+	if (!optIn) return FilterFile();
+	if (string(optIn) != "1") {
+		fprintf(stderr, "openfx-gmic: OFX_GMIC_UPDATE_FILE=\"%s\" is not 1: G'MIC's update file is not read\n", optIn);
+		return FilterFile();
+	}
+#ifdef OFX_GMIC_COMMERCIAL
+	fprintf(stderr, "openfx-gmic: OFX_GMIC_UPDATE_FILE ignored: the update file has GPL filters, which COMMERCIAL builds leave out\n");
+	return FilterFile();
+#else
+	const string rcPath = gmicRcPath();
+	if (rcPath.empty()) return FilterFile();
+	FilterFile file{rcPath + gmicUpdateFileName(), string()};
+	file.content = loadStringFromFile(file.path);
+	static const string kCImgPrefix = "1 uint8 "; // a serialized CImg (G'MIC-Qt's Updater::isCImgCompressed)
+	if (file.content.compare(0, kCImgPrefix.size(), kCImgPrefix) == 0) {
+		fprintf(stderr, "openfx-gmic: Warning: %s is compressed, the plug-in only reads it as text: ignored\n", file.path.c_str());
+		return FilterFile();
+	}
+	if (file.content.find("#@gui") == string::npos) return FilterFile(); // (as G'MIC-Qt)
+	return file;
+#endif
+}
+
+// The filter file the filters come from, the first of these that the plug-in can use (README,
+// "Filters"): ~/.config/gmic/gmic_ofx.gmic or gmic_stdlib.gmic (in rcPath, from
+// get_gmic_rc_path()) if not empty, then G'MIC's update file (loadUpdateFile). An empty content
+// if none: the filters then come from the built-in stdlib.
+static FilterFile loadFilterFile(const string& rcPath)
+{
+	FilterFile file{rcPath + "gmic_ofx.gmic", string()};
+	file.content = loadStringFromFile(file.path);
+	if (file.content.empty()) {
+		file.path = rcPath + "gmic_stdlib.gmic";
+		file.content = loadStringFromFile(file.path);
+	}
+	if (file.content.empty()) {
+		file = loadUpdateFile();
+	}
+	return file;
+}
 
 PluginGlobalData loadPluginGlobalData()
 {
@@ -467,21 +627,23 @@ PluginGlobalData loadPluginGlobalData()
 	vector<EffectData>& pluginData = data.pluginData;
 	vector<string>& pluginContent = data.pluginContent;
 	{
-		// The hot fixes are checked against the built-in stdlib, which G'MIC always loads: decompress
-		// it once here (~35 ms), even when the filters come from a user file (gmic_ofx.gmic).
+		// The hot fixes are checked against the built-in stdlib, which G'MIC always loads, and the
+		// filter file's commands, which replace its own: decompress it once here (~35 ms), even
+		// when the filters come from a file.
 		string stdlib;
 		{
 			const char* lib = gmic_get_stdlib();
 			stdlib = string(lib);
 			gmic_delete_external((float*)lib);
 		}
-		data.hotfixes = gmicGetHotfixes(stdlib);
 		bool builtinStdlib = false; // the curated lists of the parser are only checked against it
-		string effectContent = loadStringFromFile(get_gmic_rc_path() + "gmic_ofx.gmic");
-		if (effectContent.empty()) {
-			effectContent = loadStringFromFile(get_gmic_rc_path() + "gmic_stdlib.gmic");
-		}
-		if (effectContent.empty()) {
+		const string rcPath = get_gmic_rc_path();
+		FilterFile file = loadFilterFile(rcPath);
+		string effectContent = std::move(file.content);
+		if (!effectContent.empty()) {
+			data.hotfixes = gmicGetHotfixes(stdlib, effectContent, file.path);
+		} else {
+			data.hotfixes = gmicGetHotfixes(stdlib, string(), string());
 			effectContent.swap(stdlib);
 			builtinStdlib = true;
 			if (
@@ -490,8 +652,11 @@ PluginGlobalData loadPluginGlobalData()
 				(int)effectContent.find("#@gui :") < 0) {
 				effectContent = "";
 			}
-		} 
+		}
 		gmic_parse_multi(effectContent, &pluginData, &pluginContent, builtinStdlib);
+		if (!builtinStdlib) {
+			data.userCommands = std::move(effectContent);
+		}
 		// leave out the filters for which leaveOut(filter) is true
 		const auto leaveOutFilters = [&pluginData, &pluginContent](const auto& leaveOut) {
 			size_t n = 0;
@@ -517,8 +682,15 @@ PluginGlobalData loadPluginGlobalData()
 		// The plug-ins that the user's list disables are not registered (OFX has no way to only hide
 		// them from the menus). The bundle's list enables every plug-in: it isn't read.
 		// OFX_GMIC_WRITE_PLUGIN_LIST=<file>: write the list there (the build writes the bundle's).
-		const string rcPath = get_gmic_rc_path();
-		const std::set<string> disabled = rcPath.empty() ? std::set<string>() : disabledPlugins(loadStringFromFile(rcPath + kPluginListFile));
+		const string userList = rcPath.empty() ? string() : loadStringFromFile(rcPath + kPluginListFile);
+		const std::set<string> disabled = disabledPlugins(userList);
+		if (!userList.empty()) { // (for terminal and log users: Natron's GUI doesn't show stderr)
+			std::set<string> pluginIds;
+			for (const EffectData& d : pluginData) {
+				pluginIds.insert(d.uniqueId);
+			}
+			fprintf(stderr, "%s\n", pluginListSummary(rcPath + kPluginListFile, disabled, pluginIds).c_str());
+		}
 		const char* const listPath = std::getenv("OFX_GMIC_WRITE_PLUGIN_LIST");
 		if (listPath && *listPath && !writePluginList(listPath, pluginData, disabled)) {
 			fprintf(stderr, "openfx-gmic: Error: could not write the plug-in list %s\n", listPath);
@@ -694,12 +866,12 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 			strSplit(defaultValue, '|', r); // drops empty fields: pad below
 			if (r.size() == 1) { r.push_back(r[0]); r.push_back(r[0]); } // gray: color(V)
 			while (r.size() < 3) r.push_back("0");
-			d1 = (float)stringToDouble(r[0]) / 255.f;
-			d2 = (float)stringToDouble(r[1]) / 255.f;
-			d3 = (float)stringToDouble(r[2]) / 255.f;
+			d1 = (float)stringToDouble(r[0]) / kGmicValueScale;
+			d2 = (float)stringToDouble(r[1]) / kGmicValueScale;
+			d3 = (float)stringToDouble(r[2]) / kGmicValueScale;
 			// color(R,_G,_B,_A): only pass alpha to G'MIC if the filter declares it
-			flags = (r.size() > 3 && !r[3].empty()) ? 4 : 3;
-			d4 = (flags == 4) ? (float)stringToDouble(r[3]) / 255.f : 1.f;
+			flags = (r.size() > 3 && !r[3].empty()) ? kParamFlagsColorRGBA : kParamFlagsColorRGB;
+			d4 = (flags == kParamFlagsColorRGBA) ? (float)stringToDouble(r[3]) / kGmicValueScale : 1.f;
 		} else if (paramType == "point") {
 			vector<string> r;
 			t = PT_POINT;
@@ -948,11 +1120,11 @@ gmicCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, bo
                 cmd += "\"" + s + "\",";
             } else if (PAR_TYPE(i) == PT_COLOR) {
                 cmd +=
-                floatToString((255.f * PAR_CH(i, 0))) + "," +
-                floatToString((255.f * PAR_CH(i, 1))) + "," +
-                floatToString((255.f * PAR_CH(i, 2))) + ",";
-                if (globalDataP->param[i].flags == 4) {
-                    cmd += floatToString((255.f * PAR_CH(i, 3))) + ",";
+                floatToString(kGmicValueScale * PAR_CH(i, 0)) + "," +
+                floatToString(kGmicValueScale * PAR_CH(i, 1)) + "," +
+                floatToString(kGmicValueScale * PAR_CH(i, 2)) + ",";
+                if (globalDataP->param[i].flags == kParamFlagsColorRGBA) {
+                    cmd += floatToString(kGmicValueScale * PAR_CH(i, 3)) + ",";
                 }
             } else if (PAR_TYPE(i) == PT_POINT) {
                 // a removable point that is off: removed, as G'MIC-Qt passes it (issue #79)
@@ -1000,14 +1172,35 @@ static const char* const kFrameSelectCommand =
 
 // The whole command line: the filter's command (main or preview), with the variables G'MIC-Qt
 // defines, the output layer selection, Ignore Alpha, the Resize Mode, verbosity and seed. Sets the
-// custom commands of the options: customCommands (the filter's #@gui lines, the hot fixes for G'MIC
-// bugs, the Ignore Alpha helpers and _openfx_gmic_opaque_resized), which must outlive the G'MIC call.
+// custom commands of the options: customCommands (the filter file, the filter's #@gui lines, the
+// hot fixes for G'MIC bugs, the Ignore Alpha helpers and _openfx_gmic_opaque_resized), which
+// must outlive the G'MIC call.
 static
 std::string
 fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, GmicInstanceData* instanceDataP, unsigned int nofImages, bool isPreview, string& customCommands)
 {
-	// the filter's #@gui lines, and the hot fixes for G'MIC bugs (gmic_hotfixes.gmic), on every run
-	customCommands = pluginGlobalData().pluginContent[globalDataP->pluginIndex] + '\n' + pluginGlobalData().hotfixes;
+	// the filter file, if the filters come from one (a user file or G'MIC's update file; after the
+	// built-in stdlib, which G'MIC loads first: its definitions replace the built-in ones, as in
+	// G'MIC-Qt), the filter's #@gui lines, and the hot fixes for G'MIC bugs (gmic_hotfixes.gmic,
+	// after the file: those that still fit its definitions, see gmicGetHotfixes), on every run
+	const PluginGlobalData& data = pluginGlobalData();
+	// (a newline after the user's file ends its last line, if the file doesn't, so that the next
+	// definition starts on a line of its own; a '\' at the end of the file's last command line
+	// still continues it into the next definition, as in G'MIC-Qt, since G'MIC skips the blank and
+	// comment lines in between. The filter's #@gui lines are comments for G'MIC, which the file
+	// already holds)
+	static const string kNoLines;
+	const string& filterLines = data.userCommands.empty() ? data.pluginContent[globalDataP->pluginIndex] : kNoLines;
+	customCommands.clear();
+	// (and the few helper commands added below)
+	customCommands.reserve(data.userCommands.size() + filterLines.size() + data.hotfixes.size() + 4096);
+	customCommands += data.userCommands;
+	if (!data.userCommands.empty()) {
+		customCommands += '\n';
+	}
+	customCommands += filterLines;
+	customCommands += '\n';
+	customCommands += data.hotfixes;
 	customCommands += kOpaqueResizedCommand;
 	string cmd = gmicCommand(sequenceDataP, globalDataP, isPreview);
 

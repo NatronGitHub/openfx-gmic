@@ -45,7 +45,8 @@ name: Continuous Integration
 #
 # Frugal CI (the NatronGitHub runners are shared by all repos): one run per change. Pushes run CI
 # only on master and tags; feature branches run through their pull request. Draft pull requests
-# don't run CI. Superseded runs are cancelled, except for tags. The weekly run is never skipped:
+# run Linux and Windows; macOS waits until the PR is ready (marking it ready starts a new run).
+# Superseded runs are cancelled, except for tags. The weekly run is never skipped:
 # the toolchains (package managers, runner images) move even when master doesn't. Jobs time out.
 
 on:
@@ -96,13 +97,12 @@ env:
   UPLOAD_ARTIFACTS: ${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && (contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc'))) }}
 
 jobs:
-  # Which jobs run: draft pull requests run none; "only: windows-arm" (workflow_dispatch) runs just
-  # the Windows on Arm job. The weekly scheduled run is never skipped: the toolchains (package
-  # managers, runner images) move even when master doesn't.
+  # Which jobs run: every pull request, drafts included (macOS only once ready); "only:
+  # windows-arm" (workflow_dispatch) runs just the Windows on Arm job. The weekly scheduled run is
+  # never skipped: the toolchains (package managers, runner images) move even when master doesn't.
   changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     outputs:
       run: ${{ steps.check.outputs.run }}
       # the Windows ARM64/Arm64EC/Arm64X job: weekly and on demand only
@@ -165,7 +165,7 @@ jobs:
           .github/workflows/check_linux_deps.sh install/OFX/Plugins/GMIC.ofx.bundle
       # the tests run on the installed bundle, the one that is shipped (see "Upload bundle")
       - name: Describe all plug-ins
-        run: DESCRIBE_USER_LIST=1 PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
+        run: DESCRIBE_USER_LIST=1 DESCRIBE_UPDATE_FILE=1 PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
       # the default FFT (pocketfft) on a non-power-of-two image, with an interpreter built from the
       # same sources
       - name: Render FFT filters (720x576)
@@ -183,6 +183,19 @@ jobs:
           python3 .github/workflows/render_plugins.py --host build --host-arg=--ofx14 \
             --plugins install/OFX/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset pr --jobs 2 --work render-ofx14
+      # a user filter file (~/.config/gmic/gmic_ofx.gmic) whose filters call the commands it
+      # defines, and replace a built-in one (#168): checks the pixels and the hot-fix notes, and
+      # prints the render times with a small file and with a copy of the standard library
+      - name: Render filters of a user filter file
+        run: |
+          python3 .github/workflows/user_filters_test.py --host build --plugins install/OFX/Plugins \
+            --stdlib build/gmic/gmic_stdlib_community.h --work render-user-file
+      # the same file as G'MIC's filter update file (~/.config/gmic/update408.gmic, read with
+      # OFX_GMIC_UPDATE_FILE=1, #180)
+      - name: Render filters of a G'MIC update file
+        run: |
+          python3 .github/workflows/user_filters_test.py --host build --plugins install/OFX/Plugins \
+            --update-file --runs 1 --work render-update-file
       # no libcurl: G'MIC downloads with the curl command (cimg::load_network). Add Grain
       # downloads its grain images (gmic_grain.gmz, from gmic.eu) into G'MIC's cache, here an empty
       # GMIC_CACHE_PATH (Color Presets downloads only for a preset other than the default).
@@ -323,7 +336,7 @@ jobs:
           openfx/Support/include/linuxCheckBundle.sh install/OFX/Plugins
           .github/workflows/check_linux_deps.sh install/OFX/Plugins/GMIC.ofx.bundle
       - name: Describe all plug-ins
-        run: DESCRIBE_USER_LIST=1 PLUGIN_LIST=plugins.txt CXX=g++ .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
+        run: DESCRIBE_USER_LIST=1 DESCRIBE_UPDATE_FILE=1 PLUGIN_LIST=plugins.txt CXX=g++ .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
       - name: Render plug-ins (subset)
         run: |
           python3 .github/workflows/render_plugins.py --host build \
@@ -334,13 +347,14 @@ jobs:
     name: macOS 15 arm64 (Apple clang, MacPorts libraries)
     runs-on: macos-15
     # macOS arm64 runners are scarce (Natron CI policy): start only once Linux and Windows have
-    # passed. Merging only requires Linux and Windows; macOS also builds weekly.
+    # passed, and not on draft PRs. Merging only requires Linux and Windows; macOS also builds weekly.
     needs: [changes, linux, windows]
     # on the weekly and on-demand runs (which also build the variants), macOS builds even if a
     # Linux/Windows variant (debug, C++20) failed. !cancelled(), not always(): a cancelled run
     # (superseded by a newer push) must also stop a running macOS job.
     if: >-
       !cancelled() && needs.changes.outputs.run == 'true' &&
+      !(github.event_name == 'pull_request' && github.event.pull_request.draft) &&
       (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
        (needs.linux.result == 'success' && needs.windows.result == 'success'))
     timeout-minutes: 60
@@ -390,7 +404,7 @@ jobs:
         run: |
           export PATH=/opt/local/bin:/opt/local/sbin:$PATH
           CXX="/usr/bin/clang++ -I/opt/local/include" \
-            HOST_LDFLAGS=-L/opt/local/lib DESCRIBE_USER_LIST=1 PLUGIN_LIST=plugins.txt \
+            HOST_LDFLAGS=-L/opt/local/lib DESCRIBE_USER_LIST=1 DESCRIBE_UPDATE_FILE=1 PLUGIN_LIST=plugins.txt \
             .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
       - name: Render plug-ins (subset)
         run: |
@@ -562,7 +576,7 @@ jobs:
         run: |
           export DESCRIBE_MSVC_EXPAT_LIB=$(ls build/vcpkg_installed/$VCPKG_TRIPLET/lib/libexpat*MT.lib | head -1)
           export DESCRIBE_MSVC_CFLAGS="-I$(cygpath -m "$PWD/build/vcpkg_installed/$VCPKG_TRIPLET/include")"
-          DESCRIBE_USER_LIST=1 PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
+          DESCRIBE_USER_LIST=1 DESCRIBE_UPDATE_FILE=1 PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
       - name: Render plug-ins (subset)
         run: |
           python .github/workflows/render_plugins.py --host build \
@@ -683,7 +697,7 @@ jobs:
       - name: Describe all plug-ins
         run: |
           set -eo pipefail
-          DESCRIBE_USER_LIST=1 PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh build/Plugins $GMIC_PLUGIN_COUNT
+          DESCRIBE_USER_LIST=1 DESCRIBE_UPDATE_FILE=1 PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh build/Plugins $GMIC_PLUGIN_COUNT
       - name: Render plug-ins (subset)
         run: |
           set -eo pipefail

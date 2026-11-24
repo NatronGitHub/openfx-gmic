@@ -81,6 +81,28 @@ GMIC_DLLINTERFACE const char* GMIC_CALLCONV gmic_get_stdlib()
 	return lib.data();
 }
 
+std::string gmicUpdateFileName()
+{
+	return "update" + std::to_string(gmic_version) + ".gmic";
+}
+
+std::string gmicRcPath()
+{
+	// gmic::path_rc() falls back to the temporary folder (TMP, TEMP, TMPDIR) when none of these is
+	// set: never read a filter file from a folder that other users can write to
+#if cimg_OS == 2
+	static const char* const kVars[] = { "GMIC_PATH", "XDG_CONFIG_HOME", "APPDATA" };
+#else
+	static const char* const kVars[] = { "GMIC_PATH", "XDG_CONFIG_HOME", "HOME" };
+#endif
+	bool set = false;
+	for (const char* const var : kVars) {
+		set = set || std::getenv(var) != nullptr;
+	}
+	const char* const path = set ? gmic::path_rc() : nullptr;
+	return path ? std::string(path) : std::string();
+}
+
 static void setError(gmic_interface_options* options, const std::string& message)
 {
 	if (options->error_message_buffer) {

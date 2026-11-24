@@ -24,6 +24,10 @@ namespace OFX {
 class ImageEffect;
 }
 
+// G'MIC gets values in [0, 255]: the images and the colour parameters (0 to 1 in OFX) are converted
+// to and from that range
+constexpr float kGmicValueScale = 255.f;
+
 // the parameters that the clip preferences depend on (see pluginSetup and getClipPreferences)
 constexpr const char* kAnimateSeedParam = "Animate Random Seed";
 constexpr const char* kOutputLayerParam = "Output Layer";
