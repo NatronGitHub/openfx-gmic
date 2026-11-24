@@ -53,7 +53,7 @@
 #include <string>
 #include <vector>
 
-namespace reduxfx {
+namespace gmic_ofx {
 
 struct EffectParameter {
 	std::string name;

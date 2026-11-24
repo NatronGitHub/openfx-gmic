@@ -1,5 +1,5 @@
 PLUGINNAME = GMIC
-PLUGINSOURCES = gmic.cpp gmic_ofx.cpp gmic_plugin.cpp gmic_plugin_call.cpp gmic_parser.cpp gmic_log.cpp RFX_StringUtils.cpp
+PLUGINSOURCES = gmic.cpp gmic_ofx.cpp gmic_plugin.cpp gmic_plugin_call.cpp gmic_parser.cpp gmic_log.cpp gmic_string.cpp
 PLUGINOBJECTS = $(PLUGINSOURCES:.cpp=.o)
 
 SRCDIR = ..
