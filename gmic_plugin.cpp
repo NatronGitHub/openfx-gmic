@@ -61,6 +61,8 @@
 // - correctly handle multiple parameters on the same line, or multi-line parameters of any kind.
 // - the G'MIC command-line is only computed when rendering, not at each param change (because converting pixel coords to % for point(...) requires image size)
 // - bug fixes
+// 2.0.0: (OpenFX plug-in)
+// - color(...) without alpha is RGB, as in G'MIC-Qt (issue #178)
 //
 // TODO:
 // - there may be any number of gmic parameters per line, see for example fx_hearts
@@ -775,12 +777,12 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 			strSplit(defaultValue, '|', r); // drops empty fields: pad below
 			if (r.size() == 1) { r.push_back(r[0]); r.push_back(r[0]); } // gray: color(V)
 			while (r.size() < 3) r.push_back("0");
-			d1 = (float)stringToDouble(r[0]) / 255.f;
-			d2 = (float)stringToDouble(r[1]) / 255.f;
-			d3 = (float)stringToDouble(r[2]) / 255.f;
+			d1 = (float)stringToDouble(r[0]) / kGmicValueScale;
+			d2 = (float)stringToDouble(r[1]) / kGmicValueScale;
+			d3 = (float)stringToDouble(r[2]) / kGmicValueScale;
 			// color(R,_G,_B,_A): only pass alpha to G'MIC if the filter declares it
-			flags = (r.size() > 3 && !r[3].empty()) ? 4 : 3;
-			d4 = (flags == 4) ? (float)stringToDouble(r[3]) / 255.f : 1.f;
+			flags = (r.size() > 3 && !r[3].empty()) ? kParamFlagsColorRGBA : kParamFlagsColorRGB;
+			d4 = (flags == kParamFlagsColorRGBA) ? (float)stringToDouble(r[3]) / kGmicValueScale : 1.f;
 		} else if (paramType == "point") {
 			vector<string> r;
 			t = PT_POINT;
@@ -1024,11 +1026,11 @@ gmicCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, bo
                 cmd += "\"" + s + "\",";
             } else if (PAR_TYPE(i) == PT_COLOR) {
                 cmd +=
-                floatToString((255.f * PAR_CH(i, 0))) + "," +
-                floatToString((255.f * PAR_CH(i, 1))) + "," +
-                floatToString((255.f * PAR_CH(i, 2))) + ",";
-                if (globalDataP->param[i].flags == 4) {
-                    cmd += floatToString((255.f * PAR_CH(i, 3))) + ",";
+                floatToString(kGmicValueScale * PAR_CH(i, 0)) + "," +
+                floatToString(kGmicValueScale * PAR_CH(i, 1)) + "," +
+                floatToString(kGmicValueScale * PAR_CH(i, 2)) + ",";
+                if (globalDataP->param[i].flags == kParamFlagsColorRGBA) {
+                    cmd += floatToString(kGmicValueScale * PAR_CH(i, 3)) + ",";
                 }
             } else if (PAR_TYPE(i) == PT_POINT) {
                 // a removable point that is off: removed, as G'MIC-Qt passes it (issue #79)

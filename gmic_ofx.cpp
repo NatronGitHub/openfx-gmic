@@ -65,8 +65,6 @@ namespace {
 // pi, without relying on the non-standard M_PI
 constexpr double kRfxPi = 3.14159265358979323846;
 
-// G'MIC gets values in [0, 255]: the images are converted to and from that range
-constexpr float kGmicValueScale = 255.f;
 constexpr float kMaxChan8 = 255.f;
 constexpr float kInvMaxChan8 = 1.f / 255.f;
 
@@ -213,6 +211,13 @@ std::optional<OfxRangeD> frameRangeOf(const OFX::Clip& clip)
 OfxPointD pointNormalisedDefault(const Parameter& param)
 {
 	return { param.defaultValue[0] / 100., 1. - param.defaultValue[1] / 100. };
+}
+
+// whether a color() parameter has an alpha channel (see kParamFlagsColorRGBA): declared as an RGBA
+// parameter; the others are RGB, as in G'MIC-Qt
+bool colorHasAlpha(const Parameter& param)
+{
+	return param.flags == kParamFlagsColorRGBA;
 }
 
 // The increment and number of digits of a float() slider, as G'MIC-Qt derives them from its range
@@ -448,7 +453,7 @@ struct LayerTimes
 // a parameter of the plug-in, of the type of its GlobalData entry (none for the layers, groups and
 // separators)
 using ParamPtr = std::variant<std::monostate, OFX::DoubleParam*, OFX::IntParam*, OFX::BooleanParam*, OFX::ChoiceParam*,
-	OFX::RGBAParam*, OFX::Double2DParam*, OFX::StringParam*>;
+	OFX::RGBParam*, OFX::RGBAParam*, OFX::Double2DParam*, OFX::StringParam*>;
 
 // ---------------------------------------------------------------------------------------------
 // The effect instance
@@ -539,7 +544,11 @@ GMICEffect::GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData
 			_params[i] = fetchChoiceParam(name);
 			break;
 		case PT_COLOR:
-			_params[i] = fetchRGBAParam(name);
+			if (colorHasAlpha(param)) {
+				_params[i] = fetchRGBAParam(name);
+			} else {
+				_params[i] = fetchRGBParam(name);
+			}
 			break;
 		case PT_POINT:
 			_params[i] = fetchDouble2DParam(name);
@@ -591,13 +600,21 @@ void GMICEffect::fetchParamValues(SequenceData& sd, const OfxRectI& dstRect, dou
 		case PT_INT:
 			value[0] = static_cast<float>(std::get<OFX::IntParam*>(_params[i])->getValueAtTime(t));
 			break;
-		case PT_COLOR: {
-			const OfxRGBAColourD c = std::get<OFX::RGBAParam*>(_params[i])->getValueAtTime(t);
-			value[0] = static_cast<float>(c.r);
-			value[1] = static_cast<float>(c.g);
-			value[2] = static_cast<float>(c.b);
-			value[3] = static_cast<float>(c.a);
-		} break;
+		case PT_COLOR:
+			if (colorHasAlpha(param)) {
+				const OfxRGBAColourD c = std::get<OFX::RGBAParam*>(_params[i])->getValueAtTime(t);
+				value[0] = static_cast<float>(c.r);
+				value[1] = static_cast<float>(c.g);
+				value[2] = static_cast<float>(c.b);
+				value[3] = static_cast<float>(c.a);
+			} else {
+				const OfxRGBColourD c = std::get<OFX::RGBParam*>(_params[i])->getValueAtTime(t);
+				value[0] = static_cast<float>(c.r);
+				value[1] = static_cast<float>(c.g);
+				value[2] = static_cast<float>(c.b);
+				value[3] = 1.f; // not passed to G'MIC
+			}
+			break;
 		case PT_POINT: {
 			// percent of the image, from its top-left corner (G'MIC's y goes down); an empty dstRect
 			// (no input, empty output) counts as 1 pixel, so as not to divide by 0
@@ -1302,11 +1319,19 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			p->setDigits(steps.digits);
 			paramDesc = p;
 		} break;
-		case PT_COLOR: {
-			OFX::RGBAParamDescriptor* p = desc.defineRGBAParam(name);
-			p->setDefault(param.defaultValue[0], param.defaultValue[1], param.defaultValue[2], param.defaultValue[3]);
-			paramDesc = p;
-		} break;
+		case PT_COLOR:
+			// Natron loads the RGB colour of the projects saved with the RGBA one (of plug-in versions
+			// that declared all colours RGBA) and drops the alpha, which G'MIC never got
+			if (colorHasAlpha(param)) {
+				OFX::RGBAParamDescriptor* p = desc.defineRGBAParam(name);
+				p->setDefault(param.defaultValue[0], param.defaultValue[1], param.defaultValue[2], param.defaultValue[3]);
+				paramDesc = p;
+			} else {
+				OFX::RGBParamDescriptor* p = desc.defineRGBParam(name);
+				p->setDefault(param.defaultValue[0], param.defaultValue[1], param.defaultValue[2]);
+				paramDesc = p;
+			}
+			break;
 		case PT_TEXT: {
 			std::string txt = param.text;
 			// as G'MIC-Qt, the parser already unescaped the defaults of text() and value(), and
