@@ -1341,9 +1341,65 @@ static DWORD WINAPI gmicCallThread(LPVOID arg)
 }
 #endif
 
+// Render progress (issue #177): G'MIC's progress index (p_progress) is set by the filters that
+// use the 'progress' command, from 0 to 100; it is -1 (unknown) when G'MIC starts, and most
+// filters never set it. The render thread passes it to the host's progress suite from its abort
+// poll (see gmicCallAbortable): the host's progress calls, like abort(), come from the render
+// thread. The host's progress starts at the first known value, so that filters without progress
+// show none, and ends when G'MIC returns, also on an exception. The progress is cosmetic: if a
+// progress call throws, the render goes on without progress.
+// The result of progressUpdate() (false: the user cancelled) is ignored, only abort() stops a
+// render: Natron's progress panel returns false to a progressUpdate() from a render thread until
+// its main thread has created the task that progressStart() asked for, which would abort the
+// render at its first update.
+class HostProgress
+{
+public:
+	HostProgress(OFX::ImageEffect& effect, const string& message) : _effect(effect), _message(message) {}
+	~HostProgress() noexcept
+	{
+		if (!_started) return;
+		try {
+			_effect.progressEnd();
+		} catch (...) {
+		}
+	}
+	HostProgress(const HostProgress&) = delete;
+	HostProgress& operator=(const HostProgress&) = delete;
+	HostProgress(HostProgress&&) = delete;
+	HostProgress& operator=(HostProgress&&) = delete;
+
+	// gmicProgress: G'MIC's progress index, from 0 to 100, or negative (unknown)
+	void update(float gmicProgress) noexcept
+	{
+		if (_failed || !(gmicProgress >= 0.f)) return; // unknown (-1), or NaN
+		const double t = std::min(gmicProgress, 100.f) / 100.;
+		try {
+			if (!_started) {
+				_effect.progressStart(_message);
+				_started = true;
+			}
+			if (t != _last) {
+				(void)_effect.progressUpdate(t);
+				_last = t;
+			}
+		} catch (...) {
+			_failed = true; // no more progress for this run (progressEnd() is still called if started)
+		}
+	}
+
+private:
+	OFX::ImageEffect& _effect;
+	string _message;
+	bool _started = false;
+	bool _failed = false;
+	double _last = -1.; // the last value given to the host
+};
+
 // gmic_plugin_call(), aborted when the host aborts the render: then *aborted is set to true, and
-// the result must be discarded.
-static int gmicCallAbortable(const OFX::ImageEffect& effect, const char* cmd, unsigned int* nofImages, gmic_interface_image* images, unsigned int maxImages, gmic_interface_options* options, bool* aborted)
+// the result must be discarded. G'MIC's progress goes to the host's progress bar, with
+// progressMessage (see HostProgress).
+static int gmicCallAbortable(OFX::ImageEffect& effect, const string& progressMessage, const char* cmd, unsigned int* nofImages, gmic_interface_image* images, unsigned int maxImages, gmic_interface_options* options, bool* aborted)
 {
 	*aborted = false;
 	if (effect.abort()) {
@@ -1357,6 +1413,14 @@ static int gmicCallAbortable(const OFX::ImageEffect& effect, const char* cmd, un
 	// not an interpreter's (e.g. an OpenMP worker evaluating the math abort()) gets a static flag
 	// shared by the whole process, which stays set (upstream behavior, not patched here).
 	bool isAbort = false;
+	// G'MIC's progress index: a plain float, written by the main interpreter (its 'progress'
+	// command), on the worker thread, while the render thread reads it: the same upstream design
+	// as the abort flag (issue #136; gmic-qt's ProgressInfoWidget reads its FilterThread's float
+	// the same way). A stale value only delays the progress bar. The interpreters of 'parallel'
+	// are copies with their own private progress (gmic::gmic(const gmic&)): their progress is
+	// never seen.
+	float progress = -1.f;
+	HostProgress hostProgress(effect, progressMessage);
 	GmicCallData d;
 	d.cmd = cmd;
 	d.nofImages = nofImages;
@@ -1366,6 +1430,7 @@ static int gmicCallAbortable(const OFX::ImageEffect& effect, const char* cmd, un
 	d.result = -1;
 	d.done = false;
 	options->p_is_abort = &isAbort;
+	options->p_progress = &progress;
 
 	bool started = false;
 #ifndef _WIN32
@@ -1386,12 +1451,13 @@ static int gmicCallAbortable(const OFX::ImageEffect& effect, const char* cmd, un
 	started = (thread != NULL);
 #endif
 	if (!started) {
-		// no thread: run G'MIC here, without abort
+		// no thread: run G'MIC here, without abort or progress
 		options->p_is_abort = NULL;
+		options->p_progress = NULL;
 		return gmic_plugin_call(cmd, nofImages, images, maxImages, options);
 	}
 
-	// the worker uses d, isAbort and the images: always join it before returning
+	// the worker uses d, isAbort, progress and the images: always join it before returning
 	try {
 		std::unique_lock<std::mutex> lock(d.mutex);
 		while (!d.cond.wait_for(lock, std::chrono::milliseconds(50), [&d] { return d.done; })) {
@@ -1403,6 +1469,7 @@ static int gmicCallAbortable(const OFX::ImageEffect& effect, const char* cmd, un
 				// set it on every poll: G'MIC resets the flag when its interpreter starts
 				isAbort = true;
 			}
+			hostProgress.update(progress);
 			lock.lock();
 		}
 	} catch (...) {
@@ -1415,6 +1482,7 @@ static int gmicCallAbortable(const OFX::ImageEffect& effect, const char* cmd, un
 		CloseHandle(thread);
 #endif
 		options->p_is_abort = NULL;
+		options->p_progress = NULL;
 		throw;
 	}
 #ifndef _WIN32
@@ -1424,12 +1492,14 @@ static int gmicCallAbortable(const OFX::ImageEffect& effect, const char* cmd, un
 	CloseHandle(thread);
 #endif
 	options->p_is_abort = NULL;
+	options->p_progress = NULL;
 	if (!*aborted && effect.abort()) {
 		*aborted = true;
 	}
 	if (*aborted) {
 		return -1;
 	}
+	hostProgress.update(progress); // G'MIC's final value (the worker is joined: no race)
 	if (d.exception) {
 		std::rethrow_exception(d.exception);
 	}
@@ -1866,7 +1936,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		intToString(kMaxFrameResults) + "," + std::to_string((unsigned long long)frameCacheBudget()) : string();
 	if (runGmic) {
 		cmd += frameSelect;
-		result = gmicCallAbortable(effect, cmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(), &aborted);
+		result = gmicCallAbortable(effect, effectData.name, cmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(), &aborted);
 		errmsg = string(instanceDataP->options().error_message_buffer);
 		// The retry needs unchanged inputs: gmic_plugin_call() works on copies (no_inplace_processing)
 		// and leaves images[] unchanged on an error. Not after an abort.
@@ -1875,7 +1945,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 					effectData.name.c_str(), errmsg.c_str());
 			preview = true;
 			cmd = fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, preview, customCommands) + frameSelect;
-			result = gmicCallAbortable(effect, cmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(), &aborted);
+			result = gmicCallAbortable(effect, effectData.name, cmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(), &aborted);
 			if (result != 0 && !aborted) {
 				errmsg += " (with the preview command: " + string(instanceDataP->options().error_message_buffer) + ")";
 			}
