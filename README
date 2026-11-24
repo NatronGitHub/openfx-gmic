@@ -235,7 +235,14 @@ Here Add Grain is disabled. A line that is only '#' (one or more) and an identif
 that plug-in; after an identifier, '#' starts a comment; any other line is a comment. If an
 identifier is on several lines, the last one wins. Plug-ins that the file doesn't mention are
 enabled, so that the filters that a new version of G'MIC adds appear; an identifier that is no
-longer a plug-in (a filter renamed or removed) is ignored.
+longer a plug-in (a filter renamed or removed) is ignored. The file may have LF, CRLF or CR line
+endings, and be UTF-8, or UTF-16 with a byte-order mark (Windows PowerShell 5's "> file").
+
+When it reads the file, the plug-in prints one line on stderr: how many plug-ins the file
+disables, and the disabled identifiers that match no plug-in (typos, or filters that G'MIC
+removed). To see it, run the host from a terminal (on Windows, NatronRenderer: Natron.exe has
+no console). A comment line that is a single word after its '#' (e.g. "#-----") reads as a
+disabled identifier, and is reported as unknown: put a space in it ("# -----").
 
 The plug-in reads the file when the host loads it. After a change, restart the host, and clear
 its OpenFX plug-in cache: this is required. Natron: Cache > Clear Plug-ins Load Cache, or start
