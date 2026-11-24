@@ -52,9 +52,9 @@
 // - original version from https://github.com/dtschump/gmic-community/tree/master/gmic_plugin
 // 1.0.0: (these changes were only tested for the OpenFX plugin)
 // - Source input is now always the topmost G'MIC layer, other inputs are below
-// - handle separator() as a PT_SEPARATOR parameter
+// - handle separator() as a ParamType::Separator parameter
 // - handle point(...)
-// - handle note(...) as a label parameter (PT_TEXT with flags=4)
+// - handle note(...) as a label parameter (ParamType::Text with flags=4)
 // - handle filein(..) and fileout(...)
 // - color(...) is now RGBA
 // - better handle link(...)
@@ -119,7 +119,6 @@
 
 using std::string;
 using std::vector;
-using namespace reduxfx;
 using namespace gmic_ofx;
 
 #include <sstream>
@@ -682,12 +681,12 @@ PluginGlobalData loadPluginGlobalData()
 			pluginData.resize(n);
 			pluginContent.resize(n);
 		};
-		// Each plug-in has a fixed table of MAX_NOF_PARAMS parameters: the filter's own parameters,
+		// Each plug-in has a fixed table of kMaxParams parameters: the filter's own parameters,
 		// up to 4 extra layers and the fixed trailing parameters (see pluginSetup). Leave out the
 		// few filters that do not fit (e.g. "Transfer Color [Reduced Colors]" in G'MIC 4.0.7,
 		// with several hundred parameters) instead of overflowing the table.
 		leaveOutFilters([](const EffectData& d) {
-			return (int)d.param.size() + kNofExtraParams + (d.multiLayer ? kNofLayerTimeParams : 0) > MAX_NOF_PARAMS;
+			return (int)d.param.size() + kNofExtraParams + (d.multiLayer ? kNofLayerTimeParams : 0) > kMaxParams;
 		});
 		// The plug-ins that the user's list disables are not registered (OFX has no way to only hide
 		// them from the menus). The bundle's list enables every plug-in: it isn't read.
@@ -839,10 +838,10 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 	// a copy: the note() parameters are appended to its notes (the description)
 	EffectData effectData = pluginGlobalData().pluginData[globalDataP->pluginIndex];
 
-	globalDataP->param[0] = Parameter(kOfxImageEffectSimpleSourceClipName, "", PT_LAYER);
+	globalDataP->param[0] = Parameter(kOfxImageEffectSimpleSourceClipName, "", ParamType::Layer);
 	int p = 1;
 	for (int i = 0; i < (int)effectData.param.size(); i++) {
-		int t = PT_FLOAT;
+		ParamType t = ParamType::Float;
 		int flags = 0;
 		bool h = false;
 		float d1 = 0.f;
@@ -853,10 +852,10 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		std::string name = param.name;
 		// a filter parameter must not reuse the name of a parameter added below (none does in
 		// G'MIC 4.0.7, but a clash would make the host reject the duplicate parameter)
-		static const char* const reservedNames[] = { "Layer -1", "Layer -2", "Layer -3", "Layer -4",
-			"Layer Times", LAYERS_FROM_SOURCE_PARAM, "Layer -1" TIME_OFFSET_PARAM_SUFFIX,
-			"Layer -2" TIME_OFFSET_PARAM_SUFFIX, "Layer -3" TIME_OFFSET_PARAM_SUFFIX,
-			"Layer -4" TIME_OFFSET_PARAM_SUFFIX, "Command",
+		static const string reservedNames[] = { "Layer -1", "Layer -2", "Layer -3", "Layer -4",
+			"Layer Times", kLayersFromSourceParam, string("Layer -1") + kTimeOffsetParamSuffix,
+			string("Layer -2") + kTimeOffsetParamSuffix, string("Layer -3") + kTimeOffsetParamSuffix,
+			string("Layer -4") + kTimeOffsetParamSuffix, "Command",
 			"Advanced Options", kOutputLayerParam, "Resize Mode", "Ignore Alpha", kDraftModeParam,
 			"Global Random Seed", kAnimateSeedParam, "Log Verbosity" };
 		for (size_t r = 0; r < sizeof(reservedNames) / sizeof(reservedNames[0]); ++r) {
@@ -871,7 +870,7 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		const std::string& text = param.text;
 		const std::string& paramType = param.paramType;
 		if (paramType == "color") {
-			t = PT_COLOR;
+			t = ParamType::Color;
 			vector<string> r = strSplit(defaultValue, '|'); // drops empty fields: pad below
 			if (r.size() == 1) { r.push_back(r[0]); r.push_back(r[0]); } // gray: color(V)
 			while (r.size() < 3) r.push_back("0");
@@ -882,7 +881,7 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 			flags = (r.size() > 3 && !r[3].empty()) ? kParamFlagsColorRGBA : kParamFlagsColorRGB;
 			d4 = (flags == kParamFlagsColorRGBA) ? (float)stringToDouble(r[3]) / kGmicValueScale : 1.f;
 		} else if (paramType == "point") {
-			t = PT_POINT;
+			t = ParamType::Point;
 			vector<string> r = strSplit(defaultValue, '|'); // drops empty fields: pad below
 			while (r.size() < 2) r.push_back("50");
 			d1 = (float)stringToDouble(r[0]);
@@ -896,48 +895,48 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 			d1 = (float)stringToDouble(defaultValue);
 			d2 = d1; d3 = d1; d4 = d1;
 			if (paramType == "bool" || paramType == "button") {
-				t = PT_BOOL;
+				t = ParamType::Bool;
 			} else if (paramType == "pointenabled") {
-				// enables the removable point before it, see PARAM_FLAGS_POINT_ENABLED
-				t = PT_BOOL;
-				flags = PARAM_FLAGS_POINT_ENABLED;
+				// enables the removable point before it, see kParamFlagsPointEnabled
+				t = ParamType::Bool;
+				flags = kParamFlagsPointEnabled;
 			} else if (paramType == "choice") {
-				t = PT_SELECT;
+				t = ParamType::Select;
 				// "color" and "point": see above
 			} else if (paramType == "value") {
 				h = true;
-				t = PT_TEXT;
+				t = ParamType::Text;
 			} else if (paramType == "file" || paramType == "fileout") {
-				t = PT_TEXT;
+				t = ParamType::Text;
 				flags = 2;
 			} else if (paramType == "filein") {
-				t = PT_TEXT;
+				t = ParamType::Text;
 				flags = 5;
 			} else if (paramType == "float") {
-				t = PT_FLOAT;
+				t = ParamType::Float;
 			} else if (paramType == "folder") {
-				t = PT_TEXT;
+				t = ParamType::Text;
 				flags = 3;
 			} else if (paramType == "int") {
-				t = PT_INT;
+				t = ParamType::Int;
 			} else if (paramType == "note" || paramType == "link") {
-				t = PT_TEXT;
+				t = ParamType::Text;
 				string note = strRemoveXmlTags(strTrim(text, " \t\r\n'\""));
 				strReplace(note, "\\n", "\n");
 				effectData.notes += note + '\n';
 				flags = 4;
 			} else if (paramType == "text") {
-				t = PT_TEXT;
+				t = ParamType::Text;
 				flags = (maxValue == "1") ? 1 : 0; // text(1,...): multi-line (the parser stores the flag in maxValue)
 			} else if (paramType == "separator") {
-				t = PT_SEPARATOR;
+				t = ParamType::Separator;
 			} else if (paramType == "input") {
-				t = PT_LAYER;
+				t = ParamType::Layer;
 			} else {
 				// a type this plug-in doesn't know (e.g. from a newer G'MIC, or a malformed line in
 				// ~/.config/gmic; the parser warns): a hidden float, which passes 0 in its slot, so
 				// that the later arguments keep their positions
-				t = PT_FLOAT;
+				t = ParamType::Float;
 				h = true;
 			}
 		}
@@ -947,7 +946,7 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		globalDataP->param[p] = Parameter(
 		  name, "", t, (float)stringToDouble(minValue), (float)stringToDouble(maxValue), d1, d2, d3, d4, paramText);
 		globalDataP->param[p].flags = flags;
-		if (h) globalDataP->param[p].displayStatus = DS_HIDDEN;
+		if (h) globalDataP->param[p].displayStatus = DisplayStatus::Hidden;
 		if (param.splitPreview) { // (see markSplitPreviewParams)
 			globalDataP->param[p].draftModeOnly = true;
 			globalDataP->param[p].hint = "Used by the filter's preview only, as in G'MIC-Qt: "
@@ -963,50 +962,48 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		p++;
 	}
 
-//	globalDataP->param[p++] = Parameter("Dummy", PT_FLOAT);
-
 	if (effectData.multiLayer) {
-		globalDataP->param[p] = Parameter("Layer -1", "", PT_LAYER);
+		globalDataP->param[p] = Parameter("Layer -1", "", ParamType::Layer);
 		++p;
-		globalDataP->param[p] = Parameter("Layer -2", "", PT_LAYER);
+		globalDataP->param[p] = Parameter("Layer -2", "", ParamType::Layer);
 		++p;
-		globalDataP->param[p] = Parameter("Layer -3", "", PT_LAYER);
+		globalDataP->param[p] = Parameter("Layer -3", "", ParamType::Layer);
 		++p;
-		globalDataP->param[p] = Parameter("Layer -4", "", PT_LAYER);
+		globalDataP->param[p] = Parameter("Layer -4", "", ParamType::Layer);
 		++p;
 		// Layer times (issue #63). Placed before Command, so that the PARAM_* indices of the
 		// trailing parameters don't change. The defaults (no layer from Source, offsets 0) give the
 		// behaviour of the plug-ins without these parameters, also for the saved projects, which
 		// don't store them. Not animated: the frames needed are given to the host for a render time.
 		// Integer parameters with flags 1 are not animated (see describeInContext).
-		globalDataP->param[p] = Parameter("Layer Times", "", PT_TOPIC_START);
+		globalDataP->param[p] = Parameter("Layer Times", "", ParamType::TopicStart);
 		globalDataP->param[p].flags = isTemporalFilter(effectData) ? 0 : 1; // closed, except for the filters that use frames
 		++p;
-		globalDataP->param[p] = Parameter(LAYERS_FROM_SOURCE_PARAM, "", PT_INT, 0, 4, 0, 0, 0, 0, "");
+		globalDataP->param[p] = Parameter(kLayersFromSourceParam, "", ParamType::Int, 0, 4, 0, 0, 0, 0, "");
 		globalDataP->param[p].flags = 1;
 		globalDataP->param[p].hint = "Number of layer inputs taken from Source instead of their own input: "
 			"Layer -1 to Layer -N are then Source at the render time plus their time offset, e.g. the "
 			"previous frames with offsets -1, -2... (set when N is raised, for offsets still at 0). 0: off.";
 		++p;
 		for (int k = 1; k <= 4; ++k) {
-			globalDataP->param[p] = Parameter("Layer -" + std::to_string(k) + TIME_OFFSET_PARAM_SUFFIX, "", PT_INT, -1000, 1000, 0, 0, 0, 0, "");
+			globalDataP->param[p] = Parameter("Layer -" + std::to_string(k) + kTimeOffsetParamSuffix, "", ParamType::Int, -1000, 1000, 0, 0, 0, 0, "");
 			globalDataP->param[p].flags = 1;
 			globalDataP->param[p].hint = "Frame offset of Layer -" + std::to_string(k) + ": its image is fetched at "
 				"the render time plus this offset (-1: the previous frame). Source is always at the render time.";
 			++p;
 		}
-		globalDataP->param[p] = Parameter("Layer Times", "", PT_TOPIC_END);
+		globalDataP->param[p] = Parameter("Layer Times", "", ParamType::TopicEnd);
 		++p;
 	}
-	globalDataP->param[p] = Parameter("Command", "", PT_TEXT, 0, 0, 0, 0, 0, 0, "-blur 2");
-	globalDataP->param[p].displayStatus = DS_HIDDEN;
+	globalDataP->param[p] = Parameter("Command", "", ParamType::Text, 0, 0, 0, 0, 0, 0, "-blur 2");
+	globalDataP->param[p].displayStatus = DisplayStatus::Hidden;
 	++p;
-	globalDataP->param[p] = Parameter("Advanced Options", "", PT_TOPIC_START);
+	globalDataP->param[p] = Parameter("Advanced Options", "", ParamType::TopicStart);
 	globalDataP->param[p].flags = 1;
 	++p;
 	// "Frame" is added at the end (issue #65): the choice is saved as its index (and label in
 	// Natron), so the other options keep their meaning in saved projects
-	globalDataP->param[p] = Parameter(kOutputLayerParam, "", PT_SELECT, 0, kOutputLayerFrame, 1, 0, 0, 0, "Merged|Layer 0|Layer -1|Layer -2|Layer -3|Layer -4|Layer -5|Layer -6|Layer -7|Layer -8|Layer -9|Frame");
+	globalDataP->param[p] = Parameter(kOutputLayerParam, "", ParamType::Select, 0, kOutputLayerFrame, 1, 0, 0, 0, "Merged|Layer 0|Layer -1|Layer -2|Layer -3|Layer -4|Layer -5|Layer -6|Layer -7|Layer -8|Layer -9|Frame");
 	globalDataP->param[p].hint = "The image of the G'MIC results to output. Merged: all the results merged into one. "
 		"Layer 0, Layer -1...: one result, counted from the top of the stack as in G'MIC-Qt (Layer 0 is the first). "
 		"Frame: the result whose number is the frame number minus the first frame of Source, modulo the number of "
@@ -1022,15 +1019,15 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 	// size. Its special path (a per-plug-in in-place flag, set from one instance by a parameter
 	// change callback that the OFX glue never called, and skipping the output copy) was removed.
 	// The entry is kept so that saved projects keep their option indices and labels.
-	globalDataP->param[p] = Parameter("Resize Mode", "", PT_SELECT, 0, 5, 1, 0, 0, 0, "Fixed (Inplace)|Dynamic|Downsample 1/2|Downsample 1/4|Downsample 1/8|Downsample 1/16");
+	globalDataP->param[p] = Parameter("Resize Mode", "", ParamType::Select, 0, 5, 1, 0, 0, 0, "Fixed (Inplace)|Dynamic|Downsample 1/2|Downsample 1/4|Downsample 1/8|Downsample 1/16");
 	++p;
-	globalDataP->param[p] = Parameter("Ignore Alpha", "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
+	globalDataP->param[p] = Parameter("Ignore Alpha", "", ParamType::Bool, 0, 1, 0, 0, 0, 0, "");
 	globalDataP->param[p].hint = "Run the filter on the RGB channels only, then give the inputs' alpha back to the results. "
 		"Gray or RGB results of another size than the input (frames, rotation, crop, resize...) are opaque.";
 	++p;
-	globalDataP->param[p] = Parameter(kDraftModeParam, "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
+	globalDataP->param[p] = Parameter(kDraftModeParam, "", ParamType::Bool, 0, 1, 0, 0, 0, 0, "");
 	if (effectData.command == effectData.preview_command) {
-		globalDataP->param[p].displayStatus = DS_HIDDEN;
+		globalDataP->param[p].displayStatus = DisplayStatus::Hidden;
 	}
 	++p;
 	// Reproducibility (issue #44): -srand seeds G'MIC's process-global random generator, which
@@ -1038,25 +1035,25 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 	// not serialised, by design). Within a run, patches/cimg-omp-rand.sh makes the random numbers
 	// of rand, noise and the math parser in OpenMP loops independent of thread scheduling (they
 	// depend on the number of threads); patchmatch and G'MIC's parallel command still vary.
-	globalDataP->param[p] = Parameter("Global Random Seed", "", PT_INT, 0, 1<<24, 0, 0, 0, 0, "");
+	globalDataP->param[p] = Parameter("Global Random Seed", "", ParamType::Int, 0, 1<<24, 0, 0, 0, 0, "");
 	globalDataP->param[p].hint = "Seed of the random numbers used by the filter. For most filters, results are reproducible "
 		"for a given seed and number of OpenMP threads; filters using patch matching or G'MIC's parallel command, "
 		"and concurrent renders, can still vary. The number of threads depends on the host and on the renders "
 		"running at once: set the OMP_NUM_THREADS environment variable for a fixed one.";
 	++p;
-	globalDataP->param[p] = Parameter(kAnimateSeedParam, "", PT_BOOL, 0, 1, 0, 0, 0, 0, "");
+	globalDataP->param[p] = Parameter(kAnimateSeedParam, "", ParamType::Bool, 0, 1, 0, 0, 0, 0, "");
 	globalDataP->param[p].hint = "Add the frame number to the Global Random Seed, so that the random numbers change "
 		"from frame to frame (reproducibility: see Global Random Seed).";
 	++p;
-	globalDataP->param[p] = Parameter("Log Verbosity", "", PT_SELECT, 0, 4, 0, 0, 0, 0, "Off|Level 1|Level 2|Level 3|");
+	globalDataP->param[p] = Parameter("Log Verbosity", "", ParamType::Select, 0, 4, 0, 0, 0, 0, "Off|Level 1|Level 2|Level 3|");
 	++p;
-	globalDataP->param[p] = Parameter("Advanced Options", "", PT_TOPIC_END);
+	globalDataP->param[p] = Parameter("Advanced Options", "", ParamType::TopicEnd);
 	++p;
 	globalDataP->nofParams = p;
 
 	globalDataP->pluginInfo.description = pluginDescription(effectData);
 	globalDataP->nofInputs = (int)std::count_if(globalDataP->param, globalDataP->param + p,
-		[](const Parameter& param) { return param.paramType == PT_LAYER; });
+		[](const Parameter& param) { return param.paramType == ParamType::Layer; });
 	return globalData;
 }
 
@@ -1076,7 +1073,7 @@ gmicCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, bo
     string cmd = preview ? effectData.preview_command : effectData.command;
 
     if (cmd == "") {
-        cmd = PAR_TXT(PARAM_COMMAND);
+        cmd = sequenceDataP->textValue[PARAM_COMMAND];
         strReplace(cmd, "\r", " ");
         strReplace(cmd, "\n", " ");
     } else {
@@ -1084,18 +1081,20 @@ gmicCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, bo
         // the filter parameters only: they come first, the layers and their times follow
         const int nofFilterParams = (int)effectData.param.size();
         for (int i = 1; i <= nofFilterParams && i < PARAM_COMMAND; i++) {
-            if (PAR_TYPE(i) == PT_BOOL && globalDataP->param[i].flags == PARAM_FLAGS_POINT_ENABLED)
+            const ParamType type = globalDataP->param[i].paramType;
+            const float* const value = sequenceDataP->floatValue[i]; // (color and point: its channels)
+            if (type == ParamType::Bool && globalDataP->param[i].flags == kParamFlagsPointEnabled)
                 continue; // not a G'MIC argument: see the point before it
-            if (PAR_TYPE(i) == PT_INT || PAR_TYPE(i) == PT_BOOL || PAR_TYPE(i) == PT_SELECT)
-                cmd += std::to_string((int)PAR_VAL(i)) + ",";
-            else if (PAR_TYPE(i) == PT_FLOAT)
-                cmd += floatToString(PAR_VAL(i)) + ",";
-            else if (PAR_TYPE(i) == PT_TEXT) {
+            if (type == ParamType::Int || type == ParamType::Bool || type == ParamType::Select)
+                cmd += std::to_string((int)value[0]) + ",";
+            else if (type == ParamType::Float)
+                cmd += floatToString(value[0]) + ",";
+            else if (type == ParamType::Text) {
                 if (globalDataP->param[i].flags == 4) {
                     // label/note
                     continue;
                 }
-                string s = PAR_TXT(i);
+                string s = sequenceDataP->textValue[i];
                 const int f = globalDataP->param[i].flags;
                 if (f == 2 || f == 3 || f == 5) {
                     // file or folder: G'MIC un-escapes \ and \" inside "...", so escape backslashes
@@ -1128,24 +1127,24 @@ gmicCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, bo
                     s.swap(q);
                 }
                 cmd += "\"" + s + "\",";
-            } else if (PAR_TYPE(i) == PT_COLOR) {
+            } else if (type == ParamType::Color) {
                 cmd +=
-                floatToString(kGmicValueScale * PAR_CH(i, 0)) + "," +
-                floatToString(kGmicValueScale * PAR_CH(i, 1)) + "," +
-                floatToString(kGmicValueScale * PAR_CH(i, 2)) + ",";
+                floatToString(kGmicValueScale * value[0]) + "," +
+                floatToString(kGmicValueScale * value[1]) + "," +
+                floatToString(kGmicValueScale * value[2]) + ",";
                 if (globalDataP->param[i].flags == kParamFlagsColorRGBA) {
-                    cmd += floatToString(kGmicValueScale * PAR_CH(i, 3)) + ",";
+                    cmd += floatToString(kGmicValueScale * value[3]) + ",";
                 }
-            } else if (PAR_TYPE(i) == PT_POINT) {
+            } else if (type == ParamType::Point) {
                 // a removable point that is off: removed, as G'MIC-Qt passes it (issue #79)
-                if (i + 1 <= nofFilterParams && i + 1 < PARAM_COMMAND && PAR_TYPE(i + 1) == PT_BOOL &&
-                    globalDataP->param[i + 1].flags == PARAM_FLAGS_POINT_ENABLED && PAR_VAL(i + 1) == 0) {
+                if (i + 1 <= nofFilterParams && i + 1 < PARAM_COMMAND && globalDataP->param[i + 1].paramType == ParamType::Bool &&
+                    globalDataP->param[i + 1].flags == kParamFlagsPointEnabled && sequenceDataP->floatValue[i + 1][0] == 0) {
                     cmd += "nan,nan,";
                     continue;
                 }
                 cmd +=
-                floatToString(PAR_CH(i, 0)) + "," +
-                floatToString(PAR_CH(i, 1)) + ",";
+                floatToString(value[0]) + "," +
+                floatToString(value[1]) + ",";
             }
         }
         cmd = cmd.substr(0, cmd.size() - 1);
@@ -1157,18 +1156,18 @@ gmicCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, bo
 
 // Output Layer "Frame" (issue #65): at most that many results (a frame per result, e.g. Spline
 // Spirograph makes up to 512 frames, Fade Layers up to 401); the other modes use at most
-// MAX_NOF_LAYERS (Layer -9 is the last one that can be picked)
+// kMaxLayers (Layer -9 is the last one that can be picked)
 static const int kMaxFrameResults = 1024;
 static size_t frameCacheBudget();
 
 static bool outputIsFrame(const SequenceData* sequenceDataP, const GlobalData* globalDataP)
 {
-	return PAR_VAL(PARAM_OUTPUT) == (float)kOutputLayerFrame;
+	return sequenceDataP->floatValue[PARAM_OUTPUT][0] == (float)kOutputLayerFrame;
 }
 
 static int maxResultsOf(const SequenceData* sequenceDataP, const GlobalData* globalDataP)
 {
-	return outputIsFrame(sequenceDataP, globalDataP) ? kMaxFrameResults : MAX_NOF_LAYERS;
+	return outputIsFrame(sequenceDataP, globalDataP) ? kMaxFrameResults : kMaxLayers;
 }
 
 // _openfx_gmic_frame_select frame,max_results,max_bytes: if there are more than max_results
@@ -1220,12 +1219,12 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 	// another size are opaque). The command stays at the top level, as with Ignore Alpha off and in
 	// G'MIC-Qt: inside a custom command, $1, $*, $#... in text parameters would be substituted, and
 	// apply_channels processed the images one by one, keeping a single result for each.
-	if (PAR_VAL(PARAM_NOALPHA) > 0.f) {
+	if (sequenceDataP->floatValue[PARAM_NOALPHA][0] > 0.f) {
 		customCommands += kIgnoreAlphaCommands;
 		cmd = "-_openfx_gmic_alpha_split " + cmd + " -_openfx_gmic_alpha_restore";
 	}
 
-	if (PAR_VAL(PARAM_OUTPUT) == 0.f) {
+	if (sequenceDataP->floatValue[PARAM_OUTPUT][0] == 0.f) {
 		// G'MIC >= 2.9 renamed gimp_merge_layers to gui_merge_layers ("Unknown command" otherwise)
 		cmd += " -gui_merge_layers";
 	}
@@ -1237,7 +1236,7 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 	if (outputIsFrame(sequenceDataP, globalDataP)) {
 		customCommands += kFrameSelectCommand;
 	} else {
-		cmd += " -if {$!>" + std::to_string(MAX_NOF_LAYERS) + "} -keep[0-" + std::to_string(MAX_NOF_LAYERS - 1) + "] -fi";
+		cmd += " -if {$!>" + std::to_string(kMaxLayers) + "} -keep[0-" + std::to_string(kMaxLayers - 1) + "] -fi";
 	}
 
 	instanceDataP->options().custom_commands = customCommands.c_str();
@@ -1258,7 +1257,7 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 	// _persistent is not defined: filters whose main command needs it are rendered with the
 	// preview command (see pluginProcess).
 	int extentW = 0, extentH = 0;
-	const float dsMode = PAR_VAL(PARAM_RESIZE);
+	const float dsMode = sequenceDataP->floatValue[PARAM_RESIZE][0];
 	if (dsMode >= 2.f) {
 		const int ds = (int)pow(2.f, dsMode - 1.f);
 		extentW = sequenceDataP->inWorld[0].width / ds;
@@ -1282,7 +1281,7 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 		// to the input size ("Fixed (Inplace)" and "Dynamic" alike). Before that, the gray or RGB
 		// results whose size differs from the processed input get an opaque alpha (see
 		// kOpaqueResizedCommand).
-		float ds = PAR_VAL(PARAM_RESIZE);
+		float ds = sequenceDataP->floatValue[PARAM_RESIZE][0];
 		string processedSize = std::to_string(sequenceDataP->inWorld[0].width) + "," + std::to_string(sequenceDataP->inWorld[0].height);
 		if (ds >= 2.f) {
 			ds = pow(2.f, ds - 1.f);
@@ -1293,9 +1292,9 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 		cmd += " -_openfx_gmic_opaque_resized " + processedSize;
 		cmd += " -resize " + std::to_string(sequenceDataP->inWorld[0].width) + "," + std::to_string(sequenceDataP->inWorld[0].height);
 	}
-	int verbosity = (int)PAR_VAL(PARAM_VERBOSITY) - 1;
-	int seed = (int)PAR_VAL(PARAM_SRAND);
-	bool animated_seed = (int)PAR_VAL(PARAM_ANIMSEED);
+	int verbosity = (int)sequenceDataP->floatValue[PARAM_VERBOSITY][0] - 1;
+	int seed = (int)sequenceDataP->floatValue[PARAM_SRAND][0];
+	bool animated_seed = (int)sequenceDataP->floatValue[PARAM_ANIMSEED][0];
 	if (animated_seed) {
 		seed += (int)sequenceDataP->time;
 	}
@@ -1952,7 +1951,7 @@ static long long frameNumberOf(const SequenceData* sequenceDataP)
 
 bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, GmicInstanceData& instanceData, OFX::ImageEffect& effect)
 {
-	// (the names used by the PAR_* and PARAM_* macros)
+	// (the names used by the PARAM_* macros)
 	SequenceData* const sequenceDataP = &sequenceData;
 	const GlobalData* const globalDataP = &globalData;
 	GmicInstanceData* const instanceDataP = &instanceData;
@@ -1996,7 +1995,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	// these with the preview command when their main command fails (EffectData::previewFallback)
 	const EffectData& effectData = effectDataOf(globalDataP);
 	const bool hasContent = !effectData.command.empty();
-	bool preview = hasContent && (effectData.previewOnly || PAR_VAL(PARAM_PREVIEW) > 0);
+	bool preview = hasContent && (effectData.previewOnly || sequenceDataP->floatValue[PARAM_PREVIEW][0] > 0);
 	// the custom commands, set in the options by fullCommand(): must stay valid until the G'MIC calls return
 	string customCommands;
 	// customCommands goes out of scope: reset the pointer on return, also when G'MIC throws
@@ -2072,7 +2071,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		// the result selected by G'MIC: too many or too large to keep
 		const bool selected = frameMode && nofImages == 1 && strcmp(images[0].name, "openfx_gmic_frame_selected") == 0;
 		if (!res && nofImages > 0) {
-			int idx = (int)PAR_VAL(PARAM_OUTPUT) - 1;
+			int idx = (int)sequenceDataP->floatValue[PARAM_OUTPUT][0] - 1;
 			if (frameMode) idx = selected ? 0 : (int)(((frame % (long long)nofImages) + nofImages) % nofImages);
 			if (idx < 0) idx = 0;
 			if ((unsigned)idx >= nofImages) idx = (int)nofImages - 1;
