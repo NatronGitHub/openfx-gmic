@@ -1,0 +1,24 @@
+# Filters for user_filters_test.py: a user filter file (~/.config/gmic/gmic_ofx.gmic) whose
+# filters call commands that the file defines (#168), a built-in command, and a built-in command
+# that the file replaces.
+#@gui User File Test
+#@gui User File Own Command : fx_userfile_own, fx_userfile_own
+#@gui : Value = float(0.25,0,1)
+fx_userfile_own :
+  _fx_userfile_own_fill {$1*255}
+
+_fx_userfile_own_fill :
+  f $1
+
+#@gui User File Builtin Command : fx_userfile_builtin, fx_userfile_builtin
+#@gui : Value = float(0.5,0,1)
+fx_userfile_builtin :
+  fill_color {$1*255},0,255
+
+#@gui User File Override : fx_userfile_override, fx_userfile_override
+fx_userfile_override :
+  fc 10,20,30
+
+# replaces the built-in 'fc' (fill_color)
+fc :
+  f 128

@@ -458,6 +458,10 @@ struct PluginGlobalData
 {
 	vector<EffectData> pluginData;
 	vector<string> pluginContent;
+	// The user's filter file (gmic_ofx.gmic or gmic_stdlib.gmic), when the filters come from it:
+	// custom commands for every run, so that its filters find the commands it defines, as in
+	// G'MIC-Qt. Empty with the built-in stdlib, which G'MIC loads itself.
+	string userCommands;
 	string hotfixes; // custom commands for every run, see gmicGetHotfixes()
 };
 
@@ -492,6 +496,9 @@ PluginGlobalData loadPluginGlobalData()
 			}
 		} 
 		gmic_parse_multi(effectContent, &pluginData, &pluginContent, builtinStdlib);
+		if (!builtinStdlib) {
+			data.userCommands = std::move(effectContent);
+		}
 		// leave out the filters for which leaveOut(filter) is true
 		const auto leaveOutFilters = [&pluginData, &pluginContent](const auto& leaveOut) {
 			size_t n = 0;
@@ -995,14 +1002,23 @@ static const char* const kFrameSelectCommand =
 
 // The whole command line: the filter's command (main or preview), with the variables G'MIC-Qt
 // defines, the output layer selection, Ignore Alpha, the Resize Mode, verbosity and seed. Sets the
-// custom commands of the options: customCommands (the filter's #@gui lines, the hot fixes for G'MIC
-// bugs, the Ignore Alpha helpers and _openfx_gmic_opaque_resized), which must outlive the G'MIC call.
+// custom commands of the options: customCommands (the user's filter file, the filter's #@gui lines,
+// the hot fixes for G'MIC bugs, the Ignore Alpha helpers and _openfx_gmic_opaque_resized), which
+// must outlive the G'MIC call.
 static
 std::string
 fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, GmicInstanceData* instanceDataP, unsigned int nofImages, bool isPreview, string& customCommands)
 {
-	// the filter's #@gui lines, and the hot fixes for G'MIC bugs (gmic_hotfixes.gmic), on every run
-	customCommands = pluginGlobalData().pluginContent[globalDataP->pluginIndex] + '\n' + pluginGlobalData().hotfixes;
+	// the user's filter file, if the filters come from one (after the built-in stdlib, which G'MIC
+	// loads first: its definitions replace the built-in ones, as in G'MIC-Qt), the filter's #@gui
+	// lines, and the hot fixes for G'MIC bugs (gmic_hotfixes.gmic, after the user's file: they
+	// still apply), on every run
+	const PluginGlobalData& data = pluginGlobalData();
+	customCommands = data.userCommands; // (empty with the built-in stdlib)
+	if (!customCommands.empty()) {
+		customCommands += '\n';
+	}
+	customCommands += data.pluginContent[globalDataP->pluginIndex] + '\n' + data.hotfixes;
 	customCommands += kOpaqueResizedCommand;
 	string cmd = gmicCommand(sequenceDataP, globalDataP, isPreview);
 

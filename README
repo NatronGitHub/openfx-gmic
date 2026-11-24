@@ -212,6 +212,9 @@ The filters come from the first of these that is not empty:
 - ~/.config/gmic/gmic_stdlib.gmic (Windows: %APPDATA%/gmic/gmic_stdlib.gmic);
 - the standard library built into the plug-in.
 A user file replaces the whole filter list. Plug-in identifiers come from the filter names.
+The commands that a user file defines are passed to G'MIC on every render, as in G'MIC-Qt, so its
+filters can call them; they replace the built-in commands of the same name (the plug-in's hot
+fixes for G'MIC bugs still apply after them).
 After adding, removing or editing a user file, clear the host's plug-in cache (see "Choosing the
 plug-ins"): a cached list of plug-ins numbers them as the old filter list did.
 
