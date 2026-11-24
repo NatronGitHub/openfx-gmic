@@ -189,6 +189,7 @@ gmic_stdlib.h
 gmic_stdlib_gmic.h
 gmic_stdlib_community.h
 ofxTestLog.txt
+ofxPluginLog.txt
 
 # QtCreator user files
 *.creator.user

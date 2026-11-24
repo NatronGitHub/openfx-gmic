@@ -168,6 +168,27 @@ def fft_plugins(stdlib_header):
     return ids
 
 
+def _progress_problem(report):
+    """The problem with the host's progress in a hostDemo report (None if there is none).
+
+    Each progress (G'MIC's progress index) must be ended exactly once, and the last value given to
+    the host must be in [0, 1].
+
+    Args:
+        report: the parsed report.json of a render (hostDemo --report).
+
+    Returns:
+        A description of the first problem found, or None.
+    """
+    for pr in report.get('progress', []):
+        last = pr.get('lastValue')
+        if pr.get('ends') != 1:
+            return 'progress ended %s times instead of once' % pr.get('ends')
+        if last is not None and not 0 <= last <= 1:
+            return 'last progress value %s outside [0, 1]' % last
+    return None
+
+
 def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
     pid, context, clips = plugin
     d = os.path.join(work, pid[len('eu.gmic.'):])
@@ -192,7 +213,7 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
     except subprocess.TimeoutExpired as e:
         rc, log = 'timeout', (e.stdout or b'').decode('utf-8', 'replace')
     t = time.time() - start
-    problem, nan = None, 0
+    problem, nan, updates = None, 0, 0
     if rc != 0:
         if rc == 'timeout':
             problem = 'timeout after %ds' % timeout
@@ -213,10 +234,13 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
                         if not os.path.exists(os.path.join(d, f)):
                             problem = 'missing output file ' + f
                     nan += sum(o.get('nan') or 0) if isinstance(o.get('nan'), list) else (o.get('nan') or 0)
+            updates = sum(pr.get('updates') or 0 for pr in report.get('progress', []))
+            if problem is None:
+                problem = _progress_problem(report)
         except (OSError, ValueError) as e:
             problem = 'no report: %s' % e
     errors = [l for l in log.splitlines() if ERROR_LINE.search(l)][:3]
-    return pid, rc, problem, nan, t, errors, log
+    return pid, rc, problem, nan, t, errors, log, updates
 
 
 def main():
@@ -284,12 +308,13 @@ def main():
     start = time.time()
     fails, xfails, xpasses, nans, times = [], [], [], [], []
     rendered = 0
+    progressed = 0  # plug-ins that updated the host's progress
     with concurrent.futures.ThreadPoolExecutor(a.jobs) as ex:
         def run(p):
             return render(host, a.host_arg, plugins_dir, work, TIMEOUT.get(p[0], a.timeout), p,
                           host_threads=a.host_threads)
 
-        for pid, rc, problem, nan, t, errors, log in ex.map(run, todo):
+        for pid, rc, problem, nan, t, errors, log, updates in ex.map(run, todo):
             times.append((t, pid))
             if len(times) % 25 == 0:
                 print('... %d/%d (%.0fs)' % (len(times), len(todo), time.time() - start))
@@ -308,6 +333,8 @@ def main():
                     print('    ' + e)
                 continue
             rendered += 1
+            if updates:
+                progressed += 1
             if pid in EXPECTED_FAIL:
                 xpasses.append(pid)
                 print('XPASS %s: rendered, remove it from EXPECTED_FAIL (%s)' % (pid, EXPECTED_FAIL[pid][1]))
@@ -315,6 +342,7 @@ def main():
                 nans.append((pid, nan))
     print('%d rendered in %.0fs: %d failed, %d expected failures, %d skipped' % (
         len(todo), time.time() - start, len(fails), len(xfails), len(sel) - len(todo)))
+    print('%d reported progress' % progressed)
     print('slowest: ' + ', '.join('%s %.0fs' % (p[len('eu.gmic.'):], t) for t, p in sorted(times)[-5:]))
     for pid, nan in nans:
         print('WARNING: %s: %d NaN values in its output' % (pid, nan))

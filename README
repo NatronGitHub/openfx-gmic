@@ -102,7 +102,8 @@ Options:
 - OPENMP=1: multithreaded G'MIC (off by default). On macOS, libomp is taken from LIBOMP_PREFIX
   (default /opt/local, MacPorts' layout: include/libomp and lib/libomp); with Homebrew's libomp,
   build with CMake and OFX_LIBOMP_ROOT.
-- CXXSTD: e.g. c++17 or c++20 (default: the compiler's).
+- CXXSTD: e.g. c++17 or c++20 (default: c++17, or none if CXX or CXXFLAGS_EXTRA already has a
+  -std option).
 - GMIC_STATIC_DEPS: Linux only, 1 (default): link zlib, libpng and FFTW statically; 0: shared.
 - LICENSE: GPL (default) or COMMERCIAL (see "Licence"; gmic_stdlib_commercial.txt lists the
   filters left out, and why).
@@ -276,6 +277,15 @@ project.
 The bundle's list is made from the standard library built into the plug-in: it doesn't follow a
 user's gmic_ofx.gmic or G'MIC's update file (see "Filters"). For a list of the filters actually loaded, set
 OFX_GMIC_WRITE_PLUGIN_LIST (see "Environment").
+
+Rendering
+---------
+
+A render can be aborted while G'MIC runs. The filters that report their progress to G'MIC (with
+its progress command; most filters don't) show it in the host's progress bar, e.g. Natron's
+Progress panel, which lists a render once it is expected to last a few seconds. The plug-in
+ignores the panel's Cancel button: abort the render itself (e.g. Natron's viewer or render
+stop button).
 
 Environment
 -----------

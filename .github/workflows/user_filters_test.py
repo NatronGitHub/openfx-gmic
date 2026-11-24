@@ -128,7 +128,7 @@ def render_all(host, plugins, work, runs):
     problems, logs, seconds = [], [], {}
     for pid in sorted(EXPECTED):
         for run in range(runs):
-            _, _, problem, _, t, errors, log = render_plugins.render(
+            _, _, problem, _, t, errors, log, _ = render_plugins.render(
                 host, [], plugins, work, TIMEOUT, (pid, CONTEXT, ['Source']))
             if run == 0:
                 logs.append(log)
