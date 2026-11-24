@@ -110,7 +110,7 @@
 #include "gmic_libc.h"
 #include "gmic_plugin_call.h"
 #include "gmic_log.h"
-#include "RFX_StringUtils.h"
+#include "gmic_string.h"
 #include "ofxsImageEffect.h"
 #include <algorithm>
 #include <cmath>
@@ -120,6 +120,7 @@
 using std::string;
 using std::vector;
 using namespace reduxfx;
+using namespace gmic_ofx;
 
 #include <sstream>
 #include <map>
@@ -870,9 +871,8 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		const std::string& text = param.text;
 		const std::string& paramType = param.paramType;
 		if (paramType == "color") {
-			vector<string> r;
 			t = PT_COLOR;
-			strSplit(defaultValue, '|', r); // drops empty fields: pad below
+			vector<string> r = strSplit(defaultValue, '|'); // drops empty fields: pad below
 			if (r.size() == 1) { r.push_back(r[0]); r.push_back(r[0]); } // gray: color(V)
 			while (r.size() < 3) r.push_back("0");
 			d1 = (float)stringToDouble(r[0]) / kGmicValueScale;
@@ -882,9 +882,8 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 			flags = (r.size() > 3 && !r[3].empty()) ? kParamFlagsColorRGBA : kParamFlagsColorRGB;
 			d4 = (flags == kParamFlagsColorRGBA) ? (float)stringToDouble(r[3]) / kGmicValueScale : 1.f;
 		} else if (paramType == "point") {
-			vector<string> r;
 			t = PT_POINT;
-			strSplit(defaultValue, '|', r); // drops empty fields: pad below
+			vector<string> r = strSplit(defaultValue, '|'); // drops empty fields: pad below
 			while (r.size() < 2) r.push_back("50");
 			d1 = (float)stringToDouble(r[0]);
 			d2 = (float)stringToDouble(r[1]);
@@ -984,9 +983,9 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 			"previous frames with offsets -1, -2... (set when N is raised, for offsets still at 0). 0: off.";
 		++p;
 		for (int k = 1; k <= 4; ++k) {
-			globalDataP->param[p] = Parameter("Layer -" + intToString(k) + TIME_OFFSET_PARAM_SUFFIX, "", PT_INT, -1000, 1000, 0, 0, 0, 0, "");
+			globalDataP->param[p] = Parameter("Layer -" + std::to_string(k) + TIME_OFFSET_PARAM_SUFFIX, "", PT_INT, -1000, 1000, 0, 0, 0, 0, "");
 			globalDataP->param[p].flags = 1;
-			globalDataP->param[p].hint = "Frame offset of Layer -" + intToString(k) + ": its image is fetched at "
+			globalDataP->param[p].hint = "Frame offset of Layer -" + std::to_string(k) + ": its image is fetched at "
 				"the render time plus this offset (-1: the previous frame). Source is always at the render time.";
 			++p;
 		}
@@ -1082,7 +1081,7 @@ gmicCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, bo
             if (PAR_TYPE(i) == PT_BOOL && globalDataP->param[i].flags == PARAM_FLAGS_POINT_ENABLED)
                 continue; // not a G'MIC argument: see the point before it
             if (PAR_TYPE(i) == PT_INT || PAR_TYPE(i) == PT_BOOL || PAR_TYPE(i) == PT_SELECT)
-                cmd += intToString((int)PAR_VAL(i)) + ",";
+                cmd += std::to_string((int)PAR_VAL(i)) + ",";
             else if (PAR_TYPE(i) == PT_FLOAT)
                 cmd += floatToString(PAR_VAL(i)) + ",";
             else if (PAR_TYPE(i) == PT_TEXT) {
@@ -1232,7 +1231,7 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 	if (outputIsFrame(sequenceDataP, globalDataP)) {
 		customCommands += kFrameSelectCommand;
 	} else {
-		cmd += " -if {$!>" + intToString(MAX_NOF_LAYERS) + "} -keep[0-" + intToString(MAX_NOF_LAYERS - 1) + "] -fi";
+		cmd += " -if {$!>" + std::to_string(MAX_NOF_LAYERS) + "} -keep[0-" + std::to_string(MAX_NOF_LAYERS - 1) + "] -fi";
 	}
 
 	instanceDataP->options().custom_commands = customCommands.c_str();
@@ -1264,8 +1263,8 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 			extentH = std::max(extentH, sequenceDataP->inWorld[i].height);
 		}
 	}
-	const string W = intToString(extentW), H = intToString(extentH);
-	string env = "_preview_x0=0 _preview_y0=0 _preview_x1=" + intToString(extentW - 1) + " _preview_y1=" + intToString(extentH - 1) + " ";
+	const string W = std::to_string(extentW), H = std::to_string(extentH);
+	string env = "_preview_x0=0 _preview_y0=0 _preview_x1=" + std::to_string(extentW - 1) + " _preview_y1=" + std::to_string(extentH - 1) + " ";
 	if (isPreview) {
 		env += "_host=ofx _preview_width=" + W + " _preview_height=" + H +
 			" _preview_area_width=" + W + " _preview_area_height=" + H + " ";
@@ -1278,15 +1277,15 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 		// results whose size differs from the processed input get an opaque alpha (see
 		// kOpaqueResizedCommand).
 		float ds = PAR_VAL(PARAM_RESIZE);
-		string processedSize = intToString(sequenceDataP->inWorld[0].width) + "," + intToString(sequenceDataP->inWorld[0].height);
+		string processedSize = std::to_string(sequenceDataP->inWorld[0].width) + "," + std::to_string(sequenceDataP->inWorld[0].height);
 		if (ds >= 2.f) {
 			ds = pow(2.f, ds - 1.f);
-			const string dsSize = intToString(sequenceDataP->inWorld[0].width / (int)ds) + "," + intToString(sequenceDataP->inWorld[0].height / (int)ds);
+			const string dsSize = std::to_string(sequenceDataP->inWorld[0].width / (int)ds) + "," + std::to_string(sequenceDataP->inWorld[0].height / (int)ds);
 			cmd = " -resize " + dsSize + " " + cmd;
 			processedSize = dsSize;
 		}
 		cmd += " -_openfx_gmic_opaque_resized " + processedSize;
-		cmd += " -resize " + intToString(sequenceDataP->inWorld[0].width) + "," + intToString(sequenceDataP->inWorld[0].height);
+		cmd += " -resize " + std::to_string(sequenceDataP->inWorld[0].width) + "," + std::to_string(sequenceDataP->inWorld[0].height);
 	}
 	int verbosity = (int)PAR_VAL(PARAM_VERBOSITY) - 1;
 	int seed = (int)PAR_VAL(PARAM_SRAND);
@@ -1295,7 +1294,7 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 		seed += (int)sequenceDataP->time;
 	}
 
-	cmd = "-v " + intToString(verbosity) + " -srand " + intToString(seed) + " " + cmd;
+	cmd = "-v " + std::to_string(verbosity) + " -srand " + std::to_string(seed) + " " + cmd;
 	// cmd += " -display";
 	// set some variables that are defined globally for the GIMP plugin
 	// not really needed as the effects should work independently of GIMP
@@ -1911,10 +1910,10 @@ static void appendHash(std::string& key, const void* data, size_t size)
 // the key of the results: the plug-in, the command line and the input images (see above)
 static std::string frameCacheKey(const GlobalData* globalDataP, const std::string& cmd, const SequenceData* sequenceDataP, unsigned int nofImages)
 {
-	std::string key = intToString(globalDataP->pluginIndex) + "\n" + cmd;
+	std::string key = std::to_string(globalDataP->pluginIndex) + "\n" + cmd;
 	for (unsigned int i = 0; i < nofImages; ++i) {
 		const World& w = sequenceDataP->inWorld[i];
-		key += "\n" + intToString(w.width) + "x" + intToString(w.height) + ":";
+		key += "\n" + std::to_string(w.width) + "x" + std::to_string(w.height) + ":";
 		appendHash(key, w.data, (size_t)w.width * (size_t)w.height * 4 * sizeof(float));
 	}
 	return key;
@@ -1984,7 +1983,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		images[i].name[0] = '\0';
 		images[i].format = E_FORMAT_FLOAT;
 		images[i].is_interleaved = false;
-		strncpy(images[i].name, string("input" + intToString(i)).c_str(), sizeof(images[i].name));
+		strncpy(images[i].name, string("input" + std::to_string(i)).c_str(), sizeof(images[i].name));
 	}
 
 	// G'MIC-Qt runs the preview command first, and some main commands need its state: render
@@ -2026,7 +2025,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	const bool runGmic = !cachedFrame && !aborted;
 	// Frame: at most the results that can be kept (see kFrameSelectCommand), after the key
 	const string frameSelect = frameMode ? " -_openfx_gmic_frame_select " + std::to_string(frame) + "," +
-		intToString(kMaxFrameResults) + "," + std::to_string((unsigned long long)frameCacheBudget()) : string();
+		std::to_string(kMaxFrameResults) + "," + std::to_string((unsigned long long)frameCacheBudget()) : string();
 	if (runGmic) {
 		// counted until both G'MIC runs (the main command and the preview fallback) are done, on
 		// every path; the thread count is added after the cache key was made (see gmicThreadsPrefix)

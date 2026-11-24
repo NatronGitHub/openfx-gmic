@@ -61,11 +61,12 @@
 #include <fstream>
 #include <sstream>
 
-#include "RFX_StringUtils.h"
+#include "gmic_string.h"
 #include "gmic_log.h"
 
 using namespace std;
 using namespace reduxfx;
+using namespace gmic_ofx;
 
 namespace reduxfx {
 
@@ -309,8 +310,7 @@ void processParam(const string& s, EffectParameter& cp)
 			cp.defaultValue = "0";
 			cp.text = pval;
 		}
-		vector<string> c;
-		strSplit(cp.text, ',', c);
+		vector<string> c = strSplit(cp.text, ',');
 		// no label ("choice()", "choice(,)", "choice(1,)"): don't read c[-1]. G'MIC-Qt
 		// (ChoiceParameter::initFromText) shows one empty label; here the empty label is dropped
 		// when the plug-in splits the labels, so the host gets a choice with no options, passing 0
@@ -322,7 +322,7 @@ void processParam(const string& s, EffectParameter& cp)
 		cp.text += strTrim(c[(int)c.size() - 1]);
 		strReplace(cp.text, "\"", "");
 		cp.minValue = "0";
-		cp.maxValue = intToString((int)c.size() - 1);
+		cp.maxValue = std::to_string((int)c.size() - 1);
 	} else if (cp.paramType == "color") {
 		// 'color(R,_G,_B,_A)', or 'color(#RRGGBB[AA])' (G'MIC >= 3)
 		// Add R,G,B[,A] parameters (as a colorchooser).
@@ -332,7 +332,7 @@ void processParam(const string& s, EffectParameter& cp)
 			cp.defaultValue = "";
 			for (size_t k = 1; k < v.size(); k += 2) {
 				if (k > 1) cp.defaultValue += "|";
-				cp.defaultValue += intToString((int)strtol(v.substr(k, 2).c_str(), NULL, 16));
+				cp.defaultValue += std::to_string((int)strtol(v.substr(k, 2).c_str(), NULL, 16));
 			}
 		} else {
 			cp.defaultValue = v;
@@ -453,8 +453,7 @@ static bool usesSeveralLayers(const string& content)
 {
 	// explicit input mode on the filter line: "#@gui Name : cmd, preview : *" (or "+"),
 	// e.g. Align Layers, Blend [Standard], Transfer Colors
-	vector<string> lines;
-	strSplit(content, '\n', lines);
+	const vector<string> lines = strSplit(content, '\n');
 	for (size_t i = 0; i < lines.size(); ++i) {
 		const string& l = lines[i];
 		// the prefix is "#@gui", or "#@gmic_plugin" once gmic_parse_multi() rewrote it; skip
@@ -520,8 +519,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	cd.previewFallback = false;
 	cd.param.clear();
 
-	vector<string> lines;
-	strSplit(content, '\n', lines);
+	const vector<string> lines = strSplit(content, '\n');
 	for (int i = 0; i < (int)lines.size(); i++) {
 		//printf("[%d]: %s\n", i,lines[i].c_str());
 		string line = strTrim(lines[i], " \r\n\t");
@@ -639,9 +637,9 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	// the name of another parameter of the filter.
 	for (int i = 0; i < (int)cd.param.size(); i++) {
 		if (!cd.param[i].name.empty()) continue;
-		const string base = "Parameter " + intToString(i + 1);
+		const string base = "Parameter " + std::to_string(i + 1);
 		string name = base;
-		for (int n = 2; realNames.count(name); n++) name = base + "_" + intToString(n);
+		for (int n = 2; realNames.count(name); n++) name = base + "_" + std::to_string(n);
 		cd.param[i].name = name;
 		realNames.insert(name);
 		gmicLog("openfx-gmic: Warning: %s parameter without a name: named \"%s\"\n",
@@ -655,7 +653,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 			ok = true;
 			for (int j = 0; j < i; j++) {
 				if (cd.param[j].name == cd.param[i].name) {
-					cd.param[i].name = t + "_" + intToString(cnt++);
+					cd.param[i].name = t + "_" + std::to_string(cnt++);
 					ok = false;
 					break;
 				}
@@ -678,7 +676,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 			bool clash = false;
 			for (int j = 0; j < (int)cd.param.size() && !clash; j++) clash = (cd.param[j].name == e.name);
 			if (!clash) break;
-			e.name = base + "_" + intToString(cnt);
+			e.name = base + "_" + std::to_string(cnt);
 		}
 		e.paramType = "pointenabled";
 		e.defaultValue = (cd.param[i].removable < 0) ? "0" : "1";
@@ -1210,7 +1208,7 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
     for (vector<EffectData>::iterator it = cds->begin(); it != cds->end(); ++it) {
         string id = it->uniqueId;
         for (int n = 2; ids.count(id) || (id != it->uniqueId && realIds.count(id)); ++n) {
-            id = it->uniqueId + intToString(n);
+            id = it->uniqueId + std::to_string(n);
         }
         it->uniqueId = id;
         ids.insert(id);

@@ -1,11 +1,11 @@
 /*
  #
- #  File        : RFX_String_Utils.h
+ #  File        : gmic_string.cpp
  #
- #  Description : A self-contained header file with helper functions for    
- #                string operations on std::string    
+ #  Description : String helpers of the plug-in: see gmic_string.h
  #
- #  Copyright   : Tobias Fleischer / reduxFX Productions (http://www.reduxfx.com)
+ #  Copyright   : Tobias Fleischer / reduxFX Productions (http://www.reduxfx.com),
+ #                openfx-gmic contributors
  #
  #  Licenses        : This file is 'dual-licensed', you have to choose one
  #                    of the two licenses below to apply.
@@ -46,16 +46,18 @@
  #
 */
 
-#include "RFX_StringUtils.h"
+#include "gmic_string.h"
 
-#include <string>
-#include <sstream>
-#include <iomanip>
 #include <algorithm>
-#include <vector>
+#include <array>
 #include <cassert>
-#include <cstring>
-#include <locale>
+#include <charconv>
+#include <cmath>
+#include <string>
+#include <string_view>
+#include <system_error>
+#include <utility>
+#include <vector>
 #include <locale.h>
 #include <stdlib.h>
 #if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
@@ -64,82 +66,65 @@
 
 using namespace std;
 
-namespace reduxfx {
+namespace gmic_ofx {
 
-string strLowercase(const string& str)
+string strLowercase(string_view str)
 {
-	string s = str;
+	string s(str);
 	// ASCII letters only, whatever the locale: std::tolower on a negative char (a UTF-8 byte) is
 	// undefined behaviour, and in a Latin-1 locale it would change UTF-8 bytes
 	transform(s.begin(), s.end(), s.begin(), [](char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; });
 	return s;
 }
 
-string strTrim(const string& str, const string& whitespace)
+string strTrim(string_view str, string_view whitespace)
 {
     const size_t strBegin = str.find_first_not_of(whitespace);
-    if (strBegin == string::npos) return ""; // no content
+    if (strBegin == string_view::npos) return string(); // no content
     const size_t strEnd = str.find_last_not_of(whitespace);
-    const size_t strRange = strEnd - strBegin + 1;
-    return str.substr(strBegin, strRange);
+    return string(str.substr(strBegin, strEnd - strBegin + 1));
 }
 
-void strReplace(string& str, const string& search, const string& replace, bool firstOnly, bool caseInsensitive)
+void strReplace(string& str, string_view search, string_view replace)
 {
 	assert(!search.empty());
 	size_t pos = 0;
-	if (caseInsensitive) {
-		string strL = strLowercase(str);
-		string searchL = strLowercase(search);
-		while ((pos = strL.find(searchL, pos)) != string::npos) {
-			strL.erase(pos, search.size());
-			strL.insert(pos, replace);
-			str.erase(pos, search.size());
-			str.insert(pos, replace);
-			pos += replace.size();
-			if (firstOnly) break;
-		}
-	} else {
-		while ((pos = str.find(search, pos)) != string::npos) {
-			str.replace(pos, search.size(), replace);
-			pos += replace.size();
-			if (firstOnly) break;
-		}
+	while ((pos = str.find(search, pos)) != string::npos) {
+		str.replace(pos, search.size(), replace);
+		pos += replace.size();
 	}
 }
 
-void strSplit(const string& s, const char seperator, vector<string>& results)
+vector<string> strSplit(string_view s, char separator)
 {
-	results.clear();
-	string::size_type prev_pos = 0, pos = 0;
-	while((pos = s.find(seperator, pos)) != std::string::npos) {
-		string substring(s.substr(prev_pos, pos-prev_pos) );
-		substring = strTrim(substring);
-		if (substring != "") results.push_back(substring);
-		prev_pos = ++pos;
+	vector<string> results;
+	size_t begin = 0;
+	for (;;) {
+		const size_t end = s.find(separator, begin);
+		string field = strTrim(s.substr(begin, end == string_view::npos ? string_view::npos : end - begin));
+		if (!field.empty()) results.push_back(std::move(field));
+		if (end == string_view::npos) return results;
+		begin = end + 1;
 	}
-	string substring = strTrim(s.substr(prev_pos, pos - prev_pos));
-	if (substring != "") results.push_back(substring); // Last word
 }
 
-// Number conversions use the classic ("C") locale, whatever the global C or C++ locale of the
-// host: G'MIC and the G'MIC stdlib always use '.' as the decimal separator and no digit grouping
-// (atof and a default stream follow LC_NUMERIC or std::locale::global, e.g. "0,5" or "1 000").
+// Number conversions ignore the global C and C++ locales of the host: G'MIC and the G'MIC stdlib
+// always use '.' as the decimal separator and no digit grouping (atof and a default stream follow
+// LC_NUMERIC or std::locale::global, e.g. "0,5" or "1 000"). Integers: std::to_string ("%d", which
+// no locale changes).
 
-string intToString(const int i)
+string floatToString(float f)
 {
-    ostringstream ss;
-    ss.imbue(locale::classic());
-    ss << i;
-    return ss.str();
-}
-
-string floatToString(const float i)
-{
-    ostringstream ss;
-    ss.imbue(locale::classic());
-    ss << setprecision(8) << i;
-    return ss.str();
+    // NaN: "nan", whatever its sign and payload, as G'MIC-Qt passes a removed point. std::to_chars
+    // would give "-nan(ind)" or "nan(snan)" (libc++ and MSVC), and the stream it replaces gave
+    // "nan" on macOS but "-nan" for a negative NaN with glibc (G'MIC reads them all as NaN).
+    if (std::isnan(f)) return "nan";
+    // Otherwise, std::to_chars with a precision: printf's "%.8g" in the "C" locale, the text of the
+    // stream with setprecision(8) and the classic locale that it replaces ("inf", "-inf" too)
+    array<char, 32> buf{}; // "-1.1754944e-38": 14 characters
+    const to_chars_result r = to_chars(buf.data(), buf.data() + buf.size(), f, chars_format::general, 8);
+    assert(r.ec == errc());
+    return string(buf.data(), r.ptr);
 }
 
 // strtod in the "C" locale, whatever the current one: strtod_l where available (an istringstream
@@ -147,19 +132,19 @@ string floatToString(const float i)
 #if defined(_WIN32)
 // MSVC, and MinGW-w64 with UCRT or a recent msvcrt (the condition of mingw-w64's locale.h)
 #  if defined(_MSC_VER) || defined(_UCRT) || (defined(__MSVCRT_VERSION__) && (__MSVCRT_VERSION__ >= 0x0800 || (__MSVCRT_VERSION__ == 0x0600 && defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0600)))
-#    define RFX_STRTOD_C(str, end) _strtod_l(str, end, cLocale())
-static _locale_t cLocale()
+#    define GMIC_HAS_STRTOD_C 1
+static double strtodC(const char* str)
 {
-    static _locale_t loc = _create_locale(LC_NUMERIC, "C"); // never freed
-    return loc;
+    static const _locale_t loc = _create_locale(LC_NUMERIC, "C"); // never freed
+    return _strtod_l(str, nullptr, loc);
 }
 #  endif
 #elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__GLIBC__)
-#  define RFX_STRTOD_C(str, end) strtod_l(str, end, cLocale())
-static locale_t cLocale()
+#  define GMIC_HAS_STRTOD_C 1
+static double strtodC(const char* str)
 {
-    static locale_t loc = newlocale(LC_NUMERIC_MASK, "C", (locale_t)0); // never freed
-    return loc;
+    static const locale_t loc = newlocale(LC_NUMERIC_MASK, "C", (locale_t)0); // never freed
+    return strtod_l(str, nullptr, loc);
 }
 #endif
 
@@ -167,8 +152,8 @@ double stringToDouble(const string& s)
 {
     // same result as atof in the "C" locale: leading whitespace skipped, trailing characters
     // ignored, 0 if there is no number; hexadecimal, inf and nan accepted
-#ifdef RFX_STRTOD_C
-    return RFX_STRTOD_C(s.c_str(), NULL);
+#ifdef GMIC_HAS_STRTOD_C
+    return strtodC(s.c_str());
 #else
     // other platforms: use the decimal point of the current C locale instead of '.'
     string t = s;
@@ -256,18 +241,19 @@ static string utf8Entities(const string& s)
 	return r;
 }
 
-string strRemoveXmlTags(const string& s, bool replaceEntities)
+string strRemoveXmlTags(string_view s, bool replaceEntities)
 {
 	// a tag is '<' followed by a letter, '/' or '!' (as "<b>", "</i>", "<!-- -->"), up to the next
 	// '>'; any other '<' or '>' is text ("a < b", "Anisotropy>0")
 	const size_t lastGt = s.rfind('>');
 	string r;
+	r.reserve(s.size());
 	bool inHtml = false;
 	for (size_t i = 0; i < s.size(); i++) {
 		const char c = s[i];
 		if (inHtml) {
 			if (c == '>') inHtml = false;
-		} else if (c == '<' && lastGt != string::npos && i + 1 < lastGt &&
+		} else if (c == '<' && lastGt != string_view::npos && i + 1 < lastGt &&
 		           ((s[i + 1] >= 'a' && s[i + 1] <= 'z') || (s[i + 1] >= 'A' && s[i + 1] <= 'Z') || s[i + 1] == '/' || s[i + 1] == '!')) {
 			inHtml = true;
 		} else {
@@ -280,4 +266,4 @@ string strRemoveXmlTags(const string& s, bool replaceEntities)
 	return r;
 }
 
-}
+} // namespace gmic_ofx

@@ -1,11 +1,13 @@
 /*
  #
- #  File        : RFX_String_Utils.h
+ #  File        : gmic_string.h
  #
- #  Description : A self-contained header file with helper functions for    
- #                string operations on std::string    
+ #  Description : String helpers of the plug-in (formerly Helpers/RFX_StringUtils.h): trimming,
+ #                splitting, replacing, the locale-independent number conversions of the G'MIC
+ #                command line, and the removal of the markup of G'MIC's texts
  #
- #  Copyright   : Tobias Fleischer / reduxFX Productions (http://www.reduxfx.com)
+ #  Copyright   : Tobias Fleischer / reduxFX Productions (http://www.reduxfx.com),
+ #                openfx-gmic contributors
  #
  #  Licenses        : This file is 'dual-licensed', you have to choose one
  #                    of the two licenses below to apply.
@@ -46,38 +48,42 @@
  #
 */
 
-#ifdef _WIN32
-#pragma warning (disable:4996)
-#endif
-
-#ifndef _RFX_STRUTILS_H
-#define _RFX_STRUTILS_H
+#ifndef GMIC_STRING_H
+#define GMIC_STRING_H
 
 #include <string>
+#include <string_view>
 #include <vector>
 
-namespace reduxfx {
+namespace gmic_ofx {
 
-// [[nodiscard]]: these return a new value and leave their arguments alone (C++ Core Guidelines F.20)
+// [[nodiscard]]: these return a new value and leave their arguments alone (C++ Core Guidelines F.20,
+// https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#rf-out)
 
-[[nodiscard]] std::string strLowercase(const std::string& str);
+// str with its ASCII letters in lowercase (whatever the locale; other bytes, e.g. UTF-8, unchanged)
+[[nodiscard]] std::string strLowercase(std::string_view str);
 
-[[nodiscard]] std::string strTrim(const std::string& str, const std::string& whitespace = " \t");
+// str without the leading and trailing characters of whitespace
+[[nodiscard]] std::string strTrim(std::string_view str, std::string_view whitespace = " \t");
 
-void strReplace(std::string& str, const std::string& search, const std::string& replace, bool firstOnly = false, bool caseInsensitive = false);
+// replaces every occurrence of search (not empty) in str, from left to right, without rescanning
+// the replacements
+void strReplace(std::string& str, std::string_view search, std::string_view replace);
 
-void strSplit(const std::string& s, const char seperator, std::vector<std::string>& results);
+// the fields of s between the separators, trimmed (strTrim), without the empty ones
+[[nodiscard]] std::vector<std::string> strSplit(std::string_view s, char separator);
 
-[[nodiscard]] std::string intToString(const int i);
-
-[[nodiscard]] std::string floatToString(const float i);
+// f as a number of the G'MIC command line: 8 significant digits, '.' as the decimal separator
+// (printf's "%.8g" in the "C" locale, e.g. "0.1" and "0.33333334"), whatever the locale
+[[nodiscard]] std::string floatToString(float f);
 
 // parse a number written with '.' as the decimal separator, whatever the locale (0 if none)
 [[nodiscard]] double stringToDouble(const std::string& s);
 
-[[nodiscard]] std::string strRemoveXmlTags(const std::string& s, bool replaceEntities = false);
+// s without its markup tags ("<b>", "</i>", "<!-- -->"); replaceEntities: also replace the HTML
+// entities with their UTF-8 characters
+[[nodiscard]] std::string strRemoveXmlTags(std::string_view s, bool replaceEntities = false);
 
-}
+} // namespace gmic_ofx
 
 #endif
-
