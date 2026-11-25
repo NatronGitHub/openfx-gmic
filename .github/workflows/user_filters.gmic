@@ -154,3 +154,17 @@ fx_userfile_frame_max :
 #@gui : Percent = float(10,1,200)
 fx_userfile_percent :
   r $1%,$1%,1,100%,0 fill_color 128,0,255,255
+
+# a weak product: W*H/1024 wide. The small and thin probes fit it within a pixel (they never have
+# both a large width and a large height), the check probe doesn't: confirmed at full size
+# (rendered on a 1920x1080 Source)
+#@gui User File Product : fx_userfile_product, fx_userfile_product
+fx_userfile_product :
+  r {round(w*h/1024)},100%,1,100%,0 fill_color 255,255,255,255
+
+# a filter slower than the plug-in's 10 s prediction budget: the prediction times out, the output
+# keeps Source's size, and the next query within 30 s doesn't try again (rendered at frames 0 and
+# 1). The waits are short, so that G'MIC stops at the deadline.
+#@gui User File Slow : fx_userfile_slow, fx_userfile_slow
+fx_userfile_slow :
+  repeat 110 { wait 100 } fill_color 64,64,64,255

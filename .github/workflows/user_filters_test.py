@@ -26,8 +26,11 @@ Mode Fixed (Inplace), User File Larger keeps Source's size and region of definit
 may warn that the result doesn't match the output, except User File Content Size, whose size
 depends on the pixels. On a 1800x1080-pixel Source: rotations (User File Rotate) and sizes in
 percent that are no exact fractions (User File Percent) must be predicted within the plug-in's
-1-pixel margin, and User File Frame Max (percent of max(w,h)) and User File Area Size (sqrt(W*H))
-must be confirmed at full size, exactly, all without a warning.
+1-pixel margin; Larger, Smaller and Shifted must be exact, with no margin; and User File Frame Max
+(percent of max(w,h)), User File Area Size (sqrt(W*H)) and User File Product (W*H/1024) must be
+confirmed at full size, exactly, all without a warning. User File Slow is slower than the
+plug-in's 10 s prediction budget: rendered at frames 0 and 1, its prediction must time out once,
+the second query must not try again, and both outputs have Source's size (about 35 s).
 
 With --stdlib, the same filters are then rendered with a copy of the whole built-in standard
 library before them in the file, as in a user's copied gmic_stdlib.gmic: the outputs must be the
@@ -119,6 +122,17 @@ ROTATE_PLUGIN = 'eu.gmic.UserFileRotate'
 # refined with a 1-pixel margin: exact or 1 pixel off (45 in the plug-in's model), never a warning
 ROTATE_ANGLES = (10.0, 20.0, 30.0, 45.0, 60.0, 70.0, 89.5)
 AREA_PLUGIN = 'eu.gmic.UserFileAreaSize'
+PRODUCT_PLUGIN = 'eu.gmic.UserFileProduct'
+# on the large Source: exact fractions, predicted exactly, with neither note and no margin (plug-in
+# id, size relative to Source's, pos, color)
+LARGE_EXACT_CASES = [
+    ('eu.gmic.UserFileLarger', (2.0, 1.5), (0, 0), (1.0, 0.0, 0.0, 1.0)),
+    ('eu.gmic.UserFileSmaller', (0.5, 0.25), (0, 0), (0.0, 1.0, 0.0, 1.0)),
+    ('eu.gmic.UserFileShifted', (1.0, 1.0), (10, 20), (0.0, 0.0, 1.0, 1.0)),
+]
+SLOW_PLUGIN = 'eu.gmic.UserFileSlow'
+TIMEOUT_NOTE = 'took more than'
+RECENT_TIMEOUT_NOTE = 'timed out less than'
 PERCENT_PLUGIN = 'eu.gmic.UserFilePercent'
 # not exact fractions of the input's size: refined with a margin, never a warning
 PERCENTS = (10.0, 70.0)
@@ -330,18 +344,36 @@ def check_large_sources(host, plugins, work):
         w, h = output.get('w') or 0, output.get('h') or 0
         if not (math.floor(pw) <= w <= math.ceil(pw) + 2 and math.floor(ph) <= h <= math.ceil(ph) + 2):
             problems.append('%s: the output is %sx%s, expected %gx%g plus at most 2 pixels' % (name, w, h, pw, ph))
-    # not affine: confirmed at full size, exact
-    problem, log, first, src, (width, height), par = large_source_render(host, plugins, work, AREA_PLUGIN, [])
-    if problem:
-        problems.append('%s: %s' % (AREA_PLUGIN, problem))
-    else:
-        aw = round(math.sqrt(width * height))
+    for pid, (sx, sy), (dx, dy), color in LARGE_EXACT_CASES:
+        problem, log, first, src, (width, height), par = large_source_render(host, plugins, work, pid, [])
+        if problem:
+            problems.append('%s on the large Source: %s' % (pid, problem))
+            continue
+        ew, eh = round(width * sx), round(height * sy)
+        output = first.get('output') or {}
+        if (output.get('w'), output.get('h')) != (ew, eh):
+            problems.append('%s on the large Source: the output is %sx%s, expected %dx%d exactly (no margin)'
+                            % (pid, output.get('w'), output.get('h'), ew, eh))
+        rod = (first.get('regionOfDefinition') or {}).get('rod') or []
+        x1, y2 = src[0] + dx * par, src[3] - dy
+        expected = [x1, y2 - eh, x1 + ew * par, y2]
+        if len(rod) != 4 or any(abs(r - e) > ROD_TOLERANCE for r, e in zip(rod, expected)):
+            problems.append('%s on the large Source: the region of definition is %s, expected %s' % (pid, rod, expected))
+        if GEOMETRY_WARNING in log or REFINED_NOTE in log or CONFIRMED_NOTE in log:
+            problems.append('%s on the large Source: a warning, refined or confirmed (expected exact)' % pid)
+        problems += ['%s on the large Source: %s' % (pid, p) for p in check_output({'renders': [first]}, color)]
+    # not affine (sqrt(W*H)), and a weak product (W*H/1024): confirmed at full size, exact
+    for pid, size_of in ((AREA_PLUGIN, lambda w, h: round(math.sqrt(w * h))), (PRODUCT_PLUGIN, lambda w, h: round(w * h / 1024))):
+        problem, log, first, src, (width, height), par = large_source_render(host, plugins, work, pid, [])
+        if problem:
+            problems.append('%s: %s' % (pid, problem))
+            continue
+        aw = size_of(width, height)
         output = first.get('output') or {}
         if (output.get('w'), output.get('h')) != (aw, height):
-            problems.append('%s: the output is %sx%s, expected %dx%d'
-                            % (AREA_PLUGIN, output.get('w'), output.get('h'), aw, height))
+            problems.append('%s: the output is %sx%s, expected %dx%d' % (pid, output.get('w'), output.get('h'), aw, height))
         if GEOMETRY_WARNING in log or CONFIRMED_NOTE not in log:
-            problems.append('%s: a warning, or not confirmed at full size' % AREA_PLUGIN)
+            problems.append('%s: a warning, or not confirmed at full size' % pid)
     problem, log, first, src, (width, height), par = large_source_render(host, plugins, work, FRAME_MAX_PLUGIN, [])
     if problem:
         return problems + ['%s: %s' % (FRAME_MAX_PLUGIN, problem)]
@@ -358,6 +390,36 @@ def check_large_sources(host, plugins, work):
     report = {'renders': [first]}
     problems += ['%s: %s' % (FRAME_MAX_PLUGIN, p) for p in check_output(report, (0.0, 128 / 255.0, 1.0, 1.0))]
     return problems
+
+
+def check_timeout(host, plugins, work):
+    """Renders SLOW_PLUGIN at frames 0 and 1: the prediction times out once, then is skipped.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems, empty if both frames have Source's size, the first prediction timed
+        out, and the second query didn't try again (the timeout is remembered).
+    """
+    result = render_plugins.render(host, [], plugins, work, TIMEOUT, (SLOW_PLUGIN, CONTEXT, ['Source']), frame='0,1')
+    problem, errors, log = result[2], result[5], result[6]
+    if problem:
+        return ['%s: %s %s' % (SLOW_PLUGIN, problem, ' '.join(errors))]
+    problems = []
+    if TIMEOUT_NOTE not in log:
+        problems.append('the prediction did not time out')
+    if RECENT_TIMEOUT_NOTE not in log:
+        problems.append('the timeout was not remembered for the next query')
+    with open(os.path.join(work, SLOW_PLUGIN[len('eu.gmic.'):], 'report.json'), encoding='utf-8') as f:
+        report = json.load(f)
+    for r in report.get('renders') or []:
+        output = r.get('output') or {}
+        if (output.get('w'), output.get('h')) != (render_plugins.INPUT_WIDTH, render_plugins.INPUT_HEIGHT):
+            problems.append('at time %s, the output is %sx%s, not Source\'s size' % (r.get('time'), output.get('w'), output.get('h')))
+    return ['%s: %s' % (SLOW_PLUGIN, p) for p in problems]
 
 
 def check_geometry(host, plugins, work):
@@ -599,6 +661,7 @@ def run_test(host, plugins, stdlib, runs, work, name):
         problems.append("no note that the file's own definition of 'star_tone' is kept")
     problems += check_geometry(host, plugins, work)
     problems += check_large_sources(host, plugins, work)
+    problems += check_timeout(host, plugins, work)
     for p in problems:
         print('FAIL (user file): ' + p)
     passed = not problems
