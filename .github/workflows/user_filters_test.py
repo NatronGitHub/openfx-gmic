@@ -3,7 +3,8 @@
 
 The file is installed as ~/.config/gmic/gmic_ofx.gmic in a temporary HOME, or with --update-file
 as G'MIC's filter update file (update408.gmic for the Makefile's GMICVER 4.0.8, read with
-OFX_GMIC_UPDATE_FILE=1, #180), which replaces the built-in filters. Its filters call a command
+OFX_GMIC_UPDATE_FILE=1, #180), which replaces the built-in filters, or with --user-source as the
+user source ~/.gmic, whose filters and commands come after the built-in ones (#206). Its filters call a command
 that the file defines ("Unknown command" before #168), a built-in command, and a built-in
 command that the file replaces: each output must be the uniform color that the filter fills it
 with. The file also defines a command that the
@@ -22,7 +23,7 @@ render).
 usage: user_filters_test.py --host <hostDemo, or the CMake build directory> [--config <config>]
                             --plugins <dir with GMIC.ofx.bundle>
                             [--stdlib <gmic_stdlib_community.h>] [--runs N] [--work <dir>]
-                            [--update-file]
+                            [--update-file | --user-source]
 """
 import argparse
 import json
@@ -50,6 +51,7 @@ KEPT_NOTE = "'star_tone'" + DEFINED_BY
 HOTFIX_WARNING = 'Warning: hot fix'
 TIMEOUT = 120
 CPUS_PLUGIN = 'eu.gmic.UserFileCpus'  # its output is G'MIC's $_cpus (divided by 255)
+USER_SOURCE = '.gmic'  # (install_user_file): the user source, ~/.gmic
 
 
 def update_file_name():
@@ -74,12 +76,15 @@ def install_user_file(work, text, name):
     Args:
         work: the work directory (render_plugins.render() sets HOME to work/home).
         text: the contents of the filter file.
-        name: its name: gmic_ofx.gmic, or G'MIC's update file (update_file_name()).
+        name: its name: gmic_ofx.gmic, G'MIC's update file (update_file_name()), or USER_SOURCE
+            for the user source, work/home/.gmic, which the plug-in reads after the built-in
+            filters (then work/home/.config/gmic is left empty).
     """
-    rc_dir = os.path.join(work, 'home', '.config', 'gmic')
+    home = os.path.join(work, 'home')
+    rc_dir = os.path.join(home, '.config', 'gmic')
     shutil.rmtree(rc_dir, ignore_errors=True)
     os.makedirs(rc_dir)
-    path = os.path.join(rc_dir, name)
+    path = os.path.join(home, '.gmic') if name == USER_SOURCE else os.path.join(rc_dir, name)
     with open(path, 'w', encoding='latin-1', newline='') as f:
         f.write(text)
 
@@ -237,7 +242,12 @@ def main():
     parser.add_argument('--work')
     parser.add_argument('--update-file', action='store_true',
                         help="install the file as G'MIC's update file, not as gmic_ofx.gmic")
+    parser.add_argument('--user-source', action='store_true',
+                        help='install the file as the user source ~/.gmic, read after the '
+                             'built-in filters, not as gmic_ofx.gmic')
     args = parser.parse_args()
+    if args.update_file and args.user_source:
+        parser.error('--update-file and --user-source are exclusive')
     # G'MIC's folder (gmic::path_rc(), where the plug-in looks for the update file) is the HOME's
     # .config/gmic only without GMIC_PATH and XDG_CONFIG_HOME; the renders inherit this environment
     for var in ('GMIC_PATH', 'XDG_CONFIG_HOME', 'OFX_GMIC_UPDATE_FILE'):
@@ -246,6 +256,10 @@ def main():
     if args.update_file:
         name = update_file_name()
         os.environ['OFX_GMIC_UPDATE_FILE'] = '1'
+    elif args.user_source:
+        if os.name == 'nt':
+            parser.error('--user-source: not on Windows (%USERPROFILE%\\user.gmic)')
+        name = USER_SOURCE
     host = render_plugins.host_demo_path(args.host, args.config)
     if host is None:
         parser.error('no hostDemo-path.txt or hostDemo-path-%s.txt in %s'

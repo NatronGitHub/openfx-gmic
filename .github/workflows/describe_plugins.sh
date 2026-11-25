@@ -64,8 +64,9 @@ else
         ${HOST_LDFLAGS:-} -lexpat ${HOST_LIBS:-} -o "$WORK/describe_plugins"
 fi
 
-# run with an empty HOME (and APPDATA, on Windows), so that no user G'MIC configuration
-# (~/.config/gmic, %APPDATA%/gmic) is picked up
+# run with an empty HOME (and APPDATA and USERPROFILE, on Windows), so that no user G'MIC
+# configuration (~/.config/gmic, %APPDATA%/gmic) or user source (~/.gmic, %USERPROFILE%/user.gmic)
+# is picked up
 native_path() { if command -v cygpath > /dev/null; then cygpath -m "$1"; else echo "$1"; fi; }
 mkdir -p "$WORK/home"
 cd "$WORK"
@@ -73,7 +74,7 @@ status=0
 if [ -n "${DESCRIBE_MSVC_EXPAT_LIB:-}" ]; then BUNDLE_DIR=$(cygpath -m "$BUNDLE_DIR"); fi
 # without XDG_CONFIG_HOME, GMIC_PATH and OFX_GMIC_UPDATE_FILE (as update_case), so that only the
 # built-in stdlib gives the plug-ins, whose number must be exact
-env -u XDG_CONFIG_HOME -u GMIC_PATH -u OFX_GMIC_UPDATE_FILE HOME="$WORK/home" APPDATA="$(native_path "$WORK/home")" \
+env -u XDG_CONFIG_HOME -u GMIC_PATH -u OFX_GMIC_UPDATE_FILE HOME="$WORK/home" APPDATA="$(native_path "$WORK/home")" USERPROFILE="$(native_path "$WORK/home")" \
     OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
     ./describe_plugins "$MIN_PLUGINS" 2> describe.log || status=$?
 # $DESCRIBE_LOG (an absolute path): keep a copy of the log (PLUGIN <id> lines, ...)
@@ -137,7 +138,7 @@ if [ -f "$SHIPPED_LIST" ] && [ "${DESCRIBE_USER_LIST:-}" = 1 ]; then
     expected=$(($(wc -l < listed.txt) - 2))
     # (no "tr ... | grep -q" below: with pipefail, tr fails with SIGPIPE when grep -q stops at a
     # match, which would hide that match)
-    HOME="$WORK/home2" APPDATA="$(native_path "$WORK/home2")" OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
+    HOME="$WORK/home2" APPDATA="$(native_path "$WORK/home2")" USERPROFILE="$(native_path "$WORK/home2")" OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
         ./describe_plugins "$expected" > describe2.out 2> describe2.log || true
     tr -d '\r' < describe2.out > describe2.txt
     cat describe2.txt
@@ -158,7 +159,7 @@ if [ -f "$SHIPPED_LIST" ] && [ "${DESCRIBE_USER_LIST:-}" = 1 ]; then
     cp "$WORK/home2/.config/gmic/gmic_ofx_plugins.txt" "$WORK/home3/gmic/"
     : > "$WORK/home3/.config/gmic/gmic_ofx_log"
     : > "$WORK/home3/gmic/gmic_ofx_log"
-    HOME="$WORK/home3" APPDATA="$(native_path "$WORK/home3")" OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
+    HOME="$WORK/home3" APPDATA="$(native_path "$WORK/home3")" USERPROFILE="$(native_path "$WORK/home3")" OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
         ./describe_plugins "$expected" > describe3.out 2> describe3.log || true
     cat "$WORK/home3/.config/gmic/gmic_ofx_log" "$WORK/home3/gmic/gmic_ofx_log" | tr -d '\r' > describe3.gmiclog
     summary="openfx-gmic: .*gmic_ofx_plugins.txt: 2 plug-ins disabled; unknown identifiers: eu.gmic.NoSuchPlugin"
@@ -188,7 +189,7 @@ if [ "${DESCRIBE_UPDATE_FILE:-}" = 1 ]; then
         mkdir -p "$home/.config/gmic" "$home/gmic"
         cat > "$home/.config/gmic/$update_name"
         cp "$home/.config/gmic/$update_name" "$home/gmic/"
-        env -u XDG_CONFIG_HOME -u GMIC_PATH OFX_GMIC_UPDATE_FILE="$2" HOME="$home" APPDATA="$(native_path "$home")" \
+        env -u XDG_CONFIG_HOME -u GMIC_PATH OFX_GMIC_UPDATE_FILE="$2" HOME="$home" APPDATA="$(native_path "$home")" USERPROFILE="$(native_path "$home")" \
             OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
             ./describe_plugins "$3" > "update-$1.out" 2> "update-$1.log" || true
         if ! tr -d '\r' < "update-$1.out" | grep -qx "plugins=$3 described=$3 failed=0"; then
@@ -220,6 +221,48 @@ fx_update_file_test :
     # star_tone is hot-fixed (gmic_hotfixes.gmic): the file's own definition is kept, with a note
     # (not a hot fix warning)
     printf '%sstar_tone :\n  f 64\n' "$one_filter" | update_case hot-fixed-command 1 1 "'star_tone' is defined by "
+fi
+# DESCRIBE_UPDATE_FILE=1 also checks the user source (README, "Filters"): ~/.gmic (Windows:
+# %USERPROFILE%/user.gmic), whose filters come after the built-in ones, with G'MIC-Qt's rules for
+# filter files (#206): nested folders are nested menu groups, "#@gui_en hide(path)" removes a
+# filter or a folder (here a built-in one), blanks may come before "#@gui", a "!" before a filter
+# name is not part of it, and the preview factor may be a float
+if [ "${DESCRIBE_UPDATE_FILE:-}" = 1 ]; then
+    builtin_count=$(tr -d '\r' < describe.log | grep -c '^PLUGIN ' || true)
+    home="$WORK/home-user-source"
+    mkdir -p "$home"
+    cat > "$home/.gmic" <<'EOF2'
+#@gui <b>User Source Test</b>
+#@gui <i>Nested</i>
+#@gui !User Source Filter : fx_user_source_test, fx_user_source_test(1.5)+
+#@gui : Value = float(0.5,0,1)
+  #@gui User Source Indented : fx_user_source_test, fx_user_source_test(0)
+  #@gui : Size = int(3,1,9)
+#@gui_en hide(Colors/Sepia)
+fx_user_source_test :
+  f 128
+EOF2
+    cp "$home/.gmic" "$home/user.gmic"
+    expected=$((builtin_count + 1)) # 2 filters more, Sepia hidden
+    env -u XDG_CONFIG_HOME -u GMIC_PATH -u OFX_GMIC_UPDATE_FILE HOME="$home" APPDATA="$(native_path "$home")" USERPROFILE="$(native_path "$home")" \
+        OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
+        ./describe_plugins "$expected" > user-source.out 2> user-source.log || true
+    tr -d '\r' < user-source.log > user-source.txt
+    tab=$(printf '\t')
+    if ! tr -d '\r' < user-source.out | grep -qx "plugins=$expected described=$expected failed=0"; then
+        echo "FAIL: user source: expected $expected plug-ins, got: $(tr -d '\r' < user-source.out | tail -n 1)"
+        status=1
+    elif grep -qx "PLUGIN eu.gmic.Sepia" user-source.txt; then
+        echo "FAIL: user source: hide(Colors/Sepia) did not hide Sepia"
+        status=1
+    elif ! grep -qx "GROUPING eu.gmic.UserSourceFilter${tab}GMIC/User Source Test/Nested${tab}GMIC User Source Filter" user-source.txt ||
+        ! grep -qx "GROUPING eu.gmic.UserSourceIndented${tab}GMIC/User Source Test/Nested${tab}GMIC User Source Indented" user-source.txt; then
+        grep '^GROUPING eu.gmic.UserSource' user-source.txt || true
+        echo "FAIL: user source: expected its two filters in the nested group GMIC/User Source Test/Nested"
+        status=1
+    else
+        echo "user source: $expected plug-ins, as expected"
+    fi
 fi
 # PLUGIN_LIST=<file>: the plug-ins, their context and input clips, for render_plugins.py
 if [ -n "${PLUGIN_LIST:-}" ]; then
