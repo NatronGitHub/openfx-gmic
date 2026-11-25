@@ -331,7 +331,7 @@ Source's top-left corner). The Resize Mode (in Advanced Options) chooses the out
   - three small probes with Source's long side at 64, 80 and 96 pixels (the inputs' proportions
     kept, about 15k pixels), two thin probes that span the real size, Source's real width x 48
     pixels and 48 pixels x its real height, and a check probe with Source's long side at 256
-    pixels: about 180k pixels in all for 1920x1080;
+    pixels: about 195k pixels in all for 1920x1080;
   - a size or position that the small probes give as an exact fraction of the input's (2x, 50%,
     150%, fixed borders), and that also gives the thin and check probes exactly, is exact;
   - any other affine one (e.g. a rotation, 10%) is fitted against both the width and the height
