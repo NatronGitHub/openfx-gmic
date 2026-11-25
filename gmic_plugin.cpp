@@ -265,8 +265,17 @@ static const int kNofLayerTimeParams = 2 + 1 + 4;
 // Does the host support multi-resolution (kOfxImageEffectPropSupportsMultiResolution)? Without
 // it, the output keeps Source's size whatever the region of definition says: Resize Mode Fixed and
 // Dynamic then resize the result to Source's size, as before issue #175, and there is no probe.
+// OFX_GMIC_MULTIRES=1 or 0 overrides the host's property, read once: for test hosts that render
+// any region of definition but don't say so (openfx's hostDemo sets the property to 0).
 static bool hostSupportsMultiResolution()
 {
+	static const std::optional<bool> forced = []() -> std::optional<bool> {
+		const char* const env = std::getenv("OFX_GMIC_MULTIRES");
+		if (env && strcmp(env, "1") == 0) return true;
+		if (env && strcmp(env, "0") == 0) return false;
+		return std::nullopt;
+	}();
+	if (forced) return *forced;
 	const OFX::ImageEffectHostDescription* const host = OFX::getImageEffectHostDescription();
 	return host && host->supportsMultiResolution;
 }
@@ -2980,10 +2989,11 @@ static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequence
 	int W[kN], H[kN], w[kN], h[kN], x[kN], y[kN];
 	unsigned int counts[kN];
 	for (int k = 0; k < kN; k++) {
-		const double small = (double)(k == 5 ? kCheckSize : kProbeSizes[std::min(k, 2)]) / longSide;
+		// (not "small": a macro of the Windows headers, rpcndr.h)
+		const double scale = (double)(k == 5 ? kCheckSize : kProbeSizes[std::min(k, 2)]) / longSide;
 		const bool thin = k == 3 || k == 4;
-		const double sx = !thin ? small : (k == 3 ? 1. : (double)kThinSize / source.width);
-		const double sy = !thin ? small : (k == 3 ? (double)kThinSize / source.height : 1.);
+		const double sx = !thin ? scale : (k == 3 ? 1. : (double)kThinSize / source.width);
+		const double sy = !thin ? scale : (k == 3 ? (double)kThinSize / source.height : 1.);
 		ResultGeometry g;
 		if (!probeScaled(sequenceData, globalDataP, nofImages, sx, sy, W[k], H[k], g, counts[k], run)) {
 			return fullSize("a probe failed");
