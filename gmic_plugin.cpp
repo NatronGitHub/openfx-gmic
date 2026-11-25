@@ -149,47 +149,96 @@ using namespace gmic_ofx;
 #endif
 
 
-// The contents of a file, or an empty string if it can't be read (missing, a directory, unreadable,
-// or too large to hold). The size isn't taken from tellg(), which can be -1 or 2^63-1 for a
-// directory (ext4 htree); libstdc++ throws ios_base::failure when reading one.
+#ifdef _WIN32
+// A wide string in UTF-8; empty if it can't be converted (e.g. an unpaired surrogate).
+static string wideToUtf8(const std::wstring& wide)
+{
+	if (wide.empty()) return string();
+	const int wideSize = static_cast<int>(wide.size());
+	const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide.data(), wideSize, nullptr, 0, nullptr, nullptr);
+	if (size <= 0) return string();
+	string utf8(static_cast<size_t>(size), '\0');
+	if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide.data(), wideSize, utf8.data(), size, nullptr, nullptr) != size) return string();
+	return utf8;
+}
+
+// The value of the environment variable "name" in UTF-8, read as UTF-16 (as G'MIC's gmic_getenv
+// does): getenv gives the ANSI code page, which may not have every character of the value (issue
+// #201). Empty if it is not set or can't be converted.
+static string getenvUtf8(const wchar_t* name)
+{
+	const DWORD size = GetEnvironmentVariableW(name, nullptr, 0); // (with the terminating null)
+	if (size == 0) return string();
+	std::wstring wide(static_cast<size_t>(size), L'\0');
+	const DWORD length = GetEnvironmentVariableW(name, wide.data(), size);
+	if (length == 0 || length >= size) return string();
+	wide.resize(length);
+	return wideToUtf8(wide);
+}
+#endif
+
+namespace {
+// closes a file opened by openUtf8FileForReading (an unnamed namespace: no ODR clash with
+// another translation unit)
+struct FileCloser
+{
+	void operator()(std::FILE* file) const { std::fclose(file); }
+};
+using UniqueFile = std::unique_ptr<std::FILE, FileCloser>;
+}
+
+// Opens the file "path" (UTF-8) for reading, as binary (null if it can't): on Windows with
+// _wfopen, since fopen and std::ifstream read a narrow path in the ANSI code page (issue #201).
+static UniqueFile openUtf8FileForReading(const string& path)
+{
+#ifdef _WIN32
+	const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.c_str(), -1, nullptr, 0);
+	if (size <= 1) return UniqueFile();
+	std::wstring wide(static_cast<size_t>(size), L'\0');
+	if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.c_str(), -1, wide.data(), size) != size) return UniqueFile();
+	return UniqueFile(_wfopen(wide.c_str(), L"rb"));
+#else
+	return UniqueFile(std::fopen(path.c_str(), "rb"));
+#endif
+}
+
+// The contents of a file (its path in UTF-8), or an empty string if it can't be read (missing, a
+// directory, unreadable, or too large to hold). The size isn't taken from ftell(), which is
+// meaningless for a directory (ext4 htree): fread fails on one (EISDIR).
 static
 string loadStringFromFile(const string& filename)
 {
 	if (filename.empty()) return string();
-	std::ifstream infile(filename.c_str(), std::ios::in | std::ios::binary);
-	if (!infile) return string();
+	const UniqueFile file = openUtf8FileForReading(filename);
+	if (!file) return string();
 	string buffer;
+	char chunk[16384];
 	try {
-		buffer.assign(std::istreambuf_iterator<char>(infile), std::istreambuf_iterator<char>());
-	} catch (const std::exception&) { // bad_alloc, length_error, ios_base::failure (EISDIR, EIO)
+		for (;;) {
+			const size_t n = std::fread(chunk, 1, sizeof(chunk), file.get());
+			if (n == 0) break;
+			buffer.append(chunk, n);
+		}
+	} catch (const std::exception&) { // bad_alloc, length_error
 		return string();
 	}
-	if (infile.bad()) return string();
+	if (std::ferror(file.get())) return string();
 	return buffer;
 }
 
+// The plug-in's folder for the user's files, with a trailing separator, in UTF-8 (as
+// loadStringFromFile and gmicOpenLog read it): $HOME/.config/gmic/, %APPDATA%/gmic/ on Windows;
+// empty if the variable is not set.
 static
 string get_gmic_rc_path()
 {
-	string path;
-	const char *_path_rc = 0;
-/*	if (!_path_rc) _path_rc = getenv("GMIC_PATH");
-	if (!_path_rc) _path_rc = getenv("GMIC_GIMP_PATH");
-	if (!_path_rc) _path_rc = getenv("XDG_CONFIG_HOME"); */
-	if (!_path_rc) {
 #ifndef _WIN32
-		_path_rc = getenv("HOME");
-		if (_path_rc) {
-			path = string(_path_rc) + "/.config/gmic/";
-		}
+	const char* const home = getenv("HOME");
+	return home ? string(home) + "/.config/gmic/" : string();
 #else
-		_path_rc = getenv("APPDATA");
+	const string appData = getenvUtf8(L"APPDATA");
+	return appData.empty() ? string() : appData + "/gmic/";
 #endif
-	}
-	if (_path_rc && path.empty()) {
-		path = string(_path_rc) + "/gmic/";
-	}
-	return path;
 }
 
 // parameters added by pluginSetup besides the filter's own: Input, 4 layers, Command, the
