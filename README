@@ -330,10 +330,15 @@ Source's top-left corner). The Resize Mode (in Advanced Options) chooses the out
   plug-in runs the filter on three small opaque gradient images (Source's long side 64, 80 and 96
   pixels, the inputs' proportions kept), and fits the result's size and position as an affine
   function of the input's size (e.g. twice the size, or the size plus a 20-pixel border), which
-  it then predicts at the real size. Sizes in percent of the image are predicted exactly;
-  irrational factors (a rotation's) may be some pixels off. The probes run again only after an
-  edit, on every frame when a parameter is animated, or when an input's size changes, and are
-  quick. If the size isn't an affine function of the input's (e.g. it depends on W*H), or if a
+  it then predicts at the real size. A fit that is an exact fraction (sizes in percent of the
+  image, fixed borders) is exact. Otherwise (e.g. a rotation, |cos|*W + |sin|*H) the plug-in
+  refines it with two thin probes that span the real size: Source's real width x 48 pixels and
+  48 pixels x its real height, about 160k pixels for 1920x1080, and fits the size against both the
+  width and the height. A rotation is then predicted within a pixel (exactly in many cases, e.g.
+  30 degrees on 1920x1080). Sizes that are rounded percentages of max(w,h) or min(w,h), as some
+  frames, can't be refined that way, and may be some pixels off at large sizes. The probes run
+  again only after an edit, on every frame when a parameter is animated, or when an input's size
+  changes. If the size isn't an affine function of the input's (e.g. it depends on W*H), or if a
   probe fails, the output keeps Source's size (a note on stderr). Sizes that depend on the
   image's content (automatic crops, crops of the transparent parts) can't be predicted from the
   probes. In all these cases, a result that doesn't fit the output is cropped or padded, with a
