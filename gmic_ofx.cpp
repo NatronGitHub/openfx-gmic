@@ -615,10 +615,10 @@ void GMICEffect::failUnlessAborted() const
 // sizes, amplitudes in pixels) can't be scaled with the render scale, and a zoomed-out viewer or a
 // proxy render wouldn't match the full-resolution render. On Natron, the actions fail for render
 // scales other than 1, except for the filters whose preview factor says that their result is the
-// same at any zoom (pluginSupportsRenderScale, "+" after the factor): Natron then marks the effect
-// as not supporting render scale (OfxEffectInstance tries the region of definition at scale 0.5) and
-// renders it at full resolution, then downscales the result (renderFullScaleThenDownscale in
-// EffectInstance::renderRoI). The filters that accept it get their inputs at the render scale, as
+// same at any zoom (pluginSupportsRenderScale, "+" after the factor): Natron then marks the
+// effect as not supporting render scale (OfxEffectInstance tries the region of definition at
+// scale 0.5) and renders it at full resolution, then downscales the result
+// (renderFullScaleThenDownscale in EffectInstance::renderRoI). The filters that accept it get their inputs at the render scale, as
 // G'MIC-Qt's zoomed preview (see pluginSupportsRenderScale). Other hosts (Resolve, Nuke, Vegas)
 // don't fall back to full resolution, and the render would fail: there, every render scale is
 // accepted, as before, with unscaled pixel-sized parameters. Natron is recognized by
