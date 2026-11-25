@@ -120,6 +120,14 @@ struct ResultGeometry
 	int y = 0;
 	int width = 0;
 	int height = 0;
+	// a transparent margin around it in the region of definition, in pixels (0 or 1 per side:
+	// left, top, right, bottom, G'MIC's orientation): a refined prediction that is not an exact
+	// fraction may be 1 pixel off (see pluginResultGeometry); a result within it fits the output
+	int marginLeft = 0;
+	int marginTop = 0;
+	int marginRight = 0;
+	int marginBottom = 0;
+	bool hasMargin() const { return marginLeft || marginTop || marginRight || marginBottom; }
 };
 
 // Does the output keep the result's size with Resize Mode Fixed and Dynamic (issue #175)? Only on

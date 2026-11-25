@@ -823,10 +823,11 @@ std::optional<OfxRectD> GMICEffect::resultRoD(const OfxRectD& sourceRod, double 
 	fetchParamValues(values, sourcePixels, par, time, renderScale);
 	const std::optional<ResultGeometry> g = pluginResultGeometry(values, _gd);
 	const int sw = sourcePixels.x2 - sourcePixels.x1, sh = sourcePixels.y2 - sourcePixels.y1;
-	if (!g || (g->x == 0 && g->y == 0 && g->width == sw && g->height == sh)) return std::nullopt;
-	// pixels (y up): the result's top edge is Source's, moved down by pos y
-	const int x1 = sourcePixels.x1 + g->x, y2 = sourcePixels.y2 - g->y;
-	const int x2 = x1 + g->width, y1 = y2 - g->height;
+	if (!g || (!g->hasMargin() && g->x == 0 && g->y == 0 && g->width == sw && g->height == sh)) return std::nullopt;
+	// pixels (y up): the result's top edge is Source's, moved down by pos y; then its margin
+	const int rx1 = sourcePixels.x1 + g->x, ry2 = sourcePixels.y2 - g->y;
+	const int x1 = rx1 - g->marginLeft, y2 = ry2 + g->marginTop;
+	const int x2 = rx1 + g->width + g->marginRight, y1 = ry2 - g->height - g->marginBottom;
 	return OfxRectD{ canonicalEdge(x1, par, renderScale.x, false), canonicalEdge(y1, 1., renderScale.y, false),
 		canonicalEdge(x2, par, renderScale.x, true), canonicalEdge(y2, 1., renderScale.y, true) };
 }

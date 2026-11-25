@@ -2832,14 +2832,16 @@ static bool probeScaled(const SequenceData& sequenceData, const GlobalData* glob
 
 // The geometry at the real size (maintainer's decisions on #175):
 // 1. three small probes keeping Source's proportions (kProbeSizes), and a fit of the result's
-//    width, height and pos() offsets against Source's width or height (fitAxis);
-// 2. if a fit is not snapped to an exact fraction (e.g. a rotation, |cos|*W + |sin|*H), a
-//    refinement: two thin probes that span the real size, Source's real width x kThinSize and
-//    kThinSize x its real height (about 160k pixels for 1920x1080), and a joint fit of each value
-//    against (W, H) over the five probes (fitPlane), whose slopes are then known to about
-//    1/1900, within 1 pixel at the real size. Sizes in percent of max(w,h) or min(w,h) aren't
-//    affine over probes of other proportions: the joint fit fails, and the axis fits give the
-//    prediction, as without the refinement.
+//    width, height and pos() offsets against Source's width or height (fitAxis). Exact fractions
+//    (sizes in percent, fixed borders) are exact: no refinement, no margin;
+// 2. otherwise (e.g. a rotation, |cos|*W + |sin|*H) a refinement: two thin probes that span the
+//    real size, Source's real width x kThinSize and kThinSize x its real height (about 160k
+//    pixels for 1920x1080), and a joint fit of each value against (W, H) over the five probes
+//    (fitPlane): within a pixel at the real size. The refined values get a 1-pixel margin
+//    (ResultGeometry), so that a result 1 pixel off still fits the output, without a warning;
+// 3. if the joint fit fails (sizes in percent of max(w,h) or min(w,h), rounded, aren't affine
+//    over probes of other proportions), or a thin probe fails: one probe at the real size, exact
+//    (the cost of a render on a gradient), with the same time limit.
 static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequenceData, const GlobalData& globalData)
 {
 	const GlobalData* const globalDataP = &globalData;
@@ -2905,14 +2907,28 @@ static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequence
 			py = fitPlane(W, H, y, 5, source.width, source.height);
 		}
 		if (pw && ph && px && py) {
-			g.width = *pw;
-			g.height = *ph;
-			g.x = *px;
-			g.y = *py;
-			gmicLog("openfx-gmic: %s: the result's size, %dx%d, refined with thin probes\n", effectData.name.c_str(), g.width, g.height);
+			// the values that are exact fractions stay; the others may be 1 pixel off: a margin on
+			// each side that they could leave short (a size: its far side; an offset: both sides)
+			if (!fw->snapped) { g.width = *pw; g.marginRight += 1; }
+			if (!fh->snapped) { g.height = *ph; g.marginBottom += 1; }
+			if (!fx->snapped) { g.x = *px; g.marginLeft += 1; g.marginRight += 1; }
+			if (!fy->snapped) { g.y = *py; g.marginTop += 1; g.marginBottom += 1; }
+			gmicLog("openfx-gmic: %s: the result's size, %dx%d, refined with thin probes (a 1-pixel margin)\n", effectData.name.c_str(),
+			        g.width, g.height);
 		} else {
-			gmicLog("openfx-gmic: %s: the result's size, %dx%d, from the small probes (not refined: %s)\n", effectData.name.c_str(),
-			        g.width, g.height, thin ? "not affine over probes of other proportions" : "a thin probe failed");
+			// not affine over probes of other proportions (e.g. a size in percent of max(w,h),
+			// rounded), or a thin probe failed: one probe at the real size, exact
+			int rw = 0, rh = 0;
+			unsigned int n = 0;
+			ResultGeometry full;
+			if (!probeScaled(sequenceData, globalDataP, nofImages, 1., 1., rw, rh, full, n)) {
+				gmicLog("G'MIC: %s: the run at full size that confirms the result's size failed: the output keeps Source's size\n",
+				        effectData.name.c_str());
+				return std::nullopt;
+			}
+			gmicLog("openfx-gmic: %s: the result's size, %dx%d, confirmed at full size (not refined: %s)\n", effectData.name.c_str(),
+			        full.width, full.height, thin ? "not affine over probes of other proportions" : "a thin probe failed");
+			g = full;
 		}
 	}
 	if (g.width <= 0 || g.height <= 0 || g.width > kMaxPos || g.height > kMaxPos) return notAffine();
@@ -3191,7 +3207,15 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 			if (!same) {
 				memset(dst, 0, dplane * 4 * sizeof(float));
 			}
-			if (!same && dynamic) {
+			// (a refined prediction with a margin: a result within the output fits, see
+			// ResultGeometry; the prediction is cached, so this only looks it up)
+			const bool inside = sx1 >= dx1 && sy1 >= dy1 && sx1 + sw <= dx1 + dw && sy1 + sh <= dy1 + dh;
+			bool withinMargin = false;
+			if (!same && dynamic && inside) {
+				const std::optional<ResultGeometry> predicted = pluginResultGeometry(*sequenceDataP, *globalDataP);
+				withinMargin = predicted && predicted->hasMargin();
+			}
+			if (!same && dynamic && !withinMargin) {
 				// the output doesn't have the size that the region of definition declared (a size that
 				// depends on the pixels, which pluginResultGeometry's probes can't predict, a size rule
 				// that isn't affine, a prediction some pixels off, or
