@@ -2840,7 +2840,10 @@ GmicStatusRun pluginRunStatus(SequenceData& sequenceData, const GlobalData& glob
 		const GmicCall call = previewStateCall(cmd, &nofImages, images.data(), (unsigned int)images.size(), &instanceData.options(), &state);
 		bool aborted = false;
 		const int result = gmicCallAbortable(effect, hostProgress, call, &aborted);
-		if (aborted) return run;
+		if (aborted) {
+			run.cancelled = true;
+			return run;
+		}
 		if (result != 0) {
 			run.error = instanceData.options().error_message_buffer;
 			gmicLog("G'MIC: %s: the preview command failed (%s)\n", effectData.name.c_str(), run.error.c_str());

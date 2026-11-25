@@ -203,9 +203,9 @@ static std::vector<std::string> statusValues(const gmic_image<char>& status)
 
 // G'MIC-Qt's FilterThread::status2Visibilities(): the visibility states of a status "{a}{b}_1{c}..."
 // (with G'MIC's codes for the braces), one per value (see GmicRunState::visibilities)
-static std::vector<std::optional<gmic_ofx::EffectParameter::Visibility>> statusVisibilities(const gmic_image<char>& status)
+static std::vector<std::optional<gmic_ofx::ParamVisibility>> statusVisibilities(const gmic_image<char>& status)
 {
-	using Visibility = gmic_ofx::EffectParameter::Visibility;
+	using Visibility = gmic_ofx::ParamVisibility;
 	std::vector<std::optional<Visibility>> states;
 	const std::string s = status._data ? std::string(status._data) : std::string();
 	const size_t n = s.size();

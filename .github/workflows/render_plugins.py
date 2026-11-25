@@ -200,7 +200,8 @@ def _progress_problem(report):
     return None
 
 
-def render(host, host_args, plugins, work, timeout, plugin, host_threads=False, extra_env=None):
+def render(host, host_args, plugins, work, timeout, plugin, host_threads=False, extra_env=None,
+           expected_log=()):
     pid, context, clips = plugin
     d = os.path.join(work, pid[len('eu.gmic.'):])
     shutil.rmtree(d, ignore_errors=True)
@@ -254,11 +255,13 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False, 
                 problem = _progress_problem(report)
         except (OSError, ValueError) as e:
             problem = 'no report: %s' % e
-    if problem is None and PREVIEW_FIRST_FAILED in log:
+    # the log lines that the caller expects (e.g. a test of a status mismatch) are no problem
+    checked = '\n'.join(l for l in log.splitlines() if not any(e in l for e in expected_log))
+    if problem is None and PREVIEW_FIRST_FAILED in checked:
         problem = 'the preview command, run before the main command, failed'
-    if problem is None and STATUS_MISMATCH in log:
+    if problem is None and STATUS_MISMATCH in checked:
         problem = "the preview's status doesn't have one value per parameter"
-    errors = [l for l in log.splitlines()
+    errors = [l for l in checked.splitlines()
               if ERROR_LINE.search(l) or PREVIEW_FIRST_FAILED in l or STATUS_MISMATCH in l][:3]
     return pid, rc, problem, nan, t, errors, log, updates
 

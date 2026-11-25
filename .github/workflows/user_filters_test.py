@@ -69,6 +69,7 @@ EXPECTED = {
     'eu.gmic.UserFileStatusDown': (0.5, 0.0, 0.1),
     'eu.gmic.UserFileStatusVariable': (0.1, 0.0, 0.0),
     'eu.gmic.UserFileStatusExpression': (0.1, 0.0, 0.0),
+    'eu.gmic.UserFileStatusMainOnly': (0.1, 0.0, 0.0),
 }
 TOLERANCE = 1e-4
 DEFINED_BY = ' is defined by '  # the note of a kept definition of a hot-fixed command
@@ -84,6 +85,7 @@ PUSH_BUTTON = 'OfxParamTypePushButton'
 # (the plug-in): follow the status's visibilities on any host, not only on Natron (#173)
 STATUS_VISIBILITY_VAR = 'OFX_GMIC_TEST_STATUS_VISIBILITY'
 STATUS_PROGRESS_ID = 'eu.gmic.status'  # (the plug-in) the progress of a run for the status
+VISIBILITY_MISMATCH = 'visibilities, for'  # (the plug-in's log) a status's visibility count
 
 
 class ButtonCase(collections.namedtuple(
@@ -103,7 +105,7 @@ class ButtonCase(collections.namedtuple(
 
 
 class StatusCase(collections.namedtuple(
-        'StatusCase', 'pid args visibility output values secret enabled runs')):
+        'StatusCase', 'pid args visibility output values secret enabled runs expected_log')):
     """A render after user edits of a filter that sets a status (#173), and what it must give.
 
     Attributes:
@@ -116,7 +118,12 @@ class StatusCase(collections.namedtuple(
         secret: the secret flag of parameters after the edits.
         enabled: the enabled flag of parameters after the edits.
         runs: the number of runs for the status (progresses with STATUS_PROGRESS_ID).
+        expected_log: the texts of log lines that the case must give (e.g. a status mismatch),
+            which are then no problem; empty for none.
     """
+
+
+StatusCase.__new__.__defaults__ = ((),)  # expected_log
 
 
 SPOT = 'spot'  # User File Button's point: at 60%, 40% of the 160x120 input (y down in G'MIC)
@@ -167,9 +174,13 @@ STATUS_CASES = (
     # "+": Level gives its visibility to the note after it; "_1" disables Other
     StatusCase(STATUS_DOWN, ['-s', 'Mode=1'], True, (0.5, 0.0, 0.1), {},
                {'Level': True, 'note': True, 'Other': False}, {'Other': False}, 1),
-    # then 2 visibilities for 3 parameters: ignored, the states stay
+    # then 2 values and visibilities for 3 parameters: ignored (both logged), the states stay
     StatusCase(STATUS_DOWN, ['-s', 'Mode=1', '-s', 'Mode=0'], True, (0.5, 0.0, 0.1), {},
-               {'Level': True, 'note': True, 'Other': False}, {'Other': False}, 2),
+               {'Level': True, 'note': True, 'Other': False}, {'Other': False}, 2,
+               (render_plugins.STATUS_MISMATCH, VISIBILITY_MISMATCH)),
+    # visibility markers in the main command only: every parameter shown, as #170
+    StatusCase('eu.gmic.UserFileStatusMainOnly', ['-s', 'A=0.3'], True, (0.3, 0.0, 0.0), {},
+               {'A': False, 'B': False}, {'B': True}, 0),
     # a status list held in a variable (status=\{...}, u $status)
     StatusCase('eu.gmic.UserFileStatusVariable', ['-s', 'A=0.3'], False, (0.3, 0.0, 0.7),
                {'B': 7}, {}, {}, 1),
@@ -288,7 +299,7 @@ def same_value(value, expected):
     return value == expected
 
 
-def render_report(host, plugins, work, pid, host_args, output, extra_env=None):
+def render_report(host, plugins, work, pid, host_args, output, extra_env=None, expected_log=()):
     """Renders a plug-in of the user file, and checks that its output is uniform.
 
     Args:
@@ -299,19 +310,21 @@ def render_report(host, plugins, work, pid, host_args, output, extra_env=None):
         host_args: hostDemo's arguments before the render (-s name=value...).
         output: the RGB value of every output pixel.
         extra_env: environment variables of the render, if any.
+        expected_log: texts of log lines that are no problem (see render_plugins.render()).
 
     Returns:
-        (problems, report): a list of problems, empty if the render gave the output, and the
-        parsed report.json (None if the render failed).
+        (problems, report, log): a list of problems, empty if the render gave the output, the
+        parsed report.json (None if the render failed), and hostDemo's log.
     """
     result = render_plugins.render(host, host_args, plugins, work, TIMEOUT,
-                                   (pid, CONTEXT, ['Source']), extra_env=extra_env)
-    problem, errors = result[2], result[5]
+                                   (pid, CONTEXT, ['Source']), extra_env=extra_env,
+                                   expected_log=expected_log)
+    problem, errors, log = result[2], result[5], result[6]
     if problem:
-        return ['%s %s' % (problem, ' '.join(errors))], None
+        return ['%s %s' % (problem, ' '.join(errors))], None, log
     with open(os.path.join(work, pid[len('eu.gmic.'):], 'report.json'), encoding='utf-8') as f:
         report = json.load(f)
-    return check_output(report, output), report
+    return check_output(report, output), report, log
 
 
 def check_buttons(host, plugins, work):
@@ -329,8 +342,8 @@ def check_buttons(host, plugins, work):
     for case in BUTTON_CASES:
         name = '%s, %s pressed' % (case.pid, case.button)
         button = case.button.split('@')[0]
-        found, report = render_report(host, plugins, work, case.pid,
-                                      case.args + ['-s', case.button], case.output)
+        found, report, _ = render_report(host, plugins, work, case.pid,
+                                         case.args + ['-s', case.button], case.output)
         problems += ['%s: %s' % (name, p) for p in found]
         if report is None:
             continue
@@ -375,8 +388,10 @@ def check_status(host, plugins, work):
         name = '%s, %s%s' % (case.pid, ' '.join(case.args) or 'no edit',
                              ', %s=1' % STATUS_VISIBILITY_VAR if case.visibility else '')
         extra_env = {STATUS_VISIBILITY_VAR: '1'} if case.visibility else None
-        found, report = render_report(host, plugins, work, case.pid, case.args, case.output,
-                                      extra_env)
+        found, report, log = render_report(host, plugins, work, case.pid, case.args,
+                                           case.output, extra_env, case.expected_log)
+        problems += ['%s: no log line with %r' % (name, e) for e in case.expected_log
+                     if e not in log]
         problems += ['%s: %s' % (name, p) for p in found]
         if report is None:
             continue

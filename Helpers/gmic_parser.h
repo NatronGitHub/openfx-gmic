@@ -53,6 +53,8 @@
 #include <string>
 #include <vector>
 
+#include "gmic_visibility.h"
+
 namespace gmic_ofx {
 
 struct EffectParameter {
@@ -72,7 +74,7 @@ struct EffectParameter {
 	// the one that a neighbour gives it (Propagation). A filter that changes the visibility at run
 	// time (EffectData::dynamicVisibility) keeps it too: the plug-in follows its status on Natron
 	// only, and makes every parameter visible on other hosts (see describeInContext).
-	enum class Visibility { Hidden = 0, Disabled = 1, Visible = 2 };
+	using Visibility = ParamVisibility;
 	Visibility visibility = Visibility::Visible;
 	// G'MIC-Qt's VisibilityPropagation, from a '-' (Up) or a '+' or '*' (Down) after the visibility:
 	// the parameter gives its visibility to the notes, links and separators right before (after) it,

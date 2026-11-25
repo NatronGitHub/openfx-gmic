@@ -1331,6 +1331,10 @@ void GMICEffect::runStatus(double time, std::optional<int> button)
 	const SequenceData atPress = sd; // the values when the run started
 	if (press) sd.floatValue[*button][0] = 1.f;
 	const GmicStatusRun run = pluginRunStatus(sd, _gd, *this);
+	if (run.cancelled) {
+		_pressesPending.clear(); // (the user's Cancel also drops the presses made during the run)
+		return;
+	}
 	if (!run.error.empty()) {
 		// (pluginRunStatus logs it)
 		if (press) sendMessage(OFX::Message::eMessageError, "", what + ": " + run.error);

@@ -107,6 +107,7 @@ struct GmicStatusRun
 	// status has visibilities for another number of values than the parameters (logged).
 	std::vector<std::pair<int, gmic_ofx::DisplayStatus>> visibility;
 	std::string error; // G'MIC's message, if the run failed
+	bool cancelled = false; // the user cancelled the run (the host's Cancel)
 };
 
 // G'MIC-Qt's run of the filter's preview command after a change of its parameters, for the status
