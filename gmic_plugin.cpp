@@ -150,30 +150,55 @@ using namespace gmic_ofx;
 
 
 #ifdef _WIN32
-// A wide string (e.g. from _wgetenv) in UTF-8; empty if it can't be converted.
-static string wideToUtf8(const wchar_t* wide)
+// A wide string in UTF-8; empty if it can't be converted (e.g. an unpaired surrogate).
+static string wideToUtf8(const std::wstring& wide)
 {
-	const int size = WideCharToMultiByte(CP_UTF8, 0, wide, -1, nullptr, 0, nullptr, nullptr);
-	if (size <= 1) return string();
+	if (wide.empty()) return string();
+	const int wideSize = static_cast<int>(wide.size());
+	const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide.data(), wideSize, nullptr, 0, nullptr, nullptr);
+	if (size <= 0) return string();
 	string utf8(static_cast<size_t>(size), '\0');
-	if (WideCharToMultiByte(CP_UTF8, 0, wide, -1, &utf8[0], size, nullptr, nullptr) != size) return string();
-	utf8.pop_back(); // (the terminating null)
+	if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide.data(), wideSize, utf8.data(), size, nullptr, nullptr) != size) return string();
 	return utf8;
+}
+
+// The value of the environment variable "name" in UTF-8, read as UTF-16 (as G'MIC's gmic_getenv
+// does): getenv gives the ANSI code page, which may not have every character of the value (issue
+// #201). Empty if it is not set or can't be converted.
+static string getenvUtf8(const wchar_t* name)
+{
+	const DWORD size = GetEnvironmentVariableW(name, nullptr, 0); // (with the terminating null)
+	if (size == 0) return string();
+	std::wstring wide(static_cast<size_t>(size), L'\0');
+	const DWORD length = GetEnvironmentVariableW(name, wide.data(), size);
+	if (length == 0 || length >= size) return string();
+	wide.resize(length);
+	return wideToUtf8(wide);
 }
 #endif
 
-// Opens the file "path" (UTF-8) for reading, as binary: on Windows with _wfopen, since fopen and
-// std::ifstream read a narrow path in the ANSI code page (issue #201).
-static std::FILE* openUtf8FileForReading(const string& path)
+namespace {
+// closes a file opened by openUtf8FileForReading (an unnamed namespace: no ODR clash with
+// another translation unit)
+struct FileCloser
+{
+	void operator()(std::FILE* file) const { std::fclose(file); }
+};
+using UniqueFile = std::unique_ptr<std::FILE, FileCloser>;
+}
+
+// Opens the file "path" (UTF-8) for reading, as binary (null if it can't): on Windows with
+// _wfopen, since fopen and std::ifstream read a narrow path in the ANSI code page (issue #201).
+static UniqueFile openUtf8FileForReading(const string& path)
 {
 #ifdef _WIN32
 	const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.c_str(), -1, nullptr, 0);
-	if (size <= 1) return nullptr;
+	if (size <= 1) return UniqueFile();
 	std::wstring wide(static_cast<size_t>(size), L'\0');
-	if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.c_str(), -1, &wide[0], size) != size) return nullptr;
-	return _wfopen(wide.c_str(), L"rb");
+	if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.c_str(), -1, wide.data(), size) != size) return UniqueFile();
+	return UniqueFile(_wfopen(wide.c_str(), L"rb"));
 #else
-	return std::fopen(path.c_str(), "rb");
+	return UniqueFile(std::fopen(path.c_str(), "rb"));
 #endif
 }
 
@@ -184,8 +209,7 @@ static
 string loadStringFromFile(const string& filename)
 {
 	if (filename.empty()) return string();
-	struct FileCloser { void operator()(std::FILE* f) const { std::fclose(f); } };
-	const std::unique_ptr<std::FILE, FileCloser> file(openUtf8FileForReading(filename));
+	const UniqueFile file = openUtf8FileForReading(filename);
 	if (!file) return string();
 	string buffer;
 	char chunk[16384];
@@ -202,34 +226,19 @@ string loadStringFromFile(const string& filename)
 	return buffer;
 }
 
+// The plug-in's folder for the user's files, with a trailing separator, in UTF-8 (as
+// loadStringFromFile and gmicOpenLog read it): $HOME/.config/gmic/, %APPDATA%/gmic/ on Windows;
+// empty if the variable is not set.
 static
 string get_gmic_rc_path()
 {
-	string path;
-	const char *_path_rc = 0;
-/*	if (!_path_rc) _path_rc = getenv("GMIC_PATH");
-	if (!_path_rc) _path_rc = getenv("GMIC_GIMP_PATH");
-	if (!_path_rc) _path_rc = getenv("XDG_CONFIG_HOME"); */
-	if (!_path_rc) {
 #ifndef _WIN32
-		_path_rc = getenv("HOME");
-		if (_path_rc) {
-			path = string(_path_rc) + "/.config/gmic/";
-		}
+	const char* const home = getenv("HOME");
+	return home ? string(home) + "/.config/gmic/" : string();
 #else
-		// in UTF-8, as loadStringFromFile and gmicOpenLog read it: getenv gives the ANSI code page,
-		// which may not have every character of the profile folder's name (issue #201)
-		const wchar_t* const appData = _wgetenv(L"APPDATA");
-		const string appDataUtf8 = appData ? wideToUtf8(appData) : string();
-		if (!appDataUtf8.empty()) {
-			path = appDataUtf8 + "/gmic/";
-		}
+	const string appData = getenvUtf8(L"APPDATA");
+	return appData.empty() ? string() : appData + "/gmic/";
 #endif
-	}
-	if (_path_rc && path.empty()) {
-		path = string(_path_rc) + "/gmic/";
-	}
-	return path;
 }
 
 // parameters added by pluginSetup besides the filter's own: Input, 4 layers, Command, the

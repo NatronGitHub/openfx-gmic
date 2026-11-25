@@ -68,6 +68,7 @@ endif()
 # C++17 for Natron RB-2.6 (Qt5) builds, C++20 for Qt6 builds (RB-2.7). add_ofx_plugin compiles
 # with strict -std=c++NN (no GNU extensions), as the Makefile's CXXSTD and the CI builds do.
 # C++17 is the minimum (openfx's Support library needs it): refuse an older one here, before openfx.
+# (openfx/cmake/OpenFX.cmake checks it too, but later and without saying what to choose.)
 if(DEFINED OFX_CXX_STANDARD)
   set(_gmic_cxx_std "${OFX_CXX_STANDARD}")
 elseif(CMAKE_CXX_STANDARD)
