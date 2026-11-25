@@ -22,8 +22,10 @@ applied: the value is also G'MIC's own default.
 User File Larger, User File Smaller and User File Shifted give results of another size or
 position (#175): with Resize Mode Dynamic, the default, the output must have the result's size,
 and the region of definition its size and position, from Source's top-left corner; with Resize
-Mode Fixed (Inplace), User File Larger keeps Source's size and region of definition. No render
-may warn that the result doesn't match the output.
+Mode Fixed (Inplace), User File Larger keeps Source's size and region of definition. The
+plug-in predicts these sizes from small probes, exactly: no render may warn that the result
+doesn't match the output, except User File Content Size, whose size depends on the pixels, and
+User File Area Size, whose size isn't an affine function of the input's (Source's size).
 
 With --stdlib, the same filters are then rendered with a copy of the whole built-in standard
 library before them in the file, as in a user's copied gmic_stdlib.gmic: the outputs must be the
@@ -82,8 +84,10 @@ GEOMETRY_CASES = [
     ('eu.gmic.UserFileShifted', ['-s', 'Resize Mode=0'], (1.0, 1.0, 0, 0), (0.0, 0.0, 1.0, 1.0), False),
     # Downsample 1/2: resized to Source's size
     ('eu.gmic.UserFileLarger', ['-s', 'Resize Mode=2'], (1.0, 1.0, 0, 0), (1.0, 0.0, 0.0, 1.0), False),
-    # the probe's size (40x60), and the warning
+    # the probes' size (40x60), and the warning
     ('eu.gmic.UserFileContentSize', [], (0.25, 0.5, 0, 0), (1.0, 1.0, 0.0, 1.0), True),
+    # not affine: Source's size, and the warning
+    ('eu.gmic.UserFileAreaSize', [], (1.0, 1.0, 0, 0), (0.0, 1.0, 1.0, 1.0), True),
     # Output Layer "Frame" at frame 0: result [0]
     ('eu.gmic.UserFileFrames', ['-s', 'Output Layer=11'], (0.5, 0.5, 5, 6), (1.0, 0.0, 1.0, 1.0), False),
 ]
