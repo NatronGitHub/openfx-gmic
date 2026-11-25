@@ -216,8 +216,10 @@ fi
 # "openfx-gmic: previewFirst <id>" for each when it loads (gmic_plugin.cpp,
 # loadPluginGlobalData(): keep the text the same). Listed, and checked against
 # $PREVIEW_FIRST_COUNT if set (ci.yml: a G'MIC bump or a change of the rule in
-# Helpers/gmic_parser.cpp changes it)
-tr -d '\r' < describe.log | sed -n -e 's/^openfx-gmic: previewFirst //p' > preview_first.txt
+# Helpers/gmic_parser.cpp changes it). Each id once: the host loads the plug-in twice (HostSupport's
+# scan unloads the binary after OfxGetNumberOfPlugins, and the describe loads it again), and each
+# load logs the lines again.
+tr -d '\r' < describe.log | sed -n -e 's/^openfx-gmic: previewFirst //p' | LC_ALL=C sort -u > preview_first.txt
 preview_first=$(($(wc -l < preview_first.txt)))
 echo "$preview_first plug-ins run their preview command first:" $(cat preview_first.txt)
 if [ -n "${PREVIEW_FIRST_COUNT:-}" ] && [ "$preview_first" != "$PREVIEW_FIRST_COUNT" ]; then
