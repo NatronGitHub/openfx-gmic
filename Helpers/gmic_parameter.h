@@ -123,6 +123,16 @@ struct PluginInfo
 	int minor_version = 0;
 };
 
+// the handle of a point parameter (ParamType::Point) on the host's viewer, as G'MIC-Qt draws and moves
+// its keypoint (issue #176; the overlay, PointsInteract, is in gmic_ofx.cpp)
+struct PointHandle
+{
+	float color[4] = { 1.f, 1.f, 1.f, 1.f }; // RGBA, 0..1 (alpha 0: not drawn, still draggable)
+	bool keepOpacity = false; // drawn with its alpha while dragged; otherwise opaque then
+	float radius = 9.f; // in screen pixels; negative: in percent of Source's diagonal on screen
+	bool burst = false; // set at each pen motion while dragged (so rendered), else at pen-up only
+};
+
 struct Parameter
 {
 	Parameter() = default;
@@ -152,6 +162,7 @@ struct Parameter
 	// used by the filter's preview command only (G'MIC's split preview, see pluginSetup): the OFX
 	// glue enables it only when Preview/Draft Mode is on
 	bool draftModeOnly = false;
+	PointHandle pointHandle; // ParamType::Point only
 };
 
 // the values of one render: the parameters at the render time, and the images

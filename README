@@ -320,6 +320,16 @@ The bundle's list is made from the standard library built into the plug-in: it d
 user's gmic_ofx.gmic, G'MIC's update file or ~/.gmic (see "Filters"). For a list of the filters
 actually loaded, set OFX_GMIC_WRITE_PLUGIN_LIST (see "Environment").
 
+Points
+------
+
+A filter's points (its point() parameters) are handles on the host's viewer, as G'MIC-Qt's
+keypoints are on its preview: discs of the colour and size that the filter gives them. A point
+with no opacity is not drawn, but can still be dragged. Most points render while they are dragged
+(G'MIC's "burst" points); the others when they are released. A removable point that is off (its
+"Enabled" checkbox), or a point that only the filter's preview uses without Preview/Draft Mode,
+has no handle. In hosts without overlays, the points keep the host's own handles, if it has some.
+
 Rendering
 ---------
 

@@ -76,6 +76,13 @@ struct EffectParameter {
 	// Horizontal"... and its point), which only the filter's preview command uses (see
 	// markSplitPreviewParams, issue #184)
 	bool splitPreview;
+	// point(): the rest of its arguments, its keypoint in G'MIC-Qt (PointParameter::initFromText):
+	// _burst, _R,_G,_B,_[-]A (0..255) and _radius[%] (see PointHandle in gmic_parameter.h)
+	bool burst = false;
+	int color[4] = { 255, 255, 255, 255 };
+	bool colorGiven = false; // _R given; otherwise the colour comes from G'MIC-Qt's colormap
+	bool keepOpacity = false; // a negative alpha ("-0" too)
+	float radius = 9.f; // screen pixels; negative: percent of the image diagonal
 	EffectParameter() : removable(0), splitPreview(false) {}
 };
 
