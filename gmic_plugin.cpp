@@ -1062,6 +1062,11 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		} else if (param.visibility == EffectParameter::Visibility::Disabled) {
 			globalDataP->param[p].displayStatus = DisplayStatus::Disabled;
 		}
+		// the status changes it at run time (issue #173): not the always hidden ones, nor the points
+		// and their checkboxes, which stay visible (see gmic_parse_single), nor the separators,
+		// which are only a layout hint
+		globalDataP->param[p].followsStatus = effectData.dynamicVisibility && !h && paramType != "point" &&
+			paramType != "pointenabled" && paramType != "separator";
 		if (param.splitPreview) { // (see markSplitPreviewParams)
 			globalDataP->param[p].draftModeOnly = true;
 			globalDataP->param[p].hint = "Used by the filter's preview only, as in G'MIC-Qt: "
@@ -1081,6 +1086,8 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		}
 		p++;
 	}
+	globalDataP->nofFilterParams = p - 1;
+	globalDataP->statusOnEdit = effectData.statusOnEdit;
 
 	if (effectData.multiLayer) {
 		globalDataP->param[p] = Parameter("Layer -1", "", ParamType::Layer);
@@ -1520,8 +1527,9 @@ enum class GmicRun
 	// the run of the preview command before the main command (see pluginProcess), for the
 	// _persistent and the status that it leaves: its results are discarded
 	kPreviewState,
-	// the run of the preview command that the press of a push button makes (pluginRunStatus), for
-	// its status: as kPreviewState, on a preview-sized image, with G'MIC-Qt's _preview_timeout
+	// the run of the preview command that the press of a push button (issue #174), or a user edit
+	// of the parameters (issue #173), makes (pluginRunStatus), for its status: as kPreviewState, on
+	// a preview-sized image, with G'MIC-Qt's _preview_timeout
 	kPress,
 };
 
@@ -1813,7 +1821,8 @@ static DWORD WINAPI gmicCallThread(LPVOID arg)
 // render: Natron's progress panel returns false to a progressUpdate() from a render thread until
 // its main thread has created the task that progressStart() asked for, which would abort the
 // render at its first update.
-// The run of a press (HostProgress::Mode::kPress, issue #174) is the exception: it runs in the
+// The run of a press or after an edit (HostProgress::Mode::kPress, issues #174, #173) is the
+// exception: it runs in the
 // instance changed action, on the host's main thread, where abort() is always false (Natron) and
 // the host creates the task at once (Natron's ProgressPanel, as for openfx-misc's ImageStatistics).
 // Its progress starts at once, every poll updates it (Natron then processes its events, Cancel
@@ -1824,7 +1833,7 @@ public:
 	enum class Mode
 	{
 		kRender, // a render's: from the first known value, the user's Cancel ignored
-		kPress, // the run of a press: at once, the user's Cancel stops it
+		kPress, // the run of a press or after an edit (pluginRunStatus): at once, the user's Cancel stops it
 	};
 
 	HostProgress(OFX::ImageEffect& effect, const string& message, Mode mode = Mode::kRender)
@@ -2685,7 +2694,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	return ok;
 }
 
-// G'MIC-Qt's preview image, which a press runs on (pluginRunStatus): the inputs scaled down so
+// G'MIC-Qt's preview image, which a press or an edit runs on (pluginRunStatus): the inputs scaled down so
 // that the largest one fits in this many pixels
 static const int kPressPreviewSize = 512;
 
@@ -2711,6 +2720,62 @@ static std::vector<float> downscalePlanar(const World& in, int w, int h)
 		}
 	}
 	return out;
+}
+
+// G'MIC-Qt's FilterParametersWidget::setVisibilityStates() (see GmicStatusRun::visibility), for
+// the visibility states of a status (GmicRunState::visibilities). G'MIC-Qt's parameters are the
+// filter's own, without the removable points' checkboxes, which only the plug-in has: those stay
+// visible with their point, and are skipped here. A state goes to the parameter that passes the
+// value (G'MIC-Qt's actual parameters, see isGmicArgument), its initial state (the parsed
+// visibility) if unspecified; a parameter that propagates gives it to the notes, links and
+// separators right before (Up) or after (Down) it, in order (a later one wins); the others get
+// their initial state, Visible.
+static vector<std::pair<int, DisplayStatus>> statusDisplay(const vector<int>& states, const GlobalData* globalDataP)
+{
+	using Visibility = EffectParameter::Visibility;
+	vector<std::pair<int, DisplayStatus>> display;
+	const EffectData& effectData = effectDataOf(globalDataP);
+	if (!effectData.dynamicVisibility) return display;
+	// G'MIC-Qt's parameters: indices in effectData.param (and globalDataP->param, minus 1)
+	vector<int> params;
+	for (int j = 0; j < globalDataP->nofFilterParams; ++j) {
+		if (effectData.param[j].paramType != "pointenabled") params.push_back(j);
+	}
+	vector<bool> actual(params.size(), false); // per params entry: a G'MIC argument
+	size_t nofActual = 0;
+	for (size_t n = 0; n < params.size(); ++n) {
+		actual[n] = isGmicArgument(globalDataP, params[n] + 1);
+		if (actual[n]) ++nofActual;
+	}
+	if (!states.empty() && states.size() != nofActual) {
+		gmicLog("openfx-gmic: %s: the status gives %zu visibilities, for %zu parameters: ignored\n",
+			effectData.name.c_str(), states.size(), nofActual);
+		return display;
+	}
+	// the state of each parameter: a G'MIC argument's from the status (its initial state if
+	// unspecified), Visible for the others until a neighbour gives them one
+	vector<Visibility> state(params.size(), Visibility::Visible);
+	for (size_t n = 0, k = 0; n < params.size(); ++n) {
+		if (!actual[n]) continue;
+		const int s = states.empty() ? kStatusVisibilityUnspecified : states[k++];
+		state[n] = (s == kStatusVisibilityUnspecified) ? effectData.param[params[n]].visibility : static_cast<Visibility>(s);
+	}
+	for (size_t n = 0; n < params.size(); ++n) {
+		if (!actual[n]) continue;
+		const EffectParameter::Propagation propagation = effectData.param[params[n]].propagation;
+		if (propagation == EffectParameter::Propagation::Up) {
+			for (size_t m = n; m > 0 && !actual[m - 1]; --m) state[m - 1] = state[n];
+		} else if (propagation == EffectParameter::Propagation::Down) {
+			for (size_t m = n + 1; m < params.size() && !actual[m]; ++m) state[m] = state[n];
+		}
+	}
+	for (size_t n = 0; n < params.size(); ++n) {
+		const int i = params[n] + 1;
+		if (!globalDataP->param[i].followsStatus) continue;
+		display.emplace_back(i, state[n] == Visibility::Hidden ? DisplayStatus::Hidden :
+		                        state[n] == Visibility::Disabled ? DisplayStatus::Disabled : DisplayStatus::Normal);
+	}
+	return display;
 }
 
 GmicStatusRun pluginRunStatus(SequenceData& sequenceData, const GlobalData& globalData, OFX::ImageEffect& effect)
@@ -2777,6 +2842,7 @@ GmicStatusRun pluginRunStatus(SequenceData& sequenceData, const GlobalData& glob
 			return run;
 		}
 	}
+	run.visibility = statusDisplay(state.visibilities, globalDataP);
 	const SequenceData before = sequenceData;
 	if (!setStatusValues(state.status, globalDataP, sequenceDataP)) return run;
 	// Changed: what G'MIC would get differs. The values themselves may differ without that: a

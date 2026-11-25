@@ -22,7 +22,16 @@ struct GmicRunState
 	// visibility after a value is ignored): the values, as G'MIC-Qt splits them
 	// (FilterThread::status2StringList()); else empty
 	std::vector<std::string> status;
+	// the visibility state that the status gives each value, as G'MIC-Qt reads them
+	// (FilterThread::status2Visibilities()): 0 (hidden), 1 (disabled), 2 (visible) for a value
+	// followed by "_0", "_1" or "_2", kStatusVisibilityUnspecified for one without; empty if the
+	// status is not a list of values "{a}{b}...", or has another text after a value
+	std::vector<int> visibilities;
 };
+
+// G'MIC-Qt's AbstractParameter::VisibilityState::Unspecified, in GmicRunState::visibilities: the
+// parameter's initial state
+constexpr int kStatusVisibilityUnspecified = -1;
 
 // What to do with the images that G'MIC returns
 enum class GmicResults

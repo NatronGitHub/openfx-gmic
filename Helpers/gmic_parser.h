@@ -67,11 +67,19 @@ struct EffectParameter {
 	// gmic_parse_single), whose name is the point's with " Enabled".
 	int removable;
 	// G'MIC-Qt's initial visibility state, from "_0", "_1" or "_2" after the closing delimiter
-	// (AbstractParameter::parseText), with the values of its VisibilityState. Applied only where
-	// the plug-in can keep it: Visible for a point, and for every parameter of a filter that
-	// changes the visibility at run time (see markDynamicVisibilityFilters in gmic_parser.cpp).
+	// (AbstractParameter::parseText), with the values of its VisibilityState. Visible for a point,
+	// whose handle a host doesn't draw when it is hidden or disabled; for a note, link or separator,
+	// the one that a neighbour gives it (Propagation). A filter that changes the visibility at run
+	// time (EffectData::dynamicVisibility) keeps it too: the plug-in follows its status on Natron
+	// only, and makes every parameter visible on other hosts (see describeInContext).
 	enum class Visibility { Hidden = 0, Disabled = 1, Visible = 2 };
 	Visibility visibility = Visibility::Visible;
+	// G'MIC-Qt's VisibilityPropagation, from a '-' (Up) or a '+' or '*' (Down) after the visibility:
+	// the parameter gives its visibility to the notes, links and separators right before (after) it,
+	// at the start and after each status (FilterParametersWidget::setVisibilityStates). None for
+	// the notes, links and separators themselves.
+	enum class Propagation { None, Up, Down };
+	Propagation propagation = Propagation::None;
 	// a parameter of G'MIC's split preview (gui_split_preview: the choice of "Full", "Forward
 	// Horizontal"... and its point), which only the filter's preview command uses (see
 	// markSplitPreviewParams, issue #184)
@@ -100,6 +108,17 @@ struct EffectData {
 	// rule needs the command definitions (gmic_parse_multi); per filter, gmic_parse_single applies
 	// only the value() rule.
 	bool previewFirst = false;
+	// G'MIC-Qt's run of the preview command after a change of the parameters, for its status
+	// (issue #173): the preview command, or a command that it calls directly, sets a status with
+	// "u" or "status" and an argument that starts with '{' (see markStatusFilters). The plug-in
+	// runs it after each user edit of the filter's parameters, and sets the values (and, on Natron,
+	// the visibilities) that the status gives. Never for a filter without a preview run ("_none_"
+	// preview command, or no command).
+	bool statusOnEdit = false;
+	// the status may change the visibility of the parameters (a "_0", "_1" or "_2" after a value):
+	// the main or preview command, or a command that one of them calls directly, sets such a status
+	// (see markStatusFilters)
+	bool dynamicVisibility = false;
     std::vector<EffectParameter> param;
 };
 

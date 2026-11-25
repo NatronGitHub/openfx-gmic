@@ -201,6 +201,31 @@ static std::vector<std::string> statusValues(const gmic_image<char>& status)
 	return values;
 }
 
+// G'MIC-Qt's FilterThread::status2Visibilities(): the visibility states of a status "{a}{b}_1{c}..."
+// (with G'MIC's codes for the braces), one per value (see GmicRunState::visibilities)
+static std::vector<int> statusVisibilities(const gmic_image<char>& status)
+{
+	std::vector<int> states;
+	const std::string s = status._data ? std::string(status._data) : std::string();
+	const size_t n = s.size();
+	// "{" first, "}" last, maybe followed by a visibility "_0", "_1" or "_2"
+	if (n < 2 || s[0] != gmic_lbrace) return states;
+	const bool lastIsState = n >= 3 && s[n - 3] == gmic_rbrace && s[n - 2] == '_' && s[n - 1] >= '0' && s[n - 1] <= '2';
+	if (s[n - 1] != gmic_rbrace && !lastIsState) return states;
+	for (size_t k = 0; k < n; ++k) {
+		if (s[k] != gmic_rbrace) continue;
+		if (k + 2 < n && s[k + 1] == '_' && s[k + 2] >= '0' && s[k + 2] <= '2' && (k + 3 == n || s[k + 3] == gmic_lbrace)) {
+			states.push_back(s[k + 2] - '0');
+			k += 2;
+		} else if (k + 1 == n || s[k + 1] == gmic_lbrace) {
+			states.push_back(kStatusVisibilityUnspecified);
+		} else {
+			return std::vector<int>();
+		}
+	}
+	return states;
+}
+
 // G'MIC's global variable _persistent, as G'MIC-Qt sets it: an encoded image list (from 'store')
 // as such, else as a string
 static void setPersistent(gmic& interpreter, const std::string& persistent)
@@ -275,6 +300,7 @@ int gmic_plugin_call(const GmicCall& call)
 		interpreter.run(call.cmd, list, names);
 		if (call.stateOut) {
 			state.status = statusValues(interpreter.status);
+			state.visibilities = statusVisibilities(interpreter.status);
 			const gmic_image<char> value = interpreter.get_variable("_persistent");
 			if (value._data) state.persistent.assign(value._data, value.size());
 		}

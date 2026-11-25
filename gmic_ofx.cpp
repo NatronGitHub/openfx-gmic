@@ -38,6 +38,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <locale>
 #include <memory>
@@ -111,6 +113,28 @@ bool hostIsNatron()
 #else
 	return false;
 #endif
+}
+
+// Does the plug-in show, hide, enable and disable the parameters as the filter's status says
+// (issue #173)? On Natron only, which keeps these changes and saves them in projects: other
+// hosts may not follow them (OFX doesn't require a host to update its interface), and a parameter
+// that the status hid would then stay hidden. The environment variable
+// OFX_GMIC_TEST_STATUS_VISIBILITY=1 makes other hosts do it too, for the tests (hostDemo).
+static bool statusVisibilityOnHost()
+{
+	static const bool test = [] {
+		const char* const v = std::getenv("OFX_GMIC_TEST_STATUS_VISIBILITY");
+		return v && std::strcmp(v, "1") == 0;
+	}();
+	return test || hostIsNatron();
+}
+
+// The display status that a parameter is declared with: G'MIC-Qt's initial state, except for the
+// parameters whose visibility follows the status (Parameter::followsStatus) on the hosts where the
+// plug-in doesn't follow it (statusVisibilityOnHost), which are shown and enabled
+static DisplayStatus describedDisplayStatus(const Parameter& param)
+{
+	return (param.followsStatus && !statusVisibilityOnHost()) ? DisplayStatus::Normal : param.displayStatus;
 }
 
 // Render scale (issue #49). G'MIC parameters carry no unit, so pixel-sized ones (radii, sizes,
@@ -543,6 +567,7 @@ private:
 	void getClipPreferences(OFX::ClipPreferencesSetter& clipPreferences) override;
 	void changedParam(const OFX::InstanceChangedArgs& args, const std::string& paramName) override;
 	void changedClip(const OFX::InstanceChangedArgs& args, const std::string& clipName) override;
+	void endChanged(OFX::InstanceChangeReason reason) override;
 	void purgeCaches() override { pluginPurgeCaches(); }
 
 	// the render fails (a missing image): unless the host aborted it, then the output is discarded
@@ -565,7 +590,8 @@ private:
 	void pointUpdateEnabled(int checkbox, bool draft);
 	void pointsUpdateEnabled(int onlyParam);
 	void draftModeUpdateEnabled();
-	void buttonPressed(int button, double time);
+	void runStatus(double time, int button);
+	void applyStatusVisibility(const std::vector<std::pair<int, DisplayStatus>>& visibility);
 	void setParamValue(int i, const SequenceData& sd, const GmicInputs& in, const OfxPointD& renderScale, double time);
 
 	const GlobalData& _gd;
@@ -584,7 +610,14 @@ private:
 	// pointsMoveToSource), also kept in the hidden parameter kPointsFromSourceParam
 	OFX::StringParam* _pointsFromSource = nullptr;
 	std::vector<std::optional<OfxPointD>> _pointFromSource; // per _gd.param
-	bool _pressRunning = false; // a push button's run is going on (see buttonPressed)
+	bool _statusRunning = false; // a run for the status is going on (see runStatus)
+	// a user edit of the filter's parameters, or of Source, asks for a run for the status at the
+	// end of its instance changed bracket (see endChanged), at the time of the edit
+	bool _statusPending = false;
+	double _statusTime = 0.;
+	// per _gd.param: the display status that the last status gave, if any (see
+	// applyStatusVisibility); else the declared one (describedDisplayStatus)
+	std::vector<std::optional<DisplayStatus>> _statusDisplay;
 	GmicInstanceData _gmic;
 };
 
@@ -597,6 +630,7 @@ GMICEffect::GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData
 	, _animateSeed(fetchBooleanParam(kAnimateSeedParam))
 	, _draftMode(fetchBooleanParam(kDraftModeParam))
 	, _pointFromSource((size_t)globalData.nofParams)
+	, _statusDisplay((size_t)globalData.nofParams)
 {
 	for (int i = 0; i < _gd.nofParams; i++) {
 		const Parameter& param = _gd.param[i];
@@ -711,7 +745,7 @@ void GMICEffect::fetchParamValues(SequenceData& sd, const OfxRectI& dstRect, dou
 			std::get<OFX::StringParam*>(_params[i])->getValueAtTime(t, sd.textValue[i]);
 			break;
 		case ParamType::Button:
-			value[0] = 0.f; // pressed: only in the run that the press makes (buttonPressed)
+			value[0] = 0.f; // pressed: only in the run that the press makes (runStatus)
 			break;
 		default:
 			break;
@@ -932,13 +966,20 @@ void GMICEffect::changedParam(const OFX::InstanceChangedArgs& args, const std::s
 		break;
 	}
 
-	// a push button pressed (issue #174), by the user or a script (Natron reports both as user edits)
+	// a push button pressed (issue #174), by the user or a script (Natron reports both as user
+	// edits); another parameter of the filter edited by the user (also an undo or a redo, which
+	// Natron reports as user edits): a run for the status at the end of the bracket (issue #173,
+	// see endChanged). The plug-in's own changes (eChangePluginEdit) ask for none.
 	if (args.reason == OFX::eChangeUserEdit) {
-		for (int i = 1; i < _gd.nofParams; i++) {
-			if (_gd.param[i].paramType == ParamType::Button && _gd.param[i].paramName == paramName) {
-				buttonPressed(i, args.time);
-				break;
+		for (int i = 1; i <= _gd.nofFilterParams; i++) {
+			if (_gd.param[i].paramName != paramName) continue;
+			if (_gd.param[i].paramType == ParamType::Button) {
+				runStatus(args.time, i);
+			} else if (_gd.statusOnEdit) {
+				_statusPending = true;
+				_statusTime = args.time;
 			}
+			break;
 		}
 	}
 
@@ -967,11 +1008,31 @@ void GMICEffect::changedParam(const OFX::InstanceChangedArgs& args, const std::s
 	}
 }
 
-// Source connected or changed by the user: point defaults within it
+// Source connected or changed by the user: point defaults within it, then a run for the status
+// (see endChanged)
 void GMICEffect::changedClip(const OFX::InstanceChangedArgs& args, const std::string& clipName)
 {
 	if (args.reason == OFX::eChangeUserEdit && clipName == inputName(0)) {
 		pointsMoveToSource(args.time, -1);
+		if (_gd.statusOnEdit) {
+			_statusPending = true;
+			_statusTime = args.time;
+		}
+	}
+}
+
+// The end of a bracket of instance changed actions (kOfxActionEndInstanceChanged; Natron makes one
+// per edit, also for the steps of a slider drag that it groups): if the bracket had a user edit
+// of the filter's parameters or of Source (see changedParam, changedClip), G'MIC-Qt's run of the
+// preview command after a change (issue #173, see runStatus), once. Not in render, where an
+// effect may not set its parameters. During a run, the host may process its events and so make
+// other brackets: an edit then runs again once the run is over.
+void GMICEffect::endChanged(OFX::InstanceChangeReason /*reason*/)
+{
+	if (_statusRunning) return; // (the run that is going on checks _statusPending again)
+	while (_statusPending) {
+		_statusPending = false;
+		runStatus(_statusTime, -1);
 	}
 }
 
@@ -1099,12 +1160,14 @@ bool GMICEffect::isPointCheckbox(int i) const
 }
 
 // whether a parameter may be enabled at all: not disabled in its descriptor
-// (DisplayStatus::Disabled), and, for the parameters of the preview command only
-// (Parameter::draftModeOnly), Preview/Draft Mode on (draft, its value)
+// (DisplayStatus::Disabled), or by the last status (see applyStatusVisibility), and, for the
+// parameters of the preview command only (Parameter::draftModeOnly), Preview/Draft Mode on
+// (draft, its value)
 bool GMICEffect::mayBeEnabled(int i, bool draft) const
 {
 	const Parameter& param = _gd.param[i];
-	return param.displayStatus != DisplayStatus::Disabled && (!param.draftModeOnly || draft);
+	const DisplayStatus status = _statusDisplay[i].value_or(describedDisplayStatus(param));
+	return status != DisplayStatus::Disabled && (!param.draftModeOnly || draft);
 }
 
 // Preview/Draft Mode, at the current time (none if the host fails)
@@ -1176,27 +1239,36 @@ void GMICEffect::draftModeUpdateEnabled()
 // same is not set. The run's image is discarded: a button whose filter sets no status does
 // nothing. From the instance changed action, the only place besides interacts where an effect may
 // set its parameters; the host's GUI waits for the run, which the user can cancel.
-void GMICEffect::buttonPressed(int button, double time)
+// The same run follows each user edit of a statusOnEdit filter's parameters or of its Source
+// (button -1, issue #173, see endChanged), as G'MIC-Qt's preview, or its "GUI dynamism" run when
+// the preview is off, after each change: it sets the values that the status gives, without an
+// undo step of their own (an undo of the user's edit is a user edit, which runs the status again),
+// and, on Natron, the visibilities (applyStatusVisibility). Its errors are logged only, as the
+// render reports them.
+void GMICEffect::runStatus(double time, int button)
 {
-	// one press at a time: the host may process its events while the run goes on (Natron's progress
-	// panel does, so that its Cancel works), and so call the instance changed action again
-	if (_pressRunning) {
-		gmicLog("openfx-gmic: %s: %s: ignored, a press is running\n", _gd.pluginInfo.name.c_str(), _gd.param[button].displayName.c_str());
+	const bool press = button >= 0;
+	const std::string what = press ? _gd.param[button].displayName : std::string("status after an edit");
+	// one run at a time: the host may process its events while the run goes on (Natron's progress
+	// panel does, so that its Cancel works), and so call the instance changed action again. A press
+	// then is ignored; an edit runs again after this run (see endChanged).
+	if (_statusRunning) {
+		if (press) gmicLog("openfx-gmic: %s: %s: ignored, a run is going on\n", _gd.pluginInfo.name.c_str(), what.c_str());
 		return;
 	}
-	struct PressRunning {
+	struct StatusRunning {
 		bool& running;
-		explicit PressRunning(bool& r) : running(r) { running = true; }
-		~PressRunning() { running = false; }
-		PressRunning(const PressRunning&) = delete;
-		PressRunning& operator=(const PressRunning&) = delete;
-	} pressRunning(_pressRunning);
+		explicit StatusRunning(bool& r) : running(r) { running = true; }
+		~StatusRunning() { running = false; }
+		StatusRunning(const StatusRunning&) = delete;
+		StatusRunning& operator=(const StatusRunning&) = delete;
+	} statusRunning(_statusRunning);
 	if (pluginPassesSourceThrough(_gd)) return;
 	SequenceData sd;
 	GmicInputs inputs;
 	const InputsResult fetched = fetchInputs(time, sd, inputs);
 	if (fetched.status != InputsStatus::kOk) {
-		gmicLog("openfx-gmic: %s: %s: %s\n", _gd.pluginInfo.name.c_str(), _gd.param[button].displayName.c_str(), fetched.message.c_str());
+		gmicLog("openfx-gmic: %s: %s: %s\n", _gd.pluginInfo.name.c_str(), what.c_str(), fetched.message.c_str());
 		return;
 	}
 	// (the host's: 1 in Natron, which gives full-resolution images outside renders)
@@ -1209,15 +1281,16 @@ void GMICEffect::buttonPressed(int button, double time)
 	}
 	fetchParamValues(sd, inputs.firstRect, inputs.firstPAR, time, renderScale);
 	const SequenceData atPress = sd; // the values when the run started
-	sd.floatValue[button][0] = 1.f;
+	if (press) sd.floatValue[button][0] = 1.f;
 	const GmicStatusRun run = pluginRunStatus(sd, _gd, *this);
 	if (!run.error.empty()) {
-		sendMessage(OFX::Message::eMessageError, "", _gd.param[button].displayName + ": " + run.error);
+		// (pluginRunStatus logs it)
+		if (press) sendMessage(OFX::Message::eMessageError, "", what + ": " + run.error);
 		return;
 	}
-	// one undo step, begun at the first change only; best-effort: without an undo block if the host
-	// refuses it
-	EditBlock editBlock(*this, _gd.param[button].displayName, EditBlock::eBeginOnChange, EditBlock::eHostErrorsIgnore);
+	// a press: one undo step, begun at the first change only; best-effort: without an undo block if
+	// the host refuses it. An edit: none (see above)
+	EditBlock editBlock(*this, what, press, EditBlock::eBeginOnChange, EditBlock::eHostErrorsIgnore);
 	// the values now: the user may have changed some during the run (the host processes its events
 	// while the run's progress shows), and these changes win over the status
 	SequenceData now;
@@ -1233,6 +1306,45 @@ void GMICEffect::buttonPressed(int button, double time)
 		editBlock.open();
 		// a value that the host refuses doesn't keep the others from being set
 		hostTry([&] { setParamValue(i, sd, inputs, renderScale, time); });
+	}
+	applyStatusVisibility(run.visibility);
+}
+
+// The base class of a parameter of the plug-in (null for none)
+static OFX::Param* paramBase(const ParamPtr& param)
+{
+	return std::visit([](auto p) -> OFX::Param* {
+		if constexpr (std::is_same_v<decltype(p), std::monostate>) {
+			return nullptr;
+		} else {
+			return p;
+		}
+	}, param);
+}
+
+// Shows, hides, enables or disables the parameters as a status says (GmicStatusRun::visibility,
+// issue #173), as G'MIC-Qt's AbstractParameter::setVisibilityState(): hidden is secret, disabled
+// is shown and disabled, visible is shown and enabled (and, for the parameters of the preview
+// command only, Preview/Draft Mode on: see mayBeEnabled). Natron only (statusVisibilityOnHost), as
+// declared (describedDisplayStatus): other hosts keep every parameter shown. A flag is set only
+// if it changes. Natron saves both flags in projects, and restores them (Node::loadKnob).
+void GMICEffect::applyStatusVisibility(const std::vector<std::pair<int, DisplayStatus>>& visibility)
+{
+	if (visibility.empty() || !statusVisibilityOnHost()) return;
+	const bool draft = draftModeValue().value_or(true);
+	for (const auto& [i, status] : visibility) {
+		_statusDisplay[i] = status;
+		OFX::Param* const param = paramBase(_params[i]);
+		if (!param) continue;
+		const bool secret = status == DisplayStatus::Hidden;
+		if (hostQuery([param] { return param->getIsSecret(); }) != secret) {
+			hostTry([param, secret] { param->setIsSecret(secret); });
+		}
+		if (secret) continue; // (as G'MIC-Qt: a hidden parameter keeps its enabled state)
+		const bool enabled = mayBeEnabled(i, draft);
+		if (hostQuery([param] { return param->getIsEnable(); }) != enabled) {
+			hostTry([param, enabled] { param->setEnabled(enabled); });
+		}
 	}
 }
 
@@ -1717,7 +1829,7 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			paramDesc = p;
 		} break;
 		case ParamType::Button: {
-			// (see GMICEffect::buttonPressed)
+			// (see GMICEffect::runStatus)
 			OFX::PushButtonParamDescriptor* p = desc.definePushButtonParam(name);
 			paramDesc = p;
 		} break;
@@ -1772,9 +1884,10 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			continue;
 		}
 
-		if (param.displayStatus == DisplayStatus::Disabled) {
+		const DisplayStatus displayStatus = describedDisplayStatus(param);
+		if (displayStatus == DisplayStatus::Disabled) {
 			paramDesc->setEnabled(false);
-		} else if (param.displayStatus == DisplayStatus::Hidden) {
+		} else if (displayStatus == DisplayStatus::Hidden) {
 			paramDesc->setIsSecret(true);
 		}
 		paramDesc->setScriptName(name);
