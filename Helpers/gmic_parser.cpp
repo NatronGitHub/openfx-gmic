@@ -91,6 +91,16 @@ string getUniqueId(const string& name)
 	return "eu.gmic." + uniqueid;
 }
 
+// the kind of preview factor whose text (after the '(') ends with c (see processCommand)
+static EffectData::PreviewFactor previewFactorOf(char c)
+{
+	switch (c) {
+	case '+': return EffectData::PreviewFactor::Accurate;
+	case '*': return EffectData::PreviewFactor::FullImage;
+	default: return EffectData::PreviewFactor::Fixed;
+	}
+}
+
 static
 void processCommand(const string& s, EffectData& cd)
 {
@@ -122,13 +132,10 @@ void processCommand(const string& s, EffectData& cd)
 	// itself), as gmic_stdlib.gmic's documentation of the #@gui lines says. Read as G'MIC-Qt does
 	// (FiltersModelReader.cpp): the preview command is what comes before the first '(', whatever
 	// the factor, and the suffix ends the text between the first '(' and the next one.
-	cd.previewZoom = EffectData::PreviewZoom::NoFactor;
 	const string::size_type factor = r3.find('(');
 	if (factor != string::npos) {
 		const string options = strTrim(r3.substr(factor + 1, r3.find('(', factor + 1) - (factor + 1)), " \t\r\n");
-		const char suffix = options.empty() ? '\0' : options[options.size() - 1];
-		cd.previewZoom = suffix == '+' ? EffectData::PreviewZoom::Accurate :
-			suffix == '*' ? EffectData::PreviewZoom::FullImage : EffectData::PreviewZoom::Fixed;
+		cd.previewFactor = previewFactorOf(options.empty() ? '\0' : options.back());
 		r3 = r3.substr(0, factor);
 	}
 
@@ -565,7 +572,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	cd.previewOnly = false;
 	cd.noPreview = false;
 	cd.previewFirst = false;
-	cd.previewZoom = EffectData::PreviewZoom::NoFactor;
+	cd.previewFactor = EffectData::PreviewFactor::NoFactor;
 	cd.param.clear();
 	vector<VisibilityPropagation> propagation; // one per cd.param entry, until the "pointenabled" ones
 

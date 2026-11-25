@@ -613,22 +613,25 @@ void GMICEffect::failUnlessAborted() const
 
 // Render scale (issues #49 and #179). G'MIC parameters carry no unit, so pixel-sized ones (radii,
 // sizes, amplitudes in pixels) can't be scaled with the render scale, and a zoomed-out viewer or a
-// proxy render wouldn't match the full-resolution render. On Natron, the actions fail for render
-// scales other than 1, except for the filters whose preview factor says that their result is the
-// same at any zoom (pluginSupportsRenderScale, "+" after the factor): Natron then marks the
-// effect as not supporting render scale (OfxEffectInstance tries the region of definition at
-// scale 0.5) and renders it at full resolution, then downscales the result
-// (renderFullScaleThenDownscale in EffectInstance::renderRoI). The filters that accept it get their inputs at the render scale, as
-// G'MIC-Qt's zoomed preview (see pluginSupportsRenderScale). Other hosts (Resolve, Nuke, Vegas)
-// don't fall back to full resolution, and the render would fail: there, every render scale is
-// accepted, as before, with unscaled pixel-sized parameters. Natron is recognized by
-// kNatronOfxHostIsNatron, not by kOfxPropName, which Natron can set to another host's name for
-// compatibility.
-// The same rule for every action that has a render scale (region of definition, regions of
-// interest, isIdentity, render): throws kOfxStatFailed if the action must fail.
+// proxy render wouldn't match the full-resolution render.
+// - Natron, filters whose preview factor ends with "+" (pluginSupportsRenderScale: G'MIC's "the
+//   preview is accurate at any zoom"): every render scale is accepted, and the inputs come at
+//   that scale, as in G'MIC-Qt's zoomed preview.
+// - Natron, the other filters: the actions fail for render scales other than 1. Natron then marks
+//   the effect as not supporting render scale (OfxEffectInstance tries the region of definition at
+//   scale 0.5), renders it at full resolution, and downscales the result
+//   (renderFullScaleThenDownscale in EffectInstance::renderRoI).
+// - Other hosts (Resolve, Nuke, Vegas): every render scale is accepted, as before, with unscaled
+//   pixel-sized parameters. They don't fall back to full resolution: a refusal would fail the
+//   render.
+// Natron is recognized by kNatronOfxHostIsNatron, not by kOfxPropName, which Natron can set to
+// another host's name for compatibility. The same rule for every action that has a render scale
+// (region of definition, regions of interest, isIdentity, render): throws kOfxStatFailed if the
+// action must fail.
 void GMICEffect::refuseRenderScale(const OfxPointD& renderScale) const
 {
-	if (hostIsNatron() && (renderScale.x != 1. || renderScale.y != 1.) && !pluginSupportsRenderScale(_gd)) {
+	const bool scaled = renderScale.x != 1. || renderScale.y != 1.;
+	if (scaled && hostIsNatron() && !pluginSupportsRenderScale(_gd)) {
 		OFX::throwSuiteStatusException(kOfxStatFailed);
 	}
 }

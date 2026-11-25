@@ -2287,10 +2287,12 @@ bool pluginPassesSourceThrough(const GlobalData& globalData)
 // other factors tell that the preview is only right at its own zoom ("(N)"; G'MIC-Qt shows a
 // warning at another zoom), or that it needs the whole full-size image, which it zooms itself
 // ("(N)*", e.g. Difference of Gaussians or Halftone [Generic], whose sizes are in pixels); without
-// a factor, nothing is known of the filter at another scale.
+// a factor, nothing is known of the filter at another scale. "+" is the author's claim: a "+"
+// filter with sizes in pixels (Ascii Art, Painting, Local Contrast...) looks different at a
+// render scale, as in G'MIC-Qt's zoomed preview.
 bool pluginSupportsRenderScale(const GlobalData& globalData)
 {
-	return effectDataOf(&globalData).previewZoom == EffectData::PreviewZoom::Accurate;
+	return effectDataOf(&globalData).previewFactor == EffectData::PreviewFactor::Accurate;
 }
 
 // The G'MIC name of an input image, as G'MIC-Qt names its layers (host_none.cpp, and the GIMP
