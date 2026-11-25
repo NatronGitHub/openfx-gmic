@@ -92,6 +92,9 @@ enum class ParamType
 	TopicEnd,
 	Text,
 	Separator,
+	// a G'MIC button() (issue #174): an OFX push button, which has no value; G'MIC gets 0 for it,
+	// except in the run of the preview command that a press makes (see pluginRunStatus)
+	Button,
 };
 
 enum class DisplayStatus

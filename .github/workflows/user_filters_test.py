@@ -11,7 +11,11 @@ string, or an image from 'store') and the status that their preview command sets
 outputs show that the plug-in ran the preview command first, and gave both to the main
 command. User File Run Variables fills it with what the plug-in gives G'MIC on every run, as
 G'MIC-Qt ($_host, $_input_layers, $_output_mode, the input's layer name), and User File Five
-Channels returns 5 channels, which must fail the render (#206). The file also defines a command
+Channels returns 5 channels, which must fail the render (#206). User File Button and User File
+Status Visibility have push buttons (#174): renders get 0 for them, and a press (hostDemo's -s
+<button>, an instance changed action) runs the preview command once with 1, whose status sets
+parameter values, which the report's params then show, also as a key of an animated parameter.
+The file also defines a command
 that the plug-in hot-fixes, which must be kept, with a note. Its User File Cpus filter fills its
 output with G'MIC's $_cpus, rendered without OMP_NUM_THREADS so that the plug-in sets it (#188):
 the value, printed, must be the number of CPUs (hostDemo runs one render, whose fair share is all
@@ -30,6 +34,7 @@ usage: user_filters_test.py --host <hostDemo, or the CMake build directory> [--c
                             [--update-file]
 """
 import argparse
+import collections
 import json
 import os
 import re
@@ -53,6 +58,9 @@ EXPECTED = {
     'eu.gmic.UserFilePersistent': (0.75, 0.5, 0.3),
     'eu.gmic.UserFilePersistentStore': (0.25, 0.5, 0.75),
     'eu.gmic.UserFileRunVariables': (1.0, 10 / 255.0, 1.0),
+    # without a press: the parameters' defaults, and 0 for the push button (green; #174)
+    'eu.gmic.UserFileButton': (0.25, 0.0, 0.1),
+    'eu.gmic.UserFileStatusVisibility': (0.2, 0.0, 0.0),
 }
 TOLERANCE = 1e-4
 DEFINED_BY = ' is defined by '  # the note of a kept definition of a hot-fixed command
@@ -63,6 +71,39 @@ CPUS_PLUGIN = 'eu.gmic.UserFileCpus'  # its output is G'MIC's $_cpus (divided by
 # its result has 5 channels: the render must fail with this message
 CHANNELS_PLUGIN = 'eu.gmic.UserFileFiveChannels'
 CHANNELS_ERROR = 'has 5 channels (should be at most 4)'
+PUSH_BUTTON = 'OfxParamTypePushButton'
+
+
+class ButtonCase(collections.namedtuple(
+        'ButtonCase', 'pid button args output values keys secret')):
+    """A render after the press of a push button (#174), and what it must give.
+
+    Attributes:
+        pid: the plug-in id.
+        button: the name of the push button that is pressed.
+        args: hostDemo's arguments before the press (-s name=value...).
+        output: the RGB value of every output pixel.
+        values: the values of parameters after the press (in the report: canonical coordinates for
+            a point, 0..1 for a color), SPOT for the point that the status moves.
+        keys: the keys of parameters after the press ([[time, value]...]).
+        secret: the secret flag of parameters after the press.
+    """
+
+
+SPOT = 'spot'  # User File Button's point: at 60%, 40% of the 160x120 input (y down in G'MIC)
+BUTTON_CASES = (
+    # a value of each type, past a separator; the render gets 0 for the button (green)
+    ButtonCase('eu.gmic.UserFileButton', 'Press', [], (0.75, 0.0, 0.4),
+               {'Level': 0.75, 'Steps': 4, 'Mode': 2, 'Flag': True,
+                'Tint': [40 / 255.0, 50 / 255.0, 60 / 255.0], 'Spot': SPOT, 'Label': 'after'},
+               {}, {}),
+    # an animated parameter: the key at the time of the press (0) gets the value
+    ButtonCase('eu.gmic.UserFileButton', 'Press', ['-s', 'Level@0=0.25', '-s', 'Level@10=0.5'],
+               (0.75, 0.0, 0.4), {'Level': 0.75}, {'Level': [[0.0, 0.75], [10.0, 0.5]]}, {}),
+    # "_0" hides the parameter in G'MIC-Qt: its value is set, its visibility not yet (#173)
+    ButtonCase('eu.gmic.UserFileStatusVisibility', 'Hide', [], (0.6, 0.0, 0.0),
+               {'Hidden Level': 0.6}, {}, {'Hidden Level': False}),
+)
 
 
 def update_file_name():
@@ -156,6 +197,67 @@ def render_all(host, plugins, work, runs):
     return problems, logs, seconds
 
 
+def same_value(value, expected):
+    """Is a parameter value of the report the expected one (numbers within TOLERANCE)?"""
+    if isinstance(expected, bool) or isinstance(value, bool):
+        return value is expected
+    if isinstance(expected, (int, float)):
+        return isinstance(value, (int, float)) and abs(value - expected) <= TOLERANCE
+    if isinstance(expected, list):
+        return (isinstance(value, list) and len(value) == len(expected) and
+                all(same_value(v, e) for v, e in zip(value, expected)))
+    return value == expected
+
+
+def check_buttons(host, plugins, work):
+    """Renders each of BUTTON_CASES after the press of its button, and checks the result.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems, empty if every press gave the expected parameters and output.
+    """
+    problems = []
+    for case in BUTTON_CASES:
+        name = '%s, %s pressed' % (case.pid, case.button)
+        result = render_plugins.render(host, case.args + ['-s', case.button], plugins, work,
+                                       TIMEOUT, (case.pid, CONTEXT, ['Source']))
+        problem, errors = result[2], result[5]
+        if problem:
+            problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
+            continue
+        report_path = os.path.join(work, case.pid[len('eu.gmic.'):], 'report.json')
+        with open(report_path, encoding='utf-8') as f:
+            report = json.load(f)
+        problems += ['%s: %s' % (name, p) for p in check_output(report, case.output)]
+        params = report.get('params') or {}
+        if (params.get(case.button) or {}).get('type') != PUSH_BUTTON:
+            problems.append('%s: %s is not a push button (%s)'
+                            % (name, case.button, params.get(case.button)))
+        par = (((report.get('clipPreferences') or {}).get('clips') or {}).get('Source') or {}).get(
+            'pixelAspectRatio') or 1.0
+        for param, expected in case.values.items():
+            if expected == SPOT:
+                expected = [0.6 * 160 * par, (1 - 0.4) * 120]
+            value = (params.get(param) or {}).get('value')
+            if not same_value(value, expected):
+                problems.append('%s: %s is %r, expected %r' % (name, param, value, expected))
+        for param, expected in case.keys.items():
+            keys = (params.get(param) or {}).get('keys')
+            if not same_value(keys, expected):
+                problems.append('%s: the keys of %s are %r, expected %r'
+                                % (name, param, keys, expected))
+        for param, expected in case.secret.items():
+            secret = (params.get(param) or {}).get('secret')
+            if secret is not expected:
+                problems.append('%s: %s has secret %r, expected %r'
+                                % (name, param, secret, expected))
+    return problems
+
+
 def check_cpus(host, plugins, work):
     """Renders CPUS_PLUGIN without OMP_NUM_THREADS, and prints and checks G'MIC's $_cpus.
 
@@ -233,6 +335,7 @@ def run_test(host, plugins, stdlib, runs, work, name):
     problems, logs, small = render_all(host, plugins, work, runs)
     problems += check_cpus(host, plugins, work)
     problems += check_channels(host, plugins, work)
+    problems += check_buttons(host, plugins, work)
     if not any(KEPT_NOTE in log for log in logs):
         problems.append("no note that the file's own definition of 'star_tone' is kept")
     for p in problems:

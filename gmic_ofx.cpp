@@ -490,7 +490,29 @@ struct LayerTimes
 // a parameter of the plug-in, of the type of its GlobalData entry (none for the layers, groups and
 // separators)
 using ParamPtr = std::variant<std::monostate, OFX::DoubleParam*, OFX::IntParam*, OFX::BooleanParam*, OFX::ChoiceParam*,
-	OFX::RGBParam*, OFX::RGBAParam*, OFX::Double2DParam*, OFX::StringParam*>;
+	OFX::RGBParam*, OFX::RGBAParam*, OFX::Double2DParam*, OFX::StringParam*, OFX::PushButtonParam*>;
+
+// The input images of a G'MIC run (see GMICEffect::fetchInputs): the host's, and their float
+// planar copies, which G'MIC gets (SequenceData::inWorld points to them)
+struct GmicInputs
+{
+	std::vector<std::unique_ptr<OFX::Image>> images;
+	std::vector<std::vector<float>> buffers;
+	// the rectangle and pixel aspect ratio of the first input (Source), the image G'MIC processes:
+	// point parameters are relative to it (fetchParamValues). The caller's values are kept if
+	// Source's rectangle is empty.
+	OfxRectI firstRect = { 0, 0, 0, 0 };
+	double firstPAR = 1.;
+	bool firstPremultiplied = false; // Source is premultiplied (unpremultiplied for G'MIC)
+};
+
+// why fetchInputs gave no inputs to G'MIC
+enum class InputsStatus
+{
+	kOk,
+	kNoSource, // no Source image (not connected, or the host gave none)
+	kNoLayer, // no image for a layer at another frame (layer times)
+};
 
 // ---------------------------------------------------------------------------------------------
 // The effect instance
@@ -518,6 +540,7 @@ private:
 
 	// the render fails (a missing image): unless the host aborted it, then the output is discarded
 	void failUnlessAborted() const;
+	InputsStatus fetchInputs(double time, SequenceData& sd, GmicInputs& in, std::string& message);
 	void fetchParamValues(SequenceData& sd, const OfxRectI& rect, double par, double t, const OfxPointD& renderScale) const;
 	LayerTimes layerTimesAt(double t) const;
 	double inputTime(const LayerTimes& lt, int i, double t) const;
@@ -535,6 +558,8 @@ private:
 	void pointUpdateEnabled(int checkbox, bool draft);
 	void pointsUpdateEnabled(int onlyParam);
 	void draftModeUpdateEnabled();
+	void buttonPressed(int button, double time);
+	void setParamValue(int i, const SequenceData& sd, const GmicInputs& in, double time);
 
 	const GlobalData& _gd;
 	OFX::Clip* _output;
@@ -597,6 +622,9 @@ GMICEffect::GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData
 			break;
 		case ParamType::Text:
 			_params[i] = fetchStringParam(name);
+			break;
+		case ParamType::Button:
+			_params[i] = fetchPushButtonParam(name);
 			break;
 		default:
 			break;
@@ -673,6 +701,9 @@ void GMICEffect::fetchParamValues(SequenceData& sd, const OfxRectI& dstRect, dou
 			break;
 		case ParamType::Text:
 			std::get<OFX::StringParam*>(_params[i])->getValueAtTime(t, sd.textValue[i]);
+			break;
+		case ParamType::Button:
+			value[0] = 0.f; // pressed: only in the run that the press makes (buttonPressed)
 			break;
 		default:
 			break;
@@ -891,6 +922,16 @@ void GMICEffect::changedParam(const OFX::InstanceChangedArgs& args, const std::s
 			pointsUpdateEnabled(i);
 		}
 		break;
+	}
+
+	// a push button pressed (issue #174), by the user or a script (the plug-in never presses one)
+	if (args.reason != OFX::eChangePluginEdit) {
+		for (int i = 1; i < _gd.nofParams; i++) {
+			if (_gd.param[i].paramType == ParamType::Button && _gd.param[i].paramName == paramName) {
+				buttonPressed(i, args.time);
+				break;
+			}
+		}
 	}
 
 	// we are only interested in user edits below
@@ -1114,6 +1155,102 @@ void GMICEffect::draftModeUpdateEnabled()
 	}
 }
 
+// A G'MIC button() (issue #174) is a push button, as in G'MIC-Qt, where it gives 1 to the next run
+// only (ButtonParameter.cpp: the value is cleared once a run has it, MainWindow.cpp). That run is
+// the preview that a click triggers: Apply follows it, so it gets 0, and what a button does
+// reaches the result through the values that the preview's status sets (Mandelbrot's zoom
+// buttons write new coordinates, Randomize Seed a new seed). Here, renders always give 0 for a
+// button; pressing it runs the filter's preview command once, with 1 for it and the other values
+// at the time of the press, on the input images at that time, and sets the parameter values that
+// the run's status gives, as G'MIC-Qt's preview does (pluginRunStatus). These changes are one
+// undo step (an edit block named after the button), set at the time of the press on animated
+// parameters. The run's image is discarded: a button whose filter sets no status does nothing.
+// From the instance changed action, the only place besides interacts where an effect may set its
+// parameters; the host's GUI waits for the run.
+void GMICEffect::buttonPressed(int button, double time)
+{
+	SequenceData sd;
+	GmicInputs inputs;
+	std::string message;
+	if (pluginPassesSourceThrough(_gd) || fetchInputs(time, sd, inputs, message) != InputsStatus::kOk) {
+		if (!message.empty()) gmicLog("openfx-gmic: %s: %s: %s\n", _gd.pluginInfo.name.c_str(), _gd.param[button].displayName.c_str(), message.c_str());
+		return;
+	}
+	const OfxPointD renderScale = { 1., 1. };
+	fetchParamValues(sd, inputs.firstRect, inputs.firstPAR, time, renderScale);
+	sd.floatValue[button][0] = 1.f;
+	const GmicStatusRun run = pluginRunStatus(sd, _gd, *this);
+	if (!run.error.empty()) {
+		sendMessage(OFX::Message::eMessageError, "", _gd.param[button].displayName + ": " + run.error);
+		return;
+	}
+	// one undo step, begun at the first change only; best-effort: without an undo block if the host
+	// refuses it
+	EditBlock editBlock(*this, _gd.param[button].displayName, EditBlock::eBeginOnChange, EditBlock::eHostErrorsIgnore);
+	for (const int i : run.changed) {
+		editBlock.open();
+		setParamValue(i, sd, inputs, time);
+	}
+}
+
+// the value of a parameter that may be animated: at time if it has keys, else its only value
+template <class P, class... V>
+void setValueOrKey(P* param, double time, const V&... value)
+{
+	const std::optional<unsigned int> keys = hostQuery([param] { return param->getNumKeys(); });
+	if (keys && *keys > 0) {
+		param->setValueAtTime(time, value...);
+	} else {
+		param->setValue(value...);
+	}
+}
+
+// Sets parameter i to its value in sd, at time (see setValueOrKey): the inverse of
+// fetchParamValues, with a render scale of 1, points relative to in.firstRect. Push buttons have
+// no value.
+void GMICEffect::setParamValue(int i, const SequenceData& sd, const GmicInputs& in, double time)
+{
+	const Parameter& param = _gd.param[i];
+	const float* const value = sd.floatValue[i];
+	switch (param.paramType) {
+	case ParamType::Float:
+		setValueOrKey(std::get<OFX::DoubleParam*>(_params[i]), time, static_cast<double>(value[0]));
+		break;
+	case ParamType::Int:
+		setValueOrKey(std::get<OFX::IntParam*>(_params[i]), time, static_cast<int>(value[0]));
+		break;
+	case ParamType::Select:
+		setValueOrKey(std::get<OFX::ChoiceParam*>(_params[i]), time, static_cast<int>(value[0]));
+		break;
+	case ParamType::Bool:
+		setValueOrKey(std::get<OFX::BooleanParam*>(_params[i]), time, value[0] != 0.f);
+		break;
+	case ParamType::Color:
+		if (colorHasAlpha(param)) {
+			setValueOrKey(std::get<OFX::RGBAParam*>(_params[i]), time, static_cast<double>(value[0]), static_cast<double>(value[1]),
+				static_cast<double>(value[2]), static_cast<double>(value[3]));
+		} else {
+			setValueOrKey(std::get<OFX::RGBParam*>(_params[i]), time, static_cast<double>(value[0]), static_cast<double>(value[1]),
+				static_cast<double>(value[2]));
+		}
+		break;
+	case ParamType::Point: {
+		// percent of Source, from its top-left corner, to canonical coordinates (see fetchParamValues)
+		const OfxRectI& r = in.firstRect;
+		const int w = std::max(1, r.x2 - r.x1), h = std::max(1, r.y2 - r.y1);
+		const double x = (value[0] * w / 100. + r.x1) * in.firstPAR;
+		const double y = (100. - value[1]) * h / 100. + r.y1;
+		setValueOrKey(std::get<OFX::Double2DParam*>(_params[i]), time, x, y);
+	} break;
+	case ParamType::Text: {
+		OFX::StringParam* const text = std::get<OFX::StringParam*>(_params[i]);
+		setValueOrKey(text, time, sd.textValue[i]);
+	} break;
+	default:
+		break;
+	}
+}
+
 // the image is the RGBA float or byte image that the plug-in declares
 void checkImageFormat(const OFX::Image& image)
 {
@@ -1121,6 +1258,101 @@ void checkImageFormat(const OFX::Image& image)
 		(image.getPixelDepth() != OFX::eBitDepthUByte && image.getPixelDepth() != OFX::eBitDepthFloat)) {
 		OFX::throwSuiteStatusException(kOfxStatErrImageFormat);
 	}
+}
+
+// The values of a G'MIC run at time (their defaults: fetchParamValues sets the parameters' own),
+// and its input images, as in render: the layer inputs up to the first one that is missing, at
+// their layer times, converted to float planar buffers (in.buffers, which sd.inWorld points to) and
+// unpremultiplied. kNoSource: no Source image; kNoLayer: no image for a layer at another frame
+// (unless the host aborted the render), which the render must not drop. message says which one.
+InputsStatus GMICEffect::fetchInputs(double time, SequenceData& sd, GmicInputs& in, std::string& message)
+{
+	const float scale = kGmicValueScale;
+	for (int i = 0; i < _gd.nofParams; i++) {
+		sd.textValue[i] = _gd.param[i].text;
+		std::copy(_gd.param[i].defaultValue, _gd.param[i].defaultValue + 4, sd.floatValue[i]);
+	}
+	sd.time = time;
+	// Output Layer "Frame" counts frames from the start of Source (0 if none, or infinite)
+	{
+		const OFX::Clip* source = _inputs[0];
+		const std::optional<OfxRangeD> range = frameRangeOf(*source);
+		if (range && range->min <= range->max && std::fabs(range->min) < 1e9) {
+			sd.frameRangeStart = range->min;
+		}
+	}
+
+	const LayerTimes layerTimes = layerTimesAt(time);
+	const int nofInputs = std::min((int)_inputs.size(), kMaxLayers);
+	in.images.clear();
+	in.images.resize((size_t)nofInputs);
+	in.buffers.clear();
+	in.buffers.resize((size_t)nofInputs);
+	in.firstPremultiplied = false;
+	for (int i = 0; i < nofInputs; i++) {
+		// layer times: the input may be another frame, of its clip or of Source (see
+		// getFramesNeeded). Point parameters stay relative to Source at the render time.
+		const int c = layerTimes.clipIndex(i);
+		OFX::Clip* clip = _inputs[c];
+		const std::string& clipName = inputName(c);
+		const double inTime = inputTime(layerTimes, i, time);
+		sd.inputConnected[i] = false;
+		const bool connected = clip->isConnected();
+		if (connected) {
+			sd.inputConnected[i] = true;
+			in.images[i].reset(clip->fetchImage(inTime));
+		}
+		if (!in.images[i] && connected && layerTimes.offset[i] != 0 && !abort()) {
+			// No image for a layer at another frame (within the clip's frame range): fail rather
+			// than drop it and the following layers (as for an unconnected layer, the stack stops
+			// at the first missing one), or skip it and shift the next frames into its place:
+			// the filters that use frames depend on their order.
+			char msg[512];
+			snprintf(msg, sizeof(msg), "%s: no image from %s at frame %g", inputName(i).c_str(), clipName.c_str(), inTime);
+			message = msg;
+			return InputsStatus::kNoLayer;
+		}
+		if (!in.images[i]) {
+			sd.inputConnected[i] = false;
+			if (i == 0) {
+				char msg[512];
+				snprintf(msg, sizeof(msg), "No image from %s at frame %g", clipName.c_str(), inTime);
+				message = msg;
+				return InputsStatus::kNoSource;
+			}
+			sd.inWorld[i].data = nullptr;
+			break;
+		}
+		const OFX::Image& img = *in.images[i];
+		checkImageFormat(img);
+		const OfxRectI srcRect = img.getBounds();
+		if (i == 0 && srcRect.x2 > srcRect.x1 && srcRect.y2 > srcRect.y1) {
+			in.firstRect = srcRect; // not an empty rectangle (point conversion divides by its size)
+			in.firstPAR = img.getPixelAspectRatio();
+		}
+		World& w = sd.inWorld[i];
+		w.name = clipName;
+		w.origin_x = srcRect.x1;
+		w.origin_y = srcRect.y1;
+		w.width = srcRect.x2 - srcRect.x1;
+		w.height = srcRect.y2 - srcRect.y1;
+		std::vector<float>& buffer = in.buffers[i];
+		buffer.resize((size_t)w.width * (size_t)w.height * 4);
+		w.data = buffer.data();
+		if (img.getPixelDepth() == OFX::eBitDepthUByte) {
+			convertToPlanar<unsigned char>(img, buffer.data(), kInvMaxChan8 * scale);
+		} else {
+			convertToPlanar<float>(img, buffer.data(), scale);
+		}
+		// G'MIC works on straight colours: unpremultiply premultiplied inputs (the converted buffer
+		// is float planar for both 8-bit and float images, so this also covers 8-bit inputs)
+		if (img.getPreMultiplication() == OFX::eImagePreMultiplied) {
+			if (i == 0) in.firstPremultiplied = true;
+			unpremultiplyPlanar(buffer.data(), w.width, w.height, scale);
+		}
+	}
+	if (!(in.firstPAR > 0.)) in.firstPAR = 1.;
+	return InputsStatus::kOk;
 }
 
 // the process code that the host sees
@@ -1151,102 +1383,31 @@ void GMICEffect::render(const OFX::RenderArguments& args)
 	const OfxRectI dstRect = outputImg->getBounds();
 	const float scale = kGmicValueScale;
 
-	// the values of this render, their defaults for the parameters without a value
+	// the values of this render (their defaults for the parameters without a value), and the input
+	// image(s); the parameters are fetched afterwards, since point parameters are relative to the
+	// first input's rectangle (the image G'MIC processes), not the output's (their defaults are
+	// moved within Source when it is connected, see pointsMoveToSource)
 	SequenceData sd;
-	for (int i = 0; i < _gd.nofParams; i++) {
-		sd.textValue[i] = _gd.param[i].text;
-		std::copy(_gd.param[i].defaultValue, _gd.param[i].defaultValue + 4, sd.floatValue[i]);
+	GmicInputs inputs;
+	inputs.firstRect = dstRect;
+	inputs.firstPAR = outputImg->getPixelAspectRatio();
+	std::string message;
+	switch (fetchInputs(time, sd, inputs, message)) {
+	case InputsStatus::kOk:
+		break;
+	case InputsStatus::kNoLayer:
+		showRenderError(*this, message);
+		OFX::throwSuiteStatusException(kOfxStatFailed);
+		break;
+	case InputsStatus::kNoSource:
+		// the render fails: say why, unless the host aborted it
+		if (!abort()) {
+			showRenderError(*this, message);
+		}
+		failUnlessAborted();
+		return;
 	}
-	sd.time = time;
-	// Output Layer "Frame" counts frames from the start of Source (0 if none, or infinite)
-	{
-		const OFX::Clip* source = _inputs[0];
-		const std::optional<OfxRangeD> range = frameRangeOf(*source);
-		if (range && range->min <= range->max && std::fabs(range->min) < 1e9) {
-			sd.frameRangeStart = range->min;
-		}
-	}
-
-	// get the input image(s); the parameters are fetched afterwards, since point parameters are
-	// relative to the first input's rectangle (the image G'MIC processes), not the output's (their
-	// defaults are moved within Source when it is connected, see pointsMoveToSource)
-	OfxRectI firstSrcRect = dstRect;
-	double firstSrcPAR = outputImg->getPixelAspectRatio();
-	bool firstSrcPremultiplied = false;
-	const LayerTimes layerTimes = layerTimesAt(time);
-	const int nofInputs = std::min((int)_inputs.size(), kMaxLayers);
-	// the host images and their float planar copies, given to G'MIC (released on return)
-	std::vector<std::unique_ptr<OFX::Image>> sourceImg((size_t)nofInputs);
-	std::vector<std::vector<float>> sourceBuffer((size_t)nofInputs);
-	for (int i = 0; i < nofInputs; i++) {
-		// layer times: the input may be another frame, of its clip or of Source (see
-		// getFramesNeeded). Point parameters stay relative to Source at the render time.
-		const int c = layerTimes.clipIndex(i);
-		OFX::Clip* clip = _inputs[c];
-		const std::string& clipName = inputName(c);
-		const double inTime = inputTime(layerTimes, i, time);
-		sd.inputConnected[i] = false;
-		const bool connected = clip->isConnected();
-		if (connected) {
-			sd.inputConnected[i] = true;
-			sourceImg[i].reset(clip->fetchImage(inTime));
-		}
-		if (!sourceImg[i] && connected && layerTimes.offset[i] != 0 && !abort()) {
-			// No image for a layer at another frame (within the clip's frame range): fail rather
-			// than drop it and the following layers (as for an unconnected layer, the stack stops
-			// at the first missing one), or skip it and shift the next frames into its place:
-			// the filters that use frames depend on their order.
-			char msg[512];
-			snprintf(msg, sizeof(msg), "%s: no image from %s at frame %g", inputName(i).c_str(), clipName.c_str(), inTime);
-			showRenderError(*this, msg);
-			OFX::throwSuiteStatusException(kOfxStatFailed);
-		}
-		if (!sourceImg[i]) {
-			sd.inputConnected[i] = false;
-			if (i == 0) {
-				// the render fails: say why, unless the host aborted it
-				if (!abort()) {
-					char msg[512];
-					snprintf(msg, sizeof(msg), "No image from %s at frame %g", clipName.c_str(), inTime);
-					showRenderError(*this, msg);
-				}
-				failUnlessAborted();
-				return;
-			}
-			sd.inWorld[i].data = nullptr;
-			break;
-		}
-		const OFX::Image& img = *sourceImg[i];
-		checkImageFormat(img);
-		const OfxRectI srcRect = img.getBounds();
-		if (i == 0 && srcRect.x2 > srcRect.x1 && srcRect.y2 > srcRect.y1) {
-			firstSrcRect = srcRect; // not an empty rectangle (point conversion divides by its size)
-			firstSrcPAR = img.getPixelAspectRatio();
-		}
-		World& in = sd.inWorld[i];
-		in.name = clipName;
-		in.origin_x = srcRect.x1;
-		in.origin_y = srcRect.y1;
-		in.width = srcRect.x2 - srcRect.x1;
-		in.height = srcRect.y2 - srcRect.y1;
-		std::vector<float>& buffer = sourceBuffer[i];
-		buffer.resize((size_t)in.width * (size_t)in.height * 4);
-		in.data = buffer.data();
-		if (img.getPixelDepth() == OFX::eBitDepthUByte) {
-			convertToPlanar<unsigned char>(img, buffer.data(), kInvMaxChan8 * scale);
-		} else {
-			convertToPlanar<float>(img, buffer.data(), scale);
-		}
-		// G'MIC works on straight colours: unpremultiply premultiplied inputs (the converted buffer
-		// is float planar for both 8-bit and float images, so this also covers 8-bit inputs)
-		if (img.getPreMultiplication() == OFX::eImagePreMultiplied) {
-			if (i == 0) firstSrcPremultiplied = true;
-			unpremultiplyPlanar(buffer.data(), in.width, in.height, scale);
-		}
-	}
-
-	if (!(firstSrcPAR > 0.)) firstSrcPAR = 1.;
-	fetchParamValues(sd, firstSrcRect, firstSrcPAR, time, args.renderScale);
+	fetchParamValues(sd, inputs.firstRect, inputs.firstPAR, time, args.renderScale);
 
 	World& out = sd.outWorld;
 	out.origin_x = dstRect.x1;
@@ -1263,7 +1424,7 @@ void GMICEffect::render(const OFX::RenderArguments& args)
 	}
 
 	// the G'MIC result has straight colours, converted here before the conversion to the output depth
-	if (firstSrcPremultiplied && !sd.resultHasAlpha) {
+	if (inputs.firstPremultiplied && !sd.resultHasAlpha) {
 		// no alpha in the result: keep the look of the input composited over black (see
 		// multiplyByInputAlphaPlanar)
 		multiplyByInputAlphaPlanar(out, sd.inWorld[0], scale);
@@ -1513,6 +1674,11 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			p->setDoubleType(OFX::eDoubleTypeXYAbsolute);
 			p->setDefaultCoordinateSystem(OFX::eCoordinatesNormalised);
 			p->setUseHostNativeOverlayHandle(true);
+			paramDesc = p;
+		} break;
+		case ParamType::Button: {
+			// (see GMICEffect::buttonPressed)
+			OFX::PushButtonParamDescriptor* p = desc.definePushButtonParam(name);
 			paramDesc = p;
 		} break;
 		case ParamType::Bool: {

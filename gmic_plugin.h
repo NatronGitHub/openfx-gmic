@@ -16,6 +16,7 @@
 #include <array>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "gmic_parameter.h"
 #include "gmic_libc.h"
@@ -89,6 +90,28 @@ bool pluginPassesSourceThrough(const gmic_ofx::GlobalData& globalData);
 // or the render was aborted).
 bool pluginProcess(gmic_ofx::SequenceData& sequenceData, const gmic_ofx::GlobalData& globalData, GmicInstanceData& instanceData,
 	OFX::ImageEffect& effect);
+
+// What pluginRunStatus did (C++ Core Guidelines F.21: the outputs in one struct)
+struct GmicStatusRun
+{
+	// the filter parameters (indices in GlobalData::param) whose G'MIC argument the status changed
+	// (for a removable point: the point if its coordinates changed, its checkbox if it was
+	// removed or put back), in order; never a push button
+	std::vector<int> changed;
+	std::string error; // G'MIC's message, if the run failed
+};
+
+// G'MIC-Qt's run of the filter's preview command after a change of its parameters, for the status
+// that the run leaves (MainWindow.cpp in c-koi/gmic-qt: onPreviewImageAvailable(),
+// onGUIDynamismRunDone()): runs the preview command on sequenceData's input images, with its
+// values, as the run made before the main command of a preview-first filter (see pluginProcess),
+// and sets in sequenceData the values that its status gives (FilterParametersWidget::setValues()
+// in G'MIC-Qt). Its own results are discarded. For the press of a push button (issue #174),
+// called from the instance changed action with the button at 1. Uses its own G'MIC options, so
+// that a render of the same instance may run at the same time. Nothing changes if the filter has
+// no preview ("_none_"), if there is no Source image, if the status is empty or has another number
+// of values than the parameters (logged), or if G'MIC fails.
+GmicStatusRun pluginRunStatus(gmic_ofx::SequenceData& sequenceData, const gmic_ofx::GlobalData& globalData, OFX::ImageEffect& effect);
 
 // kOfxActionPurgeCaches: drop the results kept for Output Layer "Frame", of every instance
 void pluginPurgeCaches();
