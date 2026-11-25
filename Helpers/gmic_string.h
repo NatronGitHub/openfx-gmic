@@ -92,11 +92,13 @@ enum class DecimalSyntax { SignedInteger, UnsignedDecimal, SignedDecimal };
 // s as a number of that syntax, '.' as the decimal point whatever the locale, blanks (" \t\r\n")
 // around it allowed; nothing for any other text ("inf", "nan", hexadecimal, other characters) and
 // on an overflow (an underflow gives 0). Only this syntax reaches the conversion, so the result
-// needs no isnan/isinf test (which -ffinite-math-only folds to false).
+// needs no isnan/isinf test (which -ffinite-math-only folds to false). Sets errno (it tests strtod's
+// ERANGE).
 [[nodiscard]] std::optional<double> parseDecimal(std::string_view s, DecimalSyntax syntax);
 
-// Append the UTF-8 encoding of the code point cp (up to U+10FFFF; not checked: the callers replace
-// invalid code points first if they need to)
+// Append the UTF-8 encoding of the code point cp. Not checked: a surrogate (U+D800..U+DFFF) or a
+// value above U+10FFFF gives bytes that are not valid UTF-8 (the parser's "\uD800" escapes keep
+// giving them, as before); callers that need valid UTF-8 replace those first (e.g. with U+FFFD).
 void appendUtf8(std::string& out, unsigned long cp);
 
 // s without its markup tags ("<b>", "</i>", "<!-- -->")

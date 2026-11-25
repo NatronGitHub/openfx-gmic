@@ -806,13 +806,15 @@ static void gmicItems(const string& line, vector<string>& items)
 	if (!item.empty()) items.push_back(item);
 }
 
-// The command name of an item: its leading name (letters, digits and '_'), after a "-" or "+"
-// prefix, without the rest ("+cmd", "cmd[0]", "ot..", "cmd$x")
+// The command name of an item that is a command: its name (letters, digits and '_'), after a "-"
+// or "+" prefix, followed by nothing, a selection or dots ("+cmd", "cmd[0]", "ot.."). Empty for
+// any other item, e.g. an argument ("ox,oy=0,0", "_fx_helper$1", "$x").
 static string commandName(const string& item)
 {
 	const size_t b = (!item.empty() && (item[0] == '-' || item[0] == '+')) ? 1 : 0;
 	size_t e = b;
 	while (e < item.size() && (isalnum((unsigned char)item[e]) || item[e] == '_')) ++e;
+	if (e < item.size() && item[e] != '[' && item.find_first_not_of('.', e) != string::npos) return string();
 	return item.substr(b, e - b);
 }
 
@@ -845,18 +847,56 @@ static size_t commentStart(const string& s, size_t pos)
 	return (pos != string::npos && s[pos] == '#') ? pos + 1 : string::npos;
 }
 
-// getline() for G'MIC code: a code line that ends with '\' goes on with the next line, without
-// its leading blanks (the unminified gmic_stdlib.gmic splits long "u" commands this way). Only code
-// lines are joined here; comment lines (a '#', maybe after blanks, see commentStart), which hold
-// the #@gui definitions, are joined by getGuiLine().
+// The code of a line of a G'MIC command file, as gmic::add_commands reads it: without its comment
+// (a '#' at the start of the line, or after a blank) and its trailing blanks (CR included)
+static bool isBlank(char c) { return (unsigned char)c <= ' '; } // (as cimg::is_blank)
+
+static string codeOf(const string& line)
+{
+	size_t end = line.size();
+	if (!line.empty() && line[0] == '#') {
+		end = 0;
+	} else {
+		for (size_t p = line.find('#'); p != string::npos; p = line.find('#', p + 1)) {
+			if (p > 0 && isBlank(line[p - 1])) {
+				end = p - 1;
+				break;
+			}
+		}
+	}
+	while (end > 0 && isBlank(line[end - 1])) --end;
+	return line.substr(0, end);
+}
+
+// Does the code end with an odd number of '\' (G'MIC's line continuation; "\\" is an escaped '\')?
+static bool isContinued(const string& code)
+{
+	const size_t last = code.find_last_not_of('\\');
+	return (code.size() - (last == string::npos ? 0 : last + 1)) % 2 == 1;
+}
+
+// getline() for G'MIC code, as gmic::add_commands joins the lines: a line whose code (codeOf) ends
+// with an odd number of '\' goes on with the code of the next line that has code (blank and
+// comment lines are skipped), from its first non-blank character, without the '\' (the unminified
+// gmic_stdlib.gmic splits long "u" commands this way). A line that doesn't go on is given as it is,
+// with its comment. Only code lines are joined here; comment lines (a '#', maybe after blanks, see
+// commentStart), which hold the #@gui definitions, are joined by getGuiLine().
 static bool getCodeLine(istream& in, string& line)
 {
 	if (!getline(in, line)) return false;
+	string code = codeOf(line);
+	if (!isContinued(code)) return true;
+	code.pop_back();
 	string next;
-	while (!line.empty() && commentStart(line, 0) == string::npos && line[line.size() - 1] == '\\' && getline(in, next)) {
-		line.erase(line.size() - 1);
-		line += next.substr(min(next.find_first_not_of(" \t"), next.size()));
+	while (getline(in, next)) {
+		const string nextCode = codeOf(next);
+		const auto b = std::find_if(nextCode.begin(), nextCode.end(), [](char c) { return !isBlank(c); });
+		if (b == nextCode.end()) continue; // (still going on)
+		code.append(b, nextCode.end());
+		if (!isContinued(nextCode)) break;
+		code.pop_back();
 	}
+	line = std::move(code);
 	return true;
 }
 

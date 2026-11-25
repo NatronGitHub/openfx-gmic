@@ -148,6 +148,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build pkg-config zlib1g-dev libpng-dev libexpat1-dev \
             libgl-dev
+      # the parser alone (no G'MIC sources): the rules on the command definitions, on cases that
+      # the stdlib doesn't have (comments, continued lines, arguments that look like commands)
+      - name: Parser test (command definitions)
+        run: |
+          c++ -std=c++17 -O1 -Wall -Wextra -IHelpers .github/workflows/parser_test.cpp Helpers/gmic_parser.cpp \
+            Helpers/gmic_string.cpp Helpers/gmic_log.cpp -o parser_test
+          ./parser_test
       - uses: ./.github/actions/gmic-sources
       # static zlib and libpng built with -fPIC, linked into GMIC.ofx (GMIC_STATIC_DEPS)
       - uses: ./.github/actions/static-deps
