@@ -640,7 +640,7 @@ PluginGlobalData loadPluginGlobalData()
 			stdlib = string(lib);
 			gmic_delete_external((float*)lib);
 		}
-		bool builtinStdlib = false; // the curated lists of the parser are only checked against it
+		bool builtinStdlib = false; // the filters come from the built-in stdlib, not from a file
 		const string rcPath = get_gmic_rc_path();
 		// before the first message (also G'MIC's: the hot fixes, the renders)
 		// (not when the build writes the bundle's plug-in list, OFX_GMIC_WRITE_PLUGIN_LIST: its
@@ -662,7 +662,7 @@ PluginGlobalData loadPluginGlobalData()
 				effectContent = "";
 			}
 		}
-		gmic_parse_multi(effectContent, &pluginData, &pluginContent, builtinStdlib);
+		gmic_parse_multi(effectContent, &pluginData, &pluginContent);
 		if (!builtinStdlib) {
 			data.userCommands = std::move(effectContent);
 		}
@@ -951,7 +951,12 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		globalDataP->param[p] = Parameter(
 		  name, "", t, (float)stringToDouble(minValue), (float)stringToDouble(maxValue), d1, d2, d3, d4, paramText);
 		globalDataP->param[p].flags = flags;
-		if (h) globalDataP->param[p].displayStatus = DisplayStatus::Hidden;
+		// as G'MIC-Qt, "_0" hides the parameter and "_1" disables it (a hidden one still passes its value)
+		if (h || param.visibility == EffectParameter::Visibility::Hidden) {
+			globalDataP->param[p].displayStatus = DisplayStatus::Hidden;
+		} else if (param.visibility == EffectParameter::Visibility::Disabled) {
+			globalDataP->param[p].displayStatus = DisplayStatus::Disabled;
+		}
 		if (param.splitPreview) { // (see markSplitPreviewParams)
 			globalDataP->param[p].draftModeOnly = true;
 			globalDataP->param[p].hint = "Used by the filter's preview only, as in G'MIC-Qt: "
@@ -1000,6 +1005,9 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		globalDataP->param[p] = Parameter("Layer Times", "", ParamType::TopicEnd);
 		++p;
 	}
+	// Not read: a filter with no command passes Source through (pluginPassesSourceThrough). Hidden
+	// on every plug-in; kept because PARAM_COMMAND, the bound of the filter's own parameters in
+	// gmicCommand, and the other PARAM_* macros count from the end of the table.
 	globalDataP->param[p] = Parameter("Command", "", ParamType::Text, 0, 0, 0, 0, 0, 0, "-blur 2");
 	globalDataP->param[p].displayStatus = DisplayStatus::Hidden;
 	++p;
@@ -1262,10 +1270,9 @@ gmicCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, bo
     const EffectData& effectData = effectDataOf(globalDataP);
     string cmd = preview ? effectData.preview_command : effectData.command;
 
-    if (cmd == "") {
-        cmd = sequenceDataP->textValue[PARAM_COMMAND];
-        strReplace(cmd, "\r", " ");
-        strReplace(cmd, "\n", " ");
+    if (cmd.empty()) {
+        // a filter with no command: G'MIC doesn't run (render passes Source through)
+        return cmd;
     } else {
         cmd = "-" + strTrim(cmd, " \t\r\n") + " ";
         // the filter parameters only: they come first, the layers and their times follow
@@ -2119,6 +2126,11 @@ static long long frameNumberOf(const SequenceData* sequenceDataP)
 	return (long long)std::floor(sequenceDataP->time - sequenceDataP->frameRangeStart + 0.5);
 }
 
+bool pluginPassesSourceThrough(const GlobalData& globalData)
+{
+	return effectDataOf(&globalData).command.empty();
+}
+
 bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, GmicInstanceData& instanceData, OFX::ImageEffect& effect)
 {
 	// (the names used by the PARAM_* macros)
@@ -2162,8 +2174,9 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	}
 
 	const EffectData& effectData = effectDataOf(globalDataP);
-	const bool hasContent = !effectData.command.empty();
-	const bool preview = hasContent && (effectData.previewOnly || sequenceDataP->floatValue[PARAM_PREVIEW][0] > 0);
+	// a filter with no command never gets here: render() copies Source (pluginPassesSourceThrough)
+	assert(!effectData.command.empty());
+	const bool preview = (effectData.previewOnly || sequenceDataP->floatValue[PARAM_PREVIEW][0] > 0);
 	// G'MIC-Qt's Apply follows a run of the preview command, whose _persistent and status the main
 	// command gets (FilterThread.cpp, MainWindow.cpp in c-koi/gmic-qt): the filters whose main
 	// command may need them (EffectData::previewFirst) run their preview command first, on the

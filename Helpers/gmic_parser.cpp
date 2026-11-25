@@ -50,6 +50,7 @@
 
 #include "gmic_parser.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstring>
 #include <cstdlib>
@@ -110,6 +111,7 @@ void processCommand(const string& s, EffectData& cd)
 	if (sPos >= 0) r2 = r2.substr(0, sPos);
 	string r3 = r2;
 	sPos = (int)r2.find(",");
+	const bool previewGiven = sPos >= 0; // (else the preview command is the main command)
 	if (sPos >= 0) {
 		r3 = r2.substr(sPos + 1);
 		r2 = r2.substr(0, sPos);
@@ -128,21 +130,26 @@ void processCommand(const string& s, EffectData& cd)
 	strReplace(r3, "+", "");
 	strReplace(r3, "*", "");
 
-	// "_none_" main command: a preview-only filter (the preview's output is the result)
-	sPos = (int)r2.find("_none_");
-	if (sPos >= 0) {
-		r2 = r3;
-		cd.previewOnly = true;
+	// As G'MIC-Qt (FiltersPresenter::Filter::isNoApplyFilter, isNoPreviewFilter): a command that is
+	// empty or exactly "_none_" is no command. No main command: a preview-only filter, rendered with
+	// its preview command (the preview's output is the result). Neither: a page with no command (e.g.
+	// the About pages), which passes Source through (EffectData::command empty).
+	string command = strTrim(r2, " \t\r\n");
+	string preview = strTrim(r3, " \t\r\n");
+	const auto isNone = [](const string& c) { return c.empty() || c == "_none_"; };
+	if (isNone(command)) {
+		command = isNone(preview) ? string() : preview;
+		cd.previewOnly = !command.empty();
 	}
-	sPos = (int)r3.find("_none_");
-	if (sPos >= 0) {
-		r3 = r2;
-		cd.noPreview = true;
+	// "_none_" or empty after the comma: G'MIC-Qt shows no preview (isNoPreviewFilter), and its
+	// Apply follows no preview run (noPreview). Without a comma, the main command is the preview
+	// command, which G'MIC-Qt does run first.
+	if (isNone(preview)) {
+		cd.noPreview = previewGiven && !command.empty();
+		preview = command;
 	}
-
-	cd.command = strTrim(r2, " \n");
-	cd.preview_command = strTrim(r3, " \n");
-	if (cd.preview_command == "") cd.preview_command = cd.command;
+	cd.command = command;
+	cd.preview_command = preview;
 }
 
 // a value() default that is not a list of numbers ("0", "-1", "50,50", "0:0:50", "1e-3", "nan")
@@ -505,6 +512,39 @@ static bool usesSeveralLayers(const string& content)
 	return false;
 }
 
+// Visibility propagation of a parameter, as G'MIC-Qt's AbstractParameter::VisibilityPropagation
+enum class VisibilityPropagation { None, Up, Down };
+
+struct VisibilitySuffix {
+	size_t length = 0; // 0: no suffix
+	EffectParameter::Visibility visibility = EffectParameter::Visibility::Visible;
+	VisibilityPropagation propagation = VisibilityPropagation::None;
+};
+
+// As G'MIC-Qt (AbstractParameter::parseText): "_0" (hidden), "_1" (disabled) or "_2" (visible)
+// right after the closing delimiter, which is at s[pos - 1], then an optional '-' (propagate up)
+// or '+' or '*' (propagate down).
+static VisibilitySuffix parseVisibilitySuffix(const string& s, size_t pos)
+{
+	VisibilitySuffix r;
+	if (pos + 1 >= s.size() || s[pos] != '_' || s[pos + 1] < '0' || s[pos + 1] > '2') {
+		return r;
+	}
+	r.visibility = static_cast<EffectParameter::Visibility>(s[pos + 1] - '0');
+	const char sign = (pos + 2 < s.size()) ? s[pos + 2] : '\0';
+	r.propagation = (sign == '-') ? VisibilityPropagation::Up :
+	                (sign == '+' || sign == '*') ? VisibilityPropagation::Down : VisibilityPropagation::None;
+	r.length = (r.propagation == VisibilityPropagation::None) ? 2 : 3;
+	return r;
+}
+
+// a parameter without a value of its own (passes no argument to the commands): G'MIC-Qt's
+// NoValueParameters, which also ignore their own visibility suffix
+static bool isNoValueParameter(const EffectParameter& p)
+{
+	return p.paramType == "note" || p.paramType == "link" || p.paramType == "separator";
+}
+
 string gmic_parse_single(const string& content, EffectData& cd)
 {
 	const string src_prefix_old = src_prefix_old_c;
@@ -523,6 +563,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	cd.noPreview = false;
 	cd.previewFirst = false;
 	cd.param.clear();
+	vector<VisibilityPropagation> propagation; // one per cd.param entry, until the "pointenabled" ones
 
 	const vector<string> lines = strSplit(content, '\n');
 	for (int i = 0; i < (int)lines.size(); i++) {
@@ -564,7 +605,10 @@ string gmic_parse_single(const string& content, EffectData& cd)
 						if (pEnd != string::npos) {
 							name += line.substr(0, pEnd + 1);
 							inMulti = false;
-							line = strTrim(line.substr(pEnd + 1), ", ");
+							const VisibilitySuffix v = parseVisibilitySuffix(line, pEnd + 1);
+							cd.param.back().visibility = v.visibility;
+							propagation.back() = v.propagation;
+							line = strTrim(line.substr(pEnd + 1 + v.length), ", ");
 						} else {
 							name += line;
 							line.clear();
@@ -594,8 +638,11 @@ string gmic_parse_single(const string& content, EffectData& cd)
 								EffectParameter p;
 								p.name = line.substr(0, pEnd+1);
 								//std::cout << p.name << std::endl;
+								const VisibilitySuffix v = parseVisibilitySuffix(line, pEnd + 1);
+								p.visibility = v.visibility;
 								cd.param.push_back(p);
-								line = strTrim(line.substr(pEnd + 1), ", ");
+								propagation.push_back(v.propagation);
+								line = strTrim(line.substr(pEnd + 1 + v.length), ", ");
 								if (!line.empty()) {
 									line = dst_prefix + " : " + line;
 								}
@@ -604,6 +651,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 								EffectParameter p;
 								p.name = line;
 								cd.param.push_back(p);
+								propagation.push_back(VisibilityPropagation::None);
 								inMulti = true;
 								line.clear();
 							}
@@ -617,8 +665,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 				}
 			}
 		} else if (sPos2 == 0) {
-			// a category line, or the line that separates the pages of "About G'MIC" (see
-			// gmic_parse_multi): it ends a value left open, as a filter line does
+			// a category line: it ends a value left open, as a filter line does
 			inMulti = false;
 			sPos = (int)n.find(" ");
 			if (sPos >= 0) {
@@ -665,6 +712,31 @@ string gmic_parse_single(const string& content, EffectData& cd)
 			}
 		}
 	}
+	// As G'MIC-Qt (FilterParametersWidget::setVisibilityStates, with the default states): a
+	// note, link or separator has no visibility of its own; a parameter with '-' ('+') gives its
+	// visibility to the ones right before (after) it, up to the previous (next) parameter that has
+	// a value, in this order, so that a later parameter wins.
+	for (size_t i = 0; i < cd.param.size(); i++) {
+		if (isNoValueParameter(cd.param[i])) {
+			cd.param[i].visibility = EffectParameter::Visibility::Visible;
+			propagation[i] = VisibilityPropagation::None;
+		}
+	}
+	for (size_t i = 0; i < cd.param.size(); i++) {
+		if (isNoValueParameter(cd.param[i])) continue;
+		const EffectParameter::Visibility v = cd.param[i].visibility;
+		if (propagation[i] == VisibilityPropagation::Up) {
+			for (size_t j = i; j > 0 && isNoValueParameter(cd.param[j - 1]); j--) cd.param[j - 1].visibility = v;
+		} else if (propagation[i] == VisibilityPropagation::Down) {
+			for (size_t j = i + 1; j < cd.param.size() && isNoValueParameter(cd.param[j]); j++) cd.param[j].visibility = v;
+		}
+	}
+	// G'MIC-Qt hides only a point's widgets and keeps its handle on the preview, while a host
+	// doesn't draw the overlay of a hidden or disabled parameter (Natron: shouldDrawOverlayInteract):
+	// a point (and its "Enabled" checkbox, added below) stays visible, so that it can be moved
+	for (size_t i = 0; i < cd.param.size(); i++) {
+		if (cd.param[i].paramType == "point") cd.param[i].visibility = EffectParameter::Visibility::Visible;
+	}
 	// A removable point (point(x,y,-1) or point(x,y,1)) can be removed in G'MIC-Qt, which then
 	// passes nan,nan for it (a -1 point starts removed): give it a checkbox right after it, whose
 	// name is the point's (without " (%)", as the plug-in shows it) with " Enabled". It is not a
@@ -695,7 +767,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	// is filled in by G'MIC-Qt from the status set by the preview command (issue #52): run the
 	// preview command first (see markPersistentFilters for the other rule)
 	for (int i = 0; i < (int)cd.param.size(); i++) {
-		if (cd.param[i].paramType == "value" && !cd.previewOnly && !cd.noPreview &&
+		if (cd.param[i].paramType == "value" && !cd.command.empty() && !cd.previewOnly && !cd.noPreview &&
 			isPlaceholder(cd.param[i].defaultValue)) {
 			cd.previewFirst = true;
 		}
@@ -726,14 +798,22 @@ static string commandDefinition(const string& line, string& rest)
 	return line.substr(b, e - b);
 }
 
-// Split a G'MIC command line into items (separated by blanks outside double quotes).
+// Split a G'MIC command line into items, separated by blanks outside double quotes. As G'MIC's
+// command_line_to_CImgList, a character after '\' is part of the item ("${-quote\ $1}" is one
+// item), and an escaped '"' doesn't start or end a quoted text.
 static void gmicItems(const string& line, vector<string>& items)
 {
 	string item;
-	bool quoted = false;
+	bool quoted = false, escaped = false;
 	for (size_t k = 0; k < line.size(); ++k) {
 		const char c = line[k];
-		if (c == '"' && (k == 0 || line[k - 1] != '\\')) quoted = !quoted;
+		if (escaped) {
+			item += c;
+			escaped = false;
+			continue;
+		}
+		if (c == '\\') escaped = true;
+		else if (c == '"') quoted = !quoted;
 		if (!quoted && (c == ' ' || c == '\t' || c == '\r')) {
 			if (!item.empty()) items.push_back(item);
 			item.clear();
@@ -833,6 +913,121 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 	}
 }
 
+// Does the line set a G'MIC-Qt status with a visibility marker? G'MIC-Qt reads the status that a
+// filter's command sets (with "u" or "status") as "{value}{value}...", where a value may be
+// followed by "_0", "_1" or "_2", its new visibility (FilterThread's status2Visibilities). In the
+// G'MIC code, the argument of "u" starts with {, "{ or \{, and a marker follows the end of a
+// value (} or ") with '_' then a digit or an expression ($var, {expr}, "...), e.g. Marker
+// Drawing's preview: u "{"$b_type"}{"$b_blur"}_"{$b_type==0?2:1}"... A status held in a
+// variable ("u $s") isn't seen.
+static bool setsVisibilityStatus(const vector<string>& items)
+{
+	for (size_t k = 0; k + 1 < items.size(); ++k) {
+		const string& it = items[k];
+		if (it[0] == '#') return false; // comment
+		if (it != "u" && it != "status") continue;
+		const string& a = items[k + 1];
+		if (a.compare(0, 1, "{") != 0 && a.compare(0, 2, "\"{") != 0 && a.compare(0, 2, "\\{") != 0) continue;
+		for (size_t p = a.find('_', 1); p != string::npos && p + 1 < a.size(); p = a.find('_', p + 1)) {
+			const char c = a[p + 1];
+			if ((a[p - 1] == '}' || a[p - 1] == '"') && ((c >= '0' && c <= '2') || c == '"' || c == '$' || c == '{')) return true;
+		}
+	}
+	return false;
+}
+
+// getline() for G'MIC code: a code line that ends with '\' goes on with the next line, without
+// its leading blanks (the unminified gmic_stdlib.gmic splits long "u" commands this way). Only code
+// lines are joined here; comment lines, which hold the #@gui definitions, are joined by
+// getGuiLine().
+static bool getCodeLine(istream& in, string& line)
+{
+	if (!getline(in, line)) return false;
+	string next;
+	while (!line.empty() && line[0] != '#' && line[line.size() - 1] == '\\' && getline(in, next)) {
+		line.erase(line.size() - 1);
+		line += next.substr(min(next.find_first_not_of(" \t"), next.size()));
+	}
+	return true;
+}
+
+// The visibility suffixes ("_0", "_1") are G'MIC-Qt's initial state, which some filters change
+// at run time through their status (see setsVisibilityStatus): e.g. Marker Drawing enables
+// Background Blur when Background Type is "Blur". The plug-in can't follow such changes, and
+// would leave these parameters hidden or disabled for good: in such a filter, every parameter
+// stays visible and enabled. A filter changes the visibility when its main or preview command,
+// or a command that one of them calls directly (one level, e.g. Mitchell Concatenation's
+// _fx_rep_mitchell_concatenation_base), sets such a status. This needs the command definitions
+// in "content": with a gmic_ofx.gmic that has only #@gui lines, every filter is static.
+static void markDynamicVisibilityFilters(const string& content, vector<EffectData>& cds)
+{
+	set<string> filterCommands;
+	for (vector<EffectData>::const_iterator it = cds.begin(); it != cds.end(); ++it) {
+		filterCommands.insert(it->command);
+		filterCommands.insert(it->preview_command);
+	}
+	// pass 1: the defined commands, and those that set a visibility status themselves
+	set<string> defined, dynamic;
+	{
+		stringstream ss(content);
+		string line, cur, rest;
+		while (getCodeLine(ss, line)) {
+			if (line.empty() || line[0] == '#') continue;
+			const string name = commandDefinition(line, rest);
+			if (!name.empty()) {
+				cur = name;
+				defined.insert(name);
+			} else {
+				rest = line;
+			}
+			if (cur.empty() || dynamic.count(cur)) continue;
+			vector<string> items;
+			gmicItems(rest, items);
+			if (setsVisibilityStatus(items)) dynamic.insert(cur);
+		}
+	}
+	// pass 2: a filter command that calls one of them
+	set<string> dynamicFilterCommands;
+	{
+		stringstream ss(content);
+		string line, cur, rest;
+		while (getCodeLine(ss, line)) {
+			if (line.empty() || line[0] == '#') continue;
+			const string name = commandDefinition(line, rest);
+			if (!name.empty()) {
+				cur = filterCommands.count(name) ? name : string();
+				if (dynamic.count(name) && !cur.empty()) dynamicFilterCommands.insert(name);
+			} else {
+				rest = line;
+			}
+			if (cur.empty() || dynamicFilterCommands.count(cur)) continue;
+			vector<string> items;
+			gmicItems(rest, items);
+			for (size_t k = 0; k < items.size(); ++k) {
+				const string& it = items[k];
+				if (it[0] == '#') break; // comment
+				// the command name of the item: "+cmd", "cmd[0]", "cmd.", "cmd arg"
+				size_t b = (it[0] == '+') ? 1 : 0, e = b;
+				while (e < it.size() && (isalnum((unsigned char)it[e]) || it[e] == '_')) ++e;
+				const string callee = it.substr(b, e - b);
+				if (!callee.empty() && callee != cur && dynamic.count(callee)) {
+					dynamicFilterCommands.insert(cur);
+					break;
+				}
+			}
+		}
+	}
+	// About G'MIC gathers the pages of the About folder (see gmic_parse_multi), whose own commands
+	// are not kept: one of them, What's New?, changes the visibility at run time
+	dynamicFilterCommands.insert("fx_gmicky");
+	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
+		if (!dynamicFilterCommands.count(it->command) && !dynamicFilterCommands.count(it->preview_command)) continue;
+		for (size_t i = 0; i < it->param.size(); ++i) {
+			it->param[i].visibility = EffectParameter::Visibility::Visible;
+		}
+	}
+}
+
 // The labels of a choice() parameter (stored as "label|label|..."), with runs of blanks as one
 // space (two filters of G'MIC 4.0.8 have "Forward  Horizontal")
 static vector<string> choiceLabels(const string& text)
@@ -873,12 +1068,6 @@ static bool isSplitPreviewChoice(const EffectParameter& param)
 static bool hasSuffix(const string& s, const string& suffix)
 {
 	return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
-}
-
-// a parameter without a value of its own (passes no argument to the commands)
-static bool isNoValueParameter(const EffectParameter& param)
-{
-	return param.paramType == "separator" || param.paramType == "note" || param.paramType == "link";
 }
 
 // Marks the parameters of G'MIC's split preview (EffectParameter::splitPreview): the choice of
@@ -1047,74 +1236,179 @@ static bool testsKey(const string& item)
 	return false;
 }
 
+// Does one of the items test a key of a display window (testsKey)?
+static bool testsKeys(const vector<string>& items)
+{
+	for (size_t k = 0; k < items.size(); ++k) {
+		if (testsKey(items[k])) return true;
+	}
+	return false;
+}
+
+// Does the text substitute an argument of the command ("$1", "${2}", "${1=0}", "${2-4}", "$*",
+// "${*}", "$\"*\""), not "$>", "$!", "${-command}" or a variable?
+static bool readsArgument(const string& s)
+{
+	for (size_t p = s.find('$'); p != string::npos; p = s.find('$', p + 1)) {
+		size_t k = p + 1;
+		if (k < s.size() && s[k] == '{') ++k;
+		if (k < s.size() && (isdigit((unsigned char)s[k]) || s[k] == '*')) return true;
+		if (s.compare(k, 3, "\"*\"") == 0) return true;
+	}
+	return false;
+}
+
+// The names of the variables that the text substitutes ("$name", "${name}"), added to names
+static void substitutedVariables(const string& s, vector<string>& names)
+{
+	for (size_t p = s.find('$'); p != string::npos; p = s.find('$', p + 1)) {
+		size_t k = p + 1;
+		if (k < s.size() && s[k] == '{') ++k;
+		size_t e = k;
+		while (e < s.size() && (isalnum((unsigned char)s[e]) || s[e] == '_')) ++e;
+		if (e > k && !isdigit((unsigned char)s[k])) names.push_back(s.substr(k, e - k));
+	}
+}
+
+// The command name of an item: without a "-" or "+" prefix, a selection ("o[0]") or dots ("ot..")
+static string commandName(const string& item)
+{
+	const size_t b = (!item.empty() && (item[0] == '-' || item[0] == '+')) ? 1 : 0;
+	const size_t sel = item.find('[');
+	string cmd = item.substr(b, sel == string::npos ? string::npos : sel - b);
+	while (!cmd.empty() && cmd[cmd.size() - 1] == '.') cmd.erase(cmd.size() - 1);
+	return cmd;
+}
+
+// Is the item a command that writes a file: "output" and its shortcuts in G'MIC 4.0.8's command
+// table ("o", "on", "op", "ot", "ow", "ox"), "output_text", "outputn", "output_cube"...?
+static bool isOutputCommand(const string& item)
+{
+	static const char* const shortcuts[] = { "o", "on", "op", "ot", "ow", "ox" };
+	const string cmd = commandName(item);
+	for (size_t i = 0; i < sizeof(shortcuts) / sizeof(shortcuts[0]); ++i) {
+		if (cmd == shortcuts[i]) return true;
+	}
+	return cmd.compare(0, 6, "output") == 0;
+}
+
+// Is the path a temporary file (${-path_tmp}, ${-filename_rand}), which isn't kept?
+static bool isTemporaryPath(const string& path)
+{
+	return path.find("${-path_tmp}") != string::npos || path.find("${-filename_rand") != string::npos;
+}
+
+// Does the definition (its items) write a file that the user doesn't choose: into G'MIC's own
+// folders ($_path_rc, ${-path_rc}, ${-path_cache}), or at a path that a command computes
+// ("${-command}") and that no argument of the command (i.e. no parameter of the filter) names?
+// Temporary files (${-path_tmp}, ${-filename_rand}) don't count. A variable in the file name is
+// replaced by the values that the definition assigns to it, and so on for the variables in these
+// ("file=${-path_cache}x.txt ... ot $file"). This is a rule on the files written, not on network
+// access: filters that download data into G'MIC's cache with input_cached are not caught (they
+// write nothing themselves), while the pages that download or post are, through the files where
+// they keep their data. A file in a folder that a parameter gives, or with a name of the filter's
+// own in the current folder, doesn't count.
+static bool writesGmicChosenFile(const vector<string>& items)
+{
+	map<string, string> values; // variable -> the values assigned to it
+	for (size_t k = 0; k < items.size(); ++k) {
+		const string& it = items[k];
+		if (!isAssignment(it)) continue;
+		const size_t op = it.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_,");
+		const size_t eq = it.find('=', op);
+		stringstream names(it.substr(0, op));
+		string name;
+		while (getline(names, name, ',')) values[name] += ' ' + it.substr(eq + 1);
+	}
+	for (size_t k = 0; k + 1 < items.size(); ++k) {
+		if (!isOutputCommand(items[k])) continue;
+		// the file name, followed by the values of the variables it substitutes (to a fixpoint)
+		string fileName = items[k + 1];
+		set<string> expanded;
+		vector<string> vars;
+		substitutedVariables(fileName, vars);
+		for (size_t v = 0; v < vars.size(); ++v) {
+			if (!expanded.insert(vars[v]).second) continue;
+			const map<string, string>::const_iterator val = values.find(vars[v]);
+			if (val == values.end()) continue;
+			fileName += val->second;
+			substitutedVariables(val->second, vars);
+		}
+		const bool gmicFolder = fileName.find("path_rc") != string::npos || fileName.find("path_cache") != string::npos;
+		const bool computed = fileName.find("${-") != string::npos && !isTemporaryPath(fileName) && !readsArgument(fileName);
+		if (gmicFolder || computed) return true;
+	}
+	return false;
+}
+
 // Filters that make no sense when rendering frame by frame in an OpenFX host (issue #64): batch
-// converters that read or write image sequences on disk on every render, filters that write files,
-// and interactive tools that open a window. Rules on the #@gui definition and on the definition of
-// the main command (not the commands it calls):
+// converters that read or write image sequences on disk on every render, filters that write files
+// that the user doesn't choose, and interactive tools that open a window. Rules on the #@gui
+// definition and on the definitions of the commands that the filter runs (its main command, or the
+// preview command of a preview-only filter, called "main" here):
 // - a parameter that reads files or folders (file(), filein(), folder()) together with the word
 //   "video" or "frame(s)" in the filter name or a parameter name: Stereo Video, 3D Video Conversion;
-// - the main command writes a file into G'MIC's own folder ("output ...$_path_rc..."): Layers To PNG;
-// - the main command waits for keys in a display window ({*,ESC}...): Diaporama.
+// - the main command, its helper "_<main>" (G'MIC's naming convention), or a command that the main
+//   command calls and that the library doesn't document (no "#@cli" line; one level), writes a file
+//   into G'MIC's folders or at a path that a command computes (writesGmicChosenFile): e.g. Layers
+//   To PNG, and the pages that download or post through the files where they keep their data;
+// - the main command (only) waits for keys in a display window ({*,ESC}...): Diaporama.
 // (The parser already leaves out the Sequences category and the [animated] and [interactive]
 // filters.) Removed after the plug-in identifiers are assigned, so that the others keep theirs.
+// There is no list of filters: as in G'MIC-Qt, which hides none, a filter that these rules miss is
+// shown (e.g. Intarsia, which writes its HTML page and images into the Output Directory that the
+// user chooses), and if it really can't work in a host, it is for upstream to mark it.
 // This needs the command definitions in "content": with a gmic_ofx.gmic that only has #@gui lines,
-// only the parameter rule and the curated list below apply.
-static void hideBatchFilters(const string& content, vector<EffectData>& cds, vector<string>* lines, bool checkCurated)
+// only the parameter rule applies.
+static void hideBatchFilters(const string& content, vector<EffectData>& cds, vector<string>* lines)
 {
 	set<string> mains;
 	for (vector<EffectData>::const_iterator it = cds.begin(); it != cds.end(); ++it) {
-		mains.insert(it->command);
+		if (!it->command.empty()) mains.insert(it->command); // (not a page with no command)
 	}
-	set<string> hidden;
-	stringstream ss(content);
-	string line, cur, rest;
-	while (getline(ss, line)) {
-		if (line.empty() || line[0] == '#') continue;
-		string name = commandDefinition(line, rest);
-		if (!name.empty()) {
-			cur = mains.count(name) ? name : string();
-		} else {
-			rest = line;
-		}
-		if (cur.empty() || hidden.count(cur)) continue;
-		vector<string> items;
-		gmicItems(rest, items);
-		for (size_t k = 0; k < items.size(); ++k) {
-			const string& it = items[k];
-			if (it[0] == '#') break; // comment
-			const size_t b = (it[0] == '-') ? 1 : 0, e = it.find('[');
-			const string cmd = it.substr(b, e == string::npos ? string::npos : e - b);
-			if ((cmd == "o" || cmd == "output") && k + 1 < items.size() && items[k + 1].find("$_path_rc") != string::npos) {
-				hidden.insert(cur);
-			} else if (testsKey(it)) {
-				hidden.insert(cur);
+	// the items of every definition, without the comments, and the documented commands (#@cli)
+	map<string, vector<string> > bodies;
+	set<string> documented;
+	{
+		stringstream ss(content);
+		string line, rest;
+		vector<string>* body = nullptr;
+		while (getline(ss, line)) {
+			if (line.compare(0, 6, "#@cli ") == 0) {
+				const size_t b = line.find_first_not_of(' ', 6), e = line.find_first_of(" :", b);
+				if (b != string::npos && e != b) documented.insert(line.substr(b, e == string::npos ? string::npos : e - b));
 			}
+			if (line.empty() || line[0] == '#') continue;
+			const string name = commandDefinition(line, rest);
+			if (!name.empty()) {
+				body = &bodies[name];
+			} else {
+				rest = line;
+			}
+			if (!body) continue;
+			vector<string> items;
+			gmicItems(rest, items);
+			for (size_t k = 0; k < items.size() && items[k][0] != '#'; ++k) body->push_back(items[k]);
 		}
 	}
-	// Main commands hidden whatever the rules say, so that they stay hidden if their definition
-	// changes. A listed command that no longer is the main command of a filter (e.g. after a G'MIC
-	// update) is reported on stderr, and makes the describe test fail
-	// (.github/workflows/describe_plugins.sh).
-	// Also hidden:
-	// - Intarsia (fx_intarsia) writes an HTML page and PNG images into its Output Directory ($1,
-	//   by default empty, so the root folder) on every render, which the rule above misses.
-	// The filters that upstream disabled as broken after G'MIC 4.0.7, and that were hidden here
-	// (Color Region, Prime Surface, Reverse Engineer Color Curve, Layer Manipulation, Halftone
-	// Shapes, Montage Multi Rows), are no longer in G'MIC 4.0.8; Beauty Retouch (fx_tk_retouch,
-	// https://github.com/GreycLab/gmic-community/issues/308) is fixed there.
-	static const char* const curated[] = { "gcd_stereo_vid", "fx_tk_video3D", "samj_diaporama", "samj_Layers_To_PNG",
-		"fx_intarsia" };
-	for (size_t c = 0; c < sizeof(curated) / sizeof(curated[0]); ++c) {
-		if (mains.count(curated[c])) {
-			hidden.insert(curated[c]);
-		} else if (checkCurated && !mains.empty()) {
-#ifdef OFX_GMIC_COMMERCIAL
-			// COMMERCIAL standard libraries leave out some of these filters, or only their #@gui
-			// lines (e.g. fx_tk_video3D, see gmic_stdlib_commercial.txt): the GPL build checks the list
-			continue;
-#endif
-			gmicLog("G'MIC: HIDDEN_FILTER_UNKNOWN %s: not the main command of a filter, update hideBatchFilters()\n", curated[c]);
+	map<string, bool> writes; // command -> writesGmicChosenFile(its definition), computed once
+	const auto writesFile = [&bodies, &writes](const string& cmd) {
+		const map<string, bool>::const_iterator w = writes.find(cmd);
+		if (w != writes.end()) return w->second;
+		const map<string, vector<string> >::const_iterator d = bodies.find(cmd);
+		return writes[cmd] = (d != bodies.end() && writesGmicChosenFile(d->second));
+	};
+	set<string> hidden;
+	for (set<string>::const_iterator m = mains.begin(); m != mains.end(); ++m) {
+		const map<string, vector<string> >::const_iterator d = bodies.find(*m);
+		if (d == bodies.end()) continue;
+		bool hide = testsKeys(d->second) || writesFile(*m) || writesFile("_" + *m);
+		// the commands that it calls and that the library doesn't document (one level)
+		for (size_t k = 0; k < d->second.size() && !hide; ++k) {
+			const string cmd = commandName(d->second[k]);
+			hide = cmd != *m && bodies.count(cmd) && !documented.count(cmd) && writesFile(cmd);
 		}
+		if (hide) hidden.insert(*m);
 	}
 	for (size_t i = cds.size(); i-- > 0; ) {
 		const EffectData& cd = cds[i];
@@ -1129,17 +1423,6 @@ static void hideBatchFilters(const string& content, vector<EffectData>& cds, vec
 			if (lines && i < lines->size()) lines->erase(lines->begin() + i);
 		}
 	}
-}
-
-// "#@gui ____<i>About</i>" (G'MIC 2) or "#@gui <i>About</i>" (G'MIC >= 3)
-static bool isAboutCategory(const string& cat)
-{
-	size_t sp = cat.find(' ');
-	if (sp == string::npos) {
-		return false;
-	}
-	string c = strTrim(cat.substr(sp), " \t\r_");
-	return c == "<i>About</i>";
 }
 
 // If the text at s[pos] starts with blanks (spaces or tabs) and '#', the position after the '#',
@@ -1175,7 +1458,7 @@ static bool getGuiLine(const string& content, size_t& pos, string& line)
 	return true;
 }
 
-void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<string>* lines, bool checkCurated)
+void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<string>* lines)
 {
 	const string src_prefix_old = src_prefix_old_c;
 	const string src_prefix = src_prefix_c;
@@ -1208,22 +1491,13 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 						command.clear();
 					}
 					cat = line;
-					if (isAboutCategory(cat)) {
-						command = "#@gui About G'MIC : fx_gmicky, fx_gmicky_preview";
-					}
 				} else if (col != spc + 1) {
-					if (isAboutCategory(cat)) {
-						// add new title, after a "#@gui" line that ends the previous page (as a filter
-						// line does in G'MIC-Qt), so that a value left open there doesn't take it in
-						command += "\n#@gui\n#@gui : note = note{" + line.substr(spc+1, col - spc - 1) + '}';
-					} else {
-						// new command/Plugin
-						if (!command.empty()) {
-							commands.push_back(cat + '\n' + command);
-							command.clear();
-						}
-						command = line;
+					// new command/Plugin (also each page of the About folder, as in G'MIC-Qt)
+					if (!command.empty()) {
+						commands.push_back(cat + '\n' + command);
+						command.clear();
 					}
+					command = line;
 				}
 			}
 		}
@@ -1241,10 +1515,7 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 		gmic_parse_single(line2, cd);
 		//printf("%s/%s\n", cd.category.c_str(), cd.name.c_str());
 		bool doOutput = true;
-		// skip entries from the about category
-		if (cd.category == "About" && cd.uniqueId != "eu.gmic.AboutGMIC") {
-			//doOutput = false;
-		} else if (cd.category == "Various") {
+		if (cd.category == "Various") {
 			//doOutput = false;
 			doOutput = true;
 		} else if ((int)strLowercase(line2).find("[interactive]") >= 0) {
@@ -1268,6 +1539,7 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 	markPersistentFilters(content, *cds);
 	markSplitPreviewParams(*cds); // (after markPersistentFilters: previewFirst)
 	markMultiInputFilters(content, *cds);
+	markDynamicVisibilityFilters(content, *cds);
     // plug-in identifiers must be unique: G'MIC 4 has several filters with the same name in
     // different folders (in 4.0.7: the "About" page of each Testing author, giving About and
     // About2..About5, and "Color Harmonies", giving ColorHarmonies2). The first one in stdlib
@@ -1289,7 +1561,7 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
         it->uniqueId = id;
         ids.insert(id);
     }
-    hideBatchFilters(content, *cds, lines, checkCurated);
+    hideBatchFilters(content, *cds, lines);
     for (vector<EffectData>::iterator it = cds->begin(); it != cds->end(); ++it) {
         // post-process
         EffectData& cd = *it;

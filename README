@@ -4,7 +4,7 @@ openfx-gmic: G'MIC filters as OpenFX plug-ins
 openfx-gmic makes the filters of G'MIC (https://gmic.eu), an open-source image processing
 framework, available as OpenFX plug-ins, mainly for Natron (https://natrongithub.github.io).
 A single GMIC.ofx bundle registers one plug-in per filter of the G'MIC standard library and its
-community filters: 1199 plug-ins with G'MIC 4.0.8 (810 in COMMERCIAL builds). Changes since
+community filters: 1202 plug-ins with G'MIC 4.0.8 (815 in COMMERCIAL builds). Changes since
 Natron 2.5 are in CHANGELOG.md.
 
 It was written by Tobias Fleischer (reduxFX Productions, https://www.reduxfx.com), and is now
@@ -226,6 +226,22 @@ defined by <file>: its definition is kept").
 After adding, removing or editing a user file, clear the host's plug-in cache (see "Choosing the
 plug-ins"): a cached list of plug-ins numbers them as the old filter list did.
 
+Filters that can't work in an OpenFX host are hidden only by generic rules on their definitions
+(batch converters of image sequences, filters that write files that the user doesn't choose, tools
+that wait for keys in a window), never by name: as in G'MIC-Qt, the others are shown. Some of them write
+files on every render: e.g. Intarsia writes an HTML page and PNG images into its Output Directory,
+which is empty by default (the root folder, where the render usually fails), so set it first.
+
+As in G'MIC-Qt, each page of G'MIC's About folder is a plug-in of its own, in the G'MIC menu
+group. A page with no command (About G'MIC, Privacy Notice, Release Notes, Tribute to
+Sébastien) shows its notes and passes Source through; Gmicky Roddy draws the mascots (it
+downloads their images). Filters whose commands write files into G'MIC's folders, or at a path
+that a command computes, are hidden: they include the pages that download or post (Download
+External Data, Send Feedback, What's New?, which would also download the update file), which
+keep their data in such files, and Layers To PNG, SVG Symetries A and SVG TSP, which write their
+result into G'MIC's folder. This is a rule on the files written, not on network access: the
+filters that only download data into G'MIC's cache (Color Presets, Denoise [CNN]...) are shown.
+
 G'MIC's update file is the update of the built-in filters that G'MIC-Qt (when its filter updates
 are on) or the command "gmic update" downloads into G'MIC's folder: $GMIC_PATH if set, else
 $XDG_CONFIG_HOME/gmic, else ~/.config/gmic if ~/.config exists, else ~/gmic (Windows:
@@ -362,8 +378,9 @@ Tests
 -----
 
 There are no unit tests. The CI scripts can be run locally:
-- .github/workflows/describe_plugins.sh <dir with GMIC.ofx.bundle> <minimum plug-in count>
-  builds a minimal OpenFX host and describes every plug-in.
+- .github/workflows/describe_plugins.sh <dir with GMIC.ofx.bundle> <plug-in count>
+  builds a minimal OpenFX host and describes every plug-in; the built-in standard library must
+  give exactly that number of plug-ins (GMIC_PLUGIN_COUNT in ci.yml).
 - .github/workflows/render_plugins.py renders the plug-ins with openfx's hostDemo (CMake with
   -DGMIC_BUILD_TESTS=ON); see the script's help.
 
