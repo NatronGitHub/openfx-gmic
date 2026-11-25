@@ -6,7 +6,9 @@ as G'MIC's filter update file (update408.gmic for the Makefile's GMICVER 4.0.8, 
 OFX_GMIC_UPDATE_FILE=1, #180), which replaces the built-in filters. Its filters call a command
 that the file defines ("Unknown command" before #168), a built-in command, and a built-in
 command that the file replaces: each output must be the uniform color that the filter fills it
-with. The file also defines a command that the
+with. User File Run Variables fills it with what the plug-in gives G'MIC on every run, as G'MIC-Qt
+($_host, $_input_layers, $_output_mode, the input's layer name), and User File Five Channels
+returns 5 channels, which must fail the render (#206). The file also defines a command that the
 plug-in hot-fixes, which must be kept, with a note. Its User File Cpus filter fills its output
 with G'MIC's $_cpus, rendered without OMP_NUM_THREADS so that the plug-in sets it (#188): the
 value, printed, must be the number of CPUs (hostDemo runs one render, whose fair share is all the
@@ -43,6 +45,7 @@ EXPECTED = {
     'eu.gmic.UserFileOwnCommand': (0.25, 0.25, 0.25),
     'eu.gmic.UserFileBuiltinCommand': (0.5, 0.0, 1.0),
     'eu.gmic.UserFileOverride': (128 / 255.0,) * 3,
+    'eu.gmic.UserFileRunVariables': (1.0, 10 / 255.0, 1.0),
 }
 TOLERANCE = 1e-4
 DEFINED_BY = ' is defined by '  # the note of a kept definition of a hot-fixed command
@@ -50,6 +53,9 @@ KEPT_NOTE = "'star_tone'" + DEFINED_BY
 HOTFIX_WARNING = 'Warning: hot fix'
 TIMEOUT = 120
 CPUS_PLUGIN = 'eu.gmic.UserFileCpus'  # its output is G'MIC's $_cpus (divided by 255)
+# its result has 5 channels: the render must fail with this message
+CHANNELS_PLUGIN = 'eu.gmic.UserFileFiveChannels'
+CHANNELS_ERROR = 'has 5 channels (should be at most 4)'
 
 
 def update_file_name():
@@ -177,6 +183,27 @@ def check_cpus(host, plugins, work):
     return []
 
 
+def check_channels(host, plugins, work):
+    """Renders CHANNELS_PLUGIN, whose render must fail with CHANNELS_ERROR.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems, empty if the render failed with that message.
+    """
+    result = render_plugins.render(
+        host, [], plugins, work, TIMEOUT, (CHANNELS_PLUGIN, CONTEXT, ['Source']))
+    problem, log = result[2], result[6]
+    if not problem:
+        return ['%s: rendered, expected a failure (%s)' % (CHANNELS_PLUGIN, CHANNELS_ERROR)]
+    if CHANNELS_ERROR not in log:
+        return ['%s: %s, without the message %r' % (CHANNELS_PLUGIN, problem, CHANNELS_ERROR)]
+    return []
+
+
 def run_test(host, plugins, stdlib, runs, work, name):
     """Runs both renders of the test (see the module docstring).
 
@@ -198,6 +225,7 @@ def run_test(host, plugins, stdlib, runs, work, name):
     install_user_file(work, user_file, name)
     problems, logs, small = render_all(host, plugins, work, runs)
     problems += check_cpus(host, plugins, work)
+    problems += check_channels(host, plugins, work)
     if not any(KEPT_NOTE in log for log in logs):
         problems.append("no note that the file's own definition of 'star_tone' is kept")
     for p in problems:
