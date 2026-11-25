@@ -105,7 +105,8 @@ class ButtonCase(collections.namedtuple(
 
 
 class StatusCase(collections.namedtuple(
-        'StatusCase', 'pid args visibility output values secret enabled runs expected_log')):
+        'StatusCase', 'pid args visibility output values secret enabled runs expected_log',
+        defaults=((),))):
     """A render after user edits of a filter that sets a status (#173), and what it must give.
 
     Attributes:
@@ -122,8 +123,6 @@ class StatusCase(collections.namedtuple(
             which are then no problem; empty for none.
     """
 
-
-StatusCase.__new__.__defaults__ = ((),)  # expected_log
 
 
 SPOT = 'spot'  # User File Button's point: at 60%, 40% of the 160x120 input (y down in G'MIC)
@@ -180,7 +179,7 @@ STATUS_CASES = (
                (render_plugins.STATUS_MISMATCH, VISIBILITY_MISMATCH)),
     # visibility markers in the main command only: every parameter shown, as #170
     StatusCase('eu.gmic.UserFileStatusMainOnly', ['-s', 'A=0.3'], True, (0.3, 0.0, 0.0), {},
-               {'A': False, 'B': False}, {'B': True}, 0),
+               {'A': False, 'B': False}, {'B': True}, 1),
     # a status list held in a variable (status=\{...}, u $status)
     StatusCase('eu.gmic.UserFileStatusVariable', ['-s', 'A=0.3'], False, (0.3, 0.0, 0.7),
                {'B': 7}, {}, {}, 1),

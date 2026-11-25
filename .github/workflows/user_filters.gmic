@@ -170,8 +170,9 @@ fx_userfile_status_expr_preview :
   fill_color 255,0,255
 
 # - User File Status Main Only: the visibility markers are in the main command only, which the
-#   runs after an edit don't run: every parameter is shown and enabled (B too), as #170, and an
-#   edit runs nothing (its preview sets no status).
+#   runs after an edit don't run: every parameter is shown and enabled (B too), as #170. Its
+#   preview sets a status without markers, which would put B back to its initial "_1" if the
+#   plug-in followed the main command's visibilities.
 #@gui User File Status Main Only : fx_userfile_status_main, fx_userfile_status_main_preview
 #@gui : A = float(0.1,0,1)
 #@gui : B = int(0,0,10)_1
@@ -180,6 +181,7 @@ fx_userfile_status_main :
   fill_color {$1*255},0,{$2*25.5}
 
 fx_userfile_status_main_preview :
+  u "{"$1"}{"$2"}"
   fill_color {$1*255},0,{$2*25.5}
 
 # a result with 5 channels, which fails the render as in G'MIC-Qt (#206)
