@@ -67,6 +67,17 @@ endif()
 # C++ standard: OFX_CXX_STANDARD (openfx/cmake/OpenFX.cmake; default: CMAKE_CXX_STANDARD, or 17):
 # C++17 for Natron RB-2.6 (Qt5) builds, C++20 for Qt6 builds (RB-2.7). add_ofx_plugin compiles
 # with strict -std=c++NN (no GNU extensions), as the Makefile's CXXSTD and the CI builds do.
+# C++17 is the minimum (openfx's Support library needs it): refuse an older one here, before openfx.
+if(DEFINED OFX_CXX_STANDARD)
+  set(_gmic_cxx_std "${OFX_CXX_STANDARD}")
+elseif(CMAKE_CXX_STANDARD)
+  set(_gmic_cxx_std "${CMAKE_CXX_STANDARD}")
+endif()
+if(DEFINED _gmic_cxx_std AND (NOT _gmic_cxx_std MATCHES "^[0-9]+$" OR _gmic_cxx_std EQUAL 98
+                              OR _gmic_cxx_std LESS 17))
+  message(FATAL_ERROR "OFX_CXX_STANDARD (or CMAKE_CXX_STANDARD) is \"${_gmic_cxx_std}\": openfx-gmic "
+                      "needs C++17 or later (17 for Natron RB-2.6, 20 for Qt6 builds)")
+endif()
 
 # ========================== licence ==========================
 #

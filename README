@@ -47,8 +47,8 @@ definitions of broken filters (each fix is skipped once G'MIC has it).
 Requirements
 ------------
 
-- A C++17 compiler (C++20 for Qt6 builds of Natron), pkg-config, and make and curl, or CMake
-  >= 3.21 (with Ninja for the example below, or any other generator).
+- A C++17 compiler (C++17 is the minimum; C++20 for Qt6 builds of Natron), pkg-config, and make
+  and curl, or CMake >= 3.21 (with Ninja for the example below, or any other generator).
 - Libraries, found through pkg-config: zlib, libpng; with FFT=fftw3 only,
   fftw3 >= 3.3.5 and fftw3_threads (the default FFT, pocketfft, is header-only and downloaded at
   build time).
@@ -102,8 +102,8 @@ Options:
 - OPENMP=1: multithreaded G'MIC (off by default). On macOS, libomp is taken from LIBOMP_PREFIX
   (default /opt/local, MacPorts' layout: include/libomp and lib/libomp); with Homebrew's libomp,
   build with CMake and OFX_LIBOMP_ROOT.
-- CXXSTD: e.g. c++17 or c++20 (default: c++17, or none if CXX or CXXFLAGS_EXTRA already has a
-  -std option).
+- CXXSTD: c++17 or later, e.g. c++20 (default: c++17, or none if CXX or CXXFLAGS_EXTRA already
+  has a -std option).
 - GMIC_STATIC_DEPS: Linux only, 1 (default): link zlib, libpng and FFTW statically; 0: shared.
 - LICENSE: GPL (default) or COMMERCIAL (see "Licence"; gmic_stdlib_commercial.txt lists the
   filters left out, and why).
@@ -132,7 +132,7 @@ OFX_DEPLOY_BUNDLES: bundled libraries).
 
 Options (the Makefile's equivalent in parentheses):
 - CMAKE_BUILD_TYPE: Release (default), Debug or RelWithDebInfo (CONFIG).
-- OFX_CXX_STANDARD: 17 (default) or 20 (CXXSTD).
+- OFX_CXX_STANDARD: 17 (default, the minimum) or 20 (CXXSTD).
 - OFX_USE_OPENMP: ON (default) (OPENMP=1); OFX_LIBOMP_ROOT: libomp for Apple clang (default:
   MacPorts'; Homebrew: -DOFX_LIBOMP_ROOT=$(brew --prefix libomp)).
 - OFX_LICENSE: GPL (default) or COMMERCIAL (LICENSE); FFT: pocketfft (default) or fftw3 (FFT).
