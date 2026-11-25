@@ -113,24 +113,6 @@ bool hostIsNatron()
 #endif
 }
 
-// Render scale (issue #49). G'MIC parameters carry no unit, so pixel-sized ones (radii, sizes,
-// amplitudes in pixels) can't be scaled with the render scale, and a zoomed-out viewer or a proxy
-// render doesn't match the full-resolution render. On Natron, the actions fail for render scales other
-// than 1: Natron then marks the effect as not supporting render scale (OfxEffectInstance tries the
-// region of definition at scale 0.5) and renders it at full resolution, then downscales the result
-// (renderFullScaleThenDownscale in EffectInstance::renderRoI). Other hosts (Resolve, Nuke, Vegas) don't
-// fall back to full resolution, and the render would fail: there, render scales are accepted as
-// before, with unscaled pixel-sized parameters. Natron is recognized by kNatronOfxHostIsNatron, not by
-// kOfxPropName, which Natron can set to another host's name for compatibility.
-// The same rule for every action that has a render scale (region of definition, regions of
-// interest, isIdentity, render): throws kOfxStatFailed if the action must fail.
-void refuseRenderScale(const OfxPointD& renderScale)
-{
-	if (hostIsNatron() && (renderScale.x != 1. || renderScale.y != 1.)) {
-		OFX::throwSuiteStatusException(kOfxStatFailed);
-	}
-}
-
 // Check the effect descriptor for potentially bad XML in the OFX Plugin cache.
 //
 // The function that wrote string properties to the OFX plugin cache used to
@@ -515,6 +497,8 @@ private:
 	void changedParam(const OFX::InstanceChangedArgs& args, const std::string& paramName) override;
 	void changedClip(const OFX::InstanceChangedArgs& args, const std::string& clipName) override;
 	void purgeCaches() override { pluginPurgeCaches(); }
+	// throws kOfxStatFailed for a render scale that the action must refuse
+	void refuseRenderScale(const OfxPointD& renderScale) const;
 
 	// the render fails (a missing image): unless the host aborted it, then the output is discarded
 	void failUnlessAborted() const;
@@ -623,6 +607,31 @@ void GMICEffect::failUnlessAborted() const
 	// host discards an aborted render); otherwise fail, so that the host doesn't use (and
 	// cache) an unwritten output (as in the OFX Programming Guide's examples).
 	if (!abort()) {
+		OFX::throwSuiteStatusException(kOfxStatFailed);
+	}
+}
+
+// Render scale (issues #49 and #179). G'MIC parameters carry no unit, so pixel-sized ones (radii,
+// sizes, amplitudes in pixels) can't be scaled with the render scale, and a zoomed-out viewer or a
+// proxy render wouldn't match the full-resolution render.
+// - Natron, filters whose preview factor ends with "+" (pluginSupportsRenderScale: G'MIC's "the
+//   preview is accurate at any zoom"): every render scale is accepted, and the inputs come at
+//   that scale, as in G'MIC-Qt's zoomed preview.
+// - Natron, the other filters: the actions fail for render scales other than 1. Natron then marks
+//   the effect as not supporting render scale (OfxEffectInstance tries the region of definition at
+//   scale 0.5), renders it at full resolution, and downscales the result
+//   (renderFullScaleThenDownscale in EffectInstance::renderRoI).
+// - Other hosts (Resolve, Nuke, Vegas): every render scale is accepted, as before, with unscaled
+//   pixel-sized parameters. They don't fall back to full resolution: a refusal would fail the
+//   render.
+// Natron is recognized by kNatronOfxHostIsNatron, not by kOfxPropName, which Natron can set to
+// another host's name for compatibility. The same rule for every action that has a render scale
+// (region of definition, regions of interest, isIdentity, render): throws kOfxStatFailed if the
+// action must fail.
+void GMICEffect::refuseRenderScale(const OfxPointD& renderScale) const
+{
+	const bool scaled = renderScale.x != 1. || renderScale.y != 1.;
+	if (scaled && hostIsNatron() && !pluginSupportsRenderScale(_gd)) {
 		OFX::throwSuiteStatusException(kOfxStatFailed);
 	}
 }
