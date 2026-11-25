@@ -123,6 +123,8 @@ using namespace gmic_ofx;
 
 #include <sstream>
 #include <map>
+#include <deque>
+#include <optional>
 #include <set>
 #include <limits>
 #include <memory>
@@ -295,10 +297,11 @@ static const char* const kIgnoreAlphaCommands =
 	"  if $!>$n rm[$n--1] fi\n";
 
 // _openfx_gmic_opaque_resized w,h: gives an opaque alpha channel to the gray or RGB images whose
-// size is not w,h (the size of the processed main input). Run just before the final resize to the
-// input size, which would hide the size change: a result without alpha from a premultiplied input
-// gets its colours multiplied by the input's alpha (see multiplyByInputAlphaPlanar in
-// gmic_ofx.cpp), which only lines up with a result of the input's size. A rotated, framed or
+// size is not w,h (the size of the processed main input), at the end of the render's command (before
+// the resize to the input size of Resize Mode Downsample 1/N, which would hide the size change): a
+// result without alpha from a premultiplied input gets its colours multiplied by the input's alpha
+// (see multiplyByInputAlphaPlanar in gmic_ofx.cpp), which only lines up with a result of the
+// input's size. A rotated, framed or
 // cropped result would otherwise be darkened by the misaligned input alpha (issue #66).
 static const char* const kOpaqueResizedCommand =
 	"\n_openfx_gmic_opaque_resized :\n"
@@ -1131,11 +1134,15 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		"own number of frames sets it. The node's frame range is Source's: for a still image, extend it "
 		"upstream to the number of results (e.g. with a FrameRange node).";
 	++p;
-	// "Fixed (Inplace)" (index 0) behaves like "Dynamic": the result is always resized to the input
-	// size. Its special path (a per-plug-in in-place flag, set from one instance by a parameter
-	// change callback that the OFX glue never called, and skipping the output copy) was removed.
-	// The entry is kept so that saved projects keep their option indices and labels.
-	globalDataP->param[p] = Parameter("Resize Mode", "", ParamType::Select, 0, 5, 1, 0, 0, 0, "Fixed (Inplace)|Dynamic|Downsample 1/2|Downsample 1/4|Downsample 1/8|Downsample 1/16");
+	// (issue #175) "Dynamic", the default, outputs the result at its own size and position, as
+	// G'MIC-Qt does (the region of definition, see pluginResultGeometry); "Fixed (Inplace)" keeps
+	// Source's rectangle, a result of another size cropped or padded (it was resized to Source's
+	// size in both modes before). The option indices and labels are kept for saved projects.
+	globalDataP->param[p] = Parameter(kResizeModeParam, "", ParamType::Select, 0, 5, kResizeModeDynamic, 0, 0, 0, "Fixed (Inplace)|Dynamic|Downsample 1/2|Downsample 1/4|Downsample 1/8|Downsample 1/16");
+	globalDataP->param[p].hint = "Dynamic: the output has the result's size and position, e.g. larger for a frame or a rotation, "
+		"smaller for a crop, as in G'MIC-Qt. Fixed (Inplace): the output keeps Source's size; a result of another size is "
+		"cropped or padded, from its top-left corner. Downsample 1/N: the filter runs on Source downsampled N times, faster, "
+		"and the result is resized to Source's size.";
 	++p;
 	globalDataP->param[p] = Parameter("Ignore Alpha", "", ParamType::Bool, 0, 1, 0, 0, 0, 0, "");
 	globalDataP->param[p].hint = "Run the filter on the RGB channels only, then give the inputs' alpha back to the results. "
@@ -1590,10 +1597,10 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 	cmd = env + cmd;
 
 	{
-		// Resize Mode: "Downsample 1/N" processes a downsampled input; the result is always resized
-		// to the input size ("Fixed (Inplace)" and "Dynamic" alike). Before that, the gray or RGB
-		// results whose size differs from the processed input get an opaque alpha (see
-		// kOpaqueResizedCommand).
+		// Resize Mode: "Downsample 1/N" processes a downsampled input, and resizes the result to the
+		// input size. "Fixed (Inplace)" and "Dynamic" keep the result's size (issue #175): the
+		// copy to the output crops or pads it (see pluginProcess). The gray or RGB results whose
+		// size differs from the processed input get an opaque alpha (see kOpaqueResizedCommand).
 		float ds = sequenceDataP->floatValue[PARAM_RESIZE][0];
 		string processedSize = std::to_string(sequenceDataP->inWorld[0].width) + "," + std::to_string(sequenceDataP->inWorld[0].height);
 		if (ds >= 2.f) {
@@ -1604,7 +1611,9 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 		}
 		if (render) {
 			cmd += " -_openfx_gmic_opaque_resized " + processedSize;
-			cmd += " -resize " + std::to_string(sequenceDataP->inWorld[0].width) + "," + std::to_string(sequenceDataP->inWorld[0].height);
+			if (ds >= 2.f) {
+				cmd += " -resize " + std::to_string(sequenceDataP->inWorld[0].width) + "," + std::to_string(sequenceDataP->inWorld[0].height);
+			}
 		}
 	}
 	const int verbosity = gmicVerbosity(verbosityLevel(sequenceDataP->floatValue[PARAM_VERBOSITY][0]));
@@ -2271,6 +2280,193 @@ static long long frameNumberOf(const SequenceData* sequenceDataP)
 	return (long long)std::floor(sequenceDataP->time - sequenceDataP->frameRangeStart + 0.5);
 }
 
+// the Resize Mode of a render (kResizeModeFixed...)
+static int resizeModeOf(const SequenceData* sequenceDataP, const GlobalData* globalDataP)
+{
+	return (int)sequenceDataP->floatValue[PARAM_RESIZE][0];
+}
+
+// The result that a render outputs, among nofImages > 0 results. Output Layer: 0 is Merged (a
+// single image), k > 0 is "Layer -(k-1)", i.e. image [k-1], counted from the top of the stack like
+// the inputs (Source = [0] = "Layer 0", the active layer in G'MIC-Qt, then the "Layer -1" input =
+// [1]...). Past the last result: the last one. Frame: image [frame mod N] (see frameNumberOf), or
+// [0] if G'MIC kept only the one needed (selected, see kFrameSelectCommand).
+static unsigned int resultIndexOf(const SequenceData* sequenceDataP, const GlobalData* globalDataP, unsigned int nofImages,
+	long long frame, bool selected)
+{
+	int idx = (int)sequenceDataP->floatValue[PARAM_OUTPUT][0] - 1;
+	if (outputIsFrame(sequenceDataP, globalDataP)) {
+		idx = selected ? 0 : (int)(((frame % (long long)nofImages) + nofImages) % nofImages);
+	}
+	if (idx < 0) idx = 0;
+	if ((unsigned)idx >= nofImages) idx = (int)nofImages - 1;
+	return (unsigned int)idx;
+}
+
+// The geometry of a result: its size, and the pos(x,y) of its name, read as G'MIC-Qt's GIMP host
+// does (get_output_layer_props in host_gimp.cpp: integers, any one character between them). The
+// inputs are named pos(0,0) (gmicImageName): a result that keeps its input's name, or has no pos,
+// is at Source's top-left corner.
+static ResultGeometry resultGeometryOf(const gmic_interface_image& image)
+{
+	ResultGeometry g;
+	g.width = (int)image.width;
+	g.height = (int)image.height;
+	const char* const pos = strstr(image.name, "pos(");
+	if (pos) {
+		const char* p = pos + 4;
+		char* end = nullptr;
+		const long x = strtol(p, &end, 10);
+		if (end != p && *end && *end != ')') {
+			p = end + 1;
+			const long y = strtol(p, &end, 10);
+			// (bounded, so that the region of definition stays far from the int range)
+			if (end != p && *end == ')' && std::labs(x) <= 1000000 && std::labs(y) <= 1000000) {
+				g.x = (int)x;
+				g.y = (int)y;
+			}
+		}
+	}
+	return g;
+}
+
+// The geometries found by pluginResultGeometry, by command line and input sizes (an empty value:
+// G'MIC failed or gave no result), shared by all instances and their render clones, behind a
+// mutex. At most kMaxGeometries entries: the oldest go first.
+static const size_t kMaxGeometries = 1024;
+struct GeometryCache
+{
+	std::mutex mutex;
+	std::map<string, std::optional<ResultGeometry>> entries;
+	std::deque<string> order; // the keys of entries, oldest first
+};
+
+static GeometryCache& geometryCache()
+{
+	static GeometryCache cache;
+	return cache;
+}
+
+static string gmicImageName(const string& clipName); // (below)
+
+std::optional<ResultGeometry> pluginResultGeometry(const SequenceData& sequenceData, const GlobalData& globalData)
+{
+	// (a copy: the probe's own input buffers, and the names used by the PARAM_* macros)
+	const std::unique_ptr<SequenceData> probe = std::make_unique<SequenceData>(sequenceData);
+	SequenceData* const sequenceDataP = probe.get();
+	const GlobalData* const globalDataP = &globalData;
+	const EffectData& effectData = effectDataOf(globalDataP);
+	if (effectData.command.empty()) return std::nullopt; // passes Source through
+	unsigned int nofImages = 0;
+	for (int i = 0; i < globalDataP->nofInputs && i < kMaxLayers; i++) {
+		const World& in = sequenceDataP->inWorld[i];
+		if (!sequenceDataP->inputConnected[i] || in.width <= 0 || in.height <= 0) break;
+		nofImages++;
+	}
+	if (nofImages == 0) return std::nullopt;
+
+	// the command line of the render (pluginProcess), with its own G'MIC options: a render of the
+	// same instance may run at the same time
+	GmicInstanceData instance;
+	instance.options().no_inplace_processing = true;
+	const bool preview = effectData.previewOnly || sequenceDataP->floatValue[PARAM_PREVIEW][0] > 0;
+	const bool previewFirst = !preview && effectData.previewFirst;
+	string customCommands;
+	struct ResetCustomCommands {
+		gmic_interface_options& options;
+		explicit ResetCustomCommands(gmic_interface_options& o) : options(o) {}
+		~ResetCustomCommands() { options.custom_commands = NULL; }
+	} resetCustomCommands(instance.options());
+	string cmd = fullCommand(sequenceDataP, globalDataP, &instance, nofImages, preview ? GmicRun::kPreview : GmicRun::kMain, customCommands);
+	// Output Layer "Frame": G'MIC keeps only the result of the frame (max_results 0)
+	const long long frame = frameNumberOf(sequenceDataP);
+	const bool frameMode = outputIsFrame(sequenceDataP, globalDataP);
+	const string frameSelect = frameMode ? " -_openfx_gmic_frame_select " + std::to_string(frame) + ",0,0" : string();
+	string key = cmd + frameSelect;
+	for (unsigned int i = 0; i < nofImages; i++) {
+		key += '\n' + std::to_string(sequenceDataP->inWorld[i].width) + 'x' + std::to_string(sequenceDataP->inWorld[i].height);
+	}
+	GeometryCache& cache = geometryCache();
+	{
+		std::lock_guard<std::mutex> lock(cache.mutex);
+		const auto it = cache.entries.find(key);
+		if (it != cache.entries.end()) return it->second;
+	}
+
+	// blank inputs (transparent black), of the inputs' sizes
+	std::vector<std::vector<float>> buffers(nofImages);
+	std::vector<gmic_interface_image> imageBuffer((size_t)maxResultsOf(sequenceDataP, globalDataP));
+	gmic_interface_image* const images = imageBuffer.data();
+	for (unsigned int i = 0; i < nofImages; i++) {
+		World& in = sequenceDataP->inWorld[i];
+		buffers[i].assign((size_t)in.width * (size_t)in.height * 4, 0.f);
+		in.data = buffers[i].data();
+		images[i].width = in.width;
+		images[i].height = in.height;
+		images[i].data = in.data;
+		images[i].spectrum = 4;
+		images[i].depth = 1;
+		images[i].format = E_FORMAT_FLOAT;
+		images[i].is_interleaved = false;
+		const string name = gmicImageName(in.name);
+		strncpy(images[i].name, name.c_str(), sizeof(images[i].name) - 1);
+		images[i].name[sizeof(images[i].name) - 1] = '\0';
+	}
+	const string threads = gmicThreadsPrefix();
+	GmicRunState state;
+	bool previewDone = false;
+	if (previewFirst) {
+		// as pluginProcess: the preview command first, for the _persistent and the status that
+		// the main command may need (they may change the result's size)
+		const string previewCmd = threads + fullCommand(sequenceDataP, globalDataP, &instance, nofImages, GmicRun::kPreviewState, customCommands);
+		GmicCall call;
+		call.cmd = previewCmd.c_str();
+		call.nofImages = &nofImages;
+		call.images = images;
+		call.maxImages = (unsigned int)imageBuffer.size();
+		call.options = &instance.options();
+		call.stateOut = &state;
+		call.results = GmicResults::kDiscard;
+		previewDone = gmic_plugin_call(call) == 0;
+		cmd = fullCommand(sequenceDataP, globalDataP, &instance, nofImages, GmicRun::kMain, customCommands,
+		                  previewDone ? &state.status : nullptr);
+	}
+	cmd = threads + cmd + frameSelect;
+	const unsigned int nofInputs = nofImages;
+	GmicCall call;
+	call.cmd = cmd.c_str();
+	call.nofImages = &nofImages;
+	call.images = images;
+	call.maxImages = (unsigned int)imageBuffer.size();
+	call.options = &instance.options();
+	call.persistentIn = previewDone ? &state.persistent : nullptr;
+	std::optional<ResultGeometry> geometry;
+	if (gmic_plugin_call(call) == 0) {
+		if (nofImages > 0) {
+			const bool selected = frameMode && nofImages == 1 && strcmp(images[0].name, "openfx_gmic_frame_selected") == 0;
+			const gmic_interface_image& res = images[resultIndexOf(sequenceDataP, globalDataP, nofImages, frame, selected)];
+			if (res.data && res.width > 0 && res.height > 0) geometry = resultGeometryOf(res);
+		}
+		for (unsigned int i = 0; i < nofImages; i++) {
+			bool input = false;
+			for (unsigned int j = 0; j < nofInputs; j++) input = input || images[i].data == buffers[j].data();
+			if (images[i].data && !input) gmic_delete_external((float*)images[i].data);
+		}
+	} else {
+		gmicLog("G'MIC: %s: the run that measures the result's size failed (%s): the output keeps Source's size\n",
+		        effectData.name.c_str(), instance.options().error_message_buffer);
+	}
+	std::lock_guard<std::mutex> lock(cache.mutex);
+	if (cache.entries.emplace(key, geometry).second) {
+		cache.order.push_back(key);
+		while (cache.order.size() > kMaxGeometries) {
+			cache.entries.erase(cache.order.front());
+			cache.order.pop_front();
+		}
+	}
+	return geometry;
+}
+
 bool pluginPassesSourceThrough(const GlobalData& globalData)
 {
 	return effectDataOf(&globalData).command.empty();
@@ -2361,6 +2557,8 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	// the preview command run first failed (shown with warning; kept with Output Layer "Frame"
 	// results, and shown again for the frames taken from them)
 	string previewWarning;
+	// the result doesn't fit the output (Resize Mode Dynamic, see the copy below)
+	string geometryWarning;
 	// Output Layer "Frame": the results kept from a previous render, if the key is the same
 	const long long frame = frameNumberOf(sequenceDataP);
 	string cacheKey;
@@ -2463,11 +2661,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		// the result selected by G'MIC: too many or too large to keep
 		const bool selected = frameMode && nofImages == 1 && strcmp(images[0].name, "openfx_gmic_frame_selected") == 0;
 		if (!res && nofImages > 0) {
-			int idx = (int)sequenceDataP->floatValue[PARAM_OUTPUT][0] - 1;
-			if (frameMode) idx = selected ? 0 : (int)(((frame % (long long)nofImages) + nofImages) % nofImages);
-			if (idx < 0) idx = 0;
-			if ((unsigned)idx >= nofImages) idx = (int)nofImages - 1;
-			res = &images[idx];
+			res = &images[resultIndexOf(sequenceDataP, globalDataP, nofImages, frame, selected)];
 		}
 
 		if (!res || res->spectrum == 0 || !res->data) {
@@ -2488,9 +2682,13 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 			const int dw = out.width, dh = out.height;
 			const int sw = (int)res->width, sh = (int)res->height;
 			// G'MIC anchors images at their top-left corner: a result of another size than the first
-			// input keeps the input's left and top edges (pixel y goes up)
-			const int sx1 = sequenceDataP->inWorld[0].origin_x;
-			const int sy1 = sequenceDataP->inWorld[0].origin_y + sequenceDataP->inWorld[0].height - sh;
+			// input keeps the input's left and top edges (pixel y goes up). Resize Mode Dynamic: moved
+			// by the pos(x,y) of its name (G'MIC's y goes down), as the region of definition
+			// (pluginResultGeometry)
+			const bool dynamic = resizeModeOf(sequenceDataP, globalDataP) == kResizeModeDynamic;
+			const ResultGeometry at = dynamic ? resultGeometryOf(*res) : ResultGeometry();
+			const int sx1 = sequenceDataP->inWorld[0].origin_x + at.x;
+			const int sy1 = sequenceDataP->inWorld[0].origin_y + sequenceDataP->inWorld[0].height - at.y - sh;
 			const int dx1 = out.origin_x, dy1 = out.origin_y;
 			const size_t dplane = (size_t)dw * (size_t)dh, splane = (size_t)sw * (size_t)sh;
 			float* const dst = out.data;
@@ -2504,6 +2702,14 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 			const bool same = (sw == dw && sh == dh && sx1 == dx1 && sy1 == dy1);
 			if (!same) {
 				memset(dst, 0, dplane * 4 * sizeof(float));
+			}
+			if (!same && dynamic) {
+				// the output doesn't have the size that the region of definition declared (a size that
+				// depends on the pixels, which the blank inputs of pluginResultGeometry don't have, or
+				// a host that gives another output): cropped or padded, never resized
+				geometryWarning = "The result (" + std::to_string(sw) + "x" + std::to_string(sh) + " at " +
+					std::to_string(at.x) + "," + std::to_string(at.y) + " from Source's top-left corner) doesn't match the output (" +
+					std::to_string(dw) + "x" + std::to_string(dh) + "): it is cropped or padded.";
 			}
 			// overlap, in pixel coordinates (y up)
 			const int x1 = std::max(sx1, dx1), x2 = std::min(sx1 + sw, dx1 + dw);
@@ -2539,6 +2745,9 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	}
 	if (!previewWarning.empty()) {
 		warning = warning.empty() ? previewWarning : previewWarning + "\n" + warning;
+	}
+	if (!geometryWarning.empty()) {
+		warning = warning.empty() ? geometryWarning : geometryWarning + "\n" + warning;
 	}
 	if (result != 0 && !aborted) {
 		// persistent message on the node, instead of a modal message on every render

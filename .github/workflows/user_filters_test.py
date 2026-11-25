@@ -19,6 +19,12 @@ the value, printed, must be the number of CPUs (hostDemo runs one render, whose 
 the hardware threads). This shows that the count reaches G'MIC, not that the plug-in's prefix is
 applied: the value is also G'MIC's own default.
 
+User File Larger, User File Smaller and User File Shifted give results of another size or
+position (#175): with Resize Mode Dynamic, the default, the output must have the result's size,
+and the region of definition its size and position, from Source's top-left corner; with Resize
+Mode Fixed (Inplace), User File Larger keeps Source's size and region of definition. No render
+may warn that the result doesn't match the output.
+
 With --stdlib, the same filters are then rendered with a copy of the whole built-in standard
 library before them in the file, as in a user's copied gmic_stdlib.gmic: the outputs must be the
 same, without another hot-fix note or a warning (a copy of the built-in commands still gets the
@@ -57,6 +63,16 @@ EXPECTED = {
 }
 TOLERANCE = 1e-4
 DEFINED_BY = ' is defined by '  # the note of a kept definition of a hot-fixed command
+# (#175) plug-in id, hostDemo arguments: the result's size (pixels) and its pos(x,y) (pixels, y
+# down), or None for Source's size and position, and the RGB value of every output pixel
+GEOMETRY_CASES = [
+    ('eu.gmic.UserFileLarger', [], (2.0, 1.5, 0, 0), (1.0, 0.0, 0.0)),
+    ('eu.gmic.UserFileSmaller', [], (0.5, 0.25, 0, 0), (0.0, 1.0, 0.0)),
+    ('eu.gmic.UserFileShifted', [], (1.0, 1.0, 10, 20), (0.0, 0.0, 1.0)),
+    ('eu.gmic.UserFileLarger', ['-s', 'Resize Mode=0'], None, (1.0, 0.0, 0.0)),
+]
+GEOMETRY_WARNING = "doesn't match the output"
+ROD_TOLERANCE = 1e-3
 KEPT_NOTE = "'star_tone'" + DEFINED_BY
 HOTFIX_WARNING = 'Warning: hot fix'
 TIMEOUT = 120
@@ -127,6 +143,58 @@ def check_output(report, expected):
         elif abs(lows[c] - value) > TOLERANCE or abs(highs[c] - value) > TOLERANCE:
             problems.append('channel %d is in [%g, %g], expected %g'
                             % (c, lows[c], highs[c], value))
+    return problems
+
+
+def check_geometry(host, plugins, work):
+    """Renders each of GEOMETRY_CASES, and checks the output's size and region of definition.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems, empty if every output has the expected size, position and color.
+    """
+    problems = []
+    for pid, args, geometry, color in GEOMETRY_CASES:
+        name = '%s %s' % (pid, ' '.join(args)) if args else pid
+        result = render_plugins.render(host, args, plugins, work, TIMEOUT, (pid, CONTEXT, ['Source']))
+        problem, errors, log = result[2], result[5], result[6]
+        if problem:
+            problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
+            continue
+        if GEOMETRY_WARNING in log:
+            problems.append('%s: the result does not match the output' % name)
+        report_path = os.path.join(work, pid[len('eu.gmic.'):], 'report.json')
+        with open(report_path, encoding='utf-8') as f:
+            report = json.load(f)
+        problems += ['%s: %s' % (name, p) for p in check_output(report, color)]
+        renders = report.get('renders') or []
+        first = renders[0] if renders else {}
+        output = first.get('output') or {}
+        # ([x1, y1, x2, y2] in canonical coordinates)
+        rod = (first.get('regionOfDefinition') or {}).get('rod') or []
+        src = ((first.get('inputs') or {}).get('Source') or {}).get('regionOfDefinition') or []
+        if len(src) != 4:
+            problems.append('%s: no region of definition of Source' % name)
+            continue
+        # Source's pixels: the file's (render scale 1), so the pixel aspect ratio is its RoD width
+        # over its pixel width
+        src_w, src_h = render_plugins.INPUT_WIDTH, render_plugins.INPUT_HEIGHT
+        par = (src[2] - src[0]) / src_w
+        sx, sy, dx, dy = geometry or (1.0, 1.0, 0, 0)
+        width, height = round(src_w * sx), round(src_h * sy)
+        x1 = src[0] + dx * par
+        y2 = src[3] - dy
+        expected = [x1, y2 - height, x1 + width * par, y2]
+        if (output.get('w'), output.get('h')) != (width, height):
+            problems.append('%s: the output is %sx%s, expected %dx%d'
+                            % (name, output.get('w'), output.get('h'), width, height))
+        if len(rod) != 4 or any(abs(r - e) > ROD_TOLERANCE for r, e in zip(rod, expected)):
+            problems.append('%s: the region of definition is %s, expected %s (Source: %s)'
+                            % (name, rod, expected, src))
     return problems
 
 
@@ -240,6 +308,7 @@ def run_test(host, plugins, stdlib, runs, work, name):
     problems += check_channels(host, plugins, work)
     if not any(KEPT_NOTE in log for log in logs):
         problems.append("no note that the file's own definition of 'star_tone' is kept")
+    problems += check_geometry(host, plugins, work)
     for p in problems:
         print('FAIL (user file): ' + p)
     passed = not problems

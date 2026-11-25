@@ -409,10 +409,10 @@ void premultiplyPlanar(float* data, int width, int height, float maxValue)
 // would be opaque everywhere, with hard bright edges where the input was transparent. Before the
 // premultiplication handling, G'MIC got the premultiplied colours, i.e. the input composited over
 // black, and the result looked composited over black too. To keep that look, the colours are
-// multiplied by the main input's alpha and the output alpha stays opaque. The result is resized to
-// the input's size at the end of the G'MIC command: only gray or RGB results that had the processed
-// input's size come here without alpha, the others get an opaque alpha before that resize, since
-// the input alpha wouldn't line up with them (see kOpaqueResizedCommand in gmic_plugin.cpp). out is the
+// multiplied by the main input's alpha and the output alpha stays opaque. Only gray or RGB results
+// that have the processed input's size come here without alpha: the others get an opaque alpha at
+// the end of the G'MIC command, since the input alpha wouldn't line up with them (see
+// kOpaqueResizedCommand in gmic_plugin.cpp). out is the
 // output buffer, in the main input's buffer, both in pixel coordinates with rows top-down.
 void multiplyByInputAlphaPlanar(const World& out, const World& in, float maxValue)
 {
@@ -526,6 +526,7 @@ private:
 
 	bool pointIsDefault(const Parameter& param, double x, double y) const;
 	std::optional<OfxRectD> sourceRoD(double time) const;
+	std::optional<OfxRectD> resultRoD(const OfxRectD& sourceRod, double time, const OfxPointD& renderScale) const;
 	void pointsFromSourceRead();
 	void pointsFromSourceWrite();
 	void pointsMoveToSource(double time, int onlyParam);
@@ -544,6 +545,7 @@ private:
 	OFX::ChoiceParam* _outputLayer;
 	OFX::BooleanParam* _animateSeed;
 	OFX::BooleanParam* _draftMode;
+	OFX::ChoiceParam* _resizeMode;
 	// layer times (see layerTimesAt), NULL for plug-ins without them
 	OFX::IntParam* _layersFromSource = nullptr;
 	int _lastLayersFromSource = 0; // its value at the previous change (see changedParam)
@@ -563,6 +565,7 @@ GMICEffect::GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData
 	, _outputLayer(fetchChoiceParam(kOutputLayerParam))
 	, _animateSeed(fetchBooleanParam(kAnimateSeedParam))
 	, _draftMode(fetchBooleanParam(kDraftModeParam))
+	, _resizeMode(fetchChoiceParam(kResizeModeParam))
 	, _pointFromSource((size_t)globalData.nofParams)
 {
 	for (int i = 0; i < _gd.nofParams; i++) {
@@ -717,7 +720,7 @@ double GMICEffect::inputTime(const LayerTimes& lt, int i, double t) const
 }
 
 // tells the host what region we are capable of filling: Source's (the host's default if it can't
-// be read)
+// be read), or with Resize Mode Dynamic, the result's (see resultRoD)
 bool GMICEffect::getRegionOfDefinition(const OFX::RegionOfDefinitionArguments& args, OfxRectD& rod)
 {
 	refuseRenderScale(args.renderScale);
@@ -725,7 +728,74 @@ bool GMICEffect::getRegionOfDefinition(const OFX::RegionOfDefinitionArguments& a
 	const std::optional<OfxRectD> sourceRod = hostQuery([&] { return source->getRegionOfDefinition(args.time); });
 	if (!sourceRod) return false;
 	rod = *sourceRod;
+	if (!pluginPassesSourceThrough(_gd) && source->isConnected() && !isEmpty(*sourceRod) &&
+		_resizeMode->getValueAtTime(args.time) == kResizeModeDynamic) {
+		if (const std::optional<OfxRectD> result = resultRoD(*sourceRod, args.time, args.renderScale)) {
+			rod = *result;
+		}
+	}
 	return true;
+}
+
+// the pixels of a canonical rectangle, as hosts compute the bounds of images (Natron's
+// RectD::toPixelEnclosing, hostDemo's canonicalToPixelEnclosing)
+OfxRectI toPixelEnclosing(const OfxRectD& r, const OfxPointD& renderScale, double par)
+{
+	return OfxRectI{ (int)std::floor(r.x1 * renderScale.x / par), (int)std::floor(r.y1 * renderScale.y),
+		(int)std::ceil(r.x2 * renderScale.x / par), (int)std::ceil(r.y2 * renderScale.y) };
+}
+
+// Resize Mode Dynamic (issue #175): the region of definition of the result, from its geometry
+// (pluginResultGeometry, which runs G'MIC on blank inputs of the sizes of the inputs' regions of
+// definition, at the render time, with the layer times). Empty if it is Source's (a result of
+// Source's size at its top-left corner: Source's region of definition, exactly as before), or if
+// it is unknown (G'MIC failed). The pixel rectangle is the result's, its top-left corner at
+// Source's moved by the result's pos(x,y); each edge is moved inwards by 1e-6 pixel before the
+// conversion to canonical coordinates, so that the host's rounding (toPixelEnclosing) gives back
+// the same pixels.
+std::optional<OfxRectD> GMICEffect::resultRoD(const OfxRectD& sourceRod, double time, const OfxPointD& renderScale) const
+{
+	// the values of the render at this time (see render), the inputs without images
+	const std::unique_ptr<SequenceData> sd = std::make_unique<SequenceData>();
+	for (int i = 0; i < _gd.nofParams; i++) {
+		sd->textValue[i] = _gd.param[i].text;
+		std::copy(_gd.param[i].defaultValue, _gd.param[i].defaultValue + 4, sd->floatValue[i]);
+	}
+	sd->time = time;
+	if (const std::optional<OfxRangeD> range = frameRangeOf(*_inputs[0]);
+		range && range->min <= range->max && std::fabs(range->min) < 1e9) {
+		sd->frameRangeStart = range->min;
+	}
+	double par = hostQuery([this] { return _inputs[0]->getPixelAspectRatio(); }).value_or(1.);
+	if (!(par > 0.)) par = 1.;
+	const OfxRectI sourcePixels = toPixelEnclosing(sourceRod, renderScale, par);
+	const LayerTimes lt = layerTimesAt(time);
+	for (int i = 0; i < lt.nofInputs; i++) {
+		const int c = lt.clipIndex(i);
+		OFX::Clip* clip = _inputs[c];
+		if (!clip->isConnected()) break;
+		const double t = inputTime(lt, i, time);
+		const std::optional<OfxRectD> inRod = i == 0 ? std::optional<OfxRectD>(sourceRod) : hostQuery([&] { return clip->getRegionOfDefinition(t); });
+		if (!inRod || isEmpty(*inRod)) break;
+		const OfxRectI r = toPixelEnclosing(*inRod, renderScale, par);
+		World& in = sd->inWorld[i];
+		in.name = inputName(c);
+		in.origin_x = r.x1;
+		in.origin_y = r.y1;
+		in.width = r.x2 - r.x1;
+		in.height = r.y2 - r.y1;
+		sd->inputConnected[i] = true;
+	}
+	fetchParamValues(*sd, sourcePixels, par, time, renderScale);
+	const std::optional<ResultGeometry> g = pluginResultGeometry(*sd, _gd);
+	const int sw = sourcePixels.x2 - sourcePixels.x1, sh = sourcePixels.y2 - sourcePixels.y1;
+	if (!g || (g->x == 0 && g->y == 0 && g->width == sw && g->height == sh)) return std::nullopt;
+	// pixels (y up): the result's top edge is Source's, moved down by pos y
+	const double x1 = sourcePixels.x1 + g->x, y2 = sourcePixels.y2 - g->y;
+	const double x2 = x1 + g->width, y1 = y2 - g->height;
+	constexpr double kInwards = 1e-6;
+	return OfxRectD{ (x1 + kInwards) * par / renderScale.x, (y1 + kInwards) / renderScale.y,
+		(x2 - kInwards) * par / renderScale.x, (y2 - kInwards) / renderScale.y };
 }
 
 // tells the host how much of the input we need to fill the given window
@@ -1368,7 +1438,10 @@ void GMICPluginFactory::describe(OFX::ImageEffectDescriptor& desc)
 	desc.setRenderThreadSafety(OFX::eRenderInstanceSafe);
 	desc.setSupportsTiles(false);
 	desc.setHostFrameThreading(false);
-	desc.setSupportsMultiResolution(false);
+	// (issue #175) inputs of any size and position, and an output with the result's own (Resize
+	// Mode Dynamic): Natron refuses to connect inputs whose regions of definition differ, or don't
+	// start at 0,0, to an effect without multi-resolution (checkCanConnectNoMultiRes)
+	desc.setSupportsMultiResolution(true);
 
 	// the parameters the clip preferences depend on, by name (they are defined in describeInContext).
 	// Not with addClipPreferencesSlaveParam in describeInContext: hosts copy this descriptor's

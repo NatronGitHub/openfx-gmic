@@ -15,6 +15,7 @@
 
 #include <array>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "gmic_parameter.h"
@@ -36,6 +37,13 @@ constexpr const char* kOutputLayerParam = "Output Layer";
 constexpr const char* kDraftModeParam = "Preview/Draft Mode";
 // the last option of the Output Layer parameter, "Frame" (issue #65): see pluginProcess
 constexpr int kOutputLayerFrame = 11;
+// Resize Mode (issue #175): Fixed (Inplace) gives Source's rectangle (a result of another size is
+// cropped or padded), Dynamic (the default) the result's own size and position, which the region
+// of definition declares (see pluginResultGeometry); Downsample 1/N (2 to 5) processes a
+// downsampled input and resizes the result to Source's size
+constexpr const char* kResizeModeParam = "Resize Mode";
+constexpr int kResizeModeFixed = 0;
+constexpr int kResizeModeDynamic = 1;
 
 // The number of plug-ins, one per G'MIC filter (the filters are loaded on first use).
 int getNofPlugins();
@@ -95,5 +103,25 @@ void pluginPurgeCaches();
 
 // the Output Layer parameter of an instance changed (any reason), to the option outputLayer
 void pluginOutputLayerChanged(GmicInstanceData& instanceData, int outputLayer);
+
+// The size and position of the result that a render outputs, in pixels: its offset from the
+// top-left corner of the first input (Source), x to the right and y down as in G'MIC (the pos(x,y)
+// in the result's name, as G'MIC-Qt's hosts read it), and its size.
+struct ResultGeometry
+{
+	int x = 0;
+	int y = 0;
+	int width = 0;
+	int height = 0;
+};
+
+// Resize Mode Dynamic (issue #175): the geometry of the result that a render with sequenceData's
+// values and input sizes gives, for the region of definition, which OFX needs before the render.
+// Runs the filter as the render does (pluginProcess), on blank (transparent black) inputs of the
+// sizes in sequenceData.inWorld (their data is ignored: the region of definition action has no
+// images), and keeps the result for that command line and those sizes, so that it runs again only
+// when they change (an edit, an animated parameter, another input size). Empty if G'MIC failed or
+// gave no result (the render will report it).
+std::optional<ResultGeometry> pluginResultGeometry(const gmic_ofx::SequenceData& sequenceData, const gmic_ofx::GlobalData& globalData);
 
 #endif

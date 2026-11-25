@@ -85,3 +85,19 @@ fc :
 # kept, with a note (no filter here calls it)
 star_tone :
   f 0
+
+# results of another size and position (#175), uniform colours: with Resize Mode Dynamic (the
+# default), the output has the result's size and position, which the region of definition
+# declares: larger (200% x 150%), smaller (50% x 25%), and moved by the pos(10,20) of its name (10
+# pixels right and 20 down, as G'MIC-Qt's hosts place a layer)
+#@gui User File Larger : fx_userfile_larger, fx_userfile_larger
+fx_userfile_larger :
+  r 200%,150%,1,100%,0 fill_color 255,0,0
+
+#@gui User File Smaller : fx_userfile_smaller, fx_userfile_smaller
+fx_userfile_smaller :
+  r 50%,25%,1,100%,0 fill_color 0,255,0
+
+#@gui User File Shifted : fx_userfile_shifted, fx_userfile_shifted
+fx_userfile_shifted :
+  fill_color 0,0,255 nm "pos(10,20),name(Source)"
