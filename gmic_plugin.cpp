@@ -2718,18 +2718,31 @@ static std::optional<ResultGeometry> probeGeometry(SequenceData& probe, const Gl
 // and outlines (a few to some 20 pixels) leave most of the image; multiples of 16, so that the
 // common percentages (50%, 25%, 12.5%, 150%...) of the long side are whole numbers. Two sizes give
 // the fit; the third one checks it, since a line goes through any two points: a size that isn't
-// an affine function of the input's (e.g. one that depends on W*H) fails it.
+// an affine function of the input's (e.g. one that depends on W*H) fails it. They keep Source's
+// proportions, so that sizes in percent of max(w,h) or min(w,h) (e.g. Frame [Regular]) stay
+// affine functions of the width and of the height.
 static const int kProbeSizes[3] = { 64, 80, 96 };
+// The refinement's thin probes (see resultGeometry): Source's real width x kThinSize, and
+// kThinSize x its real height
+static const int kThinSize = 48;
 
-// The fit of a size or an offset Y against an input size X (Source's width or height), over the
-// probes, at the real size realX, if it is affine: Y = a*X + b. a is first tried as a fraction p/q
-// with q <= 16 (2, 3/2, 1/4...) and b as an integer, within half a pixel of every probe (the
-// rounding of a size in percent): the prediction is then exact for sizes in percent of the image
-// plus a fixed border. Else the least-squares fit, within 1 pixel of every probe (e.g. a
-// rotation's |cos| + |sin| * H/W, irrational): its prediction may be some pixels off at the real
-// size (the slope of 3 probes 32 pixels apart), which the render then crops or pads, with a
-// warning. Empty if no fit is close enough: not an affine function.
-static std::optional<int> fitAffine(const int (&X)[3], const int (&Y)[3], int realX)
+// A fit Y = a*X + b of a size or an offset against Source's width or height (see fitAxis)
+struct AxisFit
+{
+	double a = 0.;
+	double b = 0.;
+	bool snapped = false; // a = p/q with q a power of 2 up to 16, b an integer: exact
+	int at(int x) const { return (int)std::lround(a * x + b); }
+};
+
+// The fit of Y against X over the probes, if it is affine. a is first tried as p/q, q = 1, 2, 4, 8
+// or 16 (2, 3/2, 1/4...), with an integer b, within half a pixel of every probe (the rounding of a
+// size in percent): sizes in percent of the image plus fixed borders are then exact (snapped).
+// Only powers of 2: with other denominators, an irrational slope (a rotation's) can pass for a
+// fraction over sizes 32 pixels apart (e.g. 15/13). Else the least-squares fit, within 1 pixel of
+// every probe, not snapped: its slope is only known to about 1/32, which the refinement corrects.
+// Empty if no fit is close enough: not an affine function.
+static std::optional<AxisFit> fitAxis(const int* X, const int* Y) // (the 3 small probes)
 {
 	const double mx = (X[0] + X[1] + X[2]) / 3., my = (Y[0] + Y[1] + Y[2]) / 3.;
 	double sxx = 0., sxy = 0.;
@@ -2745,16 +2758,85 @@ static std::optional<int> fitAffine(const int (&X)[3], const int (&Y)[3], int re
 		}
 		return true;
 	};
-	for (int q = 1; q <= 16; q++) {
-		const double a = std::round(slope * q) / q;
-		const double b = std::round(my - a * mx);
-		if (fits(a, b, 0.5)) return (int)std::lround(a * realX + b);
+	AxisFit f;
+	for (int q = 1; q <= 16; q *= 2) {
+		f.a = std::round(slope * q) / q;
+		f.b = std::round(my - f.a * mx);
+		if (fits(f.a, f.b, 0.5)) {
+			f.snapped = true;
+			return f;
+		}
 	}
-	const double b = my - slope * mx;
-	if (fits(slope, b, 1.)) return (int)std::lround(slope * realX + b);
+	f.a = slope;
+	f.b = my - slope * mx;
+	if (fits(f.a, f.b, 1.)) return f;
 	return std::nullopt;
 }
 
+// The least-squares fit Y = a*W + c*H + b over n probes of sizes (W[k], H[k]), at (realW, realH),
+// if it is within 1 pixel of every probe
+static std::optional<int> fitPlane(const int* W, const int* H, const int* Y, int n, int realW, int realH)
+{
+	// the normal equations, solved by Cramer's rule (3x3)
+	double m[3][3] = {}, v[3] = {};
+	for (int k = 0; k < n; k++) {
+		const double r[3] = { (double)W[k], (double)H[k], 1. };
+		for (int i = 0; i < 3; i++) {
+			for (int j = 0; j < 3; j++) m[i][j] += r[i] * r[j];
+			v[i] += r[i] * Y[k];
+		}
+	}
+	const auto det = [](const double (&a)[3][3]) {
+		return a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) +
+			a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+	};
+	const double d = det(m);
+	if (!(std::fabs(d) > 1e-9)) return std::nullopt;
+	double x[3];
+	for (int i = 0; i < 3; i++) {
+		double mi[3][3];
+		for (int r = 0; r < 3; r++) {
+			for (int c = 0; c < 3; c++) mi[r][c] = c == i ? v[r] : m[r][c];
+		}
+		x[i] = det(mi) / d;
+	}
+	for (int k = 0; k < n; k++) {
+		if (std::fabs(x[0] * W[k] + x[1] * H[k] + x[2] - Y[k]) > 1. + 1e-9) return std::nullopt;
+	}
+	return (int)std::lround(x[0] * realW + x[1] * realH + x[2]);
+}
+
+// one probe of the inputs scaled by (sx, sy) (Source's size at the probe: W, H), its result's
+// geometry in g; false if it failed
+static bool probeScaled(const SequenceData& sequenceData, const GlobalData* globalDataP, unsigned int nofImages, double sx, double sy,
+	int& W, int& H, ResultGeometry& g, unsigned int& count)
+{
+	SequenceData probe = sequenceData;
+	for (unsigned int i = 0; i < nofImages; i++) {
+		World& in = probe.inWorld[i];
+		in.origin_x = (int)std::lround(in.origin_x * sx);
+		in.origin_y = (int)std::lround(in.origin_y * sy);
+		in.width = std::max(1, (int)std::lround(in.width * sx));
+		in.height = std::max(1, (int)std::lround(in.height * sy));
+	}
+	W = probe.inWorld[0].width;
+	H = probe.inWorld[0].height;
+	const std::optional<ResultGeometry> r = probeGeometry(probe, globalDataP, nofImages, count);
+	if (!r) return false;
+	g = *r;
+	return true;
+}
+
+// The geometry at the real size (maintainer's decisions on #175):
+// 1. three small probes keeping Source's proportions (kProbeSizes), and a fit of the result's
+//    width, height and pos() offsets against Source's width or height (fitAxis);
+// 2. if a fit is not snapped to an exact fraction (e.g. a rotation, |cos|*W + |sin|*H), a
+//    refinement: two thin probes that span the real size, Source's real width x kThinSize and
+//    kThinSize x its real height (about 160k pixels for 1920x1080), and a joint fit of each value
+//    against (W, H) over the five probes (fitPlane), whose slopes are then known to about
+//    1/1900, within 1 pixel at the real size. Sizes in percent of max(w,h) or min(w,h) aren't
+//    affine over probes of other proportions: the joint fit fails, and the axis fits give the
+//    prediction, as without the refinement.
 static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequenceData, const GlobalData& globalData)
 {
 	const GlobalData* const globalDataP = &globalData;
@@ -2775,44 +2857,64 @@ static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequence
 		SequenceData probe = sequenceData;
 		return probeGeometry(probe, globalDataP, nofImages, count);
 	}
-	// the inputs scaled so that Source's long side is each probe size: their aspect ratios,
-	// relative sizes and offsets kept (rounded to pixels)
-	int W[3], H[3], w[3], h[3], x[3], y[3];
-	unsigned int counts[3];
+	// [0..2]: the small probes, [3..4]: the thin ones (refinement)
+	int W[5], H[5], w[5], h[5], x[5], y[5];
+	unsigned int counts[5];
+	const auto record = [&](int k, const ResultGeometry& g) {
+		w[k] = g.width;
+		h[k] = g.height;
+		x[k] = g.x;
+		y[k] = g.y;
+	};
 	for (int k = 0; k < 3; k++) {
-		SequenceData probe = sequenceData;
 		const double scale = (double)kProbeSizes[k] / longSide;
-		for (unsigned int i = 0; i < nofImages; i++) {
-			World& in = probe.inWorld[i];
-			in.origin_x = (int)std::lround(in.origin_x * scale);
-			in.origin_y = (int)std::lround(in.origin_y * scale);
-			in.width = std::max(1, (int)std::lround(in.width * scale));
-			in.height = std::max(1, (int)std::lround(in.height * scale));
-		}
-		W[k] = probe.inWorld[0].width;
-		H[k] = probe.inWorld[0].height;
-		const std::optional<ResultGeometry> g = probeGeometry(probe, globalDataP, nofImages, counts[k]);
-		if (!g) return std::nullopt;
-		w[k] = g->width;
-		h[k] = g->height;
-		x[k] = g->x;
-		y[k] = g->y;
+		ResultGeometry g;
+		if (!probeScaled(sequenceData, globalDataP, nofImages, scale, scale, W[k], H[k], g, counts[k])) return std::nullopt;
+		record(k, g);
 	}
-	// (Output Layer "Frame": the same number of results, so that the frame picks the same one)
-	const std::optional<int> fw = fitAffine(W, w, source.width), fh = fitAffine(H, h, source.height);
-	const std::optional<int> fx = fitAffine(W, x, source.width), fy = fitAffine(H, y, source.height);
-	if (counts[0] != counts[1] || counts[1] != counts[2] || !fw || !fh || !fx || !fy || *fw <= 0 || *fh <= 0 ||
-		*fw > kMaxPos || *fh > kMaxPos) {
+	const auto notAffine = [&]() {
 		gmicLog("G'MIC: %s: the result's size is not an affine function of the input's size (%dx%d, %dx%d, %dx%d for "
 		        "inputs of %dx%d, %dx%d, %dx%d): the output keeps Source's size\n", effectData.name.c_str(),
 		        w[0], h[0], w[1], h[1], w[2], h[2], W[0], H[0], W[1], H[1], W[2], H[2]);
 		return std::nullopt;
-	}
+	};
+	// (Output Layer "Frame": the same number of results, so that the frame picks the same one)
+	if (counts[0] != counts[1] || counts[1] != counts[2]) return notAffine();
+	const std::optional<AxisFit> fw = fitAxis(W, w), fh = fitAxis(H, h), fx = fitAxis(W, x), fy = fitAxis(H, y);
+	if (!fw || !fh || !fx || !fy) return notAffine();
 	ResultGeometry g;
-	g.width = *fw;
-	g.height = *fh;
-	g.x = std::max(-(int)kMaxPos, std::min((int)kMaxPos, *fx));
-	g.y = std::max(-(int)kMaxPos, std::min((int)kMaxPos, *fy));
+	g.width = fw->at(source.width);
+	g.height = fh->at(source.height);
+	g.x = fx->at(source.width);
+	g.y = fy->at(source.height);
+	if (!(fw->snapped && fh->snapped && fx->snapped && fy->snapped)) {
+		ResultGeometry t[2];
+		const bool thin = probeScaled(sequenceData, globalDataP, nofImages, 1., (double)kThinSize / source.height, W[3], H[3], t[0], counts[3]) &&
+			probeScaled(sequenceData, globalDataP, nofImages, (double)kThinSize / source.width, 1., W[4], H[4], t[1], counts[4]) &&
+			counts[3] == counts[0] && counts[4] == counts[0];
+		std::optional<int> pw, ph, px, py;
+		if (thin) {
+			record(3, t[0]);
+			record(4, t[1]);
+			pw = fitPlane(W, H, w, 5, source.width, source.height);
+			ph = fitPlane(W, H, h, 5, source.width, source.height);
+			px = fitPlane(W, H, x, 5, source.width, source.height);
+			py = fitPlane(W, H, y, 5, source.width, source.height);
+		}
+		if (pw && ph && px && py) {
+			g.width = *pw;
+			g.height = *ph;
+			g.x = *px;
+			g.y = *py;
+			gmicLog("openfx-gmic: %s: the result's size, %dx%d, refined with thin probes\n", effectData.name.c_str(), g.width, g.height);
+		} else {
+			gmicLog("openfx-gmic: %s: the result's size, %dx%d, from the small probes (not refined: %s)\n", effectData.name.c_str(),
+			        g.width, g.height, thin ? "not affine over probes of other proportions" : "a thin probe failed");
+		}
+	}
+	if (g.width <= 0 || g.height <= 0 || g.width > kMaxPos || g.height > kMaxPos) return notAffine();
+	g.x = std::max(-(int)kMaxPos, std::min((int)kMaxPos, g.x));
+	g.y = std::max(-(int)kMaxPos, std::min((int)kMaxPos, g.y));
 	return g;
 }
 
