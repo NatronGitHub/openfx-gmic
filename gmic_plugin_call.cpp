@@ -223,11 +223,13 @@ static void setPersistent(gmic& interpreter, const std::string& persistent)
 // Keeps the OpenMP runtime (vcomp140.dll, libgomp) loaded until the process exits: when the host
 // unloads GMIC.ofx, the runtime would be unloaded too, under its threads still running (those of
 // a pool finishing to exit after gmicCallAbortable()'s worker is joined; on the fallback path in
-// the host's thread, idle ones), which then crash (issue #213). The module is found from a
-// function's address, not by name (Windows: the bundle's vcomp140.dll); with a static runtime,
-// GMIC.ofx is pinned, so its static destructors run at exit() instead of at unload. Not on macOS:
-// libomp joins its threads at unload, and pinning it would move that to exit(), where libomp had
-// a crash (https://reviews.llvm.org/D159324).
+// the host's thread, idle ones), which then crash (issue #213). The first G'MIC run is early
+// enough: no OpenMP thread exists before it, so an earlier unload, with the runtime (e.g. after
+// HostSupport's plug-in scan, which loads GMIC.ofx again at first use), is harmless. The module is
+// found from a function's address, not by name (Windows: the bundle's vcomp140.dll); with a
+// static runtime, GMIC.ofx is pinned, so its static destructors run at exit() instead of at
+// unload. Not on macOS: libomp joins its threads at unload, and pinning it would move that to
+// exit(), where libomp had a crash (https://reviews.llvm.org/D159324).
 static void pinOpenMpRuntime()
 {
 #if defined(_OPENMP) && !defined(__APPLE__)

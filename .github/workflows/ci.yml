@@ -193,21 +193,40 @@ jobs:
             --plugins install/OFX/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset pr --jobs 2 --work render-ofx14
       # the OpenMP runtime stays loaded when the host unloads GMIC.ofx (#213): libgomp, unloaded
-      # with it, crashed intermittently under its threads that were still exiting. glibc's
-      # LD_DEBUG=files log shows it at every run: "activating NODELETE" for libgomp (the
-      # plug-in's pin), and no "destroying link map" for it
+      # with it, crashed intermittently under its threads that were still exiting. In glibc's
+      # LD_DEBUG=files log of hostDemo (one ld.<pid> file per process), the plug-in's pin is
+      # "activating NODELETE" for libgomp, at the first render; after it, GMIC.ofx is unloaded
+      # ("destroying link map") and libgomp is not. hostDemo also loads and unloads GMIC.ofx for
+      # the plug-in scan, before any render: libgomp, not pinned yet, is unloaded then, harmlessly
+      # (no OpenMP thread exists before the first G'MIC run), and loaded again for the render
       - name: Check that unloading the plug-in keeps libgomp loaded
         run: |
           rm -rf ld-debug && mkdir ld-debug
           LD_DEBUG=files LD_DEBUG_OUTPUT="$PWD/ld-debug/ld" python3 .github/workflows/render_plugins.py \
             --host build --plugins install/OFX/Plugins --list plugins.txt --only eu.gmic.ExtractObjects \
             --work render-unload
-          grep -h 'activating NODELETE for .*libgomp' ld-debug/ld.* > /dev/null ||
-            { echo "FAIL: libgomp was not pinned (no 'activating NODELETE' in the LD_DEBUG log)"; exit 1; }
-          if grep -h 'libgomp.*destroying link map' ld-debug/ld.*; then
-            echo "FAIL: libgomp was unloaded with the plug-in"; exit 1
-          fi
-          echo "libgomp stays loaded after the plug-in is unloaded"
+          status=0 pinned=0
+          for f in ld-debug/ld.*; do
+            # the loads, unloads and NODELETE pins of libgomp and GMIC.ofx in this process
+            lines=$(grep -E '(libgomp[^ ]*|GMIC\.ofx) \[[0-9]+\]; +(generating|destroying) link map|NODELETE for [^ ]*libgomp' "$f") ||
+              continue
+            echo "${f##*/}:" && echo "$lines"
+            rc=0
+            echo "$lines" | awk '/activating NODELETE for [^ ]*libgomp/ { pin = 1; next }
+              pin && /libgomp[^ ]* \[[0-9]+\]; +destroying link map/ { unpinned = 1 }
+              pin && /GMIC\.ofx \[[0-9]+\]; +destroying link map/ { unloaded = 1 }
+              END { exit !pin ? 1 : unpinned ? 2 : unloaded ? 0 : 3 }' || rc=$?
+            case $rc in
+              0) ;;
+              1) continue ;;  # no render in this process
+              2) echo "FAIL: ${f##*/}: libgomp was unloaded after the plug-in pinned it"; status=1 ;;
+              *) echo "FAIL: ${f##*/}: GMIC.ofx was not unloaded after the pin: the check proves nothing"; status=1 ;;
+            esac
+            pinned=1
+          done
+          [ $pinned = 1 ] || { echo "FAIL: libgomp was not pinned (no 'activating NODELETE' in the LD_DEBUG logs)"; status=1; }
+          [ $status = 0 ] && echo "libgomp stays loaded after the plug-in is unloaded"
+          exit $status
       # a user filter file (~/.config/gmic/gmic_ofx.gmic) whose filters call the commands it
       # defines, and replace a built-in one (#168): checks the pixels and the hot-fix notes, and
       # prints the render times with a small file and with a copy of the standard library
