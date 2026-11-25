@@ -40,6 +40,7 @@ usage: user_filters_test.py --host <hostDemo, or the CMake build directory> [--c
 """
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -92,6 +93,12 @@ GEOMETRY_CASES = [
     ('eu.gmic.UserFileFrames', ['-s', 'Output Layer=11'], (0.5, 0.5, 5, 6), (1.0, 0.0, 1.0, 1.0), False),
 ]
 GEOMETRY_WARNING = "doesn't match the output"
+# the plug-in's notes when it refines a prediction with thin probes, or can't (see resultGeometry)
+REFINED_NOTE = 'refined with thin probes'
+NOT_REFINED_NOTE = 'from the small probes (not refined'
+ROTATE_PLUGIN = 'eu.gmic.UserFileRotate'
+ROTATE_ANGLE = 30.0
+ROTATE_SOURCE = (1920, 1080)
 ROD_TOLERANCE = 1e-3
 KEPT_NOTE = "'star_tone'" + DEFINED_BY
 HOTFIX_WARNING = 'Warning: hot fix'
@@ -186,6 +193,53 @@ def check_padded(report):
             if abs(lows[c] - lo) > TOLERANCE or abs(highs[c] - hi) > TOLERANCE]
 
 
+def check_rotation(host, plugins, work):
+    """Renders ROTATE_PLUGIN on a large Source: the refined prediction must be exact.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems, empty if the output has the rotated size, with no warning.
+    """
+    sw, sh = ROTATE_SOURCE
+    args = ['-i', 'Source=rod:0,0,%d,%d' % (sw, sh)]
+    result = render_plugins.render(host, args, plugins, work, TIMEOUT, (ROTATE_PLUGIN, CONTEXT, []))
+    problem, errors, log = result[2], result[5], result[6]
+    if problem:
+        return ['%s: %s %s' % (ROTATE_PLUGIN, problem, ' '.join(errors))]
+    problems = []
+    if GEOMETRY_WARNING in log:
+        problems.append('the result does not match the output')
+    if REFINED_NOTE not in log:
+        problems.append('no refinement with thin probes')
+    report_path = os.path.join(work, ROTATE_PLUGIN[len('eu.gmic.'):], 'report.json')
+    with open(report_path, encoding='utf-8') as f:
+        report = json.load(f)
+    problems += check_output(report, (1.0, 128 / 255.0, 0.0, 1.0))
+    first = (report.get('renders') or [{}])[0]
+    output = first.get('output') or {}
+    rod = (first.get('regionOfDefinition') or {}).get('rod') or []
+    src = ((first.get('inputs') or {}).get('Source') or {}).get('regionOfDefinition') or []
+    par = ((((report.get('clipPreferences') or {}).get('clips') or {}).get('Source') or {})
+           .get('pixelAspectRatio') or 1.0)
+    if len(src) != 4:
+        return ['%s: no region of definition of Source' % ROTATE_PLUGIN]
+    # CImg's get_rotate, on Source's pixels
+    width, height = round((src[2] - src[0]) / par), round(src[3] - src[1])
+    c, s = abs(math.cos(math.radians(ROTATE_ANGLE))), abs(math.sin(math.radians(ROTATE_ANGLE)))
+    rw, rh = round(1 + c * (width - 1) + s * (height - 1)), round(1 + s * (width - 1) + c * (height - 1))
+    if (output.get('w'), output.get('h')) != (rw, rh):
+        problems.append('the output is %sx%s, expected %dx%d (Source %dx%d pixels)'
+                        % (output.get('w'), output.get('h'), rw, rh, width, height))
+    expected = [src[0], src[3] - rh, src[0] + rw * par, src[3]]
+    if len(rod) != 4 or any(abs(r - e) > ROD_TOLERANCE for r, e in zip(rod, expected)):
+        problems.append('the region of definition is %s, expected %s' % (rod, expected))
+    return ['%s: %s' % (ROTATE_PLUGIN, p) for p in problems]
+
+
 def check_geometry(host, plugins, work):
     """Renders each of GEOMETRY_CASES, and checks the output's size and region of definition.
 
@@ -206,6 +260,9 @@ def check_geometry(host, plugins, work):
         if problem:
             problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
             continue
+        if REFINED_NOTE in log or NOT_REFINED_NOTE in log:
+            problems.append('%s: reached the refinement with thin probes (its sizes are exact '
+                            'fractions of the input\'s)' % name)
         if (GEOMETRY_WARNING in log) != warns:
             problems.append('%s: %s' % (name, 'no warning that the result does not match the output'
                                         if warns else 'the result does not match the output'))
@@ -352,6 +409,7 @@ def run_test(host, plugins, stdlib, runs, work, name):
     if not any(KEPT_NOTE in log for log in logs):
         problems.append("no note that the file's own definition of 'star_tone' is kept")
     problems += check_geometry(host, plugins, work)
+    problems += check_rotation(host, plugins, work)
     for p in problems:
         print('FAIL (user file): ' + p)
     passed = not problems
