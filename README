@@ -327,22 +327,27 @@ Results of another size (issue #175): as in G'MIC-Qt, a filter's result may be l
 moved (Rotate, frames, crops, Upscale [Scale2x]..., or a pos(x,y) in the result's name, from
 Source's top-left corner). The Resize Mode (in Advanced Options) chooses the output:
 - Dynamic, the default: the result's size and position. OpenFX needs them before the render: the
-  plug-in runs the filter on small opaque gradient images and predicts them, in up to three steps:
-  - three probes with Source's long side at 64, 80 and 96 pixels (the inputs' proportions kept),
-    and a fit of the size and position as an affine function of the input's size. An exact
-    fraction (sizes in percent of the image, fixed borders) is exact: about 15k pixels in all;
-  - otherwise (e.g. a rotation), two thin probes that span the real size, Source's real width x
-    48 pixels and 48 pixels x its real height (about 160k more pixels for 1920x1080), and a fit
-    against both the width and the height: within a pixel, with a 1-pixel transparent margin
-    on the sides that could be short, so that the result fits without a warning;
-  - if that fit fails too (sizes in rounded percent of max(w,h), as some frames), one probe at
-    the real size: exact, at the cost of a render on a gradient.
+  plug-in runs the filter on opaque gradient images and predicts them:
+  - three small probes with Source's long side at 64, 80 and 96 pixels (the inputs' proportions
+    kept, about 15k pixels), and two thin probes that span the real size, Source's real width x
+    48 pixels and 48 pixels x its real height (about 140k pixels for 1920x1080);
+  - a size or position that the small probes give as an exact fraction of the input's (2x, 50%,
+    150%, fixed borders), and that also gives the thin probes exactly, is exact;
+  - any other affine one (e.g. a rotation, 10%) is fitted against both the width and the height
+    of all the probes: within a pixel, with a 1-pixel transparent margin on the sides that could
+    be short, so that the result fits without a warning;
+  - if a fit fails (a size in rounded percent of max(w,h), as some frames, one that isn't an
+    affine function of the input's, or a Source so thin that its small probes are 1 pixel
+    high), or a probe fails: one probe at the real size, exact, at the cost of a render on a
+    gradient. A Source no larger than the probes would be (e.g. 160x120) is probed at its own
+    size.
   The probes run again only after an edit, on every frame when a parameter is animated, or when
-  an input's size changes; each run stops after 10 s. If the size isn't an affine function of the
-  input's (e.g. it depends on W*H), or if a probe fails or times out, the output keeps Source's
-  size (a note on stderr). Sizes that depend on the image's content (automatic crops, crops of
-  the transparent parts) can't be predicted from the probes. In these cases, a result that
-  doesn't fit the output is cropped or padded, with a warning on the node.
+  an input's size changes. A prediction stops after 10 s in all; then, or if the probe at the
+  real size fails, the output keeps Source's size (a note on stderr), and the prediction is tried
+  again at the next request. Some sizes can't be predicted: those that depend on the image's
+  content (automatic crops, crops of the transparent parts), and products such as W*H whose term
+  is too small at the probes' sizes to be noticed. A result that doesn't fit the output is
+  cropped or padded, with a warning on the node.
 - Fixed (Inplace): Source's size and position. A result of another size is cropped or padded,
   from its top-left corner, never resized.
 - Downsample 1/N: the filter runs on Source downsampled N times, and the result is resized to
