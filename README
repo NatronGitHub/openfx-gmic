@@ -337,7 +337,13 @@ G'MIC-Qt does for its preview zoom:
   filters render at the render scale, on inputs at that scale, with G'MIC-Qt's preview area
   variables at that scale too (_preview_x0 to _preview_y1; _preview_width and _preview_height
   with Preview/Draft Mode), as in G'MIC-Qt's zoomed preview. 63 filters with G'MIC 4.0.8: colour
-  mixers, CLUTs, Black & White...
+  mixers, CLUTs, Black & White... "+" is the filter author's claim. Colour-only filters look the
+  same at any scale, but the "+" filters with sizes in pixels (Ascii Art, Painting, Hard
+  Painting, Local Contrast, Pen Drawing, Denoise Smooth, Sharpen FFT...) look different at a
+  lower scale: e.g. Ascii Art's characters are twice as large, relative to the image, at half
+  scale. That is also what G'MIC-Qt's zoomed preview shows. Natron renders at a lower scale by
+  itself when its viewer is zoomed to 50% or less, not only in proxy mode: the final render, at
+  full size, is not affected.
 - No factor, a factor alone (G'MIC-Qt only shows the preview at that zoom), or "*" (the preview
   needs the whole image at full size): Natron renders these at full size, then downscales the
   result.
