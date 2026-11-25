@@ -2391,6 +2391,11 @@ static string gmicImageName(const string& clipName)
 // kPress): its results are discarded (the inputs, images[] too, stay unchanged), its state goes
 // to *state, and _persistent starts empty (no persistentIn)
 static GmicCall previewStateCall(const string& cmd, unsigned int* nofImages, gmic_interface_image* images, unsigned int maxImages,
+	gmic_interface_options* options, GmicRunState* state);
+// (the call keeps a pointer into cmd: not from a temporary, C++ Core Guidelines ES.65)
+static GmicCall previewStateCall(string&& cmd, unsigned int* nofImages, gmic_interface_image* images, unsigned int maxImages,
+	gmic_interface_options* options, GmicRunState* state) = delete;
+static GmicCall previewStateCall(const string& cmd, unsigned int* nofImages, gmic_interface_image* images, unsigned int maxImages,
 	gmic_interface_options* options, GmicRunState* state)
 {
 	GmicCall call;
@@ -2731,8 +2736,12 @@ GmicStatusRun pluginRunStatus(SequenceData& sequenceData, const GlobalData& glob
 		for (unsigned int i = 0; i < nofImages; ++i) {
 			extent = std::max(extent, std::max(sequenceData.inWorld[i].width, sequenceData.inWorld[i].height));
 		}
-		if (extent > kPressPreviewSize) {
-			const double factor = (double)kPressPreviewSize / extent;
+		// Resize Mode "Downsample 1/N" divides the size again (fullCommand): at most
+		// kPressPreviewSize in all
+		const float dsMode = sequenceData.floatValue[PARAM_RESIZE][0];
+		const int ds = (dsMode >= 2.f) ? (int)pow(2.f, dsMode - 1.f) : 1;
+		if (extent > kPressPreviewSize * ds) {
+			const double factor = (double)kPressPreviewSize * ds / extent;
 			for (unsigned int i = 0; i < nofImages; ++i) {
 				World& w = proxy.inWorld[i];
 				const int pw = std::max(1, (int)std::lround(w.width * factor)), ph = std::max(1, (int)std::lround(w.height * factor));

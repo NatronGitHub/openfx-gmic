@@ -1208,6 +1208,7 @@ void GMICEffect::buttonPressed(int button, double time)
 		if (sx && sy && *sx > 0. && *sy > 0.) renderScale = { *sx, *sy };
 	}
 	fetchParamValues(sd, inputs.firstRect, inputs.firstPAR, time, renderScale);
+	const SequenceData atPress = sd; // the values when the run started
 	sd.floatValue[button][0] = 1.f;
 	const GmicStatusRun run = pluginRunStatus(sd, _gd, *this);
 	if (!run.error.empty()) {
@@ -1217,7 +1218,18 @@ void GMICEffect::buttonPressed(int button, double time)
 	// one undo step, begun at the first change only; best-effort: without an undo block if the host
 	// refuses it
 	EditBlock editBlock(*this, _gd.param[button].displayName, EditBlock::eBeginOnChange, EditBlock::eHostErrorsIgnore);
+	// the values now: the user may have changed some during the run (the host processes its events
+	// while the run's progress shows), and these changes win over the status
+	SequenceData now;
+	if (!run.changed.empty()) {
+		now = atPress;
+		fetchParamValues(now, inputs.firstRect, inputs.firstPAR, time, renderScale);
+	}
 	for (const int i : run.changed) {
+		if (now.textValue[i] != atPress.textValue[i] ||
+			!std::equal(now.floatValue[i], now.floatValue[i] + 4, atPress.floatValue[i])) {
+			continue;
+		}
 		editBlock.open();
 		// a value that the host refuses doesn't keep the others from being set
 		hostTry([&] { setParamValue(i, sd, inputs, renderScale, time); });
