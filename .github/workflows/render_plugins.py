@@ -59,7 +59,7 @@ SKIP = {
     'eu.gmic.CImgNLMeans': "runs the external executable 'use_nlmeans'",
     'eu.gmic.CImgSkeleton': "runs the external executable 'use_skeleton'",
     'eu.gmic.Intarsia': 'writes an HTML page and PNG images into its Output Directory on every render '
-                        '(empty by default: the root folder)',
+                        '(empty by default: the home folder)',
     # they download data at render time (G'MIC's input_cached, from gmic.eu, or another site),
     # which CI runners may not reach (UpscaleCNN2x failed on Windows)
     'eu.gmic.GmickyRoddy': 'downloads its mascot images (sp gmicky...: img/sample_*.png)',
@@ -211,7 +211,10 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
            '--report', 'report.json']
     for c in clips:
         cmd += ['-i', c + '=file:../input.pfm']
-    env = dict(os.environ, OFX_PLUGIN_PATH=plugins, HOME=os.path.join(work, 'home'))
+    # the home folder (Windows: USERPROFILE), where filters with an empty folder parameter write
+    # their files (e.g. Valeur Moyenne LCH), is in the work directory
+    home = os.path.join(work, 'home')
+    env = dict(os.environ, OFX_PLUGIN_PATH=plugins, HOME=home, USERPROFILE=home)
     if host_threads:
         env.pop('OMP_NUM_THREADS', None)
     else:

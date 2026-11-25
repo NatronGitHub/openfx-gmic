@@ -230,7 +230,8 @@ Filters that can't work in an OpenFX host are hidden only by generic rules on th
 (batch converters of image sequences, filters that write files that the user doesn't choose, tools
 that wait for keys in a window), never by name: as in G'MIC-Qt, the others are shown. Some of them write
 files on every render: e.g. Intarsia writes an HTML page and PNG images into its Output Directory,
-which is empty by default (the root folder, where the render usually fails), so set it first.
+which is empty by default, i.e. the home folder, as in G'MIC-Qt (an empty folder parameter is the
+home folder), so set it first.
 
 As in G'MIC-Qt, each page of G'MIC's About folder is a plug-in of its own, in the G'MIC menu
 group. A page with no command (About G'MIC, Privacy Notice, Release Notes, Tribute to
@@ -359,8 +360,9 @@ Messages
 
 The plug-in prints its messages (when it loads the filters, and some notes while rendering) on
 stderr, as G'MIC does with the messages of the Log Verbosity parameter (Level 1 to 3; Off, the
-default, prints none). A host started from the Dock, the Start menu or a desktop launcher shows
-no stderr: to keep them, create an empty file gmic_ofx_log in ~/.config/gmic (Windows:
+default, prints none; Level 3 is G'MIC-Qt's "very verbose" level, G'MIC's `v 3`). A host
+started from the Dock, the Start menu or a desktop launcher shows no stderr: to keep them, create
+an empty file gmic_ofx_log in ~/.config/gmic (Windows:
 %APPDATA%/gmic), as G'MIC-Qt's "log file" output messages do with gmic_qt_log. Every host
 process that loads the plug-in then appends its messages to that file instead of stderr, from
 the first host start after the file exists; delete it to go back to stderr (on Windows, quit the
