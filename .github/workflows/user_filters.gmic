@@ -77,6 +77,14 @@ fx_userfile_vars :
 fx_userfile_five_channels :
   r 100%,100%,1,5
 
+# a filter whose preview factor ends with "+" (accurate at any zoom), so that the plug-in accepts
+# render scales (#179): R and G are 255 if the preview area that the plug-in gives G'MIC
+# ($_preview_x1, $_preview_y1) ends at the image's last column and row, B is the image width,
+# which is half of Source's at render scale 0.5
+#@gui User File Render Scale : fx_userfile_render_scale, fx_userfile_render_scale(0)+
+fx_userfile_render_scale :
+  fill_color {(0$_preview_x1+1==w)*255},{(0$_preview_y1+1==h)*255},{w}
+
 # replaces the built-in 'fc' (fill_color)
 fc :
   f 128

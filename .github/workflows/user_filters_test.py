@@ -25,6 +25,10 @@ same, without another hot-fix note or a warning (a copy of the built-in commands
 hot fixes), and the render times with both files are printed (G'MIC parses the file on every
 render).
 
+User File Render Scale, whose preview factor ends with "+", is also rendered at render scale 0.5
+(#179): its output must be half the size of Source, with the region of definition of Source, and
+show that G'MIC got the input and the preview area at that scale.
+
 usage: user_filters_test.py --host <hostDemo, or the CMake build directory> [--config <config>]
                             --plugins <dir with GMIC.ofx.bundle>
                             [--stdlib <gmic_stdlib_community.h>] [--runs N] [--work <dir>]
@@ -46,6 +50,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CONTEXT = 'OfxImageEffectContextFilter'
 # plug-in id: the RGB color of its output (G'MIC's 0..255 values, divided by 255)
 EXPECTED = {
+    # the preview area is the image, whose width is Source's (#179)
+    'eu.gmic.UserFileRenderScale': (1.0, 1.0, render_plugins.INPUT_WIDTH / 255.0),
     'eu.gmic.UserFileOwnCommand': (0.25, 0.25, 0.25),
     'eu.gmic.UserFileBuiltinCommand': (0.5, 0.0, 1.0),
     'eu.gmic.UserFileOverride': (128 / 255.0,) * 3,
@@ -60,6 +66,9 @@ DEFINED_BY = ' is defined by '  # the note of a kept definition of a hot-fixed c
 KEPT_NOTE = "'star_tone'" + DEFINED_BY
 HOTFIX_WARNING = 'Warning: hot fix'
 TIMEOUT = 120
+# rendered at render scale RENDER_SCALE too (#179): its preview factor ends with "+"
+SCALE_PLUGIN = 'eu.gmic.UserFileRenderScale'
+RENDER_SCALE = 0.5
 CPUS_PLUGIN = 'eu.gmic.UserFileCpus'  # its output is G'MIC's $_cpus (divided by 255)
 # its result has 5 channels: the render must fail with this message
 CHANNELS_PLUGIN = 'eu.gmic.UserFileFiveChannels'
@@ -216,6 +225,47 @@ def check_channels(host, plugins, work):
     return []
 
 
+def check_render_scale(host, plugins, work):
+    """Renders SCALE_PLUGIN at RENDER_SCALE, and checks its output and region of definition.
+
+    The output must be Source's size times RENDER_SCALE, with Source's region of definition (in
+    canonical coordinates, which the render scale doesn't change), and G'MIC must have got the
+    input at that scale, with the preview area of the same size (see user_filters.gmic).
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems, empty if the render at that scale is right.
+    """
+    scale = str(RENDER_SCALE)
+    result = render_plugins.render(host, ['--scale', scale], plugins, work, TIMEOUT,
+                                   (SCALE_PLUGIN, CONTEXT, ['Source']))
+    problem, errors = result[2], result[5]
+    if problem:
+        return ['%s at scale %s: %s %s' % (SCALE_PLUGIN, scale, problem, ' '.join(errors))]
+    report_path = os.path.join(work, SCALE_PLUGIN[len('eu.gmic.'):], 'report.json')
+    with open(report_path, encoding='utf-8') as f:
+        report = json.load(f)
+    width = round(render_plugins.INPUT_WIDTH * RENDER_SCALE)
+    height = round(render_plugins.INPUT_HEIGHT * RENDER_SCALE)
+    problems = check_output(report, (1.0, 1.0, width / 255.0))
+    renders = report.get('renders') or []
+    first = renders[0] if renders else {}
+    output = first.get('output') or {}
+    if (output.get('w'), output.get('h')) != (width, height):
+        problems.append('the output is %sx%s, expected %dx%d'
+                        % (output.get('w'), output.get('h'), width, height))
+    rod = (first.get('regionOfDefinition') or {}).get('rod')
+    source_rod = ((first.get('inputs') or {}).get('Source') or {}).get('regionOfDefinition')
+    if rod is None or rod != source_rod:
+        problems.append("the region of definition is %s, expected Source's, %s"
+                        % (rod, source_rod))
+    return ['%s at scale %s: %s' % (SCALE_PLUGIN, scale, p) for p in problems]
+
+
 def run_test(host, plugins, stdlib, runs, work, name):
     """Runs both renders of the test (see the module docstring).
 
@@ -236,6 +286,7 @@ def run_test(host, plugins, stdlib, runs, work, name):
 
     install_user_file(work, user_file, name)
     problems, logs, small = render_all(host, plugins, work, runs)
+    problems += check_render_scale(host, plugins, work)
     problems += check_cpus(host, plugins, work)
     problems += check_channels(host, plugins, work)
     if not any(KEPT_NOTE in log for log in logs):

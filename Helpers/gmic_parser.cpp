@@ -116,11 +116,21 @@ void processCommand(const string& s, EffectData& cd)
 		r3 = r2.substr(sPos + 1);
 		r2 = r2.substr(0, sPos);
 	}
-	// remove the preview options after the preview command: "(factor)", the preview's zoom factor
-	// (a number, e.g. "(0)", "(1)" or "(1.5)"), followed by "+" (accurate on zoom) and/or "*"
-	// (G'MIC >= 3, accurate on parameter change). As G'MIC-Qt (FiltersModelReader.cpp), the
-	// preview command is what comes before the first '(', whatever the factor.
-	r3 = r3.substr(0, r3.find('('));
+	// the preview options after the preview command: "(factor)", the preview's zoom factor (a
+	// number, e.g. "(0)", "(1)" or "(1.5)"), maybe followed by "+" (the preview is accurate at any
+	// zoom) or "*" (the preview gets the whole image at full size, and makes its zoomed preview
+	// itself), as gmic_stdlib.gmic's documentation of the #@gui lines says. Read as G'MIC-Qt does
+	// (FiltersModelReader.cpp): the preview command is what comes before the first '(', whatever
+	// the factor, and the suffix ends the text between the first '(' and the next one.
+	cd.previewZoom = EffectData::PreviewZoom::NoFactor;
+	const string::size_type factor = r3.find('(');
+	if (factor != string::npos) {
+		const string options = strTrim(r3.substr(factor + 1, r3.find('(', factor + 1) - (factor + 1)), " \t\r\n");
+		const char suffix = options.empty() ? '\0' : options[options.size() - 1];
+		cd.previewZoom = suffix == '+' ? EffectData::PreviewZoom::Accurate :
+			suffix == '*' ? EffectData::PreviewZoom::FullImage : EffectData::PreviewZoom::Fixed;
+		r3 = r3.substr(0, factor);
+	}
 
 	// As G'MIC-Qt (FiltersPresenter::Filter::isNoApplyFilter, isNoPreviewFilter): a command that is
 	// empty or exactly "_none_" is no command. No main command: a preview-only filter, rendered with
@@ -555,6 +565,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	cd.previewOnly = false;
 	cd.noPreview = false;
 	cd.previewFirst = false;
+	cd.previewZoom = EffectData::PreviewZoom::NoFactor;
 	cd.param.clear();
 	vector<VisibilityPropagation> propagation; // one per cd.param entry, until the "pointenabled" ones
 

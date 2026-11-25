@@ -100,6 +100,14 @@ struct EffectData {
 	// rule needs the command definitions (gmic_parse_multi); per filter, gmic_parse_single applies
 	// only the value() rule.
 	bool previewFirst = false;
+	// what the preview factor after the preview command says of the preview at another zoom, as
+	// G'MIC-Qt reads it (FiltersModelReader.cpp): no factor; "(N)", a preview that is only right at
+	// its own zoom N; "(N)+", a preview that is right at any zoom; "(N)*", a preview that needs the
+	// whole image at full size, and zooms itself. Only Accurate filters work on a downscaled image
+	// as at full size: the plug-in accepts a render scale for them (issue #179, see
+	// pluginSupportsRenderScale)
+	enum class PreviewZoom { NoFactor, Fixed, Accurate, FullImage };
+	PreviewZoom previewZoom = PreviewZoom::NoFactor;
     std::vector<EffectParameter> param;
 };
 

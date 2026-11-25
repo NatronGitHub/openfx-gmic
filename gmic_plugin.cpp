@@ -1563,6 +1563,8 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 	// - _preview_width/height and _preview_area_width/height only for a preview run: main
 	//   commands use them to detect a preview (Speech Bubble draws its guides). For a preview,
 	//   gui_preview_wh now returns the image size instead of 400x400 for small images.
+	// At a render scale (only for the filters that accept one, see pluginSupportsRenderScale), the
+	// inputs and so these sizes are at that scale, as in G'MIC-Qt's zoomed preview.
 	// _persistent is not in the command line: the filters that need it run their preview command
 	// first, which sets it for the main command (see pluginProcess).
 	int extentW = 0, extentH = 0;
@@ -1915,8 +1917,9 @@ static int gmicCallAbortable(OFX::ImageEffect& effect, HostProgress& hostProgres
 // Resize Mode, the verbosity and the image size, plus the size and a hash (four independent
 // 64-bit lanes) of the pixels of every input image given to G'MIC (after the conversion to float
 // and the unpremultiplication: whatever G'MIC sees, which covers the layer inputs, the frames of
-// Source given by the layer times, and upstream changes). The render scale and window only change
-// the output placement, done when copying. The cache is keyed by this content key, not by
+// Source given by the layer times, and upstream changes). The render window only changes the
+// output placement, done when copying; a render scale gives other input images, so another key.
+// The cache is keyed by this content key, not by
 // instance: Natron renders through instance clones, and duplicated nodes get the same results;
 // each instance refers to the key of its last Frame render, and an entry that no instance refers
 // to any more is dropped (another key, another Output Layer, the instance destroyed). Nothing
@@ -2274,6 +2277,20 @@ static long long frameNumberOf(const SequenceData* sequenceDataP)
 bool pluginPassesSourceThrough(const GlobalData& globalData)
 {
 	return effectDataOf(&globalData).command.empty();
+}
+
+// G'MIC-Qt lets the user zoom the preview of a filter whose preview factor ends with "+", and gives
+// it the image downscaled to the zoom (GmicProcessor.cpp: CroppedImageListProxy::get with the zoom
+// factor, and _preview_x1/y1, _preview_width/height from the zoomed extent). A render at a render
+// scale is that: the host gives the inputs at that scale, and fullCommand() makes the preview area
+// (_preview_x0/y0/x1/y1, and _preview_width/height for a preview) the size of these inputs. The
+// other factors tell that the preview is only right at its own zoom ("(N)"; G'MIC-Qt shows a
+// warning at another zoom), or that it needs the whole full-size image, which it zooms itself
+// ("(N)*", e.g. Difference of Gaussians or Halftone [Generic], whose sizes are in pixels); without
+// a factor, nothing is known of the filter at another scale.
+bool pluginSupportsRenderScale(const GlobalData& globalData)
+{
+	return effectDataOf(&globalData).previewZoom == EffectData::PreviewZoom::Accurate;
 }
 
 // The G'MIC name of an input image, as G'MIC-Qt names its layers (host_none.cpp, and the GIMP

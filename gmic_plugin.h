@@ -83,6 +83,12 @@ void showRenderWarning(OFX::ImageEffect& effect, const std::string& msg);
 // render copies Source without calling pluginProcess.
 bool pluginPassesSourceThrough(const gmic_ofx::GlobalData& globalData);
 
+// Does the filter give the same result on a downscaled image as at full size, downscaled? (Its
+// preview factor ends with "+": EffectData::PreviewZoom::Accurate.) Natron then renders it at its
+// render scale (proxy mode, zoomed-out viewer); the other filters refuse render scales other than 1
+// there, and Natron renders them at full size (see refuseRenderScale in gmic_ofx.cpp, issue #179).
+bool pluginSupportsRenderScale(const gmic_ofx::GlobalData& globalData);
+
 // Run G'MIC on sequenceData's input images (float planar RGBA, values up to 255), into its
 // outWorld buffer, with the parameter values of sequenceData. Polls effect.abort() while G'MIC
 // runs, and reports G'MIC's errors on effect. False if the output is not valid (G'MIC failed,
