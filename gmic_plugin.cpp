@@ -47,32 +47,13 @@
  #
 */
 
-// History:
-// 0.3.2:
-// - original version from https://github.com/dtschump/gmic-community/tree/master/gmic_plugin
-// 1.0.0: (these changes were only tested for the OpenFX plugin)
-// - Source input is now always the topmost G'MIC layer, other inputs are below
-// - handle separator() as a ParamType::Separator parameter
-// - handle point(...)
-// - handle note(...) as a label parameter (ParamType::Text with flags=4)
-// - handle filein(..) and fileout(...)
-// - color(...) is now RGBA
-// - better handle link(...)
-// - correctly handle multiple parameters on the same line, or multi-line parameters of any kind.
-// - the G'MIC command-line is only computed when rendering, not at each param change (because converting pixel coords to % for point(...) requires image size)
-// - bug fixes
-// 2.0.0: (OpenFX plug-in)
-// - color(...) without alpha is RGB, as in G'MIC-Qt (issue #178)
-//
-// TODO:
-// - there may be any number of gmic parameters per line, see for example fx_hearts
-// - why doesn't "mineral mosaic" show the note after the separator?
-//
-// version and description of the plug-ins (the name, grouping and identifier are the filter's)
-#define	MAJOR_VERSION		2
-#define	MINOR_VERSION		0
+// (The plug-in's history is in CHANGELOG.md; it started from
+// https://github.com/dtschump/gmic-community/tree/master/gmic_plugin, version 0.3.2.)
 
-#define PLUGIN_DESCRIPTION	"Wrapper for the G'MIC framework (http://gmic.eu) written by Tobias Fleischer (http://www.reduxfx.com) and Frederic Devernay.";
+// version and description of the plug-ins (the name, grouping and identifier are the filter's)
+constexpr int kPluginVersionMajor = 2;
+constexpr int kPluginVersionMinor = 0;
+constexpr const char* kPluginDescription = "Wrapper for the G'MIC framework (http://gmic.eu) written by Tobias Fleischer (http://www.reduxfx.com) and Frederic Devernay.";
 
 // Layout of the last parameters (see pluginSetup): Command, [Advanced Options group start], Output Layer,
 // Resize Mode, Ignore Alpha, Preview/Draft Mode, Global Random Seed, Animate Random Seed, Log Verbosity,
@@ -128,7 +109,6 @@ using namespace gmic_ofx;
 #include <memory>
 #include <vector>
 #include <cctype>
-#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cassert>
@@ -226,11 +206,12 @@ string loadStringFromFile(const string& filename)
 	return buffer;
 }
 
-// The plug-in's folder for the user's files, with a trailing separator, in UTF-8 (as
-// loadStringFromFile and gmicOpenLog read it): $HOME/.config/gmic/, %APPDATA%/gmic/ on Windows;
-// empty if the variable is not set.
+// The plug-in's folder for the user's files (gmic_ofx.gmic, gmic_ofx_plugins.txt, the log file),
+// with a trailing separator, in UTF-8 (as loadStringFromFile and gmicOpenLog read it):
+// $HOME/.config/gmic/, %APPDATA%/gmic/ on Windows; empty if the variable is not set. (G'MIC's own
+// folder, where its update file is, is gmicFolder(), gmic_plugin_call.h.)
 static
-string get_gmic_rc_path()
+string pluginConfigFolder()
 {
 #ifndef _WIN32
 	const char* const home = getenv("HOME");
@@ -372,36 +353,42 @@ static string gmicChecksum(const string& def)
 // one (fixed upstream). Otherwise it is skipped: with a note if the user's file defines the
 // command or a callee another way (its definition is kept: a copy of the built-in definition
 // still gets the fix), else with a warning for the developers.
+// A block of gmic_hotfixes.gmic (see gmicGetHotfixes)
+struct HotfixBlock
+{
+	// (command, checksum of its original definition), then (callee, checksum or empty) for each callee
+	vector<std::pair<string, string> > checks;
+	string fixedChecksum; // the checksum of the fixed definition
+	string text; // the block's lines
+};
+
 static string gmicGetHotfixes(const string& stdlib, const string& userCommands, const string& userFile)
 {
 	static const string marker = "#@hotfix ";
-	vector<vector<std::pair<string, string> > > checks; // per block: (command, checksum)
-	vector<string> fixed, texts; // per block: checksum of the fixed definition, block text
+	vector<HotfixBlock> blocks;
 	std::istringstream ss(string((const char*)gmic_hotfixes));
 	string line;
 	while (getline(ss, line)) {
 		if (line.compare(0, marker.size(), marker) == 0) {
 			std::istringstream ls(line.substr(marker.size()));
-			vector<std::pair<string, string> > check;
-			string name, checksum, fixedChecksum, callee;
-			ls >> name >> checksum >> fixedChecksum;
-			check.push_back(std::make_pair(name, checksum));
+			HotfixBlock block;
+			string name, checksum, callee;
+			ls >> name >> checksum >> block.fixedChecksum;
+			block.checks.push_back(std::make_pair(name, checksum));
 			while (ls >> callee) {
 				const string::size_type colon = callee.find(':');
-				check.push_back(std::make_pair(callee.substr(0, colon), colon == string::npos ? string() : callee.substr(colon + 1)));
+				block.checks.push_back(std::make_pair(callee.substr(0, colon), colon == string::npos ? string() : callee.substr(colon + 1)));
 			}
-			checks.push_back(check);
-			fixed.push_back(fixedChecksum);
-			texts.push_back(string());
+			blocks.push_back(std::move(block));
 		}
-		if (!texts.empty()) {
-			texts.back() += line + '\n';
+		if (!blocks.empty()) {
+			blocks.back().text += line + '\n';
 		}
 	}
 	std::map<string, string> defs;
-	for (size_t i = 0; i < checks.size(); ++i) {
-		for (size_t k = 0; k < checks[i].size(); ++k) {
-			defs[checks[i][k].first];
+	for (const HotfixBlock& block : blocks) {
+		for (const auto& check : block.checks) {
+			defs[check.first];
 		}
 	}
 	gmicGetDefinitions(stdlib, defs);
@@ -416,24 +403,24 @@ static string gmicGetHotfixes(const string& stdlib, const string& userCommands, 
 		}
 	}
 	string hotfixes;
-	for (size_t i = 0; i < checks.size(); ++i) {
-		const string& command = checks[i][0].first;
+	for (const HotfixBlock& block : blocks) {
+		const string& command = block.checks[0].first;
 		std::map<string, string> own;
 		own[command];
-		gmicGetDefinitions(texts[i], own);
+		gmicGetDefinitions(block.text, own);
 		const string ownChecksum = gmicChecksum(own[command]);
-		if (own[command].empty() || ownChecksum != fixed[i]) {
+		if (own[command].empty() || ownChecksum != block.fixedChecksum) {
 			gmicLog("openfx-gmic: Warning: hot fix for the G'MIC command '%s' not applied: the fixed definition has checksum %s, but its '#@hotfix' line says '%s', update it in gmic_hotfixes.gmic\n",
-			        command.c_str(), ownChecksum.c_str(), fixed[i].c_str());
+			        command.c_str(), ownChecksum.c_str(), block.fixedChecksum.c_str());
 			continue;
 		}
 		if (!defs[command].empty() && gmicChecksum(defs[command]) == ownChecksum) {
 			continue; // already fixed in G'MIC (then the callees do not matter)
 		}
 		bool ok = true;
-		for (size_t k = 0; k < checks[i].size(); ++k) {
-			const string& name = checks[i][k].first;
-			const string& expected = checks[i][k].second;
+		for (size_t k = 0; k < block.checks.size(); ++k) {
+			const string& name = block.checks[k].first;
+			const string& expected = block.checks[k].second;
 			const string& def = defs[name];
 			const string found = gmicChecksum(def);
 			// a callee given without a checksum only has to exist; a command whose original is "-"
@@ -455,7 +442,7 @@ static string gmicGetHotfixes(const string& stdlib, const string& userCommands, 
 			}
 		}
 		if (ok) {
-			hotfixes += texts[i];
+			hotfixes += block.text;
 		}
 	}
 	return hotfixes;
@@ -464,7 +451,7 @@ static string gmicGetHotfixes(const string& stdlib, const string& userCommands, 
 namespace {
 
 // The list of the plug-ins (README, "Choosing the plug-ins"; issue #157): its name, in the bundle's
-// Resources and in the user's G'MIC configuration directory (get_gmic_rc_path)
+// Resources and in the plug-in's folder for the user's files (pluginConfigFolder)
 constexpr const char* kPluginListFile = "gmic_ofx_plugins.txt";
 // the log file (gmicOpenLog): in the user's G'MIC configuration directory, if the user made it
 constexpr const char* kLogFile = "gmic_ofx_log";
@@ -484,7 +471,6 @@ string utf16ToUtf8(const string& text)
 		return hi << 8 | lo;
 	};
 	string utf8;
-	const auto put = [&utf8](unsigned byte) { utf8 += static_cast<char>(byte); };
 	utf8.reserve(text.size() / 2);
 	for (size_t i = 2; i + 1 < text.size(); i += 2) {
 		unsigned c = unit(i);
@@ -494,21 +480,7 @@ string utf16ToUtf8(const string& text)
 		} else if (c >= 0xD800 && c < 0xE000) {
 			c = 0xFFFD;
 		}
-		if (c < 0x80) {
-			put(c);
-		} else if (c < 0x800) {
-			put(0xC0 | c >> 6);
-			put(0x80 | (c & 0x3F));
-		} else if (c < 0x10000) {
-			put(0xE0 | c >> 12);
-			put(0x80 | (c >> 6 & 0x3F));
-			put(0x80 | (c & 0x3F));
-		} else {
-			put(0xF0 | c >> 18);
-			put(0x80 | (c >> 12 & 0x3F));
-			put(0x80 | (c >> 6 & 0x3F));
-			put(0x80 | (c & 0x3F));
-		}
+		appendUtf8(utf8, c);
 	}
 	return utf8;
 }
@@ -639,8 +611,18 @@ struct FilterFile
 	string content;
 };
 
+// Is file still CImg-compressed (a serialized CImg, G'MIC-Qt's Updater::isCImgCompressed), which
+// only G'MIC could read? Then with a warning: the plug-in reads filter files as text.
+static bool isCompressed(const FilterFile& file)
+{
+	static const string kCImgPrefix = "1 uint8 ";
+	if (file.content.compare(0, kCImgPrefix.size(), kCImgPrefix) != 0) return false;
+	gmicLog("openfx-gmic: Warning: %s is compressed, the plug-in only reads it as text: ignored\n", file.path.c_str());
+	return true;
+}
+
 // G'MIC's filter update file of this G'MIC version (update408.gmic for G'MIC 4.0.8), in G'MIC's
-// own folder (gmicRcPath()), where G'MIC-Qt and G'MIC's 'update' command download it as text (the
+// own folder (gmicFolder()), where G'MIC-Qt and G'MIC's 'update' command download it as text (the
 // plug-in never downloads it). Read only if OFX_GMIC_UPDATE_FILE is 1, since G'MIC-Qt rewrites it
 // on its own and a host's stale plug-in cache would then swap filters (README, "Environment"),
 // and never in COMMERCIAL builds, since it brings back the filters under the GPL. Its path and
@@ -658,15 +640,11 @@ static FilterFile loadUpdateFile()
 	gmicLog("openfx-gmic: OFX_GMIC_UPDATE_FILE ignored: the update file has GPL filters, which COMMERCIAL builds leave out\n");
 	return FilterFile();
 #else
-	const string rcPath = gmicRcPath();
-	if (rcPath.empty()) return FilterFile();
-	FilterFile file{rcPath + gmicUpdateFileName(), string()};
+	const string folder = gmicFolder();
+	if (folder.empty()) return FilterFile();
+	FilterFile file{folder + gmicUpdateFileName(), string()};
 	file.content = loadStringFromFile(file.path);
-	static const string kCImgPrefix = "1 uint8 "; // a serialized CImg (G'MIC-Qt's Updater::isCImgCompressed)
-	if (file.content.compare(0, kCImgPrefix.size(), kCImgPrefix) == 0) {
-		gmicLog("openfx-gmic: Warning: %s is compressed, the plug-in only reads it as text: ignored\n", file.path.c_str());
-		return FilterFile();
-	}
+	if (isCompressed(file)) return FilterFile();
 	if (file.content.find("#@gui") == string::npos) return FilterFile(); // (as G'MIC-Qt)
 	return file;
 #endif
@@ -688,24 +666,20 @@ static FilterFile loadUserSource()
 	FilterFile file{home + "/.gmic", string()};
 #endif
 	file.content = loadStringFromFile(file.path);
-	static const string kCImgPrefix = "1 uint8 "; // (see loadUpdateFile)
-	if (file.content.compare(0, kCImgPrefix.size(), kCImgPrefix) == 0) {
-		gmicLog("openfx-gmic: Warning: %s is compressed, the plug-in only reads it as text: ignored\n", file.path.c_str());
-		return FilterFile();
-	}
+	if (isCompressed(file)) return FilterFile();
 	return file;
 }
 
 // The filter file the filters come from, the first of these that the plug-in can use (README,
-// "Filters"): ~/.config/gmic/gmic_ofx.gmic or gmic_stdlib.gmic (in rcPath, from
-// get_gmic_rc_path()) if not empty, then G'MIC's update file (loadUpdateFile). An empty content
+// "Filters"): ~/.config/gmic/gmic_ofx.gmic or gmic_stdlib.gmic (in configFolder, from
+// pluginConfigFolder()) if not empty, then G'MIC's update file (loadUpdateFile). An empty content
 // if none: the filters then come from the built-in stdlib.
-static FilterFile loadFilterFile(const string& rcPath)
+static FilterFile loadFilterFile(const string& configFolder)
 {
-	FilterFile file{rcPath + "gmic_ofx.gmic", string()};
+	FilterFile file{configFolder + "gmic_ofx.gmic", string()};
 	file.content = loadStringFromFile(file.path);
 	if (file.content.empty()) {
-		file.path = rcPath + "gmic_stdlib.gmic";
+		file.path = configFolder + "gmic_stdlib.gmic";
 		file.content = loadStringFromFile(file.path);
 	}
 	if (file.content.empty()) {
@@ -718,6 +692,7 @@ PluginGlobalData loadPluginGlobalData()
 {
 	PluginGlobalData data;
 	vector<Filter>& filters = data.filters;
+	setDownloadCommands(); // (before any G'MIC run)
 	{
 		// The hot fixes are checked against the built-in stdlib, which G'MIC always loads, and the
 		// filter file's commands, which replace its own: decompress it once here (~35 ms), even
@@ -728,13 +703,15 @@ PluginGlobalData loadPluginGlobalData()
 			stdlib = string(lib);
 			gmic_delete_external((float*)lib);
 		}
-		const string rcPath = get_gmic_rc_path();
-		// before the first message (also G'MIC's: the hot fixes, the renders)
-		// (not when the build writes the bundle's plug-in list, OFX_GMIC_WRITE_PLUGIN_LIST: its
-		// messages stay on stderr, in the build log)
-		const char* const writeList = std::getenv("OFX_GMIC_WRITE_PLUGIN_LIST");
-		if (!rcPath.empty() && !(writeList && *writeList)) gmicOpenLog(rcPath + kLogFile);
-		FilterFile file = loadFilterFile(rcPath);
+		const string configFolder = pluginConfigFolder();
+		// OFX_GMIC_WRITE_PLUGIN_LIST=<file>: write the list of the plug-ins there (the build writes
+		// the bundle's, see below)
+		const char* const listEnv = std::getenv("OFX_GMIC_WRITE_PLUGIN_LIST");
+		const string listPath = listEnv ? listEnv : "";
+		// before the first message (also G'MIC's: the hot fixes, the renders); not when the build
+		// writes the bundle's plug-in list: its messages stay on stderr, in the build log
+		if (!configFolder.empty() && listPath.empty()) gmicOpenLog(configFolder + kLogFile);
+		FilterFile file = loadFilterFile(configFolder);
 		const FilterFile userSource = loadUserSource();
 		string effectContent = std::move(file.content);
 		// the custom commands of the files (see PluginGlobalData::userCommands), and their paths
@@ -755,12 +732,6 @@ PluginGlobalData loadPluginGlobalData()
 			data.filterFile = true;
 		} else {
 			effectContent.swap(stdlib); // the built-in filters
-			if (
-				(int)effectContent.find("#@gimp :") < 0 && 
-				(int)effectContent.find("#@gmic_plugin :") < 0 && 
-				(int)effectContent.find("#@gui :") < 0) {
-				effectContent = "";
-			}
 		}
 		if (!userSource.content.empty()) {
 			effectContent += "\n" + kTopLevel + userSource.content + "\n" + kTopLevel;
@@ -781,19 +752,17 @@ PluginGlobalData loadPluginGlobalData()
 		});
 		// The plug-ins that the user's list disables are not registered (OFX has no way to only hide
 		// them from the menus). The bundle's list enables every plug-in: it isn't read.
-		// OFX_GMIC_WRITE_PLUGIN_LIST=<file>: write the list there (the build writes the bundle's).
-		const string userList = rcPath.empty() ? string() : loadStringFromFile(rcPath + kPluginListFile);
+		const string userList = configFolder.empty() ? string() : loadStringFromFile(configFolder + kPluginListFile);
 		const std::set<string> disabled = disabledPlugins(userList);
 		if (!userList.empty()) { // (on stderr or in the log file: Natron's GUI shows neither)
 			std::set<string> pluginIds;
 			for (const Filter& f : filters) {
 				pluginIds.insert(f.data.uniqueId);
 			}
-			gmicLog("%s\n", pluginListSummary(rcPath + kPluginListFile, disabled, pluginIds).c_str());
+			gmicLog("%s\n", pluginListSummary(configFolder + kPluginListFile, disabled, pluginIds).c_str());
 		}
-		const char* const listPath = std::getenv("OFX_GMIC_WRITE_PLUGIN_LIST");
-		if (listPath && *listPath && !writePluginList(listPath, filters, disabled)) {
-			gmicLog("openfx-gmic: Error: could not write the plug-in list %s\n", listPath);
+		if (!listPath.empty() && !writePluginList(listPath, filters, disabled)) {
+			gmicLog("openfx-gmic: Error: could not write the plug-in list %s\n", listPath.c_str());
 		}
 		if (!disabled.empty()) {
 			leaveOutFilters([&disabled](const EffectData& d) { return disabled.count(d.uniqueId) > 0; });
@@ -893,7 +862,7 @@ static string pluginDescription(const EffectData& effectData)
 	string d = strXmlToText(effectData.notes);
 	strReplace(d, "<", "(");
 	strReplace(d, ">", ")");
-	return d + ignoreAlphaNote(effectData) + layerTimesNote(effectData) + "\n" + PLUGIN_DESCRIPTION;
+	return d + ignoreAlphaNote(effectData) + layerTimesNote(effectData) + "\n" + kPluginDescription;
 }
 
 #if defined(cimg_use_fftw3) && !defined(cimg_use_fftw3_singlethread)
@@ -982,11 +951,7 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 			while (r.size() < 2) r.push_back("50");
 			d1 = (float)stringToDouble(r[0]);
 			d2 = (float)stringToDouble(r[1]);
-			// erase any occurence of " (%)" in the string, because the displayed parameter will be in pixels
-			size_t start_pos = name.find(" (%)");
-    		if(start_pos != string::npos) {
-				name.erase(start_pos, 4);
-			}
+			name = pointDisplayName(name);
 		} else {
 			d1 = (float)stringToDouble(defaultValue);
 			d2 = d1; d3 = d1; d4 = d1;
@@ -1107,7 +1072,14 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 	++p;
 	// "Frame" is added at the end (issue #65): the choice is saved as its index (and label in
 	// Natron), so the other options keep their meaning in saved projects
-	globalDataP->param[p] = Parameter(kOutputLayerParam, "", ParamType::Select, 0, kOutputLayerFrame, 1, 0, 0, 0, "Merged|Layer 0|Layer -1|Layer -2|Layer -3|Layer -4|Layer -5|Layer -6|Layer -7|Layer -8|Layer -9|Frame");
+	static constexpr std::array<const char*, kOutputLayerFrame + 1> kOutputLayerOptions = {
+		"Merged", "Layer 0", "Layer -1", "Layer -2", "Layer -3", "Layer -4", "Layer -5", "Layer -6", "Layer -7", "Layer -8", "Layer -9", "Frame" };
+	static_assert(std::string_view(kOutputLayerOptions[kOutputLayerFrame]) == "Frame", "kOutputLayerFrame is the index of \"Frame\"");
+	string outputLayerOptions;
+	for (const char* option : kOutputLayerOptions) {
+		outputLayerOptions += (outputLayerOptions.empty() ? "" : "|") + string(option);
+	}
+	globalDataP->param[p] = Parameter(kOutputLayerParam, "", ParamType::Select, 0, kOutputLayerFrame, 1, 0, 0, 0, outputLayerOptions);
 	globalDataP->param[p].hint = "The image of the G'MIC results to output. Merged: all the results merged into one. "
 		"Layer 0, Layer -1...: one result, counted from the top of the stack as in G'MIC-Qt (Layer 0 is the first). "
 		"Frame: the result whose number is the frame number minus the first frame of Source, modulo the number of "
@@ -1192,33 +1164,13 @@ static bool isGmicArgument(const GlobalData* globalDataP, int i)
 }
 
 // A decimal number of a status value, as G'MIC-Qt reads it (QString::toFloat(), toInt()), '.' as
-// decimal point whatever the locale, blanks around it allowed. Only this syntax reaches the
-// conversion: no "inf" or "nan" (without isnan/isinf, folded with -ffinite-math-only), no
-// hexadecimal, no overflow. integer: digits only, with an optional sign, within int.
+// decimal point whatever the locale, blanks around it allowed (parseDecimal). integer: digits
+// only, with an optional sign, within int; else within float.
 static bool statusNumber(const string& text, bool integer, double& v)
 {
-	const size_t b = text.find_first_not_of(" \t\r\n"), e = text.find_last_not_of(" \t\r\n");
-	if (b == string::npos) return false;
-	const string s = text.substr(b, e - b + 1);
-	size_t i = 0, digits = 0;
-	if (s[i] == '+' || s[i] == '-') ++i;
-	while (i < s.size() && isdigit((unsigned char)s[i])) ++i, ++digits;
-	if (!integer) {
-		if (i < s.size() && s[i] == '.') ++i;
-		while (i < s.size() && isdigit((unsigned char)s[i])) ++i, ++digits;
-	}
-	if (digits == 0) return false;
-	if (!integer && i < s.size() && (s[i] == 'e' || s[i] == 'E')) {
-		++i;
-		if (i < s.size() && (s[i] == '+' || s[i] == '-')) ++i;
-		const size_t first = i;
-		while (i < s.size() && isdigit((unsigned char)s[i])) ++i;
-		if (i == first) return false;
-	}
-	if (i != s.size()) return false;
-	errno = 0;
-	v = stringToDouble(s); // locale-independent strtod
-	if (errno == ERANGE && std::fabs(v) > 1.) return false; // overflow (an underflow gives 0)
+	const std::optional<double> n = parseDecimal(text, integer ? DecimalSyntax::SignedInteger : DecimalSyntax::SignedDecimal);
+	if (!n) return false;
+	v = *n;
 	if (integer) {
 		return v >= (double)std::numeric_limits<int>::min() && v <= (double)std::numeric_limits<int>::max();
 	}
@@ -1929,32 +1881,15 @@ static int gmicCallAbortable(OFX::ImageEffect& effect, HostProgress& hostProgres
 static unsigned long long physicalMemoryBytes(); // at the end of the file
 
 // OFX_GMIC_FRAME_CACHE_MB: a decimal number >= 0, with '.' as decimal point whatever the locale
-// and an optional exponent ("512", "0.5", "2e3"), surrounding whitespace allowed. Anything else
-// (a sign, "inf", "nan", hexadecimal, other characters, an overflow) gives the default budget,
-// without isnan/isinf (folded with -ffinite-math-only): only this syntax reaches the conversion.
+// and an optional exponent ("512", "0.5", "2e3"), surrounding whitespace allowed (parseDecimal).
+// Anything else (a sign, "inf", "nan", hexadecimal, other characters, an overflow) gives the
+// default budget.
 static bool frameCacheParseMB(const char* env, double& mb)
 {
-	std::string s(env ? env : "");
-	const size_t b = s.find_first_not_of(" \t\r\n"), e = s.find_last_not_of(" \t\r\n");
-	if (b == std::string::npos) return false;
-	s = s.substr(b, e - b + 1);
-	size_t i = 0, digits = 0;
-	while (i < s.size() && isdigit((unsigned char)s[i])) ++i, ++digits;
-	if (i < s.size() && s[i] == '.') ++i;
-	while (i < s.size() && isdigit((unsigned char)s[i])) ++i, ++digits;
-	if (digits == 0) return false;
-	if (i < s.size() && (s[i] == 'e' || s[i] == 'E')) {
-		++i;
-		if (i < s.size() && (s[i] == '+' || s[i] == '-')) ++i;
-		const size_t first = i;
-		while (i < s.size() && isdigit((unsigned char)s[i])) ++i;
-		if (i == first) return false;
-	}
-	if (i != s.size()) return false;
-	errno = 0;
-	mb = stringToDouble(s); // locale-independent strtod
-	if (errno == ERANGE && mb > 1.) return false; // overflow (an underflow gives 0)
-	return mb >= 0. && mb <= std::numeric_limits<double>::max();
+	const std::optional<double> n = parseDecimal(env ? env : "", DecimalSyntax::UnsignedDecimal);
+	if (!n) return false;
+	mb = *n;
+	return true;
 }
 
 static size_t computeFrameCacheBudget()
@@ -2586,8 +2521,8 @@ PluginInfo getPluginInfo(int pluginIndex)
 	pluginInfo.identifier = effectData.uniqueId;
 	pluginInfo.category = effectData.category;
 	// (the description is made by pluginSetup)
-	pluginInfo.major_version = MAJOR_VERSION;
-	pluginInfo.minor_version = MINOR_VERSION;
+	pluginInfo.major_version = kPluginVersionMajor;
+	pluginInfo.minor_version = kPluginVersionMinor;
 	return pluginInfo;
 }
 

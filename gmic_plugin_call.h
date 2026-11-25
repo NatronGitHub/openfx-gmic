@@ -1,8 +1,8 @@
 // gmic_plugin_call(): run G'MIC on the plug-in's images, like gmic_call() from gmic_libc, but
 // never writing more than maxImages results, and with G'MIC-Qt's state between the runs of a
 // filter (GmicRunState). gmic_plugin_call.cpp also defines gmic_delete_external() and
-// gmic_get_stdlib() from gmic_libc.h (gmic_libc.cpp is not built), and gmicUpdateFileName() and
-// gmicRcPath(), which need gmic.h.
+// gmic_get_stdlib() from gmic_libc.h (gmic_libc.cpp is not built), and setDownloadCommands(),
+// gmicUpdateFileName() and gmicFolder(), which need gmic.h.
 #ifndef GMIC_PLUGIN_CALL_H
 #define GMIC_PLUGIN_CALL_H
 
@@ -72,8 +72,13 @@ std::string gmicUpdateFileName();
 // $GMIC_PATH, else $XDG_CONFIG_HOME/gmic, else $HOME/.config/gmic if $HOME/.config exists, else
 // $HOME/gmic (Windows: %APPDATA%/gmic); empty when none of these variables is set, where G'MIC
 // would use the temporary folder. G'MIC-Qt downloads the update file there. (The plug-in's own
-// files, gmic_ofx.gmic..., are looked up in get_gmic_rc_path().)
-std::string gmicRcPath();
+// files, gmic_ofx.gmic..., are in pluginConfigFolder(), gmic_plugin.cpp.)
+std::string gmicFolder();
+
+// Sets the commands that CImg runs to download filter data (curl, then wget and gunzip, or
+// PowerShell on Windows), so that they are never looked up in the host's current directory (see
+// gmic_plugin_call.cpp). Called once, when the plug-in loads the filters, before any G'MIC run.
+void setDownloadCommands();
 
 // If the file "path" (UTF-8) exists, the plug-in's messages (gmicLog, Helpers/gmic_log.h) and
 // G'MIC's (cimg::output) are appended to it from now on, as G'MIC-Qt's "log file" output messages
