@@ -206,14 +206,14 @@ def _progress_problem(report):
     return None
 
 
-def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
+def render(host, host_args, plugins, work, timeout, plugin, host_threads=False, frame='0'):
     pid, context, clips = plugin
     d = os.path.join(work, pid[len('eu.gmic.'):])
     shutil.rmtree(d, ignore_errors=True)
     os.makedirs(d)
     cmd = [host] + host_args + ['--no-std-paths', '--no-cache', '--quiet', '--allow-unwritten', '--format', 'pfm',
            '-d', 'float', '-p', pid, '-c', 'general' if 'General' in context else 'filter',
-           '--frames', '0', '-o', 'out',
+           '--frames', frame, '-o', 'out',
            '--report', 'report.json']
     for c in clips:
         cmd += ['-i', c + '=file:../input.pfm']

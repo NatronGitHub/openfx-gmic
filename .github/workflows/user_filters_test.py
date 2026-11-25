@@ -22,10 +22,12 @@ applied: the value is also G'MIC's own default.
 User File Larger, User File Smaller and User File Shifted give results of another size or
 position (#175): with Resize Mode Dynamic, the default, the output must have the result's size,
 and the region of definition its size and position, from Source's top-left corner; with Resize
-Mode Fixed (Inplace), User File Larger keeps Source's size and region of definition. The
-plug-in predicts these sizes from small probes, exactly: no render may warn that the result
-doesn't match the output, except User File Content Size, whose size depends on the pixels, and
-User File Area Size, whose size isn't an affine function of the input's (Source's size).
+Mode Fixed (Inplace), User File Larger keeps Source's size and region of definition. No render
+may warn that the result doesn't match the output, except User File Content Size, whose size
+depends on the pixels. On a 1800x1080-pixel Source: rotations (User File Rotate) and sizes in
+percent that are no exact fractions (User File Percent) must be predicted within the plug-in's
+1-pixel margin, and User File Frame Max (percent of max(w,h)) and User File Area Size (sqrt(W*H))
+must be confirmed at full size, exactly, all without a warning.
 
 With --stdlib, the same filters are then rendered with a copy of the whole built-in standard
 library before them in the file, as in a user's copied gmic_stdlib.gmic: the outputs must be the
@@ -80,35 +82,46 @@ DEFINED_BY = ' is defined by '  # the note of a kept definition of a hot-fixed c
 # whether the render must warn that the result doesn't match the output
 OFFSET_SOURCE = ['-i', 'Source=file:../input.pfm@20,10']
 PADDED = 'padded'
+# (each case: plug-in id, hostDemo arguments, the output's size and pos as above, its color, whether
+# the render warns, how the size is found: EXACT, with no note (exact fractions; the test's small
+# Source is probed at its own size), CONFIRMED by a probe at full size after a failed fit, or
+# NO_PROBE (Fixed, Downsample), and the frame)
+EXACT, CONFIRMED, NO_PROBE = 'exact', 'confirmed', 'no probe'
 GEOMETRY_CASES = [
-    ('eu.gmic.UserFileLarger', [], (2.0, 1.5, 0, 0), (1.0, 0.0, 0.0, 1.0), False),
-    ('eu.gmic.UserFileSmaller', [], (0.5, 0.25, 0, 0), (0.0, 1.0, 0.0, 1.0), False),
-    ('eu.gmic.UserFileShifted', [], (1.0, 1.0, 10, 20), (0.0, 0.0, 1.0, 1.0), False),
-    ('eu.gmic.UserFileLarger', OFFSET_SOURCE, (2.0, 1.5, 0, 0), (1.0, 0.0, 0.0, 1.0), False),
-    ('eu.gmic.UserFileShifted', OFFSET_SOURCE, (1.0, 1.0, 10, 20), (0.0, 0.0, 1.0, 1.0), False),
+    ('eu.gmic.UserFileLarger', [], (2.0, 1.5, 0, 0), (1.0, 0.0, 0.0, 1.0), False, EXACT, '0'),
+    ('eu.gmic.UserFileSmaller', [], (0.5, 0.25, 0, 0), (0.0, 1.0, 0.0, 1.0), False, EXACT, '0'),
+    ('eu.gmic.UserFileShifted', [], (1.0, 1.0, 10, 20), (0.0, 0.0, 1.0, 1.0), False, EXACT, '0'),
+    ('eu.gmic.UserFileLarger', OFFSET_SOURCE, (2.0, 1.5, 0, 0), (1.0, 0.0, 0.0, 1.0), False, EXACT, '0'),
+    ('eu.gmic.UserFileShifted', OFFSET_SOURCE, (1.0, 1.0, 10, 20), (0.0, 0.0, 1.0, 1.0), False, EXACT, '0'),
     # Fixed (Inplace): Source's rectangle, cropped, padded, pos() ignored
-    ('eu.gmic.UserFileLarger', ['-s', 'Resize Mode=0'], (1.0, 1.0, 0, 0), (1.0, 0.0, 0.0, 1.0), False),
-    ('eu.gmic.UserFileSmaller', ['-s', 'Resize Mode=0'], (1.0, 1.0, 0, 0), PADDED, False),
-    ('eu.gmic.UserFileShifted', ['-s', 'Resize Mode=0'], (1.0, 1.0, 0, 0), (0.0, 0.0, 1.0, 1.0), False),
+    ('eu.gmic.UserFileLarger', ['-s', 'Resize Mode=0'], (1.0, 1.0, 0, 0), (1.0, 0.0, 0.0, 1.0), False, NO_PROBE, '0'),
+    ('eu.gmic.UserFileSmaller', ['-s', 'Resize Mode=0'], (1.0, 1.0, 0, 0), PADDED, False, NO_PROBE, '0'),
+    ('eu.gmic.UserFileShifted', ['-s', 'Resize Mode=0'], (1.0, 1.0, 0, 0), (0.0, 0.0, 1.0, 1.0), False, NO_PROBE, '0'),
     # Downsample 1/2: resized to Source's size
-    ('eu.gmic.UserFileLarger', ['-s', 'Resize Mode=2'], (1.0, 1.0, 0, 0), (1.0, 0.0, 0.0, 1.0), False),
+    ('eu.gmic.UserFileLarger', ['-s', 'Resize Mode=2'], (1.0, 1.0, 0, 0), (1.0, 0.0, 0.0, 1.0), False, NO_PROBE, '0'),
     # the probes' size (40x60), and the warning
-    ('eu.gmic.UserFileContentSize', [], (0.25, 0.5, 0, 0), (1.0, 1.0, 0.0, 1.0), True),
-    # not affine: Source's size, and the warning
-    ('eu.gmic.UserFileAreaSize', [], (1.0, 1.0, 0, 0), (0.0, 1.0, 1.0, 1.0), True),
-    # Output Layer "Frame" at frame 0: result [0]
-    ('eu.gmic.UserFileFrames', ['-s', 'Output Layer=11'], (0.5, 0.5, 5, 6), (1.0, 0.0, 1.0, 1.0), False),
+    ('eu.gmic.UserFileContentSize', [], (0.25, 0.5, 0, 0), (1.0, 1.0, 0.0, 1.0), True, EXACT, '0'),
+    # not affine, sqrt(W*H) = 139 wide: a small Source, probed at its own size
+    ('eu.gmic.UserFileAreaSize', [], (139 / 160.0, 1.0, 0, 0), (0.0, 1.0, 1.0, 1.0), False, EXACT, '0'),
+    # Output Layer "Frame": result [0] at frame 0, [1] (Source's size) at frame 1
+    ('eu.gmic.UserFileFrames', ['-s', 'Output Layer=11'], (0.5, 0.5, 5, 6), (1.0, 0.0, 1.0, 1.0), False, EXACT, '0'),
+    ('eu.gmic.UserFileFrames', ['-s', 'Output Layer=11'], (1.0, 1.0, 0, 0), (1.0, 0.0, 1.0, 1.0), False, EXACT, '1'),
 ]
 GEOMETRY_WARNING = "doesn't match the output"
-# the plug-in's notes when it refines a prediction with thin probes, or can't (see resultGeometry)
+# the plug-in's notes when it refines a prediction with thin probes, or confirms it with a probe at
+# full size (see resultGeometry)
 REFINED_NOTE = 'refined with thin probes'
-NOT_REFINED_NOTE = 'from the small probes (not refined'
 CONFIRMED_NOTE = 'confirmed at full size'
-# rendered on a large Source made by hostDemo (1800x1080 pixels: its pixel aspect ratio is 16/15)
+# rendered on a large Source made by hostDemo: 1920x1080 canonical, 1800x1080 pixels (hostDemo's
+# pixel aspect ratio is 16/15); the tests take the pixels from the report
 LARGE_SOURCE = (1920, 1080)
 ROTATE_PLUGIN = 'eu.gmic.UserFileRotate'
-# 30 and 60: predicted exactly; 45: 1 pixel off, within the margin
-ROTATE_ANGLES = (30.0, 60.0, 45.0)
+# refined with a 1-pixel margin: exact or 1 pixel off (45 in the plug-in's model), never a warning
+ROTATE_ANGLES = (10.0, 20.0, 30.0, 45.0, 60.0, 70.0, 89.5)
+AREA_PLUGIN = 'eu.gmic.UserFileAreaSize'
+PERCENT_PLUGIN = 'eu.gmic.UserFilePercent'
+# not exact fractions of the input's size: refined with a margin, never a warning
+PERCENTS = (10.0, 70.0)
 FRAME_MAX_PLUGIN = 'eu.gmic.UserFileFrameMax'
 ROD_TOLERANCE = 1e-3
 KEPT_NOTE = "'star_tone'" + DEFINED_BY
@@ -260,11 +273,12 @@ def check_max_color(first, color):
 
 
 def check_large_sources(host, plugins, work):
-    """Renders ROTATE_PLUGIN at ROTATE_ANGLES and FRAME_MAX_PLUGIN on a LARGE_SOURCE Source.
+    """Renders ROTATE_PLUGIN, PERCENT_PLUGIN and FRAME_MAX_PLUGIN on a LARGE_SOURCE Source.
 
-    The rotations are refined with thin probes, within a pixel, with a 1-pixel margin on the right
-    and bottom sides: the output is the rotated size plus 0 to 2 pixels, at Source's top-left
-    corner, with no warning. The frame in percent of max(w,h) is confirmed at full size: exact.
+    The rotations (ROTATE_ANGLES) and percentages (PERCENTS) are refined with thin probes, within
+    a pixel, with a 1-pixel margin on the right and bottom sides: the output is the result's size
+    plus 0 to 2 pixels, at Source's top-left corner, with no warning. The frame in percent of
+    max(w,h) and the size in sqrt(W*H) (AREA_PLUGIN) are confirmed at full size: exact.
 
     Args:
         host: the path of hostDemo.
@@ -293,13 +307,41 @@ def check_large_sources(host, plugins, work):
         rh = round(1 + s * (width - 1) + c * (height - 1))
         output = first.get('output') or {}
         w, h = output.get('w') or 0, output.get('h') or 0
-        if not (rw <= w <= rw + 2 and rh <= h <= rh + 2):
+        # (rw, rh in double precision: CImg's float may round 1 pixel the other way)
+        if not (rw - 1 <= w <= rw + 2 and rh - 1 <= h <= rh + 2):
             problems.append('%s: the output is %sx%s, expected %dx%d plus at most 2 pixels'
                             % (name, w, h, rw, rh))
         rod = (first.get('regionOfDefinition') or {}).get('rod') or []
         if len(rod) != 4 or abs(rod[0] - src[0]) > ROD_TOLERANCE or abs(rod[3] - src[3]) > ROD_TOLERANCE:
             problems.append("%s: the region of definition %s doesn't start at Source's top-left corner %s"
                             % (name, rod, src))
+    for percent in PERCENTS:
+        name = '%s Percent=%g' % (PERCENT_PLUGIN, percent)
+        problem, log, first, src, (width, height), par = large_source_render(
+            host, plugins, work, PERCENT_PLUGIN, ['-s', 'Percent=%g' % percent])
+        if problem:
+            problems.append('%s: %s' % (name, problem))
+            continue
+        if GEOMETRY_WARNING in log:
+            problems.append('%s: the result does not match the output' % name)
+        problems += ['%s: %s' % (name, p) for p in check_max_color(first, (128 / 255.0, 0.0, 1.0, 1.0))]
+        pw, ph = width * percent / 100, height * percent / 100
+        output = first.get('output') or {}
+        w, h = output.get('w') or 0, output.get('h') or 0
+        if not (math.floor(pw) <= w <= math.ceil(pw) + 2 and math.floor(ph) <= h <= math.ceil(ph) + 2):
+            problems.append('%s: the output is %sx%s, expected %gx%g plus at most 2 pixels' % (name, w, h, pw, ph))
+    # not affine: confirmed at full size, exact
+    problem, log, first, src, (width, height), par = large_source_render(host, plugins, work, AREA_PLUGIN, [])
+    if problem:
+        problems.append('%s: %s' % (AREA_PLUGIN, problem))
+    else:
+        aw = round(math.sqrt(width * height))
+        output = first.get('output') or {}
+        if (output.get('w'), output.get('h')) != (aw, height):
+            problems.append('%s: the output is %sx%s, expected %dx%d'
+                            % (AREA_PLUGIN, output.get('w'), output.get('h'), aw, height))
+        if GEOMETRY_WARNING in log or CONFIRMED_NOTE not in log:
+            problems.append('%s: a warning, or not confirmed at full size' % AREA_PLUGIN)
     problem, log, first, src, (width, height), par = large_source_render(host, plugins, work, FRAME_MAX_PLUGIN, [])
     if problem:
         return problems + ['%s: %s' % (FRAME_MAX_PLUGIN, problem)]
@@ -330,17 +372,19 @@ def check_geometry(host, plugins, work):
         A list of problems, empty if every output has the expected size, position and color.
     """
     problems = []
-    for pid, args, geometry, color, warns in GEOMETRY_CASES:
-        name = '%s %s' % (pid, ' '.join(args)) if args else pid
+    for pid, args, geometry, color, warns, path, frame in GEOMETRY_CASES:
+        name = '%s %s frame %s' % (pid, ' '.join(args), frame)
         clips = [] if args is OFFSET_SOURCE else ['Source']
-        result = render_plugins.render(host, args, plugins, work, TIMEOUT, (pid, CONTEXT, clips))
+        result = render_plugins.render(host, args, plugins, work, TIMEOUT, (pid, CONTEXT, clips), frame=frame)
         problem, errors, log = result[2], result[5], result[6]
         if problem:
             problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
             continue
-        if REFINED_NOTE in log or NOT_REFINED_NOTE in log:
-            problems.append('%s: reached the refinement with thin probes (its sizes are exact '
-                            'fractions of the input\'s)' % name)
+        if REFINED_NOTE in log:
+            problems.append('%s: refined with thin probes (expected %s)' % (name, path))
+        if (CONFIRMED_NOTE in log) != (path == CONFIRMED):
+            problems.append('%s: %s' % (name, 'not confirmed at full size' if path == CONFIRMED
+                                        else 'confirmed at full size (expected %s)' % path))
         if (GEOMETRY_WARNING in log) != warns:
             problems.append('%s: %s' % (name, 'no warning that the result does not match the output'
                                         if warns else 'the result does not match the output'))

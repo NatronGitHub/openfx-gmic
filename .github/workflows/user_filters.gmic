@@ -120,11 +120,12 @@ fx_userfile_shifted :
 fx_userfile_content_size :
   w2={i(80,60,0,0)>200&&i(80,60,0,1)<100?80:40} r $w2,60,1,100%,0 fill_color 255,255,0,255
 
-# a size that is not an affine function of the input's: W*H/64 wide. The plug-in's probes can't
-# predict it: the output keeps Source's size, and the render warns and crops.
+# a size that is not an affine function of the input's: sqrt(W*H) wide. The fits fail, and the
+# plug-in confirms the size with one probe at full size (rendered on the test's small Source, which
+# is probed at its own size anyway, and on a 1920x1080 Source)
 #@gui User File Area Size : fx_userfile_area_size, fx_userfile_area_size
 fx_userfile_area_size :
-  r {round(w*h/64)},100%,1,100%,0 fill_color 0,255,255,255
+  r {round(sqrt(w*h))},100%,1,100%,0 fill_color 0,255,255,255
 
 # two results, for Output Layer "Frame": frame 0 is [0], half of Source's size at pos(5,6), frame
 # 1 is [1], Source's size
@@ -146,3 +147,10 @@ fx_userfile_rotate :
 #@gui User File Frame Max : fx_userfile_frame_max, fx_userfile_frame_max
 fx_userfile_frame_max :
   fs={round(0.1*max(w+2,h+2))} r {w+2+2*$fs},{h+2+2*$fs},1,100%,0 fill_color 0,128,255,255
+
+# a size in percent that is no exact fraction (10%, 70%): refined with thin probes, with a margin
+# (rendered on a 1920x1080 Source)
+#@gui User File Percent : fx_userfile_percent, fx_userfile_percent
+#@gui : Percent = float(10,1,200)
+fx_userfile_percent :
+  r $1%,$1%,1,100%,0 fill_color 128,0,255,255
