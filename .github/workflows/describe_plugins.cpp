@@ -50,6 +50,9 @@ int main(int argc, char** argv)
     for (size_t i = 0; i < plugins.size(); ++i) {
         const std::string id = plugins[i]->getIdentifier();
         fprintf(stderr, "PLUGIN %s\n", id.c_str());
+        // the menu group ('/' between nested groups) and the label
+        const ImageEffect::Descriptor& desc = plugins[i]->getDescriptor();
+        fprintf(stderr, "GROUPING %s\t%s\t%s\n", id.c_str(), desc.getPluginGrouping().c_str(), desc.getLabel().c_str());
         // Pick the context from what the plug-in advertises (Filter if available, else General),
         // and fail if describing that context fails: getContext() also returns NULL when the
         // describe actions fail, so falling back to another context would hide a regression.

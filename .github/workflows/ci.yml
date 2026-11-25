@@ -205,6 +205,11 @@ jobs:
         run: |
           python3 .github/workflows/user_filters_test.py --host build --plugins install/OFX/Plugins \
             --update-file --runs 1 --work render-update-file
+      # the same file as the user source (~/.gmic), read after the built-in filters (#206)
+      - name: Render filters of a user source
+        run: |
+          python3 .github/workflows/user_filters_test.py --host build --plugins install/OFX/Plugins \
+            --user-source --runs 1 --work render-user-source
       # no libcurl: G'MIC downloads with the curl command (cimg::load_network). Add Grain
       # downloads its grain images (gmic_grain.gmz, from gmic.eu) into G'MIC's cache, here an empty
       # GMIC_CACHE_PATH (Color Presets downloads only for a preset other than the default).

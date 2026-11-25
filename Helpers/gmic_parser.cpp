@@ -116,19 +116,11 @@ void processCommand(const string& s, EffectData& cd)
 		r3 = r2.substr(sPos + 1);
 		r2 = r2.substr(0, sPos);
 	}
-	// remove the preview options after the preview command: "(N)" (preview mode/split) followed by
-	// "+" (accurate on zoom) and/or "*" (G'MIC >= 3, accurate on parameter change)
-	for (size_t lp = r3.find('('); lp != string::npos; lp = r3.find('(', lp)) {
-		size_t rp = lp + 1;
-		while (rp < r3.size() && isdigit((unsigned char)r3[rp])) ++rp;
-		if (rp > lp + 1 && rp < r3.size() && r3[rp] == ')') {
-			r3.erase(lp, rp - lp + 1);
-		} else {
-			++lp;
-		}
-	}
-	strReplace(r3, "+", "");
-	strReplace(r3, "*", "");
+	// remove the preview options after the preview command: "(factor)", the preview's zoom factor
+	// (a number, e.g. "(0)", "(1)" or "(1.5)"), followed by "+" (accurate on zoom) and/or "*"
+	// (G'MIC >= 3, accurate on parameter change). As G'MIC-Qt (FiltersModelReader.cpp), the
+	// preview command is what comes before the first '(', whatever the factor.
+	r3 = r3.substr(0, r3.find('('));
 
 	// As G'MIC-Qt (FiltersPresenter::Filter::isNoApplyFilter, isNoPreviewFilter): a command that is
 	// empty or exactly "_none_" is no command. No main command: a preview-only filter, rendered with
@@ -938,15 +930,23 @@ static bool setsVisibilityStatus(const vector<string>& items)
 	return false;
 }
 
+// If the text at s[pos] starts with blanks (spaces or tabs) and '#', the position after the '#',
+// else npos (G'MIC-Qt's containsLeadingSpaceAndCrossSign)
+static size_t commentStart(const string& s, size_t pos)
+{
+	pos = s.find_first_not_of(" \t", pos);
+	return (pos != string::npos && s[pos] == '#') ? pos + 1 : string::npos;
+}
+
 // getline() for G'MIC code: a code line that ends with '\' goes on with the next line, without
 // its leading blanks (the unminified gmic_stdlib.gmic splits long "u" commands this way). Only code
-// lines are joined here; comment lines, which hold the #@gui definitions, are joined by
-// getGuiLine().
+// lines are joined here; comment lines (a '#', maybe after blanks, see commentStart), which hold
+// the #@gui definitions, are joined by getGuiLine().
 static bool getCodeLine(istream& in, string& line)
 {
 	if (!getline(in, line)) return false;
 	string next;
-	while (!line.empty() && line[0] != '#' && line[line.size() - 1] == '\\' && getline(in, next)) {
+	while (!line.empty() && commentStart(line, 0) == string::npos && line[line.size() - 1] == '\\' && getline(in, next)) {
 		line.erase(line.size() - 1);
 		line += next.substr(min(next.find_first_not_of(" \t"), next.size()));
 	}
@@ -1427,14 +1427,6 @@ static void hideBatchFilters(const string& content, vector<EffectData>& cds, vec
 	}
 }
 
-// If the text at s[pos] starts with blanks (spaces or tabs) and '#', the position after the '#',
-// else npos (G'MIC-Qt's containsLeadingSpaceAndCrossSign)
-static size_t commentStart(const string& s, size_t pos)
-{
-	pos = s.find_first_not_of(" \t", pos);
-	return (pos != string::npos && s[pos] == '#') ? pos + 1 : string::npos;
-}
-
 // getline() on content from pos, as G'MIC-Qt reads the filter definitions
 // (FiltersModelReader::readBufferLine): a comment line ending with '\' goes on with the next line
 // if that one is a comment line too, from after its first '#' (e.g. the long notes of "About
@@ -1460,24 +1452,107 @@ static bool getGuiLine(const string& content, size_t& pos, string& line)
 	return true;
 }
 
+// G'MIC-Qt's plain text of a folder or filter name (HtmlTranslator::html2txt, which matches the
+// paths of hide() against it): without the HTML tags, with the entities decoded, and the blanks
+// collapsed and trimmed, as QTextDocument::toPlainText() does
+static string plainText(const string& s)
+{
+	const string t = strRemoveXmlTags(s, true);
+	string r;
+	r.reserve(t.size());
+	for (const char c : t) {
+		if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+			if (!r.empty() && r.back() != ' ') r += ' ';
+		} else {
+			r += c;
+		}
+	}
+	if (!r.empty() && r.back() == ' ') r.pop_back();
+	return r;
+}
+
+// Is the #@gui line (without its leading blanks) G'MIC-Qt's "#@gui_en hide(path)" (FiltersModelReader.cpp,
+// containsHidePath, for its "en" language, used when no translation is configured)? Gives the
+// path: the folders, '/'-separated, optionally followed by a filter name.
+static bool isHideLine(const string& line, string& path)
+{
+	static const string kPrefix = "#@gui_en ";
+	if (line.compare(0, kPrefix.size(), kPrefix) != 0) return false;
+	const size_t b = line.find_first_not_of(" \t", kPrefix.size());
+	if (b == string::npos || line.compare(b, 5, "hide(") != 0) return false;
+	const size_t e = line.find(')', b + 5);
+	if (e == string::npos) return false;
+	path = line.substr(b + 5, e - b - 5);
+	return true;
+}
+
+// The names of a hide() path, without the empty ones (G'MIC-Qt splits it on '/', skipping the
+// empty parts, without trimming them)
+static vector<string> hidePathNames(const string& path)
+{
+	vector<string> names;
+	size_t b = 0;
+	while (b <= path.size()) {
+		size_t e = path.find('/', b);
+		if (e == string::npos) e = path.size();
+		if (e > b) names.push_back(path.substr(b, e - b));
+		b = e + 1;
+	}
+	return names;
+}
+
+// A filter's #@gui lines, with the plain text of its folders and name (see plainText)
+struct GuiFilter
+{
+	string text; // its folder line (all its folders, '/'-separated), then its #@gui lines
+	vector<string> plainPath;
+	string plainName;
+	bool hidden = false; // by a hide() line
+};
+
+// Does hide(path) hide the filter (G'MIC-Qt's FiltersModel::Filter::matchFullPath)? Yes if the
+// path's names are the first folders of the filter, or all its folders followed by its name.
+static bool hides(const vector<string>& path, const GuiFilter& filter)
+{
+	size_t k = 0;
+	while (k < filter.plainPath.size() && k < path.size() && filter.plainPath[k] == path[k]) ++k;
+	return k == path.size() || (k == filter.plainPath.size() && filter.plainName == path[k]);
+}
+
 void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<string>* lines)
 {
 	const string src_prefix_old = src_prefix_old_c;
 	const string src_prefix = src_prefix_c;
 	const string dst_prefix = dst_prefix_c;
 	size_t pos = 0;
-	string line, cat, command;
-	vector<string> commands;
+	string rawLine, command;
+	vector<string> folders; // the current folder and the ones that hold it, as in the #@gui lines
+	vector<GuiFilter> filters;
+	vector<string> hidden; // the paths of the hide() lines
+	GuiFilter filter;
 	EffectData cd;
-	//printf("content:\n%s\n", content.c_str());
-	while (getGuiLine(content, pos, line)) {
-		//printf("%s\n%s\n", cat.c_str(), line.c_str());
+	const auto endFilter = [&filters, &filter, &command]() {
+		if (command.empty()) return;
+		filter.text += '\n' + command;
+		filters.push_back(std::move(filter));
+		filter = GuiFilter();
+		command.clear();
+	};
+	while (getGuiLine(content, pos, rawLine)) {
+		// as G'MIC-Qt (containsGuiComment...), blanks may come before "#@gui"
+		const size_t b = rawLine.find_first_not_of(" \t");
+		string line = (b == string::npos) ? string() : rawLine.substr(b);
+		string path;
+		if (isHideLine(line, path)) {
+			hidden.push_back(path);
+			continue;
+		}
 		if ( (line.substr(0, src_prefix.size() + 1) == src_prefix + " ") ||
 			 (line.substr(0, src_prefix.size() + 4) == src_prefix + "_en ") ||
 			 (line.substr(0, src_prefix_old.size() + 1) == src_prefix_old + " ") ) {
 			// This is a @gui line or equivalent.
 			// Three possibilities:
-			// "#@gui Folder name" -> new category
+			// "#@gui Folder name" -> new folder
 			// "#@gui Command name : ..." -> new plugin
 			// "#@gui : ..." -> plugin parameters description
 			string::size_type spc = line.find(' ');
@@ -1487,42 +1562,81 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 			} else {
 				string::size_type col = line.find(':', spc + 1);
 				if (col == string::npos) {
-					// new Folder/category
-					if (!command.empty()) {
-						commands.push_back(cat + '\n' + command);
-						command.clear();
-					}
-					cat = line;
+					// new folder, as in G'MIC-Qt (FiltersModelReader::parseFiltersDefinitions): each
+					// leading '_' closes the current folder (a nested folder goes back to its parent,
+					// e.g. "#@gui _<b>Colors</b>" after "#@gui <i>Testing</i>"), the others are dropped,
+					// and an empty name opens no folder
+					endFilter();
+					string name = line.substr(spc + 1);
+					size_t u = 0;
+					for (; u < name.size() && name[u] == '_' && !folders.empty(); ++u) folders.pop_back();
+					while (u < name.size() && name[u] == '_') ++u;
+					name = strTrim(name.substr(u), " \t\r");
+					if (!name.empty()) folders.push_back(name);
 				} else if (col != spc + 1) {
 					// new command/Plugin (also each page of the About folder, as in G'MIC-Qt)
-					if (!command.empty()) {
-						commands.push_back(cat + '\n' + command);
-						command.clear();
+					endFilter();
+					// G'MIC-Qt's warning prefix ("#@gui !Name : ..."): not part of the name
+					if (line.compare(spc + 1, 1, "!") == 0) {
+						line.erase(spc + 1, 1);
+						--col;
 					}
+					// its folders, all in one folder line: G'MIC-Qt's path, with '/' between the
+					// folders, which hosts show as nested menu groups (see gmic_parse_single)
+					filter.text = src_prefix + " ";
+					for (size_t f = 0; f < folders.size(); ++f) {
+						filter.text += (f ? "/" : "") + folders[f];
+						filter.plainPath.push_back(plainText(folders[f]));
+					}
+					filter.plainName = plainText(line.substr(spc + 1, col - spc - 1));
 					command = line;
 				}
 			}
 		}
 	}
 	// push last command being processed
-	if (!command.empty()) {
-		commands.push_back(cat + '\n' + command);
-		command.clear();
-	}
+	endFilter();
 
-	for (vector<string>::const_iterator it = commands.begin(); it != commands.end(); ++it) {
-		string line2 = *it;
+	// hide(): as G'MIC-Qt, after all the filters were read (a line also hides the filters of the
+	// filter files before it). The hidden filters are only marked here: they are left out after
+	// the identifiers are numbered (see below), so that hiding the first of two filters of the
+	// same name doesn't give its identifier to the other (G'MIC-Qt identifies a filter by a hash
+	// of its path, which hiding doesn't change).
+	for (const string& path : hidden) {
+		const vector<string> names = hidePathNames(path);
+		bool found = false;
+		for (GuiFilter& f : filters) {
+			if (!f.hidden && hides(names, f)) {
+				f.hidden = true;
+				found = true;
+			}
+		}
+		if (!found) {
+			gmicLog("openfx-gmic: Warning: hide(%s): no folder or filter with this path\n", path.c_str());
+		}
+	}
+	// per entry that this call adds to cds (and lines), from these positions: hidden by hide()
+	vector<bool> hiddenCds;
+	const size_t cdsStart = cds ? cds->size() : 0;
+	const size_t linesStart = lines ? lines->size() : 0;
+
+	for (vector<GuiFilter>::const_iterator it = filters.begin(); it != filters.end(); ++it) {
+		string line2 = it->text;
 		strReplace(line2, src_prefix, dst_prefix);
 		strReplace(line2, src_prefix_old, dst_prefix);
+		cd.category.clear(); // (no folder: the filter is at the top level)
 		gmic_parse_single(line2, cd);
 		//printf("%s/%s\n", cd.category.c_str(), cd.name.c_str());
+		// the rules below look at the filter's own folder, the last one of its path (e.g.
+		// Testing/Samj/Sequences is a Sequences folder)
+		const string folder = it->plainPath.empty() ? string() : it->plainPath.back();
 		bool doOutput = true;
-		if (cd.category == "Various") {
+		if (folder == "Various") {
 			//doOutput = false;
 			doOutput = true;
 		} else if ((int)strLowercase(line2).find("[interactive]") >= 0) {
 			doOutput = false;
-		} else if (cd.category == "Sequences" || (int)strLowercase(line2).find("[animated]") >= 0) {
+		} else if (folder == "Sequences" || (int)strLowercase(line2).find("[animated]") >= 0) {
 			doOutput = false;
 		} else if (line2.find("[ New Version Available! ]") != string::npos) {
 			// The page that G'MIC's update_deprecate inserts into the update file of an older
@@ -1530,9 +1644,10 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 			// upgrade: no filter, and a plug-in there would shift the index of every other one.
 			doOutput = false;
 		}
-		if (doOutput && !cd.name.empty()) {
+		if (doOutput && !cd.name.empty() && (cds || !it->hidden)) {
 			if (cds) cds->push_back(cd);
 			if (lines) lines->push_back(line2);
+			hiddenCds.push_back(it->hidden);
 		}
 	}
 	if (!cds) {
@@ -1563,14 +1678,22 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
         it->uniqueId = id;
         ids.insert(id);
     }
+    // the filters that hide() hides, now that the others have their identifiers
+    for (size_t k = hiddenCds.size(); k-- > 0; ) {
+        if (!hiddenCds[k]) continue;
+        cds->erase(cds->begin() + (ptrdiff_t)(cdsStart + k));
+        if (lines && linesStart + k < lines->size()) lines->erase(lines->begin() + (ptrdiff_t)(linesStart + k));
+    }
     hideBatchFilters(content, *cds, lines);
     for (vector<EffectData>::iterator it = cds->begin(); it != cds->end(); ++it) {
         // post-process
         EffectData& cd = *it;
+        // (nested folders: "G'MIC/Testing/Afre/Colors", see gmic_parse_multi; a filter in no
+        // folder is in the G'MIC group itself)
         if (cd.category == "About") {
             cd.category = "G'MIC";
         } else {
-            cd.category = "G'MIC/" + cd.category;
+            cd.category = cd.category.empty() ? string("G'MIC") : "G'MIC/" + cd.category;
             cd.name = "G'MIC " + cd.name;
         }
         strReplace(cd.name, "[", "");
