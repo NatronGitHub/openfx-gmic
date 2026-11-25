@@ -66,6 +66,12 @@ struct EffectParameter {
 	// removable). "pointenabled": the checkbox the parser adds after a removable point (see
 	// gmic_parse_single), whose name is the point's with " Enabled".
 	int removable;
+	// G'MIC-Qt's initial visibility state, from "_0", "_1" or "_2" after the closing delimiter
+	// (AbstractParameter::parseText), with the values of its VisibilityState. Applied only where
+	// the plug-in can keep it: Visible for a point, and for every parameter of a filter that
+	// changes the visibility at run time (see markDynamicVisibilityFilters in gmic_parser.cpp).
+	enum class Visibility { Hidden = 0, Disabled = 1, Visible = 2 };
+	Visibility visibility = Visibility::Visible;
 	// a parameter of G'MIC's split preview (gui_split_preview: the choice of "Full", "Forward
 	// Horizontal"... and its point), which only the filter's preview command uses (see
 	// markSplitPreviewParams, issue #184)
@@ -97,9 +103,7 @@ struct EffectData {
 
 std::string gmic_parse_single(const std::string& content, EffectData& cd);
 
-// checkCurated: report the curated entries that are no longer the main command of a filter (only
-// meaningful with the built-in standard library, not with a user's gmic_ofx.gmic)
-void gmic_parse_multi(const std::string& content, std::vector<EffectData>* cds, std::vector<std::string>* lines, bool checkCurated = true);
+void gmic_parse_multi(const std::string& content, std::vector<EffectData>* cds, std::vector<std::string>* lines);
 
 }
 #endif

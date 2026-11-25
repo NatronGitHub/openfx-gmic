@@ -55,6 +55,8 @@ SKIP = {
     'eu.gmic.PinkOperatorBinary': "runs Pink's external executables (pink)",
     'eu.gmic.CImgNLMeans': "runs the external executable 'use_nlmeans'",
     'eu.gmic.CImgSkeleton': "runs the external executable 'use_skeleton'",
+    'eu.gmic.Intarsia': 'writes an HTML page and PNG images into its Output Directory on every render '
+                        '(empty by default: the root folder)',
     # they download data at render time (G'MIC's input_cached, from gmic.eu, or another site),
     # which CI runners may not reach (UpscaleCNN2x failed on Windows)
     'eu.gmic.GmickyRoddy': 'downloads its mascot images (sp gmicky...: img/sample_*.png)',
