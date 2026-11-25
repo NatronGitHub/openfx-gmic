@@ -192,6 +192,22 @@ jobs:
           python3 .github/workflows/render_plugins.py --host build --host-arg=--ofx14 --host-threads \
             --plugins install/OFX/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset pr --jobs 2 --work render-ofx14
+      # the OpenMP runtime stays loaded when the host unloads GMIC.ofx (#213): libgomp, unloaded
+      # with it, crashed intermittently under its threads that were still exiting. glibc's
+      # LD_DEBUG=files log shows it at every run: "activating NODELETE" for libgomp (the
+      # plug-in's pin), and no "destroying link map" for it
+      - name: Check that unloading the plug-in keeps libgomp loaded
+        run: |
+          rm -rf ld-debug && mkdir ld-debug
+          LD_DEBUG=files LD_DEBUG_OUTPUT="$PWD/ld-debug/ld" python3 .github/workflows/render_plugins.py \
+            --host build --plugins install/OFX/Plugins --list plugins.txt --only eu.gmic.ExtractObjects \
+            --work render-unload
+          grep -h 'activating NODELETE for .*libgomp' ld-debug/ld.* > /dev/null ||
+            { echo "FAIL: libgomp was not pinned (no 'activating NODELETE' in the LD_DEBUG log)"; exit 1; }
+          if grep -h 'libgomp.*destroying link map' ld-debug/ld.*; then
+            echo "FAIL: libgomp was unloaded with the plug-in"; exit 1
+          fi
+          echo "libgomp stays loaded after the plug-in is unloaded"
       # a user filter file (~/.config/gmic/gmic_ofx.gmic) whose filters call the commands it
       # defines, and replace a built-in one (#168): checks the pixels and the hot-fix notes, and
       # prints the render times with a small file and with a copy of the standard library

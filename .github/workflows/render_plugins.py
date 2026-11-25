@@ -4,7 +4,8 @@
 Each plug-in is rendered at frame 0 with its default parameters, on a small fixed test input
 (160x120 float RGB with gradients, stripes and a rectangle: every input clip, the extra layers
 included, gets the same image), in its own directory, with a timeout. The test fails on any
-load, describe, instance or render error, and on a missing output; NaN pixels in an output are
+load, describe, instance or render error, and on a missing output (a crash is reported as "at
+exit" when hostDemo had written report.json and the outputs); NaN pixels in an output are
 reported as warnings. A few plug-ins are skipped (SKIP), are expected to fail with a given error
 (EXPECTED_FAIL), or have a longer timeout (TIMEOUT), with the reason; the test also fails when an
 expected failure renders (XPASS), or when fewer than --min-rendered plug-ins rendered (default:
@@ -200,6 +201,17 @@ def _progress_problem(report):
     return None
 
 
+def _outputs_written(d):
+    """True if d has report.json and every output file it lists."""
+    try:
+        with open(os.path.join(d, 'report.json')) as f:
+            report = json.load(f)
+    except (OSError, ValueError):
+        return False
+    files = [f for r in report.get('renders', []) for f in ((r.get('output') or {}).get('files') or [])]
+    return bool(files) and all(os.path.exists(os.path.join(d, f)) for f in files)
+
+
 def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
     pid, context, clips = plugin
     d = os.path.join(work, pid[len('eu.gmic.'):])
@@ -232,7 +244,10 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
         if rc == 'timeout':
             problem = 'timeout after %ds' % timeout
         elif rc < 0:
-            problem = 'crash (signal %d)' % -rc
+            # hostDemo writes report.json after the renders and before it unloads the plug-in: a
+            # crash after it and all the output files were written is a crash at exit (#213)
+            when = 'at exit' if _outputs_written(d) else 'during the render'
+            problem = 'crash %s (signal %d)' % (when, -rc)
         else:
             problem = 'exit status %s' % rc
     else:
