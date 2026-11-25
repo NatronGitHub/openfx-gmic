@@ -113,7 +113,8 @@ void gmicOpenLog(const std::string& path)
 {
 	if (path.empty()) return;
 	// opt-in: only a file that the user made (never created here). cimg::std_fopen: on Windows, also
-	// a UTF-8 path (_wfopen), e.g. in a profile folder with non-ASCII characters
+	// a UTF-8 path (_wfopen), e.g. in a profile folder with non-ASCII characters (get_gmic_rc_path()
+	// gives %APPDATA% in UTF-8, issue #201)
 	std::FILE* file = cimg::std_fopen(path.c_str(), "r");
 	if (!file) return;
 	std::fclose(file);

@@ -149,22 +149,56 @@ using namespace gmic_ofx;
 #endif
 
 
-// The contents of a file, or an empty string if it can't be read (missing, a directory, unreadable,
-// or too large to hold). The size isn't taken from tellg(), which can be -1 or 2^63-1 for a
-// directory (ext4 htree); libstdc++ throws ios_base::failure when reading one.
+#ifdef _WIN32
+// A wide string (e.g. from _wgetenv) in UTF-8; empty if it can't be converted.
+static string wideToUtf8(const wchar_t* wide)
+{
+	const int size = WideCharToMultiByte(CP_UTF8, 0, wide, -1, nullptr, 0, nullptr, nullptr);
+	if (size <= 1) return string();
+	string utf8(static_cast<size_t>(size), '\0');
+	if (WideCharToMultiByte(CP_UTF8, 0, wide, -1, &utf8[0], size, nullptr, nullptr) != size) return string();
+	utf8.pop_back(); // (the terminating null)
+	return utf8;
+}
+#endif
+
+// Opens the file "path" (UTF-8) for reading, as binary: on Windows with _wfopen, since fopen and
+// std::ifstream read a narrow path in the ANSI code page (issue #201).
+static std::FILE* openUtf8FileForReading(const string& path)
+{
+#ifdef _WIN32
+	const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.c_str(), -1, nullptr, 0);
+	if (size <= 1) return nullptr;
+	std::wstring wide(static_cast<size_t>(size), L'\0');
+	if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.c_str(), -1, &wide[0], size) != size) return nullptr;
+	return _wfopen(wide.c_str(), L"rb");
+#else
+	return std::fopen(path.c_str(), "rb");
+#endif
+}
+
+// The contents of a file (its path in UTF-8), or an empty string if it can't be read (missing, a
+// directory, unreadable, or too large to hold). The size isn't taken from ftell(), which is
+// meaningless for a directory (ext4 htree): fread fails on one (EISDIR).
 static
 string loadStringFromFile(const string& filename)
 {
 	if (filename.empty()) return string();
-	std::ifstream infile(filename.c_str(), std::ios::in | std::ios::binary);
-	if (!infile) return string();
+	struct FileCloser { void operator()(std::FILE* f) const { std::fclose(f); } };
+	const std::unique_ptr<std::FILE, FileCloser> file(openUtf8FileForReading(filename));
+	if (!file) return string();
 	string buffer;
+	char chunk[16384];
 	try {
-		buffer.assign(std::istreambuf_iterator<char>(infile), std::istreambuf_iterator<char>());
-	} catch (const std::exception&) { // bad_alloc, length_error, ios_base::failure (EISDIR, EIO)
+		for (;;) {
+			const size_t n = std::fread(chunk, 1, sizeof(chunk), file.get());
+			if (n == 0) break;
+			buffer.append(chunk, n);
+		}
+	} catch (const std::exception&) { // bad_alloc, length_error
 		return string();
 	}
-	if (infile.bad()) return string();
+	if (std::ferror(file.get())) return string();
 	return buffer;
 }
 
@@ -183,7 +217,13 @@ string get_gmic_rc_path()
 			path = string(_path_rc) + "/.config/gmic/";
 		}
 #else
-		_path_rc = getenv("APPDATA");
+		// in UTF-8, as loadStringFromFile and gmicOpenLog read it: getenv gives the ANSI code page,
+		// which may not have every character of the profile folder's name (issue #201)
+		const wchar_t* const appData = _wgetenv(L"APPDATA");
+		const string appDataUtf8 = appData ? wideToUtf8(appData) : string();
+		if (!appDataUtf8.empty()) {
+			path = appDataUtf8 + "/gmic/";
+		}
 #endif
 	}
 	if (_path_rc && path.empty()) {
