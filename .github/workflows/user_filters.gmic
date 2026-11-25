@@ -132,9 +132,17 @@ fx_userfile_area_size :
 fx_userfile_frames :
   fill_color 255,0,255,255 +r[0] 50%,50%,1,100%,0 rv nm[0] "pos(5,6),name(Small)"
 
-# a rotation by 30 degrees: its size, round(1 + |cos|*(W-1) + |sin|*(H-1)) wide (CImg's
-# get_rotate), is affine but irrational, which the small probes can't predict at a large size:
-# the plug-in refines it with two thin probes (rendered on a 1920x1080 Source)
+# a rotation: its size, round(1 + |cos|*(W-1) + |sin|*(H-1)) wide (CImg's get_rotate), is affine
+# but irrational, which the small probes can't predict at a large size: the plug-in refines it
+# with two thin probes, within a pixel, and adds a 1-pixel margin (rendered on a 1920x1080 Source)
 #@gui User File Rotate : fx_userfile_rotate, fx_userfile_rotate
+#@gui : Angle = float(30,0,90)
 fx_userfile_rotate :
-  rotate 30,1,0 fill_color 255,128,0,255
+  rotate $1,1,0 fill_color 255,128,0,255
+
+# a frame in percent of max(w,h), rounded, as Frame [Regular] (10% of the long side, and a
+# 1-pixel outline): affine only over probes of Source's proportions, so the refinement fails and
+# the plug-in confirms the size with one probe at full size (rendered on a 1920x1080 Source)
+#@gui User File Frame Max : fx_userfile_frame_max, fx_userfile_frame_max
+fx_userfile_frame_max :
+  fs={round(0.1*max(w+2,h+2))} r {w+2+2*$fs},{h+2+2*$fs},1,100%,0 fill_color 0,128,255,255

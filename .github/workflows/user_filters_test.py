@@ -103,9 +103,13 @@ GEOMETRY_WARNING = "doesn't match the output"
 # the plug-in's notes when it refines a prediction with thin probes, or can't (see resultGeometry)
 REFINED_NOTE = 'refined with thin probes'
 NOT_REFINED_NOTE = 'from the small probes (not refined'
+CONFIRMED_NOTE = 'confirmed at full size'
+# rendered on a large Source made by hostDemo (1800x1080 pixels: its pixel aspect ratio is 16/15)
+LARGE_SOURCE = (1920, 1080)
 ROTATE_PLUGIN = 'eu.gmic.UserFileRotate'
-ROTATE_ANGLE = 30.0
-ROTATE_SOURCE = (1920, 1080)
+# 30 and 60: predicted exactly; 45: 1 pixel off, within the margin
+ROTATE_ANGLES = (30.0, 60.0, 45.0)
+FRAME_MAX_PLUGIN = 'eu.gmic.UserFileFrameMax'
 ROD_TOLERANCE = 1e-3
 KEPT_NOTE = "'star_tone'" + DEFINED_BY
 HOTFIX_WARNING = 'Warning: hot fix'
@@ -207,8 +211,60 @@ def check_padded(report):
             if abs(lows[c] - lo) > TOLERANCE or abs(highs[c] - hi) > TOLERANCE]
 
 
-def check_rotation(host, plugins, work):
-    """Renders ROTATE_PLUGIN on a large Source: the refined prediction must be exact.
+def large_source_render(host, plugins, work, pid, args):
+    """Renders a plug-in on a LARGE_SOURCE Source made by hostDemo.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+        pid: the plug-in id.
+        args: more hostDemo arguments (-s name=value).
+
+    Returns:
+        (problem, log, first render of the report, Source's RoD, Source's size in pixels, PAR);
+        problem is None if it rendered.
+    """
+    sw, sh = LARGE_SOURCE
+    result = render_plugins.render(host, ['-i', 'Source=rod:0,0,%d,%d' % (sw, sh)] + args, plugins, work,
+                                   TIMEOUT, (pid, CONTEXT, []))
+    problem, errors, log = result[2], result[5], result[6]
+    if problem:
+        return '%s %s' % (problem, ' '.join(errors)), log, {}, [], (0, 0), 1.0
+    with open(os.path.join(work, pid[len('eu.gmic.'):], 'report.json'), encoding='utf-8') as f:
+        report = json.load(f)
+    first = (report.get('renders') or [{}])[0]
+    src = ((first.get('inputs') or {}).get('Source') or {}).get('regionOfDefinition') or []
+    par = ((((report.get('clipPreferences') or {}).get('clips') or {}).get('Source') or {})
+           .get('pixelAspectRatio') or 1.0)
+    if len(src) != 4:
+        return 'no region of definition of Source', log, first, [], (0, 0), par
+    return None, log, first, src, (round((src[2] - src[0]) / par), round(src[3] - src[1])), par
+
+
+def check_max_color(first, color):
+    """Checks that the output's maximum is color (a result in a transparent margin).
+
+    Args:
+        first: the first render of the report.
+        color: the RGBA value of the result's pixels.
+
+    Returns:
+        A list of problems.
+    """
+    highs = (first.get('output') or {}).get('max') or []
+    if len(highs) < 4 or None in highs[:4]:
+        return ['no RGBA output']
+    return ['channel %d: maximum %g, expected %g' % (c, highs[c], v)
+            for c, v in enumerate(color) if abs(highs[c] - v) > TOLERANCE]
+
+
+def check_large_sources(host, plugins, work):
+    """Renders ROTATE_PLUGIN at ROTATE_ANGLES and FRAME_MAX_PLUGIN on a LARGE_SOURCE Source.
+
+    The rotations are refined with thin probes, within a pixel, with a 1-pixel margin on the right
+    and bottom sides: the output is the rotated size plus 0 to 2 pixels, at Source's top-left
+    corner, with no warning. The frame in percent of max(w,h) is confirmed at full size: exact.
 
     Args:
         host: the path of hostDemo.
@@ -216,42 +272,50 @@ def check_rotation(host, plugins, work):
         work: the work directory, with the user file installed.
 
     Returns:
-        A list of problems, empty if the output has the rotated size, with no warning.
+        A list of problems, empty if every render is right.
     """
-    sw, sh = ROTATE_SOURCE
-    args = ['-i', 'Source=rod:0,0,%d,%d' % (sw, sh)]
-    result = render_plugins.render(host, args, plugins, work, TIMEOUT, (ROTATE_PLUGIN, CONTEXT, []))
-    problem, errors, log = result[2], result[5], result[6]
-    if problem:
-        return ['%s: %s %s' % (ROTATE_PLUGIN, problem, ' '.join(errors))]
     problems = []
-    if GEOMETRY_WARNING in log:
-        problems.append('the result does not match the output')
-    if REFINED_NOTE not in log:
-        problems.append('no refinement with thin probes')
-    report_path = os.path.join(work, ROTATE_PLUGIN[len('eu.gmic.'):], 'report.json')
-    with open(report_path, encoding='utf-8') as f:
-        report = json.load(f)
-    problems += check_output(report, (1.0, 128 / 255.0, 0.0, 1.0))
-    first = (report.get('renders') or [{}])[0]
+    for angle in ROTATE_ANGLES:
+        name = '%s Angle=%g' % (ROTATE_PLUGIN, angle)
+        problem, log, first, src, (width, height), par = large_source_render(
+            host, plugins, work, ROTATE_PLUGIN, ['-s', 'Angle=%g' % angle])
+        if problem:
+            problems.append('%s: %s' % (name, problem))
+            continue
+        if GEOMETRY_WARNING in log:
+            problems.append('%s: the result does not match the output' % name)
+        if REFINED_NOTE not in log:
+            problems.append('%s: no refinement with thin probes' % name)
+        problems += ['%s: %s' % (name, p) for p in check_max_color(first, (1.0, 128 / 255.0, 0.0, 1.0))]
+        # CImg's get_rotate, on Source's pixels
+        c, s = abs(math.cos(math.radians(angle))), abs(math.sin(math.radians(angle)))
+        rw = round(1 + c * (width - 1) + s * (height - 1))
+        rh = round(1 + s * (width - 1) + c * (height - 1))
+        output = first.get('output') or {}
+        w, h = output.get('w') or 0, output.get('h') or 0
+        if not (rw <= w <= rw + 2 and rh <= h <= rh + 2):
+            problems.append('%s: the output is %sx%s, expected %dx%d plus at most 2 pixels'
+                            % (name, w, h, rw, rh))
+        rod = (first.get('regionOfDefinition') or {}).get('rod') or []
+        if len(rod) != 4 or abs(rod[0] - src[0]) > ROD_TOLERANCE or abs(rod[3] - src[3]) > ROD_TOLERANCE:
+            problems.append("%s: the region of definition %s doesn't start at Source's top-left corner %s"
+                            % (name, rod, src))
+    problem, log, first, src, (width, height), par = large_source_render(host, plugins, work, FRAME_MAX_PLUGIN, [])
+    if problem:
+        return problems + ['%s: %s' % (FRAME_MAX_PLUGIN, problem)]
+    s = round(0.1 * max(width + 2, height + 2))
+    fw, fh = width + 2 + 2 * s, height + 2 + 2 * s
     output = first.get('output') or {}
-    rod = (first.get('regionOfDefinition') or {}).get('rod') or []
-    src = ((first.get('inputs') or {}).get('Source') or {}).get('regionOfDefinition') or []
-    par = ((((report.get('clipPreferences') or {}).get('clips') or {}).get('Source') or {})
-           .get('pixelAspectRatio') or 1.0)
-    if len(src) != 4:
-        return ['%s: no region of definition of Source' % ROTATE_PLUGIN]
-    # CImg's get_rotate, on Source's pixels
-    width, height = round((src[2] - src[0]) / par), round(src[3] - src[1])
-    c, s = abs(math.cos(math.radians(ROTATE_ANGLE))), abs(math.sin(math.radians(ROTATE_ANGLE)))
-    rw, rh = round(1 + c * (width - 1) + s * (height - 1)), round(1 + s * (width - 1) + c * (height - 1))
-    if (output.get('w'), output.get('h')) != (rw, rh):
-        problems.append('the output is %sx%s, expected %dx%d (Source %dx%d pixels)'
-                        % (output.get('w'), output.get('h'), rw, rh, width, height))
-    expected = [src[0], src[3] - rh, src[0] + rw * par, src[3]]
-    if len(rod) != 4 or any(abs(r - e) > ROD_TOLERANCE for r, e in zip(rod, expected)):
-        problems.append('the region of definition is %s, expected %s' % (rod, expected))
-    return ['%s: %s' % (ROTATE_PLUGIN, p) for p in problems]
+    if (output.get('w'), output.get('h')) != (fw, fh):
+        problems.append('%s: the output is %sx%s, expected %dx%d'
+                        % (FRAME_MAX_PLUGIN, output.get('w'), output.get('h'), fw, fh))
+    if GEOMETRY_WARNING in log:
+        problems.append('%s: the result does not match the output' % FRAME_MAX_PLUGIN)
+    if CONFIRMED_NOTE not in log:
+        problems.append('%s: not confirmed at full size' % FRAME_MAX_PLUGIN)
+    report = {'renders': [first]}
+    problems += ['%s: %s' % (FRAME_MAX_PLUGIN, p) for p in check_output(report, (0.0, 128 / 255.0, 1.0, 1.0))]
+    return problems
 
 
 def check_geometry(host, plugins, work):
@@ -490,7 +554,7 @@ def run_test(host, plugins, stdlib, runs, work, name):
     if not any(KEPT_NOTE in log for log in logs):
         problems.append("no note that the file's own definition of 'star_tone' is kept")
     problems += check_geometry(host, plugins, work)
-    problems += check_rotation(host, plugins, work)
+    problems += check_large_sources(host, plugins, work)
     for p in problems:
         print('FAIL (user file): ' + p)
     passed = not problems
