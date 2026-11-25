@@ -20,7 +20,10 @@ the hardware threads). This shows that the count reaches G'MIC, not that the plu
 applied: the value is also G'MIC's own default.
 
 User File Larger, User File Smaller and User File Shifted give results of another size or
-position (#175): with Resize Mode Dynamic, the default, the output must have the result's size,
+position (#175). hostDemo reports no multi-resolution support: as it is, User File Larger must be
+resized to Source's size, as before #175. The other checks run with OFX_GMIC_MULTIRES=1, which
+makes the plug-in predict the result's size anyway. With Resize Mode Dynamic, the default, the
+output must have the result's size,
 and the region of definition its size and position, from Source's top-left corner; with Resize
 Mode Fixed (Inplace), User File Larger keeps Source's size and region of definition. No render
 may warn that the result doesn't match the output, except User File Content Size, whose size
@@ -111,6 +114,8 @@ GEOMETRY_CASES = [
     ('eu.gmic.UserFileFrames', ['-s', 'Output Layer=11'], (1.0, 1.0, 0, 0), (1.0, 0.0, 1.0, 1.0), False, EXACT, '1'),
 ]
 GEOMETRY_WARNING = "doesn't match the output"
+# the plug-in's override of the host's multi-resolution support (see run_test)
+MULTIRES_ENV = 'OFX_GMIC_MULTIRES'
 # the plug-in's notes when it refines a prediction with thin probes, or confirms it with a probe at
 # full size (see resultGeometry)
 REFINED_NOTE = 'refined with thin probes'
@@ -422,6 +427,41 @@ def check_timeout(host, plugins, work):
     return ['%s: %s' % (SLOW_PLUGIN, p) for p in problems]
 
 
+def check_no_multires(host, plugins, work):
+    """Renders User File Larger on hostDemo as it is, without multi-resolution support.
+
+    The plug-in must then resize the result to Source's size, as before #175: Source's size and
+    region of definition, no probe and no warning.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems.
+    """
+    pid = 'eu.gmic.UserFileLarger'
+    result = render_plugins.render(host, [], plugins, work, TIMEOUT, (pid, CONTEXT, ['Source']))
+    problem, errors, log = result[2], result[5], result[6]
+    if problem:
+        return ['%s without multi-resolution: %s %s' % (pid, problem, ' '.join(errors))]
+    with open(os.path.join(work, pid[len('eu.gmic.'):], 'report.json'), encoding='utf-8') as f:
+        report = json.load(f)
+    problems = check_output(report, (1.0, 0.0, 0.0, 1.0))
+    first = (report.get('renders') or [{}])[0]
+    output = first.get('output') or {}
+    if (output.get('w'), output.get('h')) != (render_plugins.INPUT_WIDTH, render_plugins.INPUT_HEIGHT):
+        problems.append('the output is %sx%s, not Source\'s size' % (output.get('w'), output.get('h')))
+    rod = (first.get('regionOfDefinition') or {}).get('rod')
+    src = ((first.get('inputs') or {}).get('Source') or {}).get('regionOfDefinition')
+    if rod != src:
+        problems.append("the region of definition is %s, not Source's %s" % (rod, src))
+    if GEOMETRY_WARNING in log or REFINED_NOTE in log or CONFIRMED_NOTE in log:
+        problems.append('a probe or a warning')
+    return ['%s without multi-resolution: %s' % (pid, p) for p in problems]
+
+
 def check_geometry(host, plugins, work):
     """Renders each of GEOMETRY_CASES, and checks the output's size and region of definition.
 
@@ -659,9 +699,16 @@ def run_test(host, plugins, stdlib, runs, work, name):
     problems += check_channels(host, plugins, work)
     if not any(KEPT_NOTE in log for log in logs):
         problems.append("no note that the file's own definition of 'star_tone' is kept")
-    problems += check_geometry(host, plugins, work)
-    problems += check_large_sources(host, plugins, work)
-    problems += check_timeout(host, plugins, work)
+    problems += check_no_multires(host, plugins, work)
+    # hostDemo renders any region of definition, but reports no multi-resolution support: the
+    # plug-in's OFX_GMIC_MULTIRES=1 makes it predict the result's size anyway
+    os.environ[MULTIRES_ENV] = '1'
+    try:
+        problems += check_geometry(host, plugins, work)
+        problems += check_large_sources(host, plugins, work)
+        problems += check_timeout(host, plugins, work)
+    finally:
+        os.environ.pop(MULTIRES_ENV, None)
     for p in problems:
         print('FAIL (user file): ' + p)
     passed = not problems
