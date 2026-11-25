@@ -327,14 +327,17 @@ Results of another size (issue #175): as in G'MIC-Qt, a filter's result may be l
 moved (Rotate, frames, crops, Upscale [Scale2x]..., or a pos(x,y) in the result's name, from
 Source's top-left corner). The Resize Mode (in Advanced Options) chooses the output:
 - Dynamic, the default: the result's size and position. OpenFX needs them before the render: the
-  plug-in runs the filter once more, on opaque gradient images of the inputs' sizes, and keeps
-  the size it finds for those parameter values and sizes (for Output Layer "Frame", one run for
-  all the frames). It runs again only after an edit, on every frame when a parameter is animated,
-  or when an input's size changes; such renders may take up to twice as long, and in Natron the
-  user interface waits for that run after an edit. A filter whose result's size depends on the
-  image's content (e.g. an automatic crop) gets an output of the size found on the gradient: its
-  result is cropped or padded, with a warning on the node. If that run fails, the output keeps
-  Source's size (a note on stderr).
+  plug-in runs the filter on three small opaque gradient images (Source's long side 64, 80 and 96
+  pixels, the inputs' proportions kept), and fits the result's size and position as an affine
+  function of the input's size (e.g. twice the size, or the size plus a 20-pixel border), which
+  it then predicts at the real size. Sizes in percent of the image are predicted exactly;
+  irrational factors (a rotation's) may be some pixels off. The probes run again only after an
+  edit, on every frame when a parameter is animated, or when an input's size changes, and are
+  quick. If the size isn't an affine function of the input's (e.g. it depends on W*H), or if a
+  probe fails, the output keeps Source's size (a note on stderr). Sizes that depend on the
+  image's content (automatic crops, crops of the transparent parts) can't be predicted from the
+  probes. In all these cases, a result that doesn't fit the output is cropped or padded, with a
+  warning on the node.
 - Fixed (Inplace): Source's size and position. A result of another size is cropped or padded,
   from its top-left corner, never resized.
 - Downsample 1/N: the filter runs on Source downsampled N times, and the result is resized to
