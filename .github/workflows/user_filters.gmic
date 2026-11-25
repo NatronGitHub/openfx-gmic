@@ -45,7 +45,10 @@ _fx_userfile_persistent_fill :
   if !narg($_persistent) error "No state from the preview command" fi
   fill_color {$_persistent*255},{$1*255},{$2*25.5}
 
+# (skip: a command that names no argument doesn't take its arguments, which G'MIC would then
+# read as the next item, here a file name)
 fx_userfile_persistent_preview :
+  skip $*
   _persistent=0.75
   fill_color 255,0,255
   u "{0.5}{3}"
