@@ -910,33 +910,83 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 	}
 }
 
-// What a line of G'MIC code sets of a G'MIC-Qt status. G'MIC-Qt reads the status that a filter's
-// command sets (with "u" or "status") as "{value}{value}...", where a value may be followed by
-// "_0", "_1" or "_2", its new visibility (FilterThread's status2StringList, status2Visibilities).
-// In the G'MIC code, such an argument of "u" starts with {, "{ or \{ (kValues), and a visibility
-// marker follows the end of a value (} or ") with '_' then a digit or an expression ($var,
-// {expr}, "..."), e.g. Marker Drawing's preview: u "{"$b_type"}{"$b_blur"}_"{$b_type==0?2:1}"...
-// (kVisibility). A status held in a variable ("u $s") isn't seen.
-enum class StatusKind { kNone, kValues, kVisibility };
-
-static StatusKind setsStatus(const vector<string>& items)
+// What the code of a command sets of a G'MIC-Qt status. G'MIC-Qt reads the status that a filter's
+// command sets (with "u" or "status") as "{value}{value}...", with G'MIC's codes for the outer
+// braces, where a value may be followed by "_0", "_1" or "_2", its new visibility (FilterThread's
+// status2StringList, status2Visibilities). In the G'MIC code, the braces of such a list are
+// quoted or escaped: the argument of "u" starts with "{ or \{, or it is a variable ("u $s",
+// "u ${s}") that the command assigns such a text ("s=\{...", "s="{..."; e.g. Mandelbrot's
+// status=\{$x0\}...). An unquoted "u {expr}" is a math substitution, a number, never a list
+// (e.g. colormap's and time's). A visibility marker follows the end of a value (} or ") with '_'
+// then a digit or an expression ($var, {expr}, "..."), e.g. Marker Drawing's preview:
+// u "{"$b_type"}{"$b_blur"}_"{$b_type==0?2:1}"...
+struct StatusUse
 {
-	StatusKind kind = StatusKind::kNone;
-	for (size_t k = 0; k + 1 < items.size(); ++k) {
+	bool values = false; // sets a status list
+	bool visibility = false; // ... with visibility markers
+	set<string> listVariables, visibilityVariables, statusVariables; // assigned a list; read by u
+};
+
+static bool startsStatusList(const string& a)
+{
+	return a.compare(0, 2, "\"{") == 0 || a.compare(0, 2, "\\{") == 0;
+}
+
+static bool hasVisibilityMarker(const string& a)
+{
+	for (size_t p = a.find('_', 1); p != string::npos && p + 1 < a.size(); p = a.find('_', p + 1)) {
+		const char c = a[p + 1];
+		if ((a[p - 1] == '}' || a[p - 1] == '"') && ((c >= '0' && c <= '2') || c == '"' || c == '$' || c == '{')) return true;
+	}
+	return false;
+}
+
+// the variable name at the start of s, if s starts with one (letters, digits, '_', not a digit first)
+static string variableName(const string& s, size_t b = 0)
+{
+	size_t e = b;
+	while (e < s.size() && (isalnum((unsigned char)s[e]) || s[e] == '_')) ++e;
+	return (e > b && !isdigit((unsigned char)s[b])) ? s.substr(b, e - b) : string();
+}
+
+// Adds what one line (its items, see gmicItems) sets to use
+static void scanStatus(const vector<string>& items, StatusUse& use)
+{
+	for (size_t k = 0; k < items.size(); ++k) {
 		const string& it = items[k];
 		if (it[0] == '#') break; // comment
-		if (it != "u" && it != "status") continue;
-		const string& a = items[k + 1];
-		if (a.compare(0, 1, "{") != 0 && a.compare(0, 2, "\"{") != 0 && a.compare(0, 2, "\\{") != 0) continue;
-		kind = StatusKind::kValues;
-		for (size_t p = a.find('_', 1); p != string::npos && p + 1 < a.size(); p = a.find('_', p + 1)) {
-			const char c = a[p + 1];
-			if ((a[p - 1] == '}' || a[p - 1] == '"') && ((c >= '0' && c <= '2') || c == '"' || c == '$' || c == '{')) {
-				return StatusKind::kVisibility;
+		if ((it == "u" || it == "status") && k + 1 < items.size()) {
+			const string& a = items[k + 1];
+			if (startsStatusList(a)) {
+				use.values = true;
+				use.visibility = use.visibility || hasVisibilityMarker(a);
+			} else if (a[0] == '$') {
+				const string name = variableName(a, (a.size() > 1 && a[1] == '{') ? 2 : 1);
+				if (!name.empty()) use.statusVariables.insert(name);
 			}
+			++k;
+			continue;
 		}
+		const size_t eq = it.find('=');
+		if (eq == string::npos || eq == 0) continue;
+		const string name = variableName(it);
+		if (name.size() != eq) continue; // not "name=..."
+		const string value = it.substr(eq + 1);
+		if (!startsStatusList(value)) continue;
+		use.listVariables.insert(name);
+		if (hasVisibilityMarker(value)) use.visibilityVariables.insert(name);
 	}
-	return kind;
+}
+
+// Does the command, all its lines scanned, set a status list? (with visibility: visibility)
+static bool setsStatus(const StatusUse& use, bool visibility)
+{
+	if (visibility ? use.visibility : use.values) return true;
+	const set<string>& assigned = visibility ? use.visibilityVariables : use.listVariables;
+	for (const string& name : use.statusVariables) {
+		if (assigned.count(name)) return true;
+	}
+	return false;
 }
 
 // If the text at s[pos] starts with blanks (spaces or tabs) and '#', the position after the '#',
@@ -968,13 +1018,14 @@ static bool getCodeLine(istream& in, string& line)
 //   Mitchell Concatenation's _fx_rep_mitchell_concatenation_base), sets a status (see setsStatus).
 //   The plug-in runs the preview command after each user edit of the filter's parameters, for its
 //   status (issue #173). Not the filters without a preview run ("_none_" preview, or no command).
-// - dynamicVisibility: the main or preview command, or a command that one of them calls
+// - dynamicVisibility: a statusOnEdit filter whose preview command, or a command that it calls
 //   directly, sets a status with visibility markers. The visibility suffixes ("_0", "_1") are
 //   then only the initial state: e.g. Marker Drawing enables Background Blur when Background Type
 //   is "Blur". The parameters keep it, and the plug-in follows the status on Natron (other hosts
-//   show every parameter, see describeInContext). In a filter whose visibility status never runs
-//   after an edit (not statusOnEdit: it is in the main command only), every parameter stays
-//   visible and enabled, as the plug-in can't follow its changes (issue #170).
+//   show every parameter, see describeInContext). In a filter whose visibility markers are in a
+//   status that never runs after an edit (in its main command only, or without a preview run),
+//   every parameter stays visible and enabled, as the plug-in can't follow its changes (issue
+//   #170): a status without markers would put every parameter back to its initial state.
 // This needs the command definitions in "content": with a gmic_ofx.gmic that has only #@gui
 // lines, every filter is static.
 static void markStatusFilters(const string& content, vector<EffectData>& cds)
@@ -984,10 +1035,11 @@ static void markStatusFilters(const string& content, vector<EffectData>& cds)
 		filterCommands.insert(it->command);
 		filterCommands.insert(it->preview_command);
 	}
-	// pass 1: the defined commands, and those that set a status themselves (with visibility
-	// markers: also in visibility)
+	// pass 1: the commands that set a status themselves (with visibility markers: also in
+	// visibility)
 	set<string> status, visibility;
 	{
+		map<string, StatusUse> uses;
 		stringstream ss(content);
 		string line, cur, rest;
 		while (getCodeLine(ss, line)) {
@@ -998,12 +1050,14 @@ static void markStatusFilters(const string& content, vector<EffectData>& cds)
 			} else {
 				rest = line;
 			}
-			if (cur.empty() || visibility.count(cur)) continue;
+			if (cur.empty()) continue;
 			vector<string> items;
 			gmicItems(rest, items);
-			const StatusKind kind = setsStatus(items);
-			if (kind != StatusKind::kNone) status.insert(cur);
-			if (kind == StatusKind::kVisibility) visibility.insert(cur);
+			scanStatus(items, uses[cur]);
+		}
+		for (const auto& u : uses) {
+			if (setsStatus(u.second, false)) status.insert(u.first);
+			if (setsStatus(u.second, true)) visibility.insert(u.first);
 		}
 	}
 	// pass 2: the filter commands that set one, or call a command that does
@@ -1045,10 +1099,11 @@ static void markStatusFilters(const string& content, vector<EffectData>& cds)
 	visibilityFilterCommands.insert("fx_gmicky");
 	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
 		it->statusOnEdit = !it->command.empty() && !it->noPreview && statusFilterCommands.count(it->preview_command);
-		it->dynamicVisibility = visibilityFilterCommands.count(it->command) || visibilityFilterCommands.count(it->preview_command);
-		if (!it->dynamicVisibility || it->statusOnEdit) continue;
-		it->dynamicVisibility = false; // (see above)
-		for (size_t i = 0; i < it->param.size(); ++i) {
+		// (the runs for the status run the preview command)
+		it->dynamicVisibility = it->statusOnEdit && visibilityFilterCommands.count(it->preview_command);
+		const bool changesVisibility = visibilityFilterCommands.count(it->command) || visibilityFilterCommands.count(it->preview_command);
+		if (it->dynamicVisibility || !changesVisibility) continue;
+		for (size_t i = 0; i < it->param.size(); ++i) { // (see above)
 			it->param[i].visibility = EffectParameter::Visibility::Visible;
 		}
 	}

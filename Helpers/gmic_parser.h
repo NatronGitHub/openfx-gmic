@@ -109,15 +109,14 @@ struct EffectData {
 	// only the value() rule.
 	bool previewFirst = false;
 	// G'MIC-Qt's run of the preview command after a change of the parameters, for its status
-	// (issue #173): the preview command, or a command that it calls directly, sets a status with
-	// "u" or "status" and an argument that starts with '{' (see markStatusFilters). The plug-in
-	// runs it after each user edit of the filter's parameters, and sets the values (and, on Natron,
-	// the visibilities) that the status gives. Never for a filter without a preview run ("_none_"
-	// preview command, or no command).
+	// (issue #173): the preview command, or a command that it calls directly, sets a status list
+	// with "u" or "status" (see markStatusFilters). The plug-in runs it after each user edit of
+	// the filter's parameters, and sets the values (and, on Natron, the visibilities) that the
+	// status gives. Never for a filter without a preview run ("_none_" preview, or no command).
 	bool statusOnEdit = false;
 	// the status may change the visibility of the parameters (a "_0", "_1" or "_2" after a value):
-	// the main or preview command, or a command that one of them calls directly, sets such a status
-	// (see markStatusFilters)
+	// a statusOnEdit filter whose preview command, or a command that it calls directly, sets such a
+	// status (see markStatusFilters)
 	bool dynamicVisibility = false;
     std::vector<EffectParameter> param;
 };
