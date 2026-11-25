@@ -1060,13 +1060,7 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		} else if (param.visibility == EffectParameter::Visibility::Disabled) {
 			globalDataP->param[p].displayStatus = DisplayStatus::Disabled;
 		}
-		if (t == ParamType::Point) {
-			PointHandle& handle = globalDataP->param[p].pointHandle;
-			for (int c = 0; c < 4; c++) handle.color[c] = (float)param.color[c] / 255.f;
-			handle.keepOpacity = param.keepOpacity;
-			handle.radius = param.radius;
-			handle.burst = param.burst;
-		}
+		if (t == ParamType::Point) globalDataP->param[p].pointHandle = param.pointHandle;
 		if (param.splitPreview) { // (see markSplitPreviewParams)
 			globalDataP->param[p].draftModeOnly = true;
 			globalDataP->param[p].hint = "Used by the filter's preview only, as in G'MIC-Qt: "

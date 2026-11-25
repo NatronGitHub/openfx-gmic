@@ -52,8 +52,7 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cerrno>
-#include <climits>
+#include <charconv>
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
@@ -261,60 +260,85 @@ static string textUnescaped(const string& s)
 	return d;
 }
 
-// an integer argument of point(), as QString::toInt (base 10, the whole string)
+// an integer argument of point(), as QString::toInt: base 10, an optional sign, the whole string
 static std::optional<int> pointIntArg(const string& s)
 {
-	if (s.empty()) return std::nullopt;
-	errno = 0;
-	char* end = nullptr;
-	const long v = strtol(s.c_str(), &end, 10);
-	if (*end != '\0' || errno == ERANGE || v < INT_MIN || v > INT_MAX) return std::nullopt;
-	return (int)v;
+	const char* first = s.data();
+	const char* const last = s.data() + s.size();
+	if (first != last && *first == '+' && last - first > 1 && first[1] != '-') ++first; // (from_chars takes no '+')
+	int v = 0;
+	const std::from_chars_result r = std::from_chars(first, last, v);
+	if (r.ec != std::errc() || r.ptr != last) return std::nullopt;
+	return v;
 }
 
-// The keypoint of a point(X,Y,_removable,_burst,_R,_G,_B,_[-]A,_radius[%]) (its arguments, without
-// the empty ones), as G'MIC-Qt reads it (PointParameter::initFromText): _burst is any non-zero
-// integer; _R alone is a gray, _R,_G has blue 0; a negative _A ("-0" too) keeps the opacity while
-// the point is dragged (otherwise it is opaque then); _radius is in pixels, or in percent of the
-// image diagonal with "%" (stored negative). G'MIC-Qt rejects a filter with a malformed argument:
-// here only that argument is ignored. Without _R, the colour is the next one of G'MIC-Qt's
-// colormap (see pointColormap).
+// a decimal number argument of point() (the radius), the whole string: [+-]digits[.digits][e[+-]digits],
+// or [+-].digits[e[+-]digits] ('.' whatever the locale, see stringToDouble)
+static std::optional<float> pointFloatArg(const string& s)
+{
+	size_t i = 0;
+	const auto digits = [&s, &i] {
+		const size_t b = i;
+		while (i < s.size() && isdigit((unsigned char)s[i])) ++i;
+		return i > b;
+	};
+	if (i < s.size() && (s[i] == '+' || s[i] == '-')) ++i;
+	bool mantissa = digits();
+	if (i < s.size() && s[i] == '.') {
+		++i;
+		mantissa = digits() || mantissa;
+	}
+	if (!mantissa) return std::nullopt;
+	if (i < s.size() && (s[i] == 'e' || s[i] == 'E')) {
+		++i;
+		if (i < s.size() && (s[i] == '+' || s[i] == '-')) ++i;
+		if (!digits()) return std::nullopt;
+	}
+	if (i != s.size()) return std::nullopt;
+	return (float)stringToDouble(s);
+}
+
+// The handle of a point(X,Y,_removable,_burst,_R,_G,_B,_[-]A,_radius[%]) (its arguments, without
+// the empty ones), as G'MIC-Qt reads its keypoint (PointParameter::initFromText): _burst is any
+// non-zero integer; _R alone is a gray, _R,_G has blue 0; a negative _A ("-0" too) keeps the
+// opacity while the point is dragged (otherwise it is opaque then); _radius is in pixels, or in
+// percent of the image diagonal with "%" (stored negative). G'MIC-Qt rejects a filter with a
+// malformed argument: here only that argument is ignored (e.g. the radius stays 9). Without _R, the
+// colour is the next one of G'MIC-Qt's colormap (see pointColormap).
 static void pointHandleArgs(const vector<string>& a, EffectParameter& cp)
 {
+	PointHandle& h = cp.pointHandle;
 	if (a.size() >= 4) {
-		if (const std::optional<int> burst = pointIntArg(a[3])) cp.burst = (*burst != 0);
+		if (const std::optional<int> burst = pointIntArg(a[3])) h.burst = (*burst != 0);
 	}
 	if (a.size() >= 5) {
 		if (const std::optional<int> r = pointIntArg(a[4])) {
 			cp.colorGiven = true;
-			cp.color[0] = cp.color[1] = cp.color[2] = *r;
+			h.color[0] = h.color[1] = h.color[2] = *r;
 		}
 	}
 	if (a.size() >= 6) {
 		if (const std::optional<int> g = pointIntArg(a[5])) {
-			cp.color[1] = *g;
-			cp.color[2] = 0;
+			h.color[1] = *g;
+			h.color[2] = 0;
 		}
 	}
 	if (a.size() >= 7) {
-		if (const std::optional<int> b = pointIntArg(a[6])) cp.color[2] = *b;
+		if (const std::optional<int> b = pointIntArg(a[6])) h.color[2] = *b;
 	}
 	if (a.size() >= 8) {
 		if (const std::optional<int> alpha = pointIntArg(a[7])) {
-			cp.keepOpacity = (a[7][0] == '-' || *alpha < 0);
-			cp.color[3] = std::abs(*alpha);
+			h.keepOpacity = (a[7][0] == '-' || *alpha < 0);
+			h.color[3] = std::abs(std::clamp(*alpha, -255, 255));
 		}
 	}
 	if (a.size() >= 9) {
 		string s = a[8];
 		const bool percent = !s.empty() && s.back() == '%';
 		if (percent) s = strTrim(s.substr(0, s.size() - 1));
-		if (!s.empty() && s.find_first_not_of("0123456789+-.eE") == string::npos) {
-			const float v = (float)stringToDouble(s);
-			cp.radius = percent ? -v : v;
-		}
+		if (const std::optional<float> v = pointFloatArg(s)) h.radius = percent ? -*v : *v;
 	}
-	for (int& c : cp.color) c = std::clamp(c, 0, 255); // (QColor's range)
+	for (int& c : h.color) c = std::clamp(c, 0, 255); // (QColor's range)
 }
 
 // The colours of the points without _R: G'MIC-Qt's default colormap
@@ -336,14 +360,15 @@ static void pointColormap(vector<EffectParameter>& params)
 	int next = 0;
 	for (EffectParameter& p : params) {
 		if (p.paramType != "point" || p.colorGiven) continue;
+		int* const color = p.pointHandle.color;
 		if (next < kColormapSize) {
-			std::copy(kColormap[next], kColormap[next] + 3, p.color);
+			std::copy(kColormap[next], kColormap[next] + 3, color);
 		} else {
-			p.color[0] = randomChannel();
-			p.color[1] = randomChannel();
-			p.color[2] = randomChannel();
+			color[0] = randomChannel();
+			color[1] = randomChannel();
+			color[2] = randomChannel();
 		}
-		p.color[3] = 255;
+		color[3] = 255;
 		++next;
 	}
 }
