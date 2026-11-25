@@ -407,10 +407,13 @@ Environment
   no user filter file comes first (see "Filters"); unset (the default) or any other value (with a
   note on stderr): the file is ignored. After G'MIC-Qt updates the file, clear the host's plug-in cache. Ignored by
   COMMERCIAL builds.
-- OFX_GMIC_MULTIRES: 1 makes the plug-in act as on a host with multi-resolution support (Resize
-  Mode Dynamic and Fixed keep the result's size, see "Rendering"), 0 as on a host without it;
-  unset (the default), the host's own property decides. For test hosts that render any region of
-  definition without saying so, such as openfx's hostDemo (the CI tests set it).
+- OFX_GMIC_MULTIRES: a test aid. 1: the plug-in acts as on a host with multi-resolution support
+  (Resize Mode Dynamic gives the result's size and position; Fixed keeps Source's size and crops
+  or pads the result, see "Rendering"); 0: as on a host without it (both resize the result to
+  Source's size); unset, the host's own property decides; any other value is ignored, with a
+  note on stderr. Only for test hosts that render any region of definition without saying so,
+  such as openfx's hostDemo (the CI tests set it): on a host that doesn't, 1 gives wrong outputs,
+  which the host crops or stretches. The plug-in prints a note when it overrides the host.
 - OFX_GMIC_FRAME_CACHE_MB: memory budget, in MB, of the cache of Output Layer "Frame" results
   (default: 1/8 of the physical memory, between 1 and 4 GiB; 0 disables the cache).
   A decimal number >= 0 ("512", "0.5", "2e3"; '.' as decimal point whatever the locale,
