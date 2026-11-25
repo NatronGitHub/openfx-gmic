@@ -946,7 +946,12 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		globalDataP->param[p] = Parameter(
 		  name, "", t, (float)stringToDouble(minValue), (float)stringToDouble(maxValue), d1, d2, d3, d4, paramText);
 		globalDataP->param[p].flags = flags;
-		if (h) globalDataP->param[p].displayStatus = DisplayStatus::Hidden;
+		// as G'MIC-Qt, "_0" hides the parameter and "_1" disables it (a hidden one still passes its value)
+		if (h || param.visibility == EffectParameter::Visibility::Hidden) {
+			globalDataP->param[p].displayStatus = DisplayStatus::Hidden;
+		} else if (param.visibility == EffectParameter::Visibility::Disabled) {
+			globalDataP->param[p].displayStatus = DisplayStatus::Disabled;
+		}
 		if (param.splitPreview) { // (see markSplitPreviewParams)
 			globalDataP->param[p].draftModeOnly = true;
 			globalDataP->param[p].hint = "Used by the filter's preview only, as in G'MIC-Qt: "

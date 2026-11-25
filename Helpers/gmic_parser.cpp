@@ -50,6 +50,7 @@
 
 #include "gmic_parser.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstring>
 #include <cstdlib>
@@ -499,6 +500,39 @@ static bool usesSeveralLayers(const string& content)
 	return false;
 }
 
+// Visibility propagation of a parameter, as G'MIC-Qt's AbstractParameter::VisibilityPropagation
+enum class VisibilityPropagation { None, Up, Down };
+
+struct VisibilitySuffix {
+	size_t length = 0; // 0: no suffix
+	EffectParameter::Visibility visibility = EffectParameter::Visibility::Visible;
+	VisibilityPropagation propagation = VisibilityPropagation::None;
+};
+
+// As G'MIC-Qt (AbstractParameter::parseText): "_0" (hidden), "_1" (disabled) or "_2" (visible)
+// right after the closing delimiter, which is at s[pos - 1], then an optional '-' (propagate up)
+// or '+' or '*' (propagate down).
+static VisibilitySuffix parseVisibilitySuffix(const string& s, size_t pos)
+{
+	VisibilitySuffix r;
+	if (pos + 1 >= s.size() || s[pos] != '_' || s[pos + 1] < '0' || s[pos + 1] > '2') {
+		return r;
+	}
+	r.visibility = static_cast<EffectParameter::Visibility>(s[pos + 1] - '0');
+	const char sign = (pos + 2 < s.size()) ? s[pos + 2] : '\0';
+	r.propagation = (sign == '-') ? VisibilityPropagation::Up :
+	                (sign == '+' || sign == '*') ? VisibilityPropagation::Down : VisibilityPropagation::None;
+	r.length = (r.propagation == VisibilityPropagation::None) ? 2 : 3;
+	return r;
+}
+
+// a parameter without a value of its own (passes no argument to the commands): G'MIC-Qt's
+// NoValueParameters, which also ignore their own visibility suffix
+static bool isNoValueParameter(const EffectParameter& p)
+{
+	return p.paramType == "note" || p.paramType == "link" || p.paramType == "separator";
+}
+
 string gmic_parse_single(const string& content, EffectData& cd)
 {
 	const string src_prefix_old = src_prefix_old_c;
@@ -516,6 +550,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	cd.previewOnly = false;
 	cd.previewFallback = false;
 	cd.param.clear();
+	vector<VisibilityPropagation> propagation; // one per cd.param entry, until the "pointenabled" ones
 
 	const vector<string> lines = strSplit(content, '\n');
 	for (int i = 0; i < (int)lines.size(); i++) {
@@ -557,7 +592,10 @@ string gmic_parse_single(const string& content, EffectData& cd)
 						if (pEnd != string::npos) {
 							name += line.substr(0, pEnd + 1);
 							inMulti = false;
-							line = strTrim(line.substr(pEnd + 1), ", ");
+							const VisibilitySuffix v = parseVisibilitySuffix(line, pEnd + 1);
+							cd.param.back().visibility = v.visibility;
+							propagation.back() = v.propagation;
+							line = strTrim(line.substr(pEnd + 1 + v.length), ", ");
 						} else {
 							name += line;
 							line.clear();
@@ -587,8 +625,11 @@ string gmic_parse_single(const string& content, EffectData& cd)
 								EffectParameter p;
 								p.name = line.substr(0, pEnd+1);
 								//std::cout << p.name << std::endl;
+								const VisibilitySuffix v = parseVisibilitySuffix(line, pEnd + 1);
+								p.visibility = v.visibility;
 								cd.param.push_back(p);
-								line = strTrim(line.substr(pEnd + 1), ", ");
+								propagation.push_back(v.propagation);
+								line = strTrim(line.substr(pEnd + 1 + v.length), ", ");
 								if (!line.empty()) {
 									line = dst_prefix + " : " + line;
 								}
@@ -597,6 +638,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 								EffectParameter p;
 								p.name = line;
 								cd.param.push_back(p);
+								propagation.push_back(VisibilityPropagation::None);
 								inMulti = true;
 								line.clear();
 							}
@@ -657,6 +699,31 @@ string gmic_parse_single(const string& content, EffectData& cd)
 				}
 			}
 		}
+	}
+	// As G'MIC-Qt (FilterParametersWidget::setVisibilityStates, with the default states): a
+	// note, link or separator has no visibility of its own; a parameter with '-' ('+') gives its
+	// visibility to the ones right before (after) it, up to the previous (next) parameter that has
+	// a value, in this order, so that a later parameter wins.
+	for (size_t i = 0; i < cd.param.size(); i++) {
+		if (isNoValueParameter(cd.param[i])) {
+			cd.param[i].visibility = EffectParameter::Visibility::Visible;
+			propagation[i] = VisibilityPropagation::None;
+		}
+	}
+	for (size_t i = 0; i < cd.param.size(); i++) {
+		if (isNoValueParameter(cd.param[i])) continue;
+		const EffectParameter::Visibility v = cd.param[i].visibility;
+		if (propagation[i] == VisibilityPropagation::Up) {
+			for (size_t j = i; j > 0 && isNoValueParameter(cd.param[j - 1]); j--) cd.param[j - 1].visibility = v;
+		} else if (propagation[i] == VisibilityPropagation::Down) {
+			for (size_t j = i + 1; j < cd.param.size() && isNoValueParameter(cd.param[j]); j++) cd.param[j].visibility = v;
+		}
+	}
+	// G'MIC-Qt hides only a point's widgets and keeps its handle on the preview, while a host
+	// doesn't draw the overlay of a hidden or disabled parameter (Natron: shouldDrawOverlayInteract):
+	// a point (and its "Enabled" checkbox, added below) stays visible, so that it can be moved
+	for (size_t i = 0; i < cd.param.size(); i++) {
+		if (cd.param[i].paramType == "point") cd.param[i].visibility = EffectParameter::Visibility::Visible;
 	}
 	// A removable point (point(x,y,-1) or point(x,y,1)) can be removed in G'MIC-Qt, which then
 	// passes nan,nan for it (a -1 point starts removed): give it a checkbox right after it, whose
@@ -835,6 +902,121 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 	}
 }
 
+// Does the line set a G'MIC-Qt status with a visibility marker? G'MIC-Qt reads the status that a
+// filter's command sets (with "u" or "status") as "{value}{value}...", where a value may be
+// followed by "_0", "_1" or "_2", its new visibility (FilterThread's status2Visibilities). In the
+// G'MIC code, the argument of "u" starts with {, "{ or \{, and a marker follows the end of a
+// value (} or ") with '_' then a digit or an expression ($var, {expr}, "...), e.g. Marker
+// Drawing's preview: u "{"$b_type"}{"$b_blur"}_"{$b_type==0?2:1}"... A status held in a
+// variable ("u $s") isn't seen.
+static bool setsVisibilityStatus(const vector<string>& items)
+{
+	for (size_t k = 0; k + 1 < items.size(); ++k) {
+		const string& it = items[k];
+		if (it[0] == '#') return false; // comment
+		if (it != "u" && it != "status") continue;
+		const string& a = items[k + 1];
+		if (a.compare(0, 1, "{") != 0 && a.compare(0, 2, "\"{") != 0 && a.compare(0, 2, "\\{") != 0) continue;
+		for (size_t p = a.find('_', 1); p != string::npos && p + 1 < a.size(); p = a.find('_', p + 1)) {
+			const char c = a[p + 1];
+			if ((a[p - 1] == '}' || a[p - 1] == '"') && ((c >= '0' && c <= '2') || c == '"' || c == '$' || c == '{')) return true;
+		}
+	}
+	return false;
+}
+
+// getline() for G'MIC code: a code line that ends with '\' goes on with the next line, without
+// its leading blanks (the unminified gmic_stdlib.gmic splits long "u" commands this way). Only code
+// lines are joined here; comment lines, which hold the #@gui definitions, are joined by
+// getGuiLine().
+static bool getCodeLine(istream& in, string& line)
+{
+	if (!getline(in, line)) return false;
+	string next;
+	while (!line.empty() && line[0] != '#' && line[line.size() - 1] == '\\' && getline(in, next)) {
+		line.erase(line.size() - 1);
+		line += next.substr(min(next.find_first_not_of(" \t"), next.size()));
+	}
+	return true;
+}
+
+// The visibility suffixes ("_0", "_1") are G'MIC-Qt's initial state, which some filters change
+// at run time through their status (see setsVisibilityStatus): e.g. Marker Drawing enables
+// Background Blur when Background Type is "Blur". The plug-in can't follow such changes, and
+// would leave these parameters hidden or disabled for good: in such a filter, every parameter
+// stays visible and enabled. A filter changes the visibility when its main or preview command,
+// or a command that one of them calls directly (one level, e.g. Mitchell Concatenation's
+// _fx_rep_mitchell_concatenation_base), sets such a status. This needs the command definitions
+// in "content": with a gmic_ofx.gmic that has only #@gui lines, every filter is static.
+static void markDynamicVisibilityFilters(const string& content, vector<EffectData>& cds)
+{
+	set<string> filterCommands;
+	for (vector<EffectData>::const_iterator it = cds.begin(); it != cds.end(); ++it) {
+		filterCommands.insert(it->command);
+		filterCommands.insert(it->preview_command);
+	}
+	// pass 1: the defined commands, and those that set a visibility status themselves
+	set<string> defined, dynamic;
+	{
+		stringstream ss(content);
+		string line, cur, rest;
+		while (getCodeLine(ss, line)) {
+			if (line.empty() || line[0] == '#') continue;
+			const string name = commandDefinition(line, rest);
+			if (!name.empty()) {
+				cur = name;
+				defined.insert(name);
+			} else {
+				rest = line;
+			}
+			if (cur.empty() || dynamic.count(cur)) continue;
+			vector<string> items;
+			gmicItems(rest, items);
+			if (setsVisibilityStatus(items)) dynamic.insert(cur);
+		}
+	}
+	// pass 2: a filter command that calls one of them
+	set<string> dynamicFilterCommands;
+	{
+		stringstream ss(content);
+		string line, cur, rest;
+		while (getCodeLine(ss, line)) {
+			if (line.empty() || line[0] == '#') continue;
+			const string name = commandDefinition(line, rest);
+			if (!name.empty()) {
+				cur = filterCommands.count(name) ? name : string();
+				if (dynamic.count(name) && !cur.empty()) dynamicFilterCommands.insert(name);
+			} else {
+				rest = line;
+			}
+			if (cur.empty() || dynamicFilterCommands.count(cur)) continue;
+			vector<string> items;
+			gmicItems(rest, items);
+			for (size_t k = 0; k < items.size(); ++k) {
+				const string& it = items[k];
+				if (it[0] == '#') break; // comment
+				// the command name of the item: "+cmd", "cmd[0]", "cmd.", "cmd arg"
+				size_t b = (it[0] == '+') ? 1 : 0, e = b;
+				while (e < it.size() && (isalnum((unsigned char)it[e]) || it[e] == '_')) ++e;
+				const string callee = it.substr(b, e - b);
+				if (!callee.empty() && callee != cur && dynamic.count(callee)) {
+					dynamicFilterCommands.insert(cur);
+					break;
+				}
+			}
+		}
+	}
+	// About G'MIC gathers the pages of the About folder (see gmic_parse_multi), whose own commands
+	// are not kept: one of them, What's New?, changes the visibility at run time
+	dynamicFilterCommands.insert("fx_gmicky");
+	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
+		if (!dynamicFilterCommands.count(it->command) && !dynamicFilterCommands.count(it->preview_command)) continue;
+		for (size_t i = 0; i < it->param.size(); ++i) {
+			it->param[i].visibility = EffectParameter::Visibility::Visible;
+		}
+	}
+}
+
 // The labels of a choice() parameter (stored as "label|label|..."), with runs of blanks as one
 // space (two filters of G'MIC 4.0.8 have "Forward  Horizontal")
 static vector<string> choiceLabels(const string& text)
@@ -875,12 +1057,6 @@ static bool isSplitPreviewChoice(const EffectParameter& param)
 static bool hasSuffix(const string& s, const string& suffix)
 {
 	return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
-}
-
-// a parameter without a value of its own (passes no argument to the commands)
-static bool isNoValueParameter(const EffectParameter& param)
-{
-	return param.paramType == "separator" || param.paramType == "note" || param.paramType == "link";
 }
 
 // Marks the parameters of G'MIC's split preview (EffectParameter::splitPreview): the choice of
@@ -1269,6 +1445,7 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 	markPersistentFilters(content, *cds);
 	markSplitPreviewParams(*cds); // (after markPersistentFilters: previewFallback)
 	markMultiInputFilters(content, *cds);
+	markDynamicVisibilityFilters(content, *cds);
     // plug-in identifiers must be unique: G'MIC 4 has several filters with the same name in
     // different folders (in 4.0.7: the "About" page of each Testing author, giving About and
     // About2..About5, and "Color Harmonies", giving ColorHarmonies2). The first one in stdlib
