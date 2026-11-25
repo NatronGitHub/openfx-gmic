@@ -131,6 +131,44 @@ fx_userfile_status_preview :
   if $1 u "{"$1"}{"$2"}_2{"$2"}_2{7}" else u "{"$1"}{"$2"}{"$3"}{"$4"}" fi
   fill_color 255,0,255
 
+# - User File Status Down: Level gives its visibility to the note after it ("+"). Mode On: the
+#   status hides Level (and so the note) and disables Other. Mode Off: the status has 2 values for
+#   3 parameters, which is ignored (logged): the states stay. The render's red is Level.
+#@gui User File Status Down : fx_userfile_status_down, fx_userfile_status_down_preview
+#@gui : Mode = choice("Off","On")
+#@gui : Level = float(0.5,0,1)_2+
+#@gui : note = note("After Level")
+#@gui : Other = int(1,0,10)
+fx_userfile_status_down :
+  fill_color {$2*255},0,{$3*25.5}
+
+fx_userfile_status_down_preview :
+  if $1 u "{"$1"}{"$2"}_0{"$3"}_1" else u "{"$1"}{"$2"}_0" fi
+  fill_color 255,0,255
+
+# - User File Status Variable: the status list is held in a variable (status=\{...}, u $status,
+#   as Mandelbrot's): an edit of A sets B to 7. The render's red and blue are A and B / 10.
+#@gui User File Status Variable : fx_userfile_status_var, fx_userfile_status_var_preview
+#@gui : A = float(0.1,0,1)
+#@gui : B = int(0,0,10)
+fx_userfile_status_var :
+  fill_color {$1*255},0,{$2*25.5}
+
+fx_userfile_status_var_preview :
+  status=\{$1\}\{7\} u $status
+  fill_color 255,0,255
+
+# - User File Status Expression: "u {expr}" is a math substitution, a number, not a status list:
+#   the plug-in runs no status after an edit (no progress with the status's id)
+#@gui User File Status Expression : fx_userfile_status_expr, fx_userfile_status_expr_preview
+#@gui : A = float(0.1,0,1)
+fx_userfile_status_expr :
+  fill_color {$1*255},0,0
+
+fx_userfile_status_expr_preview :
+  u {$1*2}
+  fill_color 255,0,255
+
 # a result with 5 channels, which fails the render as in G'MIC-Qt (#206)
 #@gui User File Five Channels : fx_userfile_five_channels, fx_userfile_five_channels
 fx_userfile_five_channels :

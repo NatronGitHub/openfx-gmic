@@ -364,8 +364,12 @@ that command after each edit of the filter's parameters (once per change that th
 and when Source is connected, the same way as a press (512 pixels, 16 seconds, Cancel), and sets
 the values that the status gives (not an undo step of its own: undoing the edit runs the status
 again). On Natron only, it also shows, hides and disables the parameters as the status says, and
-they start as in G'MIC-Qt; Natron saves this state in projects. Other hosts show and enable every
-parameter of these filters. Points and their checkboxes always stay visible, since a host draws no
+they start as in G'MIC-Qt; Natron saves this state in projects. In a project saved with an older
+version of the plug-in, which showed every parameter of these filters, the parameters left at their
+default value start in G'MIC-Qt's initial state (some hidden or disabled), the others shown: edit
+any parameter of the node to update them. The visibilities follow the values at the time of the
+edit: moving to another frame of an animation doesn't update them. Other hosts show and enable
+every parameter of these filters. Points and their checkboxes always stay visible, since a host draws no
 handle for a hidden or disabled parameter. The run makes the host wait after each edit, more so with
 a large input or a slow filter.
 

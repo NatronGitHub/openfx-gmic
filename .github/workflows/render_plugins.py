@@ -200,7 +200,7 @@ def _progress_problem(report):
     return None
 
 
-def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
+def render(host, host_args, plugins, work, timeout, plugin, host_threads=False, extra_env=None):
     pid, context, clips = plugin
     d = os.path.join(work, pid[len('eu.gmic.'):])
     shutil.rmtree(d, ignore_errors=True)
@@ -215,6 +215,7 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
     # their files (e.g. Valeur Moyenne LCH), is in the work directory
     home = os.path.join(work, 'home')
     env = dict(os.environ, OFX_PLUGIN_PATH=plugins, HOME=home, USERPROFILE=home)
+    env.update(extra_env or {})  # (e.g. a test hook of the plug-in)
     if host_threads:
         env.pop('OMP_NUM_THREADS', None)
     else:

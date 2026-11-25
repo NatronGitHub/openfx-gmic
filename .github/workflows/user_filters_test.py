@@ -66,6 +66,9 @@ EXPECTED = {
     'eu.gmic.UserFileStatusVisibility': (0.2, 0.0, 0.0),
     # without an edit, no status run: the defaults (#173)
     'eu.gmic.UserFileStatusEdit': (0.2, 0.0, 0.3),
+    'eu.gmic.UserFileStatusDown': (0.5, 0.0, 0.1),
+    'eu.gmic.UserFileStatusVariable': (0.1, 0.0, 0.0),
+    'eu.gmic.UserFileStatusExpression': (0.1, 0.0, 0.0),
 }
 TOLERANCE = 1e-4
 DEFINED_BY = ' is defined by '  # the note of a kept definition of a hot-fixed command
@@ -80,6 +83,7 @@ USER_SOURCE = '.gmic'  # (install_user_file): the user source, ~/.gmic
 PUSH_BUTTON = 'OfxParamTypePushButton'
 # (the plug-in): follow the status's visibilities on any host, not only on Natron (#173)
 STATUS_VISIBILITY_VAR = 'OFX_GMIC_TEST_STATUS_VISIBILITY'
+STATUS_PROGRESS_ID = 'eu.gmic.status'  # (the plug-in) the progress of a run for the status
 
 
 class ButtonCase(collections.namedtuple(
@@ -99,7 +103,7 @@ class ButtonCase(collections.namedtuple(
 
 
 class StatusCase(collections.namedtuple(
-        'StatusCase', 'pid args visibility output values secret enabled')):
+        'StatusCase', 'pid args visibility output values secret enabled runs')):
     """A render after user edits of a filter that sets a status (#173), and what it must give.
 
     Attributes:
@@ -111,6 +115,7 @@ class StatusCase(collections.namedtuple(
         values: the values of parameters after the edits.
         secret: the secret flag of parameters after the edits.
         enabled: the enabled flag of parameters after the edits.
+        runs: the number of runs for the status (progresses with STATUS_PROGRESS_ID).
     """
 
 
@@ -138,29 +143,42 @@ BUTTON_CASES = (
 )
 
 STATUS_EDIT = 'eu.gmic.UserFileStatusEdit'
+STATUS_DOWN = 'eu.gmic.UserFileStatusDown'
 STATUS_CASES = (
     # the initial states: Amount and the note before it hidden, Echo disabled; other hosts show
     # and enable every parameter of such a filter
     StatusCase(STATUS_EDIT, [], True, (0.2, 0.0, 0.3), {},
-               {'Amount': True, 'note': True, 'Echo': False, 'Tail': False}, {'Echo': False}),
+               {'Amount': True, 'note': True, 'Echo': False, 'Tail': False}, {'Echo': False}, 0),
     StatusCase(STATUS_EDIT, [], False, (0.2, 0.0, 0.3), {},
-               {'Amount': False, 'note': False, 'Echo': False}, {'Echo': True}),
+               {'Amount': False, 'note': False, 'Echo': False}, {'Echo': True}, 0),
     # Mode On: the status shows Amount (and its note) and enables Echo, gives Echo Amount's value
     # and Tail 7
     StatusCase(STATUS_EDIT, ['-s', 'Mode=1'], True, (0.2, 0.2, 0.7),
                {'Echo': 0.2, 'Tail': 7},
-               {'Amount': False, 'note': False, 'Echo': False, 'Tail': False}, {'Echo': True}),
+               {'Amount': False, 'note': False, 'Echo': False, 'Tail': False}, {'Echo': True}, 1),
     # the values without the visibilities on other hosts
     StatusCase(STATUS_EDIT, ['-s', 'Mode=1'], False, (0.2, 0.2, 0.7),
-               {'Echo': 0.2, 'Tail': 7}, {'Amount': False, 'note': False}, {'Echo': True}),
+               {'Echo': 0.2, 'Tail': 7}, {'Amount': False, 'note': False}, {'Echo': True}, 1),
     # Mode Off again: a status without visibilities gives every parameter its initial state; the
     # values stay
     StatusCase(STATUS_EDIT, ['-s', 'Mode=1', '-s', 'Mode=0'], True, (0.2, 0.2, 0.7),
                {'Echo': 0.2, 'Tail': 7},
-               {'Amount': True, 'note': True, 'Echo': False}, {'Echo': False}),
+               {'Amount': True, 'note': True, 'Echo': False}, {'Echo': False}, 2),
+    # "+": Level gives its visibility to the note after it; "_1" disables Other
+    StatusCase(STATUS_DOWN, ['-s', 'Mode=1'], True, (0.5, 0.0, 0.1), {},
+               {'Level': True, 'note': True, 'Other': False}, {'Other': False}, 1),
+    # then 2 visibilities for 3 parameters: ignored, the states stay
+    StatusCase(STATUS_DOWN, ['-s', 'Mode=1', '-s', 'Mode=0'], True, (0.5, 0.0, 0.1), {},
+               {'Level': True, 'note': True, 'Other': False}, {'Other': False}, 2),
+    # a status list held in a variable (status=\{...}, u $status)
+    StatusCase('eu.gmic.UserFileStatusVariable', ['-s', 'A=0.3'], False, (0.3, 0.0, 0.7),
+               {'B': 7}, {}, {}, 1),
+    # "u {expr}" is no status list: an edit runs nothing
+    StatusCase('eu.gmic.UserFileStatusExpression', ['-s', 'A=0.3'], True, (0.3, 0.0, 0.0),
+               {}, {}, {}, 0),
     # a press's status hides Hidden Level ("_0")
     StatusCase('eu.gmic.UserFileStatusVisibility', ['-s', 'Hide'], True, (0.6, 0.0, 1.0),
-               {'Hidden Level': 0.6}, {'Hidden Level': True}, {}),
+               {'Hidden Level': 0.6}, {'Hidden Level': True}, {}, 1),
 )
 
 
@@ -270,6 +288,32 @@ def same_value(value, expected):
     return value == expected
 
 
+def render_report(host, plugins, work, pid, host_args, output, extra_env=None):
+    """Renders a plug-in of the user file, and checks that its output is uniform.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+        pid: the plug-in id.
+        host_args: hostDemo's arguments before the render (-s name=value...).
+        output: the RGB value of every output pixel.
+        extra_env: environment variables of the render, if any.
+
+    Returns:
+        (problems, report): a list of problems, empty if the render gave the output, and the
+        parsed report.json (None if the render failed).
+    """
+    result = render_plugins.render(host, host_args, plugins, work, TIMEOUT,
+                                   (pid, CONTEXT, ['Source']), extra_env=extra_env)
+    problem, errors = result[2], result[5]
+    if problem:
+        return ['%s %s' % (problem, ' '.join(errors))], None
+    with open(os.path.join(work, pid[len('eu.gmic.'):], 'report.json'), encoding='utf-8') as f:
+        report = json.load(f)
+    return check_output(report, output), report
+
+
 def check_buttons(host, plugins, work):
     """Renders each of BUTTON_CASES after the press of its button, and checks the result.
 
@@ -285,16 +329,11 @@ def check_buttons(host, plugins, work):
     for case in BUTTON_CASES:
         name = '%s, %s pressed' % (case.pid, case.button)
         button = case.button.split('@')[0]
-        result = render_plugins.render(host, case.args + ['-s', case.button], plugins, work,
-                                       TIMEOUT, (case.pid, CONTEXT, ['Source']))
-        problem, errors = result[2], result[5]
-        if problem:
-            problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
+        found, report = render_report(host, plugins, work, case.pid,
+                                      case.args + ['-s', case.button], case.output)
+        problems += ['%s: %s' % (name, p) for p in found]
+        if report is None:
             continue
-        report_path = os.path.join(work, case.pid[len('eu.gmic.'):], 'report.json')
-        with open(report_path, encoding='utf-8') as f:
-            report = json.load(f)
-        problems += ['%s: %s' % (name, p) for p in check_output(report, case.output)]
         params = report.get('params') or {}
         if (params.get(button) or {}).get('type') != PUSH_BUTTON:
             problems.append('%s: %s is not a push button (%s)'
@@ -335,21 +374,15 @@ def check_status(host, plugins, work):
     for case in STATUS_CASES:
         name = '%s, %s%s' % (case.pid, ' '.join(case.args) or 'no edit',
                              ', %s=1' % STATUS_VISIBILITY_VAR if case.visibility else '')
-        if case.visibility:
-            os.environ[STATUS_VISIBILITY_VAR] = '1'
-        try:
-            result = render_plugins.render(host, case.args, plugins, work, TIMEOUT,
-                                           (case.pid, CONTEXT, ['Source']))
-        finally:
-            os.environ.pop(STATUS_VISIBILITY_VAR, None)
-        problem, errors = result[2], result[5]
-        if problem:
-            problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
+        extra_env = {STATUS_VISIBILITY_VAR: '1'} if case.visibility else None
+        found, report = render_report(host, plugins, work, case.pid, case.args, case.output,
+                                      extra_env)
+        problems += ['%s: %s' % (name, p) for p in found]
+        if report is None:
             continue
-        report_path = os.path.join(work, case.pid[len('eu.gmic.'):], 'report.json')
-        with open(report_path, encoding='utf-8') as f:
-            report = json.load(f)
-        problems += ['%s: %s' % (name, p) for p in check_output(report, case.output)]
+        runs = sum(1 for p in report.get('progress') or [] if p.get('id') == STATUS_PROGRESS_ID)
+        if runs != case.runs:
+            problems.append('%s: %d runs for the status, expected %d' % (name, runs, case.runs))
         params = report.get('params') or {}
         for flag, expectations in (('value', case.values), ('secret', case.secret),
                                    ('enabled', case.enabled)):
@@ -358,6 +391,8 @@ def check_status(host, plugins, work):
                 if not same_value(value, expected):
                     problems.append('%s: %s has %s %r, expected %r'
                                     % (name, param, flag, value, expected))
+    if not problems:
+        print('status after edits (#173): %d cases checked' % len(STATUS_CASES))
     return problems
 
 

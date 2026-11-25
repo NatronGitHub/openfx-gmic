@@ -87,7 +87,7 @@ ifeq ($(FFT),pocketfft)
 GMIC_HEADERS += $(SRCDIR)/pocketfft_hdronly.h
 endif
 $(OBJECTPATH)/gmic.o: $(GMIC_HEADERS) $(SRCDIR)/gmic_stdlib_community.h
-$(OBJECTPATH)/gmic_plugin_call.o: $(GMIC_HEADERS) $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h $(SRCDIR)/Helpers/gmic_log.h
+$(OBJECTPATH)/gmic_plugin_call.o: $(GMIC_HEADERS) $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h $(SRCDIR)/Helpers/gmic_log.h $(SRCDIR)/Helpers/gmic_parser.h
 $(OBJECTPATH)/gmic_plugin.o: $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h $(SRCDIR)/gmic_plugin.h $(SRCDIR)/Helpers/gmic_log.h
 $(OBJECTPATH)/gmic_ofx.o: $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin.h $(SRCDIR)/Helpers/gmic_log.h
 $(OBJECTPATH)/gmic_parser.o $(OBJECTPATH)/gmic_log.o: $(SRCDIR)/Helpers/gmic_log.h

@@ -1827,6 +1827,9 @@ static DWORD WINAPI gmicCallThread(LPVOID arg)
 // the host creates the task at once (Natron's ProgressPanel, as for openfx-misc's ImageStatistics).
 // Its progress starts at once, every poll updates it (Natron then processes its events, Cancel
 // included), and a false from progressUpdate() stops the run.
+// the message id of the progress of a run for the status (HostProgress::Mode::kPress)
+static const char* const kStatusProgressId = "eu.gmic.status";
+
 class HostProgress
 {
 public:
@@ -1876,7 +1879,8 @@ public:
 		if (press) t = std::max(t, _last); // (an unknown value: the last one)
 		try {
 			if (!_started) {
-				_effect.progressStart(_message);
+				// (an id for the run of a press or after an edit, which the tests look for)
+				_effect.progressStart(_message, press ? kStatusProgressId : "");
 				_started = true;
 			}
 			if (press || t != _last) {
@@ -2730,7 +2734,8 @@ static std::vector<float> downscalePlanar(const World& in, int w, int h)
 // visibility) if unspecified; a parameter that propagates gives it to the notes, links and
 // separators right before (Up) or after (Down) it, in order (a later one wins); the others get
 // their initial state, Visible.
-static vector<std::pair<int, DisplayStatus>> statusDisplay(const vector<int>& states, const GlobalData* globalDataP)
+static vector<std::pair<int, DisplayStatus>> statusDisplay(const vector<std::optional<EffectParameter::Visibility>>& states,
+	const GlobalData* globalDataP)
 {
 	using Visibility = EffectParameter::Visibility;
 	vector<std::pair<int, DisplayStatus>> display;
@@ -2757,8 +2762,8 @@ static vector<std::pair<int, DisplayStatus>> statusDisplay(const vector<int>& st
 	vector<Visibility> state(params.size(), Visibility::Visible);
 	for (size_t n = 0, k = 0; n < params.size(); ++n) {
 		if (!actual[n]) continue;
-		const int s = states.empty() ? kStatusVisibilityUnspecified : states[k++];
-		state[n] = (s == kStatusVisibilityUnspecified) ? effectData.param[params[n]].visibility : static_cast<Visibility>(s);
+		const std::optional<Visibility> s = states.empty() ? std::nullopt : states[k++];
+		state[n] = s.value_or(effectData.param[params[n]].visibility);
 	}
 	for (size_t n = 0; n < params.size(); ++n) {
 		if (!actual[n]) continue;
