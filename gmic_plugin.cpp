@@ -123,7 +123,7 @@ using namespace gmic_ofx;
 
 #include <sstream>
 #include <map>
-#include <deque>
+#include <list>
 #include <optional>
 #include <set>
 #include <limits>
@@ -261,6 +261,15 @@ string homeFolder()
 // also the "Layer Times" group (start and end), Layers from Source and the 4 time offsets
 static const int kNofExtraParams = 1 + 4 + 1 + 2 + 7;
 static const int kNofLayerTimeParams = 2 + 1 + 4;
+
+// Does the host support multi-resolution (kOfxImageEffectPropSupportsMultiResolution)? Without
+// it, the output keeps Source's size whatever the region of definition says: Resize Mode Fixed and
+// Dynamic then resize the result to Source's size, as before issue #175, and there is no probe.
+static bool hostSupportsMultiResolution()
+{
+	const OFX::ImageEffectHostDescription* const host = OFX::getImageEffectHostDescription();
+	return host && host->supportsMultiResolution;
+}
 
 // Ignore Alpha (see fullCommand): _openfx_gmic_alpha_split stores the alpha channel of every image
 // (an empty image for images without alpha) in the global variable _openfx_gmic_alpha, and
@@ -1599,7 +1608,9 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 	{
 		// Resize Mode: "Downsample 1/N" processes a downsampled input, and resizes the result to the
 		// input size. "Fixed (Inplace)" and "Dynamic" keep the result's size (issue #175): the
-		// copy to the output crops or pads it (see pluginProcess). The gray or RGB results whose
+		// copy to the output crops or pads it (see pluginProcess); not on a host without
+		// multi-resolution, whose output keeps Source's size: the result is resized to it, as
+		// before. The gray or RGB results whose
 		// size differs from the processed input get an opaque alpha (see kOpaqueResizedCommand).
 		float ds = sequenceDataP->floatValue[PARAM_RESIZE][0];
 		string processedSize = std::to_string(sequenceDataP->inWorld[0].width) + "," + std::to_string(sequenceDataP->inWorld[0].height);
@@ -1611,7 +1622,7 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 		}
 		if (render) {
 			cmd += " -_openfx_gmic_opaque_resized " + processedSize;
-			if (ds >= 2.f) {
+			if (ds >= 2.f || !hostSupportsMultiResolution()) {
 				cmd += " -resize " + std::to_string(sequenceDataP->inWorld[0].width) + "," + std::to_string(sequenceDataP->inWorld[0].height);
 			}
 		}
@@ -1802,6 +1813,47 @@ private:
 	double _size = 1.;
 };
 
+// The worker thread of a G'MIC run, with an 8 MiB stack (gmicCallAbortable, gmicCallTimed)
+struct GmicWorker
+{
+#ifndef _WIN32
+	pthread_t thread;
+#else
+	HANDLE thread = NULL;
+#endif
+	// starts the run of d on the thread; false if no thread could be started
+	bool start(GmicCallData& d)
+	{
+#ifndef _WIN32
+		// a large stack, like G'MIC's own threads (the default size of a secondary thread is 512
+		// KiB on macOS, and the interpreter recurses)
+		bool started = false;
+		pthread_attr_t attr;
+		if (pthread_attr_init(&attr) == 0) {
+			pthread_attr_setstacksize(&attr, (size_t)8 * 1024 * 1024);
+			started = (pthread_create(&thread, &attr, gmicCallThread, &d) == 0);
+			pthread_attr_destroy(&attr);
+		}
+		return started;
+#else
+		// the same 8 MiB, reserved (committed on demand): std::thread can't set the stack size,
+		// and its default is the host executable's reserve (1 MiB with MSVC's linker, 2 MiB with
+		// MinGW's)
+		thread = CreateThread(NULL, (SIZE_T)8 * 1024 * 1024, gmicCallThread, &d, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
+		return thread != NULL;
+#endif
+	}
+	void join()
+	{
+#ifndef _WIN32
+		pthread_join(thread, NULL);
+#else
+		WaitForSingleObject(thread, INFINITE);
+		CloseHandle(thread);
+#endif
+	}
+};
+
 // gmic_plugin_call(), aborted when the host aborts the render: then *aborted is set to true, and
 // the result must be discarded. G'MIC's progress goes to the host's progress bar, through
 // hostProgress (one for all the G'MIC runs of a render).
@@ -1834,25 +1886,8 @@ static int gmicCallAbortable(OFX::ImageEffect& effect, HostProgress& hostProgres
 	options->p_is_abort = &isAbort;
 	options->p_progress = &progress;
 
-	bool started = false;
-#ifndef _WIN32
-	// a large stack, like G'MIC's own threads (the default size of a secondary thread is 512 KiB
-	// on macOS, and the interpreter recurses)
-	pthread_t thread;
-	pthread_attr_t attr;
-	if (pthread_attr_init(&attr) == 0) {
-		pthread_attr_setstacksize(&attr, (size_t)8 * 1024 * 1024);
-		started = (pthread_create(&thread, &attr, gmicCallThread, &d) == 0);
-		pthread_attr_destroy(&attr);
-	}
-#else
-	// the same 8 MiB, reserved (committed on demand): std::thread can't set the stack size, and its
-	// default is the host executable's reserve (1 MiB with MSVC's linker, 2 MiB with MinGW's)
-	HANDLE thread = CreateThread(NULL, (SIZE_T)8 * 1024 * 1024, gmicCallThread, &d,
-	                             STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
-	started = (thread != NULL);
-#endif
-	if (!started) {
+	GmicWorker worker;
+	if (!worker.start(d)) {
 		// no thread: run G'MIC here, without abort or progress
 		options->p_is_abort = NULL;
 		options->p_progress = NULL;
@@ -1877,22 +1912,12 @@ static int gmicCallAbortable(OFX::ImageEffect& effect, HostProgress& hostProgres
 	} catch (...) {
 		// waiting failed (e.g. std::system_error from the mutex): stop G'MIC, wait for it, and fail
 		isAbort = true;
-#ifndef _WIN32
-		pthread_join(thread, NULL);
-#else
-		WaitForSingleObject(thread, INFINITE);
-		CloseHandle(thread);
-#endif
+		worker.join();
 		options->p_is_abort = NULL;
 		options->p_progress = NULL;
 		throw;
 	}
-#ifndef _WIN32
-	pthread_join(thread, NULL);
-#else
-	WaitForSingleObject(thread, INFINITE);
-	CloseHandle(thread);
-#endif
+	worker.join();
 	options->p_is_abort = NULL;
 	options->p_progress = NULL;
 	if (!*aborted && effect.abort()) {
@@ -2257,12 +2282,15 @@ static std::string frameCacheKey(const GlobalData* globalDataP, const std::strin
 
 // the host purges its caches (kOfxActionPurgeCaches): drop all the entries (Natron renders
 // through clones, so the instance purged is not the one that refers to the entries)
+static void geometryCachePurge(); // (below)
+
 void pluginPurgeCaches()
 {
 	std::vector<CachedFrames> dropped; // freed after unlocking
 	FrameCache& c = frameCache();
 	std::lock_guard<std::mutex> lock(c.mutex);
 	while (!c.entries.empty()) frameCacheDrop(c, c.entries.begin(), dropped);
+	geometryCachePurge();
 }
 
 // Output Layer changed (any reason): not Frame, the instance's entry may be dropped now
@@ -2307,6 +2335,7 @@ static unsigned int resultIndexOf(const SequenceData* sequenceDataP, const Globa
 // does (get_output_layer_props in host_gimp.cpp: integers, any one character between them). The
 // inputs are named pos(0,0) (gmicImageName): a result that keeps its input's name, or has no pos,
 // is at Source's top-left corner.
+static const long kMaxPos = 1000000;
 static ResultGeometry resultGeometryOf(const gmic_interface_image& image)
 {
 	ResultGeometry g;
@@ -2320,8 +2349,9 @@ static ResultGeometry resultGeometryOf(const gmic_interface_image& image)
 		if (end != p && *end && *end != ')') {
 			p = end + 1;
 			const long y = strtol(p, &end, 10);
-			// (bounded, so that the region of definition stays far from the int range)
-			if (end != p && *end == ')' && std::labs(x) <= 1000000 && std::labs(y) <= 1000000) {
+			// (bounded, so that the region of definition stays far from the int range; an overflow
+			// gives LONG_MIN or LONG_MAX, out of these bounds: no labs, undefined for LONG_MIN)
+			if (end != p && *end == ')' && x >= -kMaxPos && x <= kMaxPos && y >= -kMaxPos && y <= kMaxPos) {
 				g.x = (int)x;
 				g.y = (int)y;
 			}
@@ -2330,15 +2360,130 @@ static ResultGeometry resultGeometryOf(const gmic_interface_image& image)
 	return g;
 }
 
-// The geometries found by pluginResultGeometry, by command line and input sizes (an empty value:
-// G'MIC failed or gave no result), shared by all instances and their render clones, behind a
-// mutex. At most kMaxGeometries entries: the oldest go first.
+static string gmicImageName(const string& clipName); // (below)
+
+bool pluginKeepsResultSize()
+{
+	return hostSupportsMultiResolution();
+}
+
+// G'MIC's name of input image i: gmicImageName, with pos(dx,dy), the offset of its top-left corner
+// from Source's (x to the right, y down), as G'MIC-Qt's GIMP host names each layer with its
+// offset (host_gimp.cpp). Source and the inputs at its corner are pos(0,0).
+static string gmicInputName(const SequenceData* sequenceDataP, unsigned int i)
+{
+	const World& in = sequenceDataP->inWorld[i];
+	const World& source = sequenceDataP->inWorld[0];
+	string name = gmicImageName(in.name);
+	const int dx = in.origin_x - source.origin_x;
+	const int dy = (source.origin_y + source.height) - (in.origin_y + in.height);
+	if (dx != 0 || dy != 0) {
+		name.replace(0, std::string("pos(0,0)").size(), "pos(" + std::to_string(dx) + "," + std::to_string(dy) + ")");
+	}
+	return name;
+}
+
+// the names of the input images[0..nofImages-1] of a run (see gmicInputName)
+static void nameInputImages(const SequenceData* sequenceDataP, unsigned int nofImages, gmic_interface_image* images)
+{
+	for (unsigned int i = 0; i < nofImages; i++) {
+		const string name = gmicInputName(sequenceDataP, i);
+		strncpy(images[i].name, name.c_str(), sizeof(images[i].name) - 1);
+		images[i].name[sizeof(images[i].name) - 1] = '\0';
+	}
+}
+
+// The probe's time limit, in seconds (0: none): past it, G'MIC is stopped, and the output keeps
+// Source's region of definition. (A maintainer's decision, pending: unlimited for now.)
+static const double kProbeTimeLimit = 0.;
+
+// gmic_plugin_call() on a worker thread (GmicWorker), as a render's runs: stopped past timeLimit
+// seconds (0: never), then *timedOut is true (G'MIC's result, which it returns, is then
+// incomplete: discard it). Without a thread, it runs here.
+static int gmicCallTimed(const GmicCall& call, double timeLimit, bool* timedOut)
+{
+	*timedOut = false;
+	gmic_interface_options* const options = call.options;
+	bool isAbort = false;
+	GmicCallData d;
+	d.call = call;
+	d.result = -1;
+	d.done = false;
+	options->p_is_abort = &isAbort;
+	options->p_progress = NULL;
+	struct ResetAbort {
+		gmic_interface_options* options;
+		~ResetAbort() { options->p_is_abort = NULL; }
+	} resetAbort{ options };
+	GmicWorker worker;
+	if (!worker.start(d)) {
+		options->p_is_abort = NULL;
+		return gmic_plugin_call(call);
+	}
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(timeLimit);
+	try {
+		std::unique_lock<std::mutex> lock(d.mutex);
+		while (!d.cond.wait_for(lock, std::chrono::milliseconds(50), [&d] { return d.done; })) {
+			if (timeLimit > 0. && std::chrono::steady_clock::now() >= deadline) {
+				*timedOut = true;
+				isAbort = true; // (on every poll: G'MIC resets the flag when its interpreter starts)
+			}
+		}
+	} catch (...) {
+		isAbort = true;
+		worker.join();
+		throw;
+	}
+	worker.join();
+	if (d.exception) std::rethrow_exception(d.exception);
+	return d.result;
+}
+
+// The result images of a run, freed on destruction (C++ Core Guidelines R.1), except the inputs'
+// buffers, which a result may share
+struct GmicResultImages
+{
+	std::vector<gmic_interface_image> images;
+	unsigned int nofImages = 0;
+	std::vector<const void*> inputs;
+	explicit GmicResultImages(size_t maxImages) : images(maxImages) {}
+	GmicResultImages(const GmicResultImages&) = delete;
+	GmicResultImages& operator=(const GmicResultImages&) = delete;
+	~GmicResultImages()
+	{
+		for (unsigned int i = 0; i < nofImages; i++) {
+			if (images[i].data && std::find(inputs.begin(), inputs.end(), images[i].data) == inputs.end()) {
+				gmic_delete_external((float*)images[i].data);
+			}
+		}
+	}
+};
+
+// What a probe found: the geometry of every result, in order (empty: G'MIC failed, gave no result,
+// or the probe failed), and whether Output Layer "Frame" kept only the one of its frame
+// (kFrameSelectCommand, as a render with too many or too large results)
+struct ProbeResult
+{
+	std::vector<ResultGeometry> results;
+	bool selected = false;
+};
+
+// The probes' results, by command line and input sizes, shared by all instances and their render
+// clones, behind a mutex. At most kMaxGeometries entries, the least recently used dropped first.
+// Single flight: a lookup of a key whose probe is running waits for it.
 static const size_t kMaxGeometries = 1024;
+struct GeometryEntry
+{
+	bool done = false; // false while its probe runs
+	ProbeResult result;
+	std::list<const string*>::iterator lru; // (done only) its place in GeometryCache::lru
+};
 struct GeometryCache
 {
 	std::mutex mutex;
-	std::map<string, std::optional<ResultGeometry>> entries;
-	std::deque<string> order; // the keys of entries, oldest first
+	std::condition_variable cond; // a probe is done
+	std::map<string, GeometryEntry> entries;
+	std::list<const string*> lru; // the keys of the done entries, least recently used first
 };
 
 static GeometryCache& geometryCache()
@@ -2347,13 +2492,188 @@ static GeometryCache& geometryCache()
 	return cache;
 }
 
-static string gmicImageName(const string& clipName); // (below)
-
-std::optional<ResultGeometry> pluginResultGeometry(const SequenceData& sequenceData, const GlobalData& globalData)
+// the done entry of key (and true), after waiting for its running probe; or, if there is none, a
+// new running entry, which the caller must finish with geometryCacheStore (and false)
+static bool geometryCacheFind(const string& key, ProbeResult& result)
 {
-	// (a copy: the probe's own input buffers, and the names used by the PARAM_* macros)
-	const std::unique_ptr<SequenceData> probe = std::make_unique<SequenceData>(sequenceData);
-	SequenceData* const sequenceDataP = probe.get();
+	GeometryCache& c = geometryCache();
+	std::unique_lock<std::mutex> lock(c.mutex);
+	for (;;) {
+		const auto it = c.entries.find(key);
+		if (it == c.entries.end()) {
+			c.entries.emplace(key, GeometryEntry());
+			return false;
+		}
+		if (it->second.done) {
+			c.lru.splice(c.lru.end(), c.lru, it->second.lru);
+			result = it->second.result;
+			return true;
+		}
+		c.cond.wait(lock);
+	}
+}
+
+static void geometryCacheStore(const string& key, const ProbeResult& result) noexcept
+{
+	GeometryCache& c = geometryCache();
+	{
+		std::lock_guard<std::mutex> lock(c.mutex);
+		const auto it = c.entries.find(key);
+		if (it != c.entries.end() && !it->second.done) {
+			try {
+				it->second.result = result;
+				it->second.lru = c.lru.insert(c.lru.end(), &it->first);
+				it->second.done = true;
+			} catch (...) {
+				c.entries.erase(it); // (out of memory: the next lookup probes again)
+			}
+			while (c.lru.size() > kMaxGeometries) {
+				c.entries.erase(*c.lru.front());
+				c.lru.pop_front();
+			}
+		}
+	}
+	c.cond.notify_all();
+}
+
+// kOfxActionPurgeCaches: the probes' results go too (not the running entries)
+static void geometryCachePurge()
+{
+	GeometryCache& c = geometryCache();
+	std::lock_guard<std::mutex> lock(c.mutex);
+	for (const string* key : c.lru) c.entries.erase(*key);
+	c.lru.clear();
+}
+
+// One probe (see pluginResultGeometry): the filter's command line cmd (without the thread count),
+// then suffix, on opaque gradient images of the inputs' sizes, as the render runs it (the preview
+// command first if the filter needs its state). key: its entry in the cache.
+static ProbeResult probeRun(SequenceData& probe, const GlobalData* globalDataP, unsigned int nofImages, const string& key,
+	const string& suffix)
+{
+	ProbeResult result;
+	if (geometryCacheFind(key, result)) return result;
+	// the entry is running: store it on every path, so that the lookups waiting for it go on
+	struct Store {
+		const string& key;
+		ProbeResult& result;
+		~Store() { geometryCacheStore(key, result); }
+	} store{ key, result };
+	SequenceData* const sequenceDataP = &probe;
+	const EffectData& effectData = effectDataOf(globalDataP);
+	try {
+		// opaque, not uniform: filters that crop a uniform border (autocrop) or the transparent
+		// parts would find no or a smaller image on blank or transparent inputs
+		std::vector<std::vector<float>> buffers(nofImages);
+		GmicResultImages out((size_t)maxResultsOf(sequenceDataP, globalDataP));
+		gmic_interface_image* const images = out.images.data();
+		for (unsigned int i = 0; i < nofImages; i++) {
+			World& in = sequenceDataP->inWorld[i];
+			const size_t plane = (size_t)in.width * (size_t)in.height;
+			buffers[i].resize(plane * 4);
+			float* const p = buffers[i].data();
+			for (int y = 0; y < in.height; y++) {
+				for (int x = 0; x < in.width; x++) {
+					const size_t k = (size_t)y * (size_t)in.width + (size_t)x;
+					p[k] = 255.f * (float)x / (float)std::max(1, in.width - 1);
+					p[plane + k] = 255.f * (float)y / (float)std::max(1, in.height - 1);
+					p[2 * plane + k] = 255.f * (float)((x + y) % 64) / 63.f;
+					p[3 * plane + k] = 255.f;
+				}
+			}
+			in.data = p;
+			out.inputs.push_back(p);
+			images[i].width = in.width;
+			images[i].height = in.height;
+			images[i].data = p;
+			images[i].spectrum = 4;
+			images[i].depth = 1;
+			images[i].format = E_FORMAT_FLOAT;
+			images[i].is_interleaved = false;
+		}
+		nameInputImages(sequenceDataP, nofImages, images);
+		// its own G'MIC options: a render of the same instance may run at the same time
+		GmicInstanceData instance;
+		instance.options().no_inplace_processing = true;
+		string customCommands;
+		struct ResetCustomCommands {
+			gmic_interface_options& options;
+			~ResetCustomCommands() { options.custom_commands = NULL; }
+		} resetCustomCommands{ instance.options() };
+		const bool preview = effectData.previewOnly || sequenceDataP->floatValue[PARAM_PREVIEW][0] > 0;
+		const bool previewFirst = !preview && effectData.previewFirst;
+		const string threads = gmicThreadsPrefix();
+		GmicRunState state;
+		bool previewDone = false;
+		bool timedOut = false;
+		const auto runDone = [&](int status) {
+			if (timedOut) {
+				gmicLog("G'MIC: %s: the run that measures the result's size took more than %g s: stopped, the output keeps Source's size\n",
+				        effectData.name.c_str(), kProbeTimeLimit);
+			}
+			return status == 0 && !timedOut;
+		};
+		if (previewFirst) {
+			// as pluginProcess: the preview command first, for the _persistent and the status that
+			// the main command may need (they may change the result's size)
+			const string previewCmd = threads + fullCommand(sequenceDataP, globalDataP, &instance, nofImages, GmicRun::kPreviewState, customCommands);
+			unsigned int n = nofImages;
+			GmicCall call;
+			call.cmd = previewCmd.c_str();
+			call.nofImages = &n;
+			call.images = images;
+			call.maxImages = (unsigned int)out.images.size();
+			call.options = &instance.options();
+			call.stateOut = &state;
+			call.results = GmicResults::kDiscard;
+			previewDone = runDone(gmicCallTimed(call, kProbeTimeLimit, &timedOut));
+			if (timedOut) return result;
+		}
+		const string cmd = threads + fullCommand(sequenceDataP, globalDataP, &instance, nofImages, preview ? GmicRun::kPreview : GmicRun::kMain,
+			customCommands, previewDone ? &state.status : nullptr) + suffix;
+		unsigned int n = nofImages;
+		GmicCall call;
+		call.cmd = cmd.c_str();
+		call.nofImages = &n;
+		call.images = images;
+		call.maxImages = (unsigned int)out.images.size();
+		call.options = &instance.options();
+		call.persistentIn = previewDone ? &state.persistent : nullptr;
+		const int status = gmicCallTimed(call, kProbeTimeLimit, &timedOut);
+		if (status == 0) out.nofImages = n; // (freed on return, also if discarded)
+		if (!runDone(status)) {
+			if (!timedOut) {
+				gmicLog("G'MIC: %s: the run that measures the result's size failed (%s): the output keeps Source's size\n",
+				        effectData.name.c_str(), instance.options().error_message_buffer);
+			}
+			return result;
+		}
+		result.selected = outputIsFrame(sequenceDataP, globalDataP) && n == 1 && strcmp(images[0].name, "openfx_gmic_frame_selected") == 0;
+		for (unsigned int i = 0; i < n; i++) {
+			result.results.push_back(images[i].data ? resultGeometryOf(images[i]) : ResultGeometry());
+		}
+		if (n == 0) {
+			gmicLog("G'MIC: %s: the run that measures the result's size gave no image: the output keeps Source's size\n",
+			        effectData.name.c_str());
+		}
+	} catch (const std::bad_alloc&) {
+		result = ProbeResult();
+		gmicLog("G'MIC: %s: not enough memory to measure the result's size: the output keeps Source's size\n", effectData.name.c_str());
+	} catch (const std::exception& e) {
+		result = ProbeResult();
+		gmicLog("G'MIC: %s: the run that measures the result's size failed (%s): the output keeps Source's size\n",
+		        effectData.name.c_str(), e.what());
+	} catch (...) {
+		result = ProbeResult();
+		gmicLog("G'MIC: %s: the run that measures the result's size failed: the output keeps Source's size\n", effectData.name.c_str());
+	}
+	return result;
+}
+
+static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequenceData, const GlobalData& globalData)
+{
+	SequenceData probe = sequenceData; // (its inputs get the probe's images)
+	SequenceData* const sequenceDataP = &probe;
 	const GlobalData* const globalDataP = &globalData;
 	const EffectData& effectData = effectDataOf(globalDataP);
 	if (effectData.command.empty()) return std::nullopt; // passes Source through
@@ -2365,106 +2685,51 @@ std::optional<ResultGeometry> pluginResultGeometry(const SequenceData& sequenceD
 	}
 	if (nofImages == 0) return std::nullopt;
 
-	// the command line of the render (pluginProcess), with its own G'MIC options: a render of the
-	// same instance may run at the same time
+	// the key: the command line of the render (without the thread count, and without the status
+	// of a preview run, which only depends on what the key holds), and the inputs' sizes and
+	// offsets. Not the frame (Output Layer "Frame"): one run gives every frame's result, unless
+	// G'MIC kept only one (selected), as in the render.
 	GmicInstanceData instance;
-	instance.options().no_inplace_processing = true;
-	const bool preview = effectData.previewOnly || sequenceDataP->floatValue[PARAM_PREVIEW][0] > 0;
-	const bool previewFirst = !preview && effectData.previewFirst;
 	string customCommands;
-	struct ResetCustomCommands {
-		gmic_interface_options& options;
-		explicit ResetCustomCommands(gmic_interface_options& o) : options(o) {}
-		~ResetCustomCommands() { options.custom_commands = NULL; }
-	} resetCustomCommands(instance.options());
-	string cmd = fullCommand(sequenceDataP, globalDataP, &instance, nofImages, preview ? GmicRun::kPreview : GmicRun::kMain, customCommands);
-	// Output Layer "Frame": G'MIC keeps only the result of the frame (max_results 0)
+	const bool preview = effectDataOf(globalDataP).previewOnly || sequenceDataP->floatValue[PARAM_PREVIEW][0] > 0;
+	string key = fullCommand(sequenceDataP, globalDataP, &instance, nofImages, preview ? GmicRun::kPreview : GmicRun::kMain, customCommands);
+	instance.options().custom_commands = NULL;
+	for (unsigned int i = 0; i < nofImages; i++) {
+		const World& in = sequenceDataP->inWorld[i];
+		key += '\n' + gmicInputName(sequenceDataP, i) + ' ' + std::to_string(in.width) + 'x' + std::to_string(in.height);
+	}
 	const long long frame = frameNumberOf(sequenceDataP);
 	const bool frameMode = outputIsFrame(sequenceDataP, globalDataP);
-	const string frameSelect = frameMode ? " -_openfx_gmic_frame_select " + std::to_string(frame) + ",0,0" : string();
-	string key = cmd + frameSelect;
-	for (unsigned int i = 0; i < nofImages; i++) {
-		key += '\n' + std::to_string(sequenceDataP->inWorld[i].width) + 'x' + std::to_string(sequenceDataP->inWorld[i].height);
+	const string budget = "," + std::to_string(kMaxFrameResults) + "," + std::to_string((unsigned long long)frameCacheBudget());
+	ProbeResult r = probeRun(probe, globalDataP, nofImages, key, frameMode ? " -_openfx_gmic_frame_select 0" + budget : string());
+	if (frameMode && r.selected) {
+		// too many or too large results: the render runs the filter for each frame, so does this
+		key += "\nframe " + std::to_string(frame);
+		r = probeRun(probe, globalDataP, nofImages, key, " -_openfx_gmic_frame_select " + std::to_string(frame) + budget);
 	}
-	GeometryCache& cache = geometryCache();
-	{
-		std::lock_guard<std::mutex> lock(cache.mutex);
-		const auto it = cache.entries.find(key);
-		if (it != cache.entries.end()) return it->second;
+	if (r.results.empty()) return std::nullopt;
+	const ResultGeometry& g = r.results[resultIndexOf(sequenceDataP, globalDataP, (unsigned int)r.results.size(), frame, r.selected)];
+	if (g.width <= 0 || g.height <= 0) {
+		gmicLog("G'MIC: %s: the run that measures the result's size gave an empty image: the output keeps Source's size\n",
+		        effectData.name.c_str());
+		return std::nullopt;
 	}
+	return g;
+}
 
-	// blank inputs (transparent black), of the inputs' sizes
-	std::vector<std::vector<float>> buffers(nofImages);
-	std::vector<gmic_interface_image> imageBuffer((size_t)maxResultsOf(sequenceDataP, globalDataP));
-	gmic_interface_image* const images = imageBuffer.data();
-	for (unsigned int i = 0; i < nofImages; i++) {
-		World& in = sequenceDataP->inWorld[i];
-		buffers[i].assign((size_t)in.width * (size_t)in.height * 4, 0.f);
-		in.data = buffers[i].data();
-		images[i].width = in.width;
-		images[i].height = in.height;
-		images[i].data = in.data;
-		images[i].spectrum = 4;
-		images[i].depth = 1;
-		images[i].format = E_FORMAT_FLOAT;
-		images[i].is_interleaved = false;
-		const string name = gmicImageName(in.name);
-		strncpy(images[i].name, name.c_str(), sizeof(images[i].name) - 1);
-		images[i].name[sizeof(images[i].name) - 1] = '\0';
+std::optional<ResultGeometry> pluginResultGeometry(const SequenceData& sequenceData, const GlobalData& globalData)
+{
+	if (!hostSupportsMultiResolution()) return std::nullopt;
+	try {
+		return resultGeometry(sequenceData, globalData);
+	} catch (const std::bad_alloc&) {
+		gmicLog("G'MIC: %s: not enough memory to measure the result's size: the output keeps Source's size\n",
+		        effectDataOf(&globalData).name.c_str());
+	} catch (...) {
+		gmicLog("G'MIC: %s: the result's size could not be measured: the output keeps Source's size\n",
+		        effectDataOf(&globalData).name.c_str());
 	}
-	const string threads = gmicThreadsPrefix();
-	GmicRunState state;
-	bool previewDone = false;
-	if (previewFirst) {
-		// as pluginProcess: the preview command first, for the _persistent and the status that
-		// the main command may need (they may change the result's size)
-		const string previewCmd = threads + fullCommand(sequenceDataP, globalDataP, &instance, nofImages, GmicRun::kPreviewState, customCommands);
-		GmicCall call;
-		call.cmd = previewCmd.c_str();
-		call.nofImages = &nofImages;
-		call.images = images;
-		call.maxImages = (unsigned int)imageBuffer.size();
-		call.options = &instance.options();
-		call.stateOut = &state;
-		call.results = GmicResults::kDiscard;
-		previewDone = gmic_plugin_call(call) == 0;
-		cmd = fullCommand(sequenceDataP, globalDataP, &instance, nofImages, GmicRun::kMain, customCommands,
-		                  previewDone ? &state.status : nullptr);
-	}
-	cmd = threads + cmd + frameSelect;
-	const unsigned int nofInputs = nofImages;
-	GmicCall call;
-	call.cmd = cmd.c_str();
-	call.nofImages = &nofImages;
-	call.images = images;
-	call.maxImages = (unsigned int)imageBuffer.size();
-	call.options = &instance.options();
-	call.persistentIn = previewDone ? &state.persistent : nullptr;
-	std::optional<ResultGeometry> geometry;
-	if (gmic_plugin_call(call) == 0) {
-		if (nofImages > 0) {
-			const bool selected = frameMode && nofImages == 1 && strcmp(images[0].name, "openfx_gmic_frame_selected") == 0;
-			const gmic_interface_image& res = images[resultIndexOf(sequenceDataP, globalDataP, nofImages, frame, selected)];
-			if (res.data && res.width > 0 && res.height > 0) geometry = resultGeometryOf(res);
-		}
-		for (unsigned int i = 0; i < nofImages; i++) {
-			bool input = false;
-			for (unsigned int j = 0; j < nofInputs; j++) input = input || images[i].data == buffers[j].data();
-			if (images[i].data && !input) gmic_delete_external((float*)images[i].data);
-		}
-	} else {
-		gmicLog("G'MIC: %s: the run that measures the result's size failed (%s): the output keeps Source's size\n",
-		        effectData.name.c_str(), instance.options().error_message_buffer);
-	}
-	std::lock_guard<std::mutex> lock(cache.mutex);
-	if (cache.entries.emplace(key, geometry).second) {
-		cache.order.push_back(key);
-		while (cache.order.size() > kMaxGeometries) {
-			cache.entries.erase(cache.order.front());
-			cache.order.pop_front();
-		}
-	}
-	return geometry;
+	return std::nullopt;
 }
 
 bool pluginPassesSourceThrough(const GlobalData& globalData)
@@ -2541,6 +2806,9 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	// ones (G'MIC-Qt keeps it between its runs of a filter). If the preview command fails, the main
 	// command runs without them, as G'MIC-Qt's Apply after a failed preview.
 	const bool previewFirst = !preview && effectData.previewFirst;
+	// the names of the inputs: layer inputs elsewhere than Source (multi-resolution) are at their
+	// pos(dx,dy) from it (see gmicInputName)
+	nameInputImages(sequenceDataP, nofImages, images);
 	// the custom commands, set in the options by fullCommand(): must stay valid until the G'MIC calls return
 	string customCommands;
 	// customCommands goes out of scope: reset the pointer on return, also when G'MIC throws
@@ -2685,7 +2953,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 			// input keeps the input's left and top edges (pixel y goes up). Resize Mode Dynamic: moved
 			// by the pos(x,y) of its name (G'MIC's y goes down), as the region of definition
 			// (pluginResultGeometry)
-			const bool dynamic = resizeModeOf(sequenceDataP, globalDataP) == kResizeModeDynamic;
+			const bool dynamic = resizeModeOf(sequenceDataP, globalDataP) == kResizeModeDynamic && hostSupportsMultiResolution();
 			const ResultGeometry at = dynamic ? resultGeometryOf(*res) : ResultGeometry();
 			const int sx1 = sequenceDataP->inWorld[0].origin_x + at.x;
 			const int sy1 = sequenceDataP->inWorld[0].origin_y + sequenceDataP->inWorld[0].height - at.y - sh;

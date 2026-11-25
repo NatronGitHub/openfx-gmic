@@ -115,13 +115,21 @@ struct ResultGeometry
 	int height = 0;
 };
 
+// Does the output keep the result's size with Resize Mode Fixed and Dynamic (issue #175)? Only on
+// a host with multi-resolution: on the others, the output keeps Source's size, the result is
+// resized to it as before, and there is no probe (pluginResultGeometry).
+bool pluginKeepsResultSize();
+
 // Resize Mode Dynamic (issue #175): the geometry of the result that a render with sequenceData's
 // values and input sizes gives, for the region of definition, which OFX needs before the render.
-// Runs the filter as the render does (pluginProcess), on blank (transparent black) inputs of the
-// sizes in sequenceData.inWorld (their data is ignored: the region of definition action has no
-// images), and keeps the result for that command line and those sizes, so that it runs again only
-// when they change (an edit, an animated parameter, another input size). Empty if G'MIC failed or
-// gave no result (the render will report it).
+// Runs the filter as the render does (pluginProcess), on a worker thread, on opaque gradient
+// images of the sizes in sequenceData.inWorld (their data is ignored: the region of definition
+// action has no images), and keeps the geometry of every result for that command line and those
+// sizes (for Output Layer "Frame", every frame's), so that it runs again only when they change
+// (an edit, an animated parameter, another input size); a lookup of a probe that is running
+// waits for it. Empty if the host has no multi-resolution (pluginKeepsResultSize), or if G'MIC
+// failed, gave no or an empty result, ran out of memory or past the time limit (logged): the
+// output then keeps Source's region of definition.
 std::optional<ResultGeometry> pluginResultGeometry(const gmic_ofx::SequenceData& sequenceData, const gmic_ofx::GlobalData& globalData);
 
 #endif

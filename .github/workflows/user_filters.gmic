@@ -86,18 +86,31 @@ fc :
 star_tone :
   f 0
 
-# results of another size and position (#175), uniform colours: with Resize Mode Dynamic (the
-# default), the output has the result's size and position, which the region of definition
+# results of another size and position (#175), uniform opaque colours: with Resize Mode Dynamic
+# (the default), the output has the result's size and position, which the region of definition
 # declares: larger (200% x 150%), smaller (50% x 25%), and moved by the pos(10,20) of its name (10
 # pixels right and 20 down, as G'MIC-Qt's hosts place a layer)
 #@gui User File Larger : fx_userfile_larger, fx_userfile_larger
 fx_userfile_larger :
-  r 200%,150%,1,100%,0 fill_color 255,0,0
+  r 200%,150%,1,100%,0 fill_color 255,0,0,255
 
 #@gui User File Smaller : fx_userfile_smaller, fx_userfile_smaller
 fx_userfile_smaller :
-  r 50%,25%,1,100%,0 fill_color 0,255,0
+  r 50%,25%,1,100%,0 fill_color 0,255,0,255
 
 #@gui User File Shifted : fx_userfile_shifted, fx_userfile_shifted
 fx_userfile_shifted :
-  fill_color 0,0,255 nm "pos(10,20),name(Source)"
+  fill_color 0,0,255,255 nm "pos(10,20),name(Source)"
+
+# a size that depends on the pixels: 80 pixels wide if the pixel at (80,60) is red (in the red
+# rectangle of the test's input), else 40 (the plug-in's probe image, a gradient), 60 high. The
+# region of definition gets the probe's size, so the render warns and crops.
+#@gui User File Content Size : fx_userfile_content_size, fx_userfile_content_size
+fx_userfile_content_size :
+  w2={i(80,60,0,0)>200?80:40} r $w2,60,1,100%,0 fill_color 255,255,0,255
+
+# two results, for Output Layer "Frame": frame 0 is [0], half of Source's size at pos(5,6), frame
+# 1 is [1], Source's size
+#@gui User File Frames : fx_userfile_frames, fx_userfile_frames
+fx_userfile_frames :
+  fill_color 255,0,255,255 +r[0] 50%,50%,1,100%,0 rv nm[0] "pos(5,6),name(Small)"

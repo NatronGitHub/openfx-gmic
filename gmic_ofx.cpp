@@ -728,10 +728,17 @@ bool GMICEffect::getRegionOfDefinition(const OFX::RegionOfDefinitionArguments& a
 	const std::optional<OfxRectD> sourceRod = hostQuery([&] { return source->getRegionOfDefinition(args.time); });
 	if (!sourceRod) return false;
 	rod = *sourceRod;
-	if (!pluginPassesSourceThrough(_gd) && source->isConnected() && !isEmpty(*sourceRod) &&
+	// (a host without multi-resolution keeps the output at Source's size: no probe, see
+	// pluginKeepsResultSize)
+	if (pluginKeepsResultSize() && !pluginPassesSourceThrough(_gd) && source->isConnected() && !isEmpty(*sourceRod) &&
 		_resizeMode->getValueAtTime(args.time) == kResizeModeDynamic) {
-		if (const std::optional<OfxRectD> result = resultRoD(*sourceRod, args.time, args.renderScale)) {
-			rod = *result;
+		try {
+			if (const std::optional<OfxRectD> result = resultRoD(*sourceRod, args.time, args.renderScale)) {
+				rod = *result;
+			}
+		} catch (const std::bad_alloc&) {
+			gmicLog("G'MIC: %s: not enough memory to measure the result's size: the output keeps Source's size\n",
+			        _gd.pluginInfo.name.c_str());
 		}
 	}
 	return true;
@@ -745,18 +752,32 @@ OfxRectI toPixelEnclosing(const OfxRectD& r, const OfxPointD& renderScale, doubl
 		(int)std::ceil(r.x2 * renderScale.x / par), (int)std::ceil(r.y2 * renderScale.y) };
 }
 
+// The canonical coordinate of a pixel edge p (x: par is the pixel aspect ratio and scale the
+// render scale x; y: par 1 and the render scale y), such that the host's rounding of the region of
+// definition to pixels (toPixelEnclosing: floor(c * scale / par) for the low edges, ceil for the
+// high ones, as Natron's RectD::toPixelEnclosing) gives p back. Exact when it does (e.g. an edge at
+// 0 stays 0, which Natron's connection test compares exactly); else moved inwards by 1e-6 pixel,
+// the same in both axes.
+double canonicalEdge(int p, double par, double scale, bool high)
+{
+	const double c = p * par / scale;
+	const double back = high ? std::ceil(c * scale / par) : std::floor(c * scale / par);
+	if (back == p) return c;
+	constexpr double kInwards = 1e-6; // pixel
+	return (high ? p - kInwards : p + kInwards) * par / scale;
+}
+
 // Resize Mode Dynamic (issue #175): the region of definition of the result, from its geometry
 // (pluginResultGeometry, which runs G'MIC on blank inputs of the sizes of the inputs' regions of
 // definition, at the render time, with the layer times). Empty if it is Source's (a result of
 // Source's size at its top-left corner: Source's region of definition, exactly as before), or if
 // it is unknown (G'MIC failed). The pixel rectangle is the result's, its top-left corner at
-// Source's moved by the result's pos(x,y); each edge is moved inwards by 1e-6 pixel before the
-// conversion to canonical coordinates, so that the host's rounding (toPixelEnclosing) gives back
-// the same pixels.
+// Source's moved by the result's pos(x,y), in canonical coordinates (see canonicalEdge).
 std::optional<OfxRectD> GMICEffect::resultRoD(const OfxRectD& sourceRod, double time, const OfxPointD& renderScale) const
 {
 	// the values of the render at this time (see render), the inputs without images
-	const std::unique_ptr<SequenceData> sd = std::make_unique<SequenceData>();
+	SequenceData values;
+	SequenceData* const sd = &values;
 	for (int i = 0; i < _gd.nofParams; i++) {
 		sd->textValue[i] = _gd.param[i].text;
 		std::copy(_gd.param[i].defaultValue, _gd.param[i].defaultValue + 4, sd->floatValue[i]);
@@ -786,16 +807,15 @@ std::optional<OfxRectD> GMICEffect::resultRoD(const OfxRectD& sourceRod, double 
 		in.height = r.y2 - r.y1;
 		sd->inputConnected[i] = true;
 	}
-	fetchParamValues(*sd, sourcePixels, par, time, renderScale);
-	const std::optional<ResultGeometry> g = pluginResultGeometry(*sd, _gd);
+	fetchParamValues(values, sourcePixels, par, time, renderScale);
+	const std::optional<ResultGeometry> g = pluginResultGeometry(values, _gd);
 	const int sw = sourcePixels.x2 - sourcePixels.x1, sh = sourcePixels.y2 - sourcePixels.y1;
 	if (!g || (g->x == 0 && g->y == 0 && g->width == sw && g->height == sh)) return std::nullopt;
 	// pixels (y up): the result's top edge is Source's, moved down by pos y
-	const double x1 = sourcePixels.x1 + g->x, y2 = sourcePixels.y2 - g->y;
-	const double x2 = x1 + g->width, y1 = y2 - g->height;
-	constexpr double kInwards = 1e-6;
-	return OfxRectD{ (x1 + kInwards) * par / renderScale.x, (y1 + kInwards) / renderScale.y,
-		(x2 - kInwards) * par / renderScale.x, (y2 - kInwards) / renderScale.y };
+	const int x1 = sourcePixels.x1 + g->x, y2 = sourcePixels.y2 - g->y;
+	const int x2 = x1 + g->width, y1 = y2 - g->height;
+	return OfxRectD{ canonicalEdge(x1, par, renderScale.x, false), canonicalEdge(y1, 1., renderScale.y, false),
+		canonicalEdge(x2, par, renderScale.x, true), canonicalEdge(y2, 1., renderScale.y, true) };
 }
 
 // tells the host how much of the input we need to fill the given window

@@ -327,18 +327,22 @@ Results of another size (issue #175): as in G'MIC-Qt, a filter's result may be l
 moved (Rotate, frames, crops, Upscale [Scale2x]..., or a pos(x,y) in the result's name, from
 Source's top-left corner). The Resize Mode (in Advanced Options) chooses the output:
 - Dynamic, the default: the result's size and position. OpenFX needs them before the render: the
-  plug-in runs the filter once more on blank images of the inputs' sizes, and keeps the size it
-  finds for those parameter values and sizes. It runs again only after an edit, on every frame
-  when a parameter is animated, or when an input's size changes; such renders may take up to
-  twice as long. A filter whose result's size depends on the image's content (e.g. an automatic
-  crop) gets an output of the size found on the blank image: its result is cropped or padded,
-  with a warning on the node.
+  plug-in runs the filter once more, on opaque gradient images of the inputs' sizes, and keeps
+  the size it finds for those parameter values and sizes (for Output Layer "Frame", one run for
+  all the frames). It runs again only after an edit, on every frame when a parameter is animated,
+  or when an input's size changes; such renders may take up to twice as long, and in Natron the
+  user interface waits for that run after an edit. A filter whose result's size depends on the
+  image's content (e.g. an automatic crop) gets an output of the size found on the gradient: its
+  result is cropped or padded, with a warning on the node. If that run fails, the output keeps
+  Source's size (a note on stderr).
 - Fixed (Inplace): Source's size and position. A result of another size is cropped or padded,
   from its top-left corner, never resized.
 - Downsample 1/N: the filter runs on Source downsampled N times, and the result is resized to
   Source's size.
 Results of Source's size render as before in every mode. The inputs may have any size and
-position (the plug-in supports OpenFX multi-resolution).
+position (the plug-in supports OpenFX multi-resolution); a layer input elsewhere than Source gets
+its offset from Source as its pos(x,y), as in G'MIC-Qt. On hosts without multi-resolution, the
+output always has Source's size, and Fixed and Dynamic resize the result to it, as before.
 
 A render can be aborted while G'MIC runs. The filters that report their progress to G'MIC (with
 its progress command; most filters don't) show it in the host's progress bar, e.g. Natron's

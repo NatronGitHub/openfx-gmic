@@ -101,6 +101,9 @@ TIMEOUT = {
     'eu.gmic.NonscapeWoods': 900,
 }
 
+# the warning of a render whose result doesn't fit the region of definition that the plug-in
+# declared (#175: a size that depends on the pixels); listed, not a failure
+GEOMETRY_MISMATCH = "doesn't match the output"
 ERROR_LINE = re.compile(r'\*\*\* Error|\bOfxMessageError\b|\bError\b|\berror:')
 COMMERCIAL_MARKER = ' #  openfx-gmic : COMMERCIAL standard library'
 FFT_COMMANDS = re.compile(r'(?<![A-Za-z0-9_])(fft|ifft|deconvolve|deconvolve_fft|convolve_fft|bandpass|watermark_fourier)(?![A-Za-z0-9_])')
@@ -334,7 +337,7 @@ def main():
     sys.stdout.flush()
 
     start = time.time()
-    fails, xfails, xpasses, nans, times = [], [], [], [], []
+    fails, xfails, xpasses, nans, times, mismatches = [], [], [], [], [], []
     rendered = 0
     progressed = 0  # plug-ins that updated the host's progress
     with concurrent.futures.ThreadPoolExecutor(a.jobs) as ex:
@@ -368,12 +371,17 @@ def main():
                 print('XPASS %s: rendered, remove it from EXPECTED_FAIL (%s)' % (pid, EXPECTED_FAIL[pid][1]))
             if nan:
                 nans.append((pid, nan))
+            if GEOMETRY_MISMATCH in log:
+                mismatches.append(pid)
     print('%d rendered in %.0fs: %d failed, %d expected failures, %d skipped' % (
         len(todo), time.time() - start, len(fails), len(xfails), len(sel) - len(todo)))
     print('%d reported progress' % progressed)
     print('slowest: ' + ', '.join('%s %.0fs' % (p[len('eu.gmic.'):], t) for t, p in sorted(times)[-5:]))
     for pid, nan in nans:
         print('WARNING: %s: %d NaN values in its output' % (pid, nan))
+    if mismatches:
+        print('WARNING: %d plug-ins whose result does not match their region of definition (#175, '
+              'cropped or padded): %s' % (len(mismatches), ' '.join(sorted(mismatches))))
     status = 0
     if fails:
         print('FAIL: %d plug-ins failed to render: %s (logs and images in %s)' % (len(fails), ' '.join(fails), work))

@@ -63,13 +63,29 @@ EXPECTED = {
 }
 TOLERANCE = 1e-4
 DEFINED_BY = ' is defined by '  # the note of a kept definition of a hot-fixed command
-# (#175) plug-in id, hostDemo arguments: the result's size (pixels) and its pos(x,y) (pixels, y
-# down), or None for Source's size and position, and the RGB value of every output pixel
+# (#175) the cases of check_geometry(): plug-in id, hostDemo arguments (a Source input that
+# doesn't start at 0,0: OFFSET_SOURCE), the expected output size relative to Source's and its
+# pos(x,y) (pixels, y down), the RGBA value of every output pixel (PADDED: the result in its
+# top-left part, transparent black elsewhere, both checked through the minimum and maximum), and
+# whether the render must warn that the result doesn't match the output
+OFFSET_SOURCE = ['-i', 'Source=file:../input.pfm@20,10']
+PADDED = 'padded'
 GEOMETRY_CASES = [
-    ('eu.gmic.UserFileLarger', [], (2.0, 1.5, 0, 0), (1.0, 0.0, 0.0)),
-    ('eu.gmic.UserFileSmaller', [], (0.5, 0.25, 0, 0), (0.0, 1.0, 0.0)),
-    ('eu.gmic.UserFileShifted', [], (1.0, 1.0, 10, 20), (0.0, 0.0, 1.0)),
-    ('eu.gmic.UserFileLarger', ['-s', 'Resize Mode=0'], None, (1.0, 0.0, 0.0)),
+    ('eu.gmic.UserFileLarger', [], (2.0, 1.5, 0, 0), (1.0, 0.0, 0.0, 1.0), False),
+    ('eu.gmic.UserFileSmaller', [], (0.5, 0.25, 0, 0), (0.0, 1.0, 0.0, 1.0), False),
+    ('eu.gmic.UserFileShifted', [], (1.0, 1.0, 10, 20), (0.0, 0.0, 1.0, 1.0), False),
+    ('eu.gmic.UserFileLarger', OFFSET_SOURCE, (2.0, 1.5, 0, 0), (1.0, 0.0, 0.0, 1.0), False),
+    ('eu.gmic.UserFileShifted', OFFSET_SOURCE, (1.0, 1.0, 10, 20), (0.0, 0.0, 1.0, 1.0), False),
+    # Fixed (Inplace): Source's rectangle, cropped, padded, pos() ignored
+    ('eu.gmic.UserFileLarger', ['-s', 'Resize Mode=0'], (1.0, 1.0, 0, 0), (1.0, 0.0, 0.0, 1.0), False),
+    ('eu.gmic.UserFileSmaller', ['-s', 'Resize Mode=0'], (1.0, 1.0, 0, 0), PADDED, False),
+    ('eu.gmic.UserFileShifted', ['-s', 'Resize Mode=0'], (1.0, 1.0, 0, 0), (0.0, 0.0, 1.0, 1.0), False),
+    # Downsample 1/2: resized to Source's size
+    ('eu.gmic.UserFileLarger', ['-s', 'Resize Mode=2'], (1.0, 1.0, 0, 0), (1.0, 0.0, 0.0, 1.0), False),
+    # the probe's size (40x60), and the warning
+    ('eu.gmic.UserFileContentSize', [], (0.25, 0.5, 0, 0), (1.0, 1.0, 0.0, 1.0), True),
+    # Output Layer "Frame" at frame 0: result [0]
+    ('eu.gmic.UserFileFrames', ['-s', 'Output Layer=11'], (0.5, 0.5, 5, 6), (1.0, 0.0, 1.0, 1.0), False),
 ]
 GEOMETRY_WARNING = "doesn't match the output"
 ROD_TOLERANCE = 1e-3
@@ -146,6 +162,26 @@ def check_output(report, expected):
     return problems
 
 
+def check_padded(report):
+    """Checks an output whose top-left part is opaque green and the rest transparent black.
+
+    Args:
+        report: the parsed report.json of the render.
+
+    Returns:
+        A list of problems, empty if green and alpha go from 0 to 1, and red and blue are 0.
+    """
+    renders = report.get('renders') or []
+    output = (renders[0].get('output') if renders else None) or {}
+    lows, highs = output.get('min') or [], output.get('max') or []
+    if len(lows) < 4 or len(highs) < 4 or None in lows[:4] or None in highs[:4]:
+        return ['no RGBA output (%s, %s)' % (lows, highs)]
+    expected = [(0.0, 0.0), (0.0, 1.0), (0.0, 0.0), (0.0, 1.0)]
+    return ['channel %d is in [%g, %g], expected [%g, %g]' % (c, lows[c], highs[c], lo, hi)
+            for c, (lo, hi) in enumerate(expected)
+            if abs(lows[c] - lo) > TOLERANCE or abs(highs[c] - hi) > TOLERANCE]
+
+
 def check_geometry(host, plugins, work):
     """Renders each of GEOMETRY_CASES, and checks the output's size and region of definition.
 
@@ -158,19 +194,22 @@ def check_geometry(host, plugins, work):
         A list of problems, empty if every output has the expected size, position and color.
     """
     problems = []
-    for pid, args, geometry, color in GEOMETRY_CASES:
+    for pid, args, geometry, color, warns in GEOMETRY_CASES:
         name = '%s %s' % (pid, ' '.join(args)) if args else pid
-        result = render_plugins.render(host, args, plugins, work, TIMEOUT, (pid, CONTEXT, ['Source']))
+        clips = [] if args is OFFSET_SOURCE else ['Source']
+        result = render_plugins.render(host, args, plugins, work, TIMEOUT, (pid, CONTEXT, clips))
         problem, errors, log = result[2], result[5], result[6]
         if problem:
             problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
             continue
-        if GEOMETRY_WARNING in log:
-            problems.append('%s: the result does not match the output' % name)
+        if (GEOMETRY_WARNING in log) != warns:
+            problems.append('%s: %s' % (name, 'no warning that the result does not match the output'
+                                        if warns else 'the result does not match the output'))
         report_path = os.path.join(work, pid[len('eu.gmic.'):], 'report.json')
         with open(report_path, encoding='utf-8') as f:
             report = json.load(f)
-        problems += ['%s: %s' % (name, p) for p in check_output(report, color)]
+        problems += ['%s: %s' % (name, p) for p in
+                     (check_padded(report) if color == PADDED else check_output(report, color))]
         renders = report.get('renders') or []
         first = renders[0] if renders else {}
         output = first.get('output') or {}
@@ -184,7 +223,7 @@ def check_geometry(host, plugins, work):
         # over its pixel width
         src_w, src_h = render_plugins.INPUT_WIDTH, render_plugins.INPUT_HEIGHT
         par = (src[2] - src[0]) / src_w
-        sx, sy, dx, dy = geometry or (1.0, 1.0, 0, 0)
+        sx, sy, dx, dy = geometry
         width, height = round(src_w * sx), round(src_h * sy)
         x1 = src[0] + dx * par
         y2 = src[3] - dy
