@@ -158,6 +158,13 @@ jobs:
             gmic_*.tar.gz
             pocketfft_hdronly.h
           key: gmic-src-${{ hashFiles('Makefile') }}
+      # the parser alone, before the build: the point() arguments that give the point handles
+      # (#176), which no other test sees (hostDemo has no overlays)
+      - name: Parser test (point arguments)
+        run: |
+          c++ -std=c++17 -O1 -Wall -Wextra -IHelpers .github/workflows/point_args_test.cpp Helpers/gmic_parser.cpp \
+            Helpers/gmic_string.cpp Helpers/gmic_log.cpp -o point_args_test
+          ./point_args_test
       # static zlib and libpng built with -fPIC, linked into GMIC.ofx (GMIC_STATIC_DEPS)
       - uses: ./.github/actions/static-deps
       - name: Build (release, OpenMP)
