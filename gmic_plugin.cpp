@@ -2402,6 +2402,17 @@ static void nameInputImages(const SequenceData* sequenceDataP, unsigned int nofI
 static const double kPredictionTimeLimit = 10.;
 using Deadline = std::chrono::steady_clock::time_point;
 
+// One prediction (see pluginResultGeometry): its deadline, and whether a run failed for a reason
+// that may not happen again (C++ Core Guidelines F.17: in-out, through every probe): a timeout, out
+// of memory or another exception, unlike G'MIC's own errors. A prediction with such a failure is
+// not kept.
+struct PredictionRun
+{
+	Deadline deadline;
+	bool transient = false;
+	bool timedOut = false;
+};
+
 // gmic_plugin_call() on a worker thread (GmicWorker), as a render's runs: stopped at deadline, then
 // *timedOut is true (G'MIC's result, which it returns, is then incomplete: discard it). Without a
 // thread, it runs here.
@@ -2533,13 +2544,16 @@ static void geometryCacheStore(const string& key, const ProbeResult& result, boo
 		std::lock_guard<std::mutex> lock(c.mutex);
 		const auto it = c.entries.find(key);
 		if (it != c.entries.end() && !it->second.done) {
-			try {
-				if (!keep) throw std::exception();
-				it->second.result = result;
-				it->second.lru = c.lru.insert(c.lru.end(), &it->first);
-				it->second.done = true;
-			} catch (...) {
+			if (!keep) {
 				c.entries.erase(it);
+			} else {
+				try {
+					it->second.result = result;
+					it->second.lru = c.lru.insert(c.lru.end(), &it->first);
+					it->second.done = true;
+				} catch (...) {
+					c.entries.erase(it); // (out of memory: the next lookup probes again)
+				}
 			}
 			while (c.lru.size() > kMaxGeometries) {
 				const auto oldest = c.entries.find(*c.lru.front());
@@ -2551,13 +2565,14 @@ static void geometryCacheStore(const string& key, const ProbeResult& result, boo
 	c.cond.notify_all();
 }
 
-// the done entry of key, if any, without waiting or probing (and without touching its place)
+// the done entry of key, if any, without waiting or probing; it becomes the most recently used
 static bool geometryCacheLookup(const string& key, ProbeResult& result)
 {
 	GeometryCache& c = geometryCache();
 	std::lock_guard<std::mutex> lock(c.mutex);
 	const auto it = c.entries.find(key);
 	if (it == c.entries.end() || !it->second.done) return false;
+	c.lru.splice(c.lru.end(), c.lru, it->second.lru);
 	result = it->second.result;
 	return true;
 }
@@ -2595,7 +2610,7 @@ static void geometryCachePurge()
 // then suffix, on opaque gradient images of the inputs' sizes, as the render runs it (the preview
 // command first if the filter needs its state). key: its entry in the cache.
 static ProbeResult probeRun(SequenceData& probe, const GlobalData* globalDataP, unsigned int nofImages, const string& key,
-	const string& suffix, Deadline deadline)
+	const string& suffix, PredictionRun& run)
 {
 	ProbeResult result;
 	if (geometryCacheFind(key, result)) return result;
@@ -2657,6 +2672,7 @@ static ProbeResult probeRun(SequenceData& probe, const GlobalData* globalDataP, 
 		bool timedOut = false;
 		const auto runDone = [&](int status) {
 			if (timedOut) {
+				run.transient = run.timedOut = true;
 				gmicLog("G'MIC: %s: measuring the result's size took more than %g s: stopped, the output keeps Source's size\n",
 				        effectData.name.c_str(), kPredictionTimeLimit);
 			}
@@ -2675,7 +2691,7 @@ static ProbeResult probeRun(SequenceData& probe, const GlobalData* globalDataP, 
 			call.options = &instance.options();
 			call.stateOut = &state;
 			call.results = GmicResults::kDiscard;
-			previewDone = runDone(gmicCallTimed(call, deadline, &timedOut));
+			previewDone = runDone(gmicCallTimed(call, run.deadline, &timedOut));
 			if (timedOut) return result;
 		}
 		const string cmd = threads + fullCommand(sequenceDataP, globalDataP, &instance, nofImages, preview ? GmicRun::kPreview : GmicRun::kMain,
@@ -2688,7 +2704,7 @@ static ProbeResult probeRun(SequenceData& probe, const GlobalData* globalDataP, 
 		call.maxImages = (unsigned int)out.images.size();
 		call.options = &instance.options();
 		call.persistentIn = previewDone ? &state.persistent : nullptr;
-		const int status = gmicCallTimed(call, deadline, &timedOut);
+		const int status = gmicCallTimed(call, run.deadline, &timedOut);
 		if (status == 0) out.nofImages = n; // (freed on return, also if discarded)
 		if (!runDone(status)) {
 			if (!timedOut) {
@@ -2708,12 +2724,15 @@ static ProbeResult probeRun(SequenceData& probe, const GlobalData* globalDataP, 
 		}
 	} catch (const std::bad_alloc&) {
 		result = ProbeResult();
+		run.transient = true;
 		gmicLog("G'MIC: %s: not enough memory for a run that measures the result's size\n", effectData.name.c_str());
 	} catch (const std::exception& e) {
 		result = ProbeResult();
+		run.transient = true;
 		gmicLog("G'MIC: %s: the run that measures the result's size failed (%s)\n", effectData.name.c_str(), e.what());
 	} catch (...) {
 		result = ProbeResult();
+		run.transient = true;
 		gmicLog("G'MIC: %s: the run that measures the result's size failed\n", effectData.name.c_str());
 	}
 	return result;
@@ -2742,7 +2761,7 @@ static string probeKey(SequenceData& probe, const GlobalData* globalDataP, unsig
 // from one probe of them (probeRun, cached); empty if it failed or gave no or an empty result.
 // count: the number of results (0 if it failed).
 static std::optional<ResultGeometry> probeGeometry(SequenceData& probe, const GlobalData* globalDataP, unsigned int nofImages,
-	unsigned int& count, Deadline deadline)
+	unsigned int& count, PredictionRun& run)
 {
 	SequenceData* const sequenceDataP = &probe;
 	const EffectData& effectData = effectDataOf(globalDataP);
@@ -2751,11 +2770,11 @@ static std::optional<ResultGeometry> probeGeometry(SequenceData& probe, const Gl
 	const long long frame = frameNumberOf(sequenceDataP);
 	const bool frameMode = outputIsFrame(sequenceDataP, globalDataP);
 	const string budget = "," + std::to_string(kMaxFrameResults) + "," + std::to_string((unsigned long long)frameCacheBudget());
-	ProbeResult r = probeRun(probe, globalDataP, nofImages, key, frameMode ? " -_openfx_gmic_frame_select 0" + budget : string(), deadline);
+	ProbeResult r = probeRun(probe, globalDataP, nofImages, key, frameMode ? " -_openfx_gmic_frame_select 0" + budget : string(), run);
 	if (frameMode && r.selected) {
 		// too many or too large results: the render runs the filter for each frame, so does this
 		key += "\nframe " + std::to_string(frame);
-		r = probeRun(probe, globalDataP, nofImages, key, " -_openfx_gmic_frame_select " + std::to_string(frame) + budget, deadline);
+		r = probeRun(probe, globalDataP, nofImages, key, " -_openfx_gmic_frame_select " + std::to_string(frame) + budget, run);
 	}
 	if (r.results.empty()) return std::nullopt;
 	count = (unsigned int)r.results.size();
@@ -2781,6 +2800,12 @@ static const int kProbeSizes[3] = { 64, 80, 96 };
 static const int kThinSize = 48;
 // about the pixels of the three small probes (64x48 + 80x60 + 96x72 for a 4:3 Source)
 static const double kSmallProbesPixels = 15000.;
+// The check probe: Source's long side at kCheckSize pixels, its proportions kept (about 2% of
+// 1920x1080's pixels). Every prediction must give it (exactly, or within a pixel for a joint
+// fit), or the size is measured at full size: the small and thin probes never have both a large
+// width and a large height, so a weak product such as W*H/1024 fits them within a pixel, and only
+// shows at a probe where both are large.
+static const int kCheckSize = 256;
 
 // A fit Y = a*X + b of a size or an offset against Source's width or height (see fitAxis)
 struct AxisFit
@@ -2829,9 +2854,17 @@ static std::optional<AxisFit> fitAxis(const int* X, const int* Y) // (the 3 smal
 	return std::nullopt;
 }
 
-// The least-squares fit Y = a*W + c*H + b over n probes of sizes (W[k], H[k]), at (realW, realH),
-// if it is within 1 pixel of every probe
-static std::optional<int> fitPlane(const int* W, const int* H, const int* Y, int n, int realW, int realH)
+// A fit Y = a*W + c*H + b (see fitPlane)
+struct PlaneFit
+{
+	double a = 0., c = 0., b = 0.;
+	double value(int w, int h) const { return a * w + c * h + b; }
+	int at(int w, int h) const { return (int)std::lround(value(w, h)); }
+};
+
+// The least-squares fit Y = a*W + c*H + b over n probes of sizes (W[k], H[k]), if it is within 1
+// pixel of every probe
+static std::optional<PlaneFit> fitPlane(const int* W, const int* H, const int* Y, int n)
 {
 	// the normal equations, solved by Cramer's rule (3x3)
 	double m[3][3] = {}, v[3] = {};
@@ -2856,16 +2889,20 @@ static std::optional<int> fitPlane(const int* W, const int* H, const int* Y, int
 		}
 		x[i] = det(mi) / d;
 	}
+	PlaneFit f;
+	f.a = x[0];
+	f.c = x[1];
+	f.b = x[2];
 	for (int k = 0; k < n; k++) {
-		if (std::fabs(x[0] * W[k] + x[1] * H[k] + x[2] - Y[k]) > 1. + 1e-9) return std::nullopt;
+		if (std::fabs(f.value(W[k], H[k]) - Y[k]) > 1. + 1e-9) return std::nullopt;
 	}
-	return (int)std::lround(x[0] * realW + x[1] * realH + x[2]);
+	return f;
 }
 
 // one probe of the inputs scaled by (sx, sy) (Source's size at the probe: W, H), its result's
 // geometry in g; false if it failed
 static bool probeScaled(const SequenceData& sequenceData, const GlobalData* globalDataP, unsigned int nofImages, double sx, double sy,
-	int& W, int& H, ResultGeometry& g, unsigned int& count, Deadline deadline)
+	int& W, int& H, ResultGeometry& g, unsigned int& count, PredictionRun& run)
 {
 	SequenceData probe = sequenceData;
 	for (unsigned int i = 0; i < nofImages; i++) {
@@ -2877,7 +2914,7 @@ static bool probeScaled(const SequenceData& sequenceData, const GlobalData* glob
 	}
 	W = probe.inWorld[0].width;
 	H = probe.inWorld[0].height;
-	const std::optional<ResultGeometry> r = probeGeometry(probe, globalDataP, nofImages, count, deadline);
+	const std::optional<ResultGeometry> r = probeGeometry(probe, globalDataP, nofImages, count, run);
 	if (!r) return false;
 	g = *r;
 	return true;
@@ -2900,7 +2937,7 @@ static bool probeScaled(const SequenceData& sequenceData, const GlobalData* glob
 //    Output Layer "Frame", or a Source so thin that its small probes are 1 pixel wide): one
 //    probe at the real size, exact (the cost of a render on a gradient).
 // Everything within kPredictionTimeLimit; past it, empty (Source's region of definition).
-static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequenceData, const GlobalData& globalData, Deadline deadline)
+static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequenceData, const GlobalData& globalData, PredictionRun& run)
 {
 	const GlobalData* const globalDataP = &globalData;
 	const EffectData& effectData = effectDataOf(globalDataP);
@@ -2919,7 +2956,7 @@ static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequence
 		int fw = 0, fh = 0;
 		unsigned int n = 0;
 		ResultGeometry full;
-		if (!probeScaled(sequenceData, globalDataP, nofImages, 1., 1., fw, fh, full, n, deadline)) {
+		if (!probeScaled(sequenceData, globalDataP, nofImages, 1., 1., fw, fh, full, n, run)) {
 			gmicLog("G'MIC: %s: the result's size could not be measured: the output keeps Source's size\n", effectData.name.c_str());
 			return std::nullopt;
 		}
@@ -2929,21 +2966,26 @@ static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequence
 		}
 		return full;
 	};
-	// a Source no larger than the probes would be (the small ones, about 15k pixels, and the thin
-	// ones): one probe at its own size, exact. (Over a small Source, the thin probes span too little
-	// to keep the joint fit within a pixel: e.g. rotations of 160x120 by 12.5 degrees, 2 off.)
-	if ((double)source.width * source.height <= (double)kThinSize * (source.width + source.height) + kSmallProbesPixels) {
+	// a Source no larger than the probes would be (the small ones, about 15k pixels, the thin ones
+	// and the check probe): one probe at its own size, exact. (Over a small Source, the thin probes
+	// span too little to keep the joint fit within a pixel: e.g. rotations of 160x120 by 12.5
+	// degrees, 2 off.)
+	const double checkPixels = (double)kCheckSize * std::max(1., std::round((double)kCheckSize * std::min(source.width, source.height) / longSide));
+	if (longSide <= kCheckSize ||
+		(double)source.width * source.height <= (double)kThinSize * (source.width + source.height) + kSmallProbesPixels + checkPixels) {
 		return fullSize(nullptr);
 	}
-	// [0..2]: the small probes, [3..4]: the thin ones
-	int W[5], H[5], w[5], h[5], x[5], y[5];
-	unsigned int counts[5];
-	for (int k = 0; k < 5; k++) {
-		const double small = (double)kProbeSizes[std::min(k, 2)] / longSide;
-		const double sx = k < 3 ? small : (k == 3 ? 1. : (double)kThinSize / source.width);
-		const double sy = k < 3 ? small : (k == 3 ? (double)kThinSize / source.height : 1.);
+	// [0..2]: the small probes, [3..4]: the thin ones, [5]: the check probe
+	const int kN = 6;
+	int W[kN], H[kN], w[kN], h[kN], x[kN], y[kN];
+	unsigned int counts[kN];
+	for (int k = 0; k < kN; k++) {
+		const double small = (double)(k == 5 ? kCheckSize : kProbeSizes[std::min(k, 2)]) / longSide;
+		const bool thin = k == 3 || k == 4;
+		const double sx = !thin ? small : (k == 3 ? 1. : (double)kThinSize / source.width);
+		const double sy = !thin ? small : (k == 3 ? (double)kThinSize / source.height : 1.);
 		ResultGeometry g;
-		if (!probeScaled(sequenceData, globalDataP, nofImages, sx, sy, W[k], H[k], g, counts[k], deadline)) {
+		if (!probeScaled(sequenceData, globalDataP, nofImages, sx, sy, W[k], H[k], g, counts[k], run)) {
 			return fullSize("a probe failed");
 		}
 		w[k] = g.width;
@@ -2953,23 +2995,24 @@ static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequence
 	}
 	// Output Layer "Frame": the same number of results, so that the frame picks the same one
 	if (outputIsFrame(&sequenceData, globalDataP)) {
-		for (int k = 1; k < 5; k++) {
+		for (int k = 1; k < kN; k++) {
 			if (counts[k] != counts[0]) return fullSize("another number of results");
 		}
 	}
-	// one value: exact if an exact fraction gives the thin probes too, else the joint fit
+	// one value: exact if an exact fraction gives the thin and check probes too, else the joint fit
+	// over the small and thin probes, if it gives the check probe within a pixel
 	ResultGeometry g;
 	bool refined = false;
 	const auto predict = [&](const int* X, const int* Y, int real, int& value, bool& margin) {
 		const std::optional<AxisFit> f = fitAxis(X, Y);
-		if (f && f->snapped && f->at(X[3]) == Y[3] && f->at(X[4]) == Y[4]) {
+		if (f && f->snapped && f->at(X[3]) == Y[3] && f->at(X[4]) == Y[4] && f->at(X[5]) == Y[5]) {
 			value = f->at(real);
 			margin = false;
 			return true;
 		}
-		const std::optional<int> p = fitPlane(W, H, Y, 5, source.width, source.height);
-		if (!p) return false;
-		value = *p;
+		const std::optional<PlaneFit> p = fitPlane(W, H, Y, 5);
+		if (!p || std::fabs(p->value(W[5], H[5]) - Y[5]) > 1. + 1e-9) return false;
+		value = p->at(source.width, source.height);
 		margin = true;
 		refined = true;
 		return true;
@@ -3006,7 +3049,52 @@ static string predictionKey(const SequenceData& sequenceData, const GlobalData* 
 	}
 	if (nofImages == 0 || effectDataOf(globalDataP).command.empty()) return string();
 	SequenceData probe = sequenceData;
-	return "prediction\n" + std::to_string(frameNumberOf(&probe)) + '\n' + probeKey(probe, globalDataP, nofImages);
+	// (the frame only for Output Layer "Frame", which picks a result by frame: elsewhere, a playback
+	// would add an entry per frame)
+	const string frame = outputIsFrame(&probe, globalDataP) ? std::to_string(frameNumberOf(&probe)) : string();
+	return "prediction\n" + frame + '\n' + probeKey(probe, globalDataP, nofImages);
+}
+
+// The predictions that ran out of time, by key, for kTimeoutMemory seconds: their region of
+// definition is Source's without trying again, so that a slow filter doesn't block the host for
+// kPredictionTimeLimit on every query (in Natron, its main thread). Another key (an edit) tries.
+static const double kTimeoutMemory = 30.;
+static const size_t kMaxTimeouts = 64;
+struct TimeoutMemory
+{
+	std::mutex mutex;
+	std::map<string, Deadline> until; // key -> when it may be tried again
+};
+
+static TimeoutMemory& timeoutMemory()
+{
+	static TimeoutMemory memory;
+	return memory;
+}
+
+// is key's prediction still to be skipped (it ran out of time less than kTimeoutMemory ago)?
+static bool timedOutRecently(const string& key)
+{
+	TimeoutMemory& m = timeoutMemory();
+	std::lock_guard<std::mutex> lock(m.mutex);
+	const auto it = m.until.find(key);
+	if (it == m.until.end()) return false;
+	if (std::chrono::steady_clock::now() < it->second) return true;
+	m.until.erase(it);
+	return false;
+}
+
+static void rememberTimeout(const string& key) noexcept
+{
+	try {
+		TimeoutMemory& m = timeoutMemory();
+		std::lock_guard<std::mutex> lock(m.mutex);
+		const Deadline now = std::chrono::steady_clock::now();
+		for (auto it = m.until.begin(); it != m.until.end();) it = it->second <= now ? m.until.erase(it) : std::next(it);
+		if (m.until.size() >= kMaxTimeouts) m.until.erase(m.until.begin());
+		m.until[key] = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(kTimeoutMemory));
+	} catch (...) {
+	}
 }
 
 std::optional<ResultGeometry> pluginResultGeometry(const SequenceData& sequenceData, const GlobalData& globalData)
@@ -3021,11 +3109,19 @@ std::optional<ResultGeometry> pluginResultGeometry(const SequenceData& sequenceD
 			if (cached.results.empty()) return std::nullopt;
 			return cached.results[0];
 		}
-		const Deadline deadline = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+		if (timedOutRecently(key)) {
+			gmicLog("openfx-gmic: %s: the result's size timed out less than %g s ago: the output keeps Source's size\n",
+			        effectDataOf(&globalData).name.c_str(), kTimeoutMemory);
+			return std::nullopt;
+		}
+		PredictionRun run;
+		run.deadline = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
 			std::chrono::duration<double>(kPredictionTimeLimit));
-		const std::optional<ResultGeometry> g = resultGeometry(sequenceData, globalData, deadline);
-		// kept, but not a prediction cut short by the time limit (Source's size, retried later)
-		if (g || std::chrono::steady_clock::now() < deadline) {
+		const std::optional<ResultGeometry> g = resultGeometry(sequenceData, globalData, run);
+		// kept, unless a run failed for a reason that may not happen again (a timeout, out of
+		// memory, an exception: Source's size, tried again later; a timeout after kTimeoutMemory)
+		if (run.timedOut) rememberTimeout(key);
+		if (!run.transient) {
 			ProbeResult r;
 			if (g) r.results.push_back(*g);
 			geometryCachePut(key, r);
