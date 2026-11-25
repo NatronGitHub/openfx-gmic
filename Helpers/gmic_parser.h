@@ -100,9 +100,7 @@ struct EffectData {
 
 std::string gmic_parse_single(const std::string& content, EffectData& cd);
 
-// checkCurated: report the curated entries that are no longer the main command of a filter (only
-// meaningful with the built-in standard library, not with a user's gmic_ofx.gmic)
-void gmic_parse_multi(const std::string& content, std::vector<EffectData>* cds, std::vector<std::string>* lines, bool checkCurated = true);
+void gmic_parse_multi(const std::string& content, std::vector<EffectData>* cds, std::vector<std::string>* lines);
 
 }
 #endif

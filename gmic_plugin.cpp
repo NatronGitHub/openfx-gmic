@@ -640,7 +640,7 @@ PluginGlobalData loadPluginGlobalData()
 			stdlib = string(lib);
 			gmic_delete_external((float*)lib);
 		}
-		bool builtinStdlib = false; // the curated lists of the parser are only checked against it
+		bool builtinStdlib = false; // the filters come from the built-in stdlib, not from a file
 		const string rcPath = get_gmic_rc_path();
 		// before the first message (also G'MIC's: the hot fixes, the renders)
 		// (not when the build writes the bundle's plug-in list, OFX_GMIC_WRITE_PLUGIN_LIST: its
@@ -662,7 +662,7 @@ PluginGlobalData loadPluginGlobalData()
 				effectContent = "";
 			}
 		}
-		gmic_parse_multi(effectContent, &pluginData, &pluginContent, builtinStdlib);
+		gmic_parse_multi(effectContent, &pluginData, &pluginContent);
 		if (!builtinStdlib) {
 			data.userCommands = std::move(effectContent);
 		}
