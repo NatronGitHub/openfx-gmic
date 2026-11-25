@@ -21,7 +21,10 @@ hostDemo-path-<config>.txt with a multi-config generator (--config, default Rele
 The plug-in list (one line per plug-in: id, context and input clips, tab-separated) is written
 by describe_plugins.sh with PLUGIN_LIST=<file>. --subset pr (the default) renders a
 representative subset: the filters whose command uses the FFT (found in the G'MIC standard
-library given by --stdlib), the multi-layer filters, and every 30th plug-in (sorted by id).
+library given by --stdlib), those that run their preview command before their main command (the
+list's "#previewFirst<tab><id>" lines, from the plug-in's log), the multi-layer filters, and every
+30th plug-in (sorted by id). A render whose preview command, run first, failed, or whose preview
+status didn't have one value per parameter (the plug-in's log says so), is a failure.
 --only renders just the given plug-ins, also those in SKIP (e.g. the ones that download data),
 and fails unless they all render. --host-arg passes an extra argument to hostDemo (repeatable),
 e.g. --host-arg=--ofx14 (an OFX 1.4-only host).
@@ -101,6 +104,11 @@ TIMEOUT = {
 ERROR_LINE = re.compile(r'\*\*\* Error|\bOfxMessageError\b|\bError\b|\berror:')
 COMMERCIAL_MARKER = ' #  openfx-gmic : COMMERCIAL standard library'
 FFT_COMMANDS = re.compile(r'(?<![A-Za-z0-9_])(fft|ifft|deconvolve|deconvolve_fft|convolve_fft|bandpass|watermark_fourier)(?![A-Za-z0-9_])')
+# the plug-in's log lines (gmic_plugin.cpp: kPreviewFirstFailed, gmicCommand()) when the preview
+# command that it runs before the main command fails, or when its status doesn't have one value
+# per parameter: both are render failures
+PREVIEW_FIRST_FAILED = 'run before the main command, failed'
+STATUS_MISMATCH = "the preview's status has"
 EVERY = 30
 
 
@@ -245,7 +253,12 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
                 problem = _progress_problem(report)
         except (OSError, ValueError) as e:
             problem = 'no report: %s' % e
-    errors = [l for l in log.splitlines() if ERROR_LINE.search(l)][:3]
+    if problem is None and PREVIEW_FIRST_FAILED in log:
+        problem = 'the preview command, run before the main command, failed'
+    if problem is None and STATUS_MISMATCH in log:
+        problem = "the preview's status doesn't have one value per parameter"
+    errors = [l for l in log.splitlines()
+              if ERROR_LINE.search(l) or PREVIEW_FIRST_FAILED in l or STATUS_MISMATCH in l][:3]
     return pid, rc, problem, nan, t, errors, log, updates
 
 
@@ -281,10 +294,13 @@ def main():
     write_input(os.path.join(work, 'input.pfm'))
 
     allp = {}
+    preview_first = set()  # the plug-ins that run their preview command first
     with open(a.list, encoding='utf-8') as lst:
         for line in lst:
             f = line.rstrip('\r\n').split('\t')
-            if f and f[0]:
+            if f[0] == '#previewFirst' and len(f) > 1:
+                preview_first.add(f[1])
+            elif f and f[0] and not f[0].startswith('#'):
                 allp[f[0]] = (f[0], f[1] if len(f) > 1 else 'filter', f[2:])
     ids = sorted(allp)
     for pid in sorted(set(SKIP) | set(EXPECTED_FAIL) | set(TIMEOUT)):
@@ -304,9 +320,12 @@ def main():
         fft = fft_plugins(a.stdlib)
         multi = {p for p in ids if any(c.startswith('Layer ') for c in allp[p][2])}
         every = set(ids[::EVERY])
-        sel = sorted(((fft & set(ids)) | multi | every) - set(TIMEOUT))  # slow ones: --subset all only
-        print('subset: %d plug-ins (%d using the FFT, %d multi-layer, every %dth of %d)' % (
-            len(sel), len(fft & set(ids)), len(multi), EVERY, len(ids)))
+        first = preview_first & set(ids)
+        # (the slow ones: --subset all only)
+        sel = sorted(((fft & set(ids)) | first | multi | every) - set(TIMEOUT))
+        print('subset: %d plug-ins (%d using the FFT, %d running their preview command first, '
+              '%d multi-layer, every %dth of %d)'
+              % (len(sel), len(fft & set(ids)), len(first), len(multi), EVERY, len(ids)))
     todo = [allp[p] for p in sel if a.only or p not in SKIP]
     print('rendering %d plug-ins (%d skipped), %d at a time, in %s' % (len(todo), len(sel) - len(todo), a.jobs, work))
     sys.stdout.flush()

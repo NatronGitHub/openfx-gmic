@@ -88,15 +88,18 @@ struct EffectData {
 	std::string command;
 	std::string preview_command;
 	std::string notes;
-	bool multiLayer;
+	bool multiLayer = false;
 	// no main command ("_none_" or empty) but a preview command: always render with the preview
 	// command, as G'MIC-Qt's preview
-	bool previewOnly;
+	bool previewOnly = false;
+	// "_none_" preview command: G'MIC-Qt shows no preview (preview_command is then the main command)
+	bool noPreview = false;
 	// the main command may need the state left by G'MIC-Qt's preview (_persistent, or the status
-	// that fills a value() parameter): if it fails, render with the preview command (issue #52).
-	// The _persistent rule needs the whole stdlib (gmic_parse_multi); per filter,
-	// gmic_parse_single applies only the value() rule.
-	bool previewFallback;
+	// that fills a value() parameter): run the preview command first, and give the main command
+	// its _persistent and status, as G'MIC-Qt's Apply does (issues #52, #206). The _persistent
+	// rule needs the command definitions (gmic_parse_multi); per filter, gmic_parse_single applies
+	// only the value() rule.
+	bool previewFirst = false;
     std::vector<EffectParameter> param;
 };
 
