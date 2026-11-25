@@ -12,7 +12,7 @@ CXX=${CXX:-c++}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 SRCDIR=${1:-.}
-ver=$(sed -n 's/^GMICVER=//p' Makefile)
+ver=$(.github/workflows/gmic_version.sh)
 tar --strip-components 2 -C "$WORK" -zxf "gmic_$ver.tar.gz" "gmic-$ver/src/gmic_cli.cpp"
 # shellcheck disable=SC2046
 $CXX -O1 -w -I"$SRCDIR" -Dgmic_core -Dcimg_display=0 -Dcimg_use_zlib -Dcimg_use_pocketfft $(pkg-config --cflags zlib) \
