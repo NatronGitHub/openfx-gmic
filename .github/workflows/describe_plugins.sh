@@ -5,7 +5,9 @@
 # GMIC_PLUGIN_COUNT): a filter that a G'MIC update shows or hides (e.g. one that the parser's
 # generic rules no longer hide) then fails the test, and is checked before the count is updated.
 # Uses $CXX (default c++) and $HOST_LDFLAGS (extra link flags, e.g. -L/opt/local/lib).
-# PLUGIN_LIST=<file>: also write the plug-ins' ids, contexts and input clips there (for render_plugins.py).
+# PLUGIN_LIST=<file>: also write the plug-ins' ids, contexts and input clips there (for render_plugins.py),
+# and the plug-ins that run their preview command first. PREVIEW_FIRST_COUNT=<n>: fail unless n
+# plug-ins run their preview command first.
 # The bundle's list of the plug-ins (gmic_ofx_plugins.txt), if any, must be the described plug-ins;
 # DESCRIBE_USER_LIST=1 (once per CI job: it describes them all again) requires the list, and also
 # checks that a user's list that disables two plug-ins leaves them out.
@@ -85,12 +87,6 @@ if [ "$status" = 0 ] && [ "$described" != "$MIN_PLUGINS" ]; then
 fi
 if grep -E "DUPLICATE_PARAM|DUPLICATE_CLIP" describe.log; then
     echo "FAIL: duplicate param/clip definitions (see above)"
-    status=1
-fi
-# the curated list of filters rendered with their preview command when the main one fails
-# (Helpers/gmic_parser.cpp) names a command that is no longer a filter's main command
-if grep -E "PREVIEW_FALLBACK_UNKNOWN" describe.log; then
-    echo "FAIL: update the curated list in markPersistentFilters() (see above)"
     status=1
 fi
 # a parameter type the parser doesn't know (e.g. new in a G'MIC bump): pluginSetup passes 0 for it
@@ -221,9 +217,25 @@ fx_update_file_test :
     # (not a hot fix warning)
     printf '%sstar_tone :\n  f 64\n' "$one_filter" | update_case hot-fixed-command 1 1 "'star_tone' is defined by "
 fi
-# PLUGIN_LIST=<file>: the plug-ins, their context and input clips, for render_plugins.py
+# the plug-ins that run their preview command before their main command (#206): the plug-in logs
+# "openfx-gmic: previewFirst <id>" for each when it loads (gmic_plugin.cpp,
+# loadPluginGlobalData(): keep the text the same). Listed, and checked against
+# $PREVIEW_FIRST_COUNT if set (ci.yml: a G'MIC bump or a change of the rule in
+# Helpers/gmic_parser.cpp changes it). Each id once: the host loads the plug-in twice (HostSupport's
+# scan unloads the binary after OfxGetNumberOfPlugins, and the describe loads it again), and each
+# load logs the lines again.
+tr -d '\r' < describe.log | sed -n -e 's/^openfx-gmic: previewFirst //p' | LC_ALL=C sort -u > preview_first.txt
+preview_first=$(($(wc -l < preview_first.txt)))
+echo "$preview_first plug-ins run their preview command first:" $(cat preview_first.txt)
+if [ -n "${PREVIEW_FIRST_COUNT:-}" ] && [ "$preview_first" != "$PREVIEW_FIRST_COUNT" ]; then
+    echo "FAIL: $preview_first plug-ins run their preview command first, expected PREVIEW_FIRST_COUNT=$PREVIEW_FIRST_COUNT (update it in ci.yml if the change is right)"
+    status=1
+fi
+# PLUGIN_LIST=<file>: the plug-ins, their context and input clips, for render_plugins.py, then a
+# "#previewFirst<tab><id>" line for each plug-in that runs its preview command first
 if [ -n "${PLUGIN_LIST:-}" ]; then
     sed -n -e 's/^RENDERINFO //p' describe.log > "$PLUGIN_LIST"
+    awk '{ printf "#previewFirst\t%s\n", $0 }' preview_first.txt >> "$PLUGIN_LIST"
 fi
 if [ $status != 0 ]; then
     echo "--- last lines of the host log:"

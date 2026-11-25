@@ -707,6 +707,11 @@ PluginGlobalData loadPluginGlobalData()
 		if (!disabled.empty()) {
 			leaveOutFilters([&disabled](const EffectData& d) { return disabled.count(d.uniqueId) > 0; });
 		}
+		// the plug-ins that run their preview command first (#206), one line each. CI's describe
+		// test (.github/workflows/describe_plugins.sh) reads these lines: keep their text the same
+		for (const EffectData& d : pluginData) {
+			if (d.previewFirst) gmicLog("openfx-gmic: previewFirst %s\n", d.uniqueId.c_str());
+		}
 	}
 	return data;
 }
@@ -1072,10 +1077,195 @@ effectDataOf(const GlobalData* globalDataP)
     return pluginGlobalData().pluginData[globalDataP->pluginIndex];
 }
 
-// the filter's command line, with its main or preview command
+// Is filter parameter i passed to G'MIC (one argument, of one or more values)? Not the notes and
+// links, separators, and the checkboxes of removable points (see kParamFlagsPointEnabled): the
+// parameters that G'MIC-Qt passes (AbstractParameter::isActualParameter()).
+static bool isGmicArgument(const GlobalData* globalDataP, int i)
+{
+	switch (globalDataP->param[i].paramType) {
+	case ParamType::Int:
+	case ParamType::Select:
+	case ParamType::Float:
+	case ParamType::Color:
+	case ParamType::Point:
+		return true;
+	case ParamType::Bool:
+		return globalDataP->param[i].flags != kParamFlagsPointEnabled;
+	case ParamType::Text:
+		return globalDataP->param[i].flags != 4; // note or link
+	default:
+		return false;
+	}
+}
+
+// A decimal number of a status value, as G'MIC-Qt reads it (QString::toFloat(), toInt()), '.' as
+// decimal point whatever the locale, blanks around it allowed. Only this syntax reaches the
+// conversion: no "inf" or "nan" (without isnan/isinf, folded with -ffinite-math-only), no
+// hexadecimal, no overflow. integer: digits only, with an optional sign, within int.
+static bool statusNumber(const string& text, bool integer, double& v)
+{
+	const size_t b = text.find_first_not_of(" \t\r\n"), e = text.find_last_not_of(" \t\r\n");
+	if (b == string::npos) return false;
+	const string s = text.substr(b, e - b + 1);
+	size_t i = 0, digits = 0;
+	if (s[i] == '+' || s[i] == '-') ++i;
+	while (i < s.size() && isdigit((unsigned char)s[i])) ++i, ++digits;
+	if (!integer) {
+		if (i < s.size() && s[i] == '.') ++i;
+		while (i < s.size() && isdigit((unsigned char)s[i])) ++i, ++digits;
+	}
+	if (digits == 0) return false;
+	if (!integer && i < s.size() && (s[i] == 'e' || s[i] == 'E')) {
+		++i;
+		if (i < s.size() && (s[i] == '+' || s[i] == '-')) ++i;
+		const size_t first = i;
+		while (i < s.size() && isdigit((unsigned char)s[i])) ++i;
+		if (i == first) return false;
+	}
+	if (i != s.size()) return false;
+	errno = 0;
+	v = stringToDouble(s); // locale-independent strtod
+	if (errno == ERANGE && std::fabs(v) > 1.) return false; // overflow (an underflow gives 0)
+	if (integer) {
+		return v >= (double)std::numeric_limits<int>::min() && v <= (double)std::numeric_limits<int>::max();
+	}
+	return std::fabs(v) <= (double)std::numeric_limits<float>::max();
+}
+
+// the fields of a status value between its commas, as QString::split(",") gives them (empty ones
+// included, not trimmed)
+static vector<string> statusFields(const string& value)
+{
+	vector<string> fields(1);
+	for (const char c : value) {
+		if (c == ',') fields.emplace_back();
+		else fields.back() += c;
+	}
+	return fields;
+}
+
+// The G'MIC argument of text, file, folder and value() parameter i (flags: see pluginSetup), quoted
+static string quotedArgument(const GlobalData* globalDataP, int i, string s)
+{
+	const int f = globalDataP->param[i].flags;
+	if (f == 2 || f == 3 || f == 5) {
+		// file or folder: G'MIC un-escapes \ and \" inside "...", so escape backslashes
+		// (Windows paths, which G'MIC-Qt gets with '/' from Qt) then double quotes
+		strReplace(s, "\\", "\\\\");
+		strReplace(s, "\"", "\\\"");
+	} else {
+		// text and value: as G'MIC-Qt (quotedString()), only escape the double quotes
+		// that are not escaped yet (or a text containing one, e.g. G'MIC code, ends the
+		// argument early), and keep the backslashes and newlines for G'MIC to decode:
+		// "\251" is a ©, and a "#" comment in multi-line G'MIC code ends at its line
+		strReplace(s, "\r\n", "\n");
+		strReplace(s, "\r", "\n");
+		string q;
+		bool escaped = false;
+		for (size_t k = 0; k < s.size(); ++k) {
+			if (escaped) {
+				escaped = false;
+			} else if (s[k] == '\\') {
+				escaped = true;
+			} else if (s[k] == '"') {
+				q += '\\';
+			}
+			q += s[k];
+		}
+		// a trailing odd backslash ("C:\temp\") would escape the closing quote and run
+		// into the next argument: double it, so that it stays literal (G'MIC-Qt has
+		// this bug)
+		if (escaped) q += '\\';
+		s.swap(q);
+	}
+	return "\"" + s + "\"";
+}
+
+// The G'MIC argument of filter parameter i (isGmicArgument), from its value at the render time.
+// value: if not null, the value that the preview's status gives it (see gmicCommand), applied as
+// G'MIC-Qt's setValue() of the parameter applies it (FilterParameters/*Parameter.cpp): a value
+// that it can't read leaves the parameter's own; an int or float is clamped to the parameter's
+// range, as by G'MIC-Qt's spin box; a choice outside its options, or a color that is not 3 or 4
+// values, is ignored.
+static string gmicArgument(const SequenceData* sequenceDataP, const GlobalData* globalDataP, int i, const string* value)
+{
+	const Parameter& par = globalDataP->param[i];
+	double v = 0.;
+	switch (par.paramType) {
+	case ParamType::Int:
+		if (value && statusNumber(*value, true, v)) {
+			return std::to_string((int)std::min(std::max(v, (double)par.minValue), (double)par.maxValue));
+		}
+		return std::to_string((int)sequenceDataP->floatValue[i][0]);
+	case ParamType::Select:
+		if (value && statusNumber(*value, true, v) && v >= 0. && v <= (double)par.maxValue) {
+			return std::to_string((int)v);
+		}
+		return std::to_string((int)sequenceDataP->floatValue[i][0]);
+	case ParamType::Bool:
+		// BoolParameter::setValue(): true only for "1" ("true", "2"... are false)
+		if (value) return (*value == "1") ? "1" : "0";
+		return std::to_string((int)sequenceDataP->floatValue[i][0]);
+	case ParamType::Float:
+		if (value && statusNumber(*value, false, v)) {
+			return floatToString((float)std::min(std::max(v, (double)par.minValue), (double)par.maxValue));
+		}
+		return floatToString(sequenceDataP->floatValue[i][0]);
+	case ParamType::Text:
+		return quotedArgument(globalDataP, i, value ? *value : sequenceDataP->textValue[i]);
+	case ParamType::Color: {
+		const bool alpha = par.flags == kParamFlagsColorRGBA;
+		const vector<string> c = value ? statusFields(*value) : vector<string>();
+		if (value && (c.size() == 3 || c.size() == 4)) {
+			// QColor(r, g, b[, a]): 0 for a value that is not an integer, then each in 0..255; an
+			// alpha that is not given is opaque
+			int rgba[4] = { 0, 0, 0, 255 };
+			for (size_t k = 0; k < c.size() && k < (alpha ? 4u : 3u); ++k) {
+				rgba[k] = statusNumber(c[k], true, v) ? (int)std::min(std::max(v, 0.), 255.) : 0;
+			}
+			string arg = std::to_string(rgba[0]) + "," + std::to_string(rgba[1]) + "," + std::to_string(rgba[2]);
+			if (alpha) arg += "," + std::to_string(rgba[3]);
+			return arg;
+		}
+		string arg = floatToString(kGmicValueScale * sequenceDataP->floatValue[i][0]) + "," +
+			floatToString(kGmicValueScale * sequenceDataP->floatValue[i][1]) + "," +
+			floatToString(kGmicValueScale * sequenceDataP->floatValue[i][2]);
+		if (alpha) arg += "," + floatToString(kGmicValueScale * sequenceDataP->floatValue[i][3]);
+		return arg;
+	}
+	case ParamType::Point: {
+		// a removable point that is off: removed, as G'MIC-Qt passes it (issue #79)
+		const bool removable = i + 1 < PARAM_COMMAND && globalDataP->param[i + 1].paramType == ParamType::Bool &&
+			globalDataP->param[i + 1].flags == kParamFlagsPointEnabled;
+		bool removed = removable && sequenceDataP->floatValue[i + 1][0] == 0;
+		float xy[2] = { sequenceDataP->floatValue[i][0], sequenceDataP->floatValue[i][1] };
+		const vector<string> c = value ? statusFields(*value) : vector<string>();
+		if (value && c.size() == 2) {
+			// each coordinate that is a number (not "nan") moves the point; "nan,nan" removes a
+			// removable point, anything else puts it back
+			bool nan[2];
+			for (int k = 0; k < 2; ++k) {
+				nan[k] = strLowercase(c[k]) == "nan";
+				if (!nan[k] && statusNumber(c[k], false, v)) xy[k] = (float)v;
+			}
+			removed = removable && nan[0] && nan[1];
+		}
+		if (removed) return "nan,nan";
+		return floatToString(xy[0]) + "," + floatToString(xy[1]);
+	}
+	default:
+		return string();
+	}
+}
+
+// the filter's command line, with its main or preview command. status: if not null, the values
+// of the status of a run of the preview command before this one (see pluginProcess), which are
+// given to the arguments as G'MIC-Qt's Apply gets them from its preview (MainWindow.cpp,
+// FilterParametersWidget::setValues(): only if there is one value per argument). Visibilities
+// are ignored.
 static
 std::string
-gmicCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, bool preview)
+gmicCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, bool preview, const std::vector<std::string>* status = nullptr)
 {
     const EffectData& effectData = effectDataOf(globalDataP);
     string cmd = preview ? effectData.preview_command : effectData.command;
@@ -1086,73 +1276,19 @@ gmicCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, bo
     } else {
         cmd = "-" + strTrim(cmd, " \t\r\n") + " ";
         // the filter parameters only: they come first, the layers and their times follow
-        const int nofFilterParams = (int)effectData.param.size();
-        for (int i = 1; i <= nofFilterParams && i < PARAM_COMMAND; i++) {
-            const ParamType type = globalDataP->param[i].paramType;
-            const float* const value = sequenceDataP->floatValue[i]; // (color and point: its channels)
-            if (type == ParamType::Bool && globalDataP->param[i].flags == kParamFlagsPointEnabled)
-                continue; // not a G'MIC argument: see the point before it
-            if (type == ParamType::Int || type == ParamType::Bool || type == ParamType::Select)
-                cmd += std::to_string((int)value[0]) + ",";
-            else if (type == ParamType::Float)
-                cmd += floatToString(value[0]) + ",";
-            else if (type == ParamType::Text) {
-                if (globalDataP->param[i].flags == 4) {
-                    // label/note
-                    continue;
-                }
-                string s = sequenceDataP->textValue[i];
-                const int f = globalDataP->param[i].flags;
-                if (f == 2 || f == 3 || f == 5) {
-                    // file or folder: G'MIC un-escapes \ and \" inside "...", so escape backslashes
-                    // (Windows paths, which G'MIC-Qt gets with '/' from Qt) then double quotes
-                    strReplace(s, "\\", "\\\\");
-                    strReplace(s, "\"", "\\\"");
-                } else {
-                    // text and value: as G'MIC-Qt (quotedString()), only escape the double quotes
-                    // that are not escaped yet (or a text containing one, e.g. G'MIC code, ends the
-                    // argument early), and keep the backslashes and newlines for G'MIC to decode:
-                    // "\251" is a ©, and a "#" comment in multi-line G'MIC code ends at its line
-                    strReplace(s, "\r\n", "\n");
-                    strReplace(s, "\r", "\n");
-                    string q;
-                    bool escaped = false;
-                    for (size_t k = 0; k < s.size(); ++k) {
-                        if (escaped) {
-                            escaped = false;
-                        } else if (s[k] == '\\') {
-                            escaped = true;
-                        } else if (s[k] == '"') {
-                            q += '\\';
-                        }
-                        q += s[k];
-                    }
-                    // a trailing odd backslash ("C:\temp\") would escape the closing quote and run
-                    // into the next argument: double it, so that it stays literal (G'MIC-Qt has
-                    // this bug)
-                    if (escaped) q += '\\';
-                    s.swap(q);
-                }
-                cmd += "\"" + s + "\",";
-            } else if (type == ParamType::Color) {
-                cmd +=
-                floatToString(kGmicValueScale * value[0]) + "," +
-                floatToString(kGmicValueScale * value[1]) + "," +
-                floatToString(kGmicValueScale * value[2]) + ",";
-                if (globalDataP->param[i].flags == kParamFlagsColorRGBA) {
-                    cmd += floatToString(kGmicValueScale * value[3]) + ",";
-                }
-            } else if (type == ParamType::Point) {
-                // a removable point that is off: removed, as G'MIC-Qt passes it (issue #79)
-                if (i + 1 <= nofFilterParams && i + 1 < PARAM_COMMAND && globalDataP->param[i + 1].paramType == ParamType::Bool &&
-                    globalDataP->param[i + 1].flags == kParamFlagsPointEnabled && sequenceDataP->floatValue[i + 1][0] == 0) {
-                    cmd += "nan,nan,";
-                    continue;
-                }
-                cmd +=
-                floatToString(value[0]) + "," +
-                floatToString(value[1]) + ",";
-            }
+        const int nofFilterParams = std::min((int)effectData.param.size(), PARAM_COMMAND - 1);
+        vector<int> args;
+        for (int i = 1; i <= nofFilterParams; i++) {
+            if (isGmicArgument(globalDataP, i)) args.push_back(i);
+        }
+        const bool fromStatus = status && !status->empty() && status->size() == args.size();
+        if (status && !status->empty() && !fromStatus) {
+            // (render_plugins.py fails a render whose log has "the preview's status has": keep it)
+            gmicLog("G'MIC: %s: the preview's status has %u values, for %u parameters: ignored\n",
+                    effectData.name.c_str(), (unsigned int)status->size(), (unsigned int)args.size());
+        }
+        for (size_t a = 0; a < args.size(); ++a) {
+            cmd += gmicArgument(sequenceDataP, globalDataP, args[a], fromStatus ? &(*status)[a] : nullptr) + ",";
         }
         cmd = cmd.substr(0, cmd.size() - 1);
     }
@@ -1186,14 +1322,33 @@ static const char* const kFrameSelectCommand =
 	"  b=0 repeat $! { b={$b+w#$>*h#$>*d#$>*s#$>*4} }\n"
 	"  if $!>$2||$b>$3 k[{(($1%$!)+$!)%$!}] nm openfx_gmic_frame_selected fi\n";
 
+// in the log line of a failed preview-first run (see pluginProcess), which
+// .github/workflows/render_plugins.py (PREVIEW_FIRST_FAILED) looks for: keep them the same
+static const char* const kPreviewFirstFailed = "run before the main command, failed";
+
+// The G'MIC run that a command line is for
+enum class GmicRun
+{
+	kMain, // a render with the main command
+	kPreview, // a render with the preview command (Preview/Draft Mode, or a "_none_" main command)
+	// the run of the preview command before the main command (see pluginProcess), for the
+	// _persistent and the status that it leaves: its results are discarded
+	kPreviewState,
+};
+
 // The whole command line: the filter's command (main or preview), with the variables G'MIC-Qt
 // defines, the output layer selection, Ignore Alpha, the Resize Mode, verbosity and seed. Sets the
 // custom commands of the options: customCommands (the filter file, the filter's #@gui lines, the
 // hot fixes for G'MIC bugs, the Ignore Alpha helpers and _openfx_gmic_opaque_resized), which
-// must outlive the G'MIC call.
+// must outlive the G'MIC call, and are the same for every GmicRun. status: see gmicCommand.
+// GmicRun::kPreviewState: the preview command sees the same images and variables as with
+// kPreview, but nothing runs after it, so that the status is the filter's own, as in G'MIC-Qt,
+// which runs nothing else (the commands that merge, keep, restore the alpha of or resize the
+// results could change it: gui_merge_layers sets it).
 static
 std::string
-fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, GmicInstanceData* instanceDataP, unsigned int nofImages, bool isPreview, string& customCommands)
+fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, GmicInstanceData* instanceDataP, unsigned int nofImages, GmicRun run, string& customCommands,
+            const std::vector<std::string>* status = nullptr)
 {
 	// the filter file, if the filters come from one (a user file or G'MIC's update file; after the
 	// built-in stdlib, which G'MIC loads first: its definitions replace the built-in ones, as in
@@ -1218,7 +1373,8 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 	customCommands += '\n';
 	customCommands += data.hotfixes;
 	customCommands += kOpaqueResizedCommand;
-	string cmd = gmicCommand(sequenceDataP, globalDataP, isPreview);
+	const bool isPreview = run != GmicRun::kMain;
+	string cmd = gmicCommand(sequenceDataP, globalDataP, isPreview, status);
 
 	// Ignore Alpha: the alpha channels of all the images are split off and stored, the command runs
 	// on all the RGB images at once (multi-input filters see every layer, extra results are kept),
@@ -1226,12 +1382,13 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 	// another size are opaque). The command stays at the top level, as with Ignore Alpha off and in
 	// G'MIC-Qt: inside a custom command, $1, $*, $#... in text parameters would be substituted, and
 	// apply_channels processed the images one by one, keeping a single result for each.
+	const bool render = run != GmicRun::kPreviewState;
 	if (sequenceDataP->floatValue[PARAM_NOALPHA][0] > 0.f) {
 		customCommands += kIgnoreAlphaCommands;
-		cmd = "-_openfx_gmic_alpha_split " + cmd + " -_openfx_gmic_alpha_restore";
+		cmd = "-_openfx_gmic_alpha_split " + cmd + (render ? " -_openfx_gmic_alpha_restore" : "");
 	}
 
-	if (sequenceDataP->floatValue[PARAM_OUTPUT][0] == 0.f) {
+	if (render && sequenceDataP->floatValue[PARAM_OUTPUT][0] == 0.f) {
 		// G'MIC >= 2.9 renamed gimp_merge_layers to gui_merge_layers ("Unknown command" otherwise)
 		cmd += " -gui_merge_layers";
 	}
@@ -1242,7 +1399,7 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 	// Output Layer "Frame": bounded by _openfx_gmic_frame_select, at the end (see pluginProcess)
 	if (outputIsFrame(sequenceDataP, globalDataP)) {
 		customCommands += kFrameSelectCommand;
-	} else {
+	} else if (render) {
 		cmd += " -if {$!>" + std::to_string(kMaxLayers) + "} -keep[0-" + std::to_string(kMaxLayers - 1) + "] -fi";
 	}
 
@@ -1261,8 +1418,8 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 	// - _host (G'MIC-Qt's host short name) only for a preview run: the stdlib compares it with
 	//   "cli" or "paintdotnet", but Array [Random] [Jumble by Px]'s preview tests
 	//   '$_host'!='$cli' (always true when _host is defined), so main runs keep it undefined.
-	// _persistent is not defined: filters whose main command needs it are rendered with the
-	// preview command (see pluginProcess).
+	// _persistent is not in the command line: the filters that need it run their preview command
+	// first, which sets it for the main command (see pluginProcess).
 	int extentW = 0, extentH = 0;
 	const float dsMode = sequenceDataP->floatValue[PARAM_RESIZE][0];
 	if (dsMode >= 2.f) {
@@ -1296,8 +1453,10 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 			cmd = " -resize " + dsSize + " " + cmd;
 			processedSize = dsSize;
 		}
-		cmd += " -_openfx_gmic_opaque_resized " + processedSize;
-		cmd += " -resize " + std::to_string(sequenceDataP->inWorld[0].width) + "," + std::to_string(sequenceDataP->inWorld[0].height);
+		if (render) {
+			cmd += " -_openfx_gmic_opaque_resized " + processedSize;
+			cmd += " -resize " + std::to_string(sequenceDataP->inWorld[0].width) + "," + std::to_string(sequenceDataP->inWorld[0].height);
+		}
 	}
 	int verbosity = (int)sequenceDataP->floatValue[PARAM_VERBOSITY][0] - 1;
 	int seed = (int)sequenceDataP->floatValue[PARAM_SRAND][0];
@@ -1387,11 +1546,7 @@ static string gmicThreadsPrefix()
 // set G'MIC's flag, and G'MIC stops at its next check.
 struct GmicCallData
 {
-	const char* cmd;
-	unsigned int* nofImages;
-	gmic_interface_image* images;
-	unsigned int maxImages;
-	gmic_interface_options* options;
+	GmicCall call;
 	int result;
 	std::exception_ptr exception; // an exception from G'MIC, rethrown in the render thread
 	std::mutex mutex;
@@ -1403,7 +1558,7 @@ static void gmicCallRun(GmicCallData* d)
 {
 	int result = -1;
 	try {
-		result = gmic_plugin_call(d->cmd, d->nofImages, d->images, d->maxImages, d->options);
+		result = gmic_plugin_call(d->call);
 	} catch (...) {
 		d->exception = std::current_exception();
 	}
@@ -1432,8 +1587,9 @@ static DWORD WINAPI gmicCallThread(LPVOID arg)
 // filters never set it. The render thread passes it to the host's progress suite from its abort
 // poll (see gmicCallAbortable): the host's progress calls, like abort(), come from the render
 // thread. The host's progress starts at the first known value, so that filters without progress
-// show none, and ends when G'MIC returns, also on an exception. The progress is cosmetic: if a
-// progress call throws, the render goes on without progress.
+// show none, and ends when the render's G'MIC runs are done (one HostProgress for them: a filter
+// that runs its preview command first shows it in the first half), also on an exception. The
+// progress is cosmetic: if a progress call throws, the render goes on without progress.
 // The result of progressUpdate() (false: the user cancelled) is ignored, only abort() stops a
 // render: Natron's progress panel returns false to a progressUpdate() from a render thread until
 // its main thread has created the task that progressStart() asked for, which would abort the
@@ -1455,11 +1611,19 @@ public:
 	HostProgress(HostProgress&&) = delete;
 	HostProgress& operator=(HostProgress&&) = delete;
 
+	// The part of the host's progress that the next G'MIC runs take: G'MIC's 0 to 100 are then
+	// start to start + size (0 to 1 by default, for a render that runs G'MIC once)
+	void setRange(double start, double size) noexcept
+	{
+		_start = start;
+		_size = size;
+	}
+
 	// gmicProgress: G'MIC's progress index, from 0 to 100, or negative (unknown)
 	void update(float gmicProgress) noexcept
 	{
 		if (_failed || !(gmicProgress >= 0.f)) return; // unknown (-1), or NaN
-		const double t = std::min(gmicProgress, 100.f) / 100.;
+		const double t = _start + _size * (std::min(gmicProgress, 100.f) / 100.);
 		try {
 			if (!_started) {
 				_effect.progressStart(_message);
@@ -1470,7 +1634,7 @@ public:
 				_last = t;
 			}
 		} catch (...) {
-			_failed = true; // no more progress for this run (progressEnd() is still called if started)
+			_failed = true; // no more progress for this render (progressEnd() is still called if started)
 		}
 	}
 
@@ -1480,13 +1644,16 @@ private:
 	bool _started = false;
 	bool _failed = false;
 	double _last = -1.; // the last value given to the host
+	double _start = 0.;
+	double _size = 1.;
 };
 
 // gmic_plugin_call(), aborted when the host aborts the render: then *aborted is set to true, and
-// the result must be discarded. G'MIC's progress goes to the host's progress bar, with
-// progressMessage (see HostProgress).
-static int gmicCallAbortable(OFX::ImageEffect& effect, const string& progressMessage, const char* cmd, unsigned int* nofImages, gmic_interface_image* images, unsigned int maxImages, gmic_interface_options* options, bool* aborted)
+// the result must be discarded. G'MIC's progress goes to the host's progress bar, through
+// hostProgress (one for all the G'MIC runs of a render).
+static int gmicCallAbortable(OFX::ImageEffect& effect, HostProgress& hostProgress, const GmicCall& call, bool* aborted)
 {
+	gmic_interface_options* const options = call.options;
 	*aborted = false;
 	if (effect.abort()) {
 		*aborted = true;
@@ -1506,13 +1673,8 @@ static int gmicCallAbortable(OFX::ImageEffect& effect, const string& progressMes
 	// are copies with their own private progress (gmic::gmic(const gmic&)): their progress is
 	// never seen.
 	float progress = -1.f;
-	HostProgress hostProgress(effect, progressMessage);
 	GmicCallData d;
-	d.cmd = cmd;
-	d.nofImages = nofImages;
-	d.images = images;
-	d.maxImages = maxImages;
-	d.options = options;
+	d.call = call;
 	d.result = -1;
 	d.done = false;
 	options->p_is_abort = &isAbort;
@@ -1540,7 +1702,7 @@ static int gmicCallAbortable(OFX::ImageEffect& effect, const string& progressMes
 		// no thread: run G'MIC here, without abort or progress
 		options->p_is_abort = NULL;
 		options->p_progress = NULL;
-		return gmic_plugin_call(cmd, nofImages, images, maxImages, options);
+		return gmic_plugin_call(call);
 	}
 
 	// the worker uses d, isAbort, progress and the images: always join it before returning
@@ -1702,6 +1864,9 @@ struct FrameCacheEntry
 	CachedFrames frames;
 	size_t bytes;
 	unsigned long long lastUse;
+	// the warning of the run that made the frames (a failed preview-first run), shown again for
+	// the frames taken from the cache; empty for none
+	std::string warning;
 };
 
 struct FrameCache
@@ -1760,12 +1925,12 @@ static void frameCacheSetOwnerKey(FrameCache& c, const void* owner, const std::s
 	if (!previous.empty()) frameCacheDropIfUnused(c, previous, dropped);
 }
 
-// result [frame mod N] of the entry of key (frame: any integer), or NULL if there is none; the
-// instance now refers to key. If another render is running G'MIC for key, waits for it first,
+// result [frame mod N] of the entry of key (frame: any integer), or NULL if there is none (then
+// with the entry's warning in *warning); the instance now refers to key. If another render is running G'MIC for key, waits for it first,
 // polling the host's abort (then sets *aborted). On NULL without abort, the caller runs G'MIC; if
 // *claimed is set, other renders wait for it: it must call frameCacheRunDone(key) whatever happens.
 static std::shared_ptr<const CachedFrame> frameCacheFind(const void* owner, const std::string& key, long long frame,
-	const OFX::ImageEffect& effect, bool* claimed, bool* aborted)
+	const OFX::ImageEffect& effect, bool* claimed, bool* aborted, std::string* warning)
 {
 	std::vector<CachedFrames> dropped; // freed after unlocking
 	FrameCache& c = frameCache();
@@ -1775,6 +1940,7 @@ static std::shared_ptr<const CachedFrame> frameCacheFind(const void* owner, cons
 		std::map<std::string, FrameCacheEntry>::iterator it = c.entries.find(key);
 		if (it != c.entries.end() && !it->second.frames.empty()) {
 			it->second.lastUse = ++c.clock;
+			*warning = it->second.warning;
 			const long long n = (long long)it->second.frames.size();
 			return it->second.frames[(size_t)(((frame % n) + n) % n)];
 		}
@@ -1846,11 +2012,13 @@ static std::string frameCacheNotKept(const std::string& key, const std::string& 
 	return warning;
 }
 
-// keeps the results images[0..nofImages-1] under key, for the instance: their buffers now belong
-// to the cache, and their data pointers are set to NULL. Results that are not usable or don't fit
+// keeps the results images[0..nofImages-1] under key, for the instance, with the run's warning
+// (FrameCacheEntry::warning): their buffers now belong to the cache, and their data pointers are
+// set to NULL. Results that are not usable or don't fit
 // in the budget are left to the caller. Returns a warning for the user if they are not kept (a
 // result is empty, or they are larger than the budget), else an empty string.
-static std::string frameCacheStore(const void* owner, const std::string& key, gmic_interface_image* images, unsigned int nofImages, const std::string& filterName)
+static std::string frameCacheStore(const void* owner, const std::string& key, gmic_interface_image* images, unsigned int nofImages, const std::string& filterName,
+                                   const std::string& runWarning)
 {
 	size_t bytes = 0;
 	for (unsigned int i = 0; i < nofImages; ++i) {
@@ -1865,6 +2033,7 @@ static std::string frameCacheStore(const void* owner, const std::string& key, gm
 	FrameCacheEntry entry;
 	entry.bytes = bytes;
 	entry.lastUse = 0;
+	entry.warning = runWarning; // (before the results are moved: may throw)
 	entry.frames.reserve(nofImages);
 	for (unsigned int i = 0; i < nofImages; ++i) {
 		std::shared_ptr<CachedFrame> f = std::make_shared<CachedFrame>();
@@ -1890,6 +2059,7 @@ static std::string frameCacheStore(const void* owner, const std::string& key, gm
 	stored.frames.swap(entry.frames);
 	stored.bytes = bytes;
 	stored.lastUse = ++c.clock;
+	stored.warning.swap(entry.warning);
 	c.bytes += bytes;
 	return std::string();
 }
@@ -2003,12 +2173,20 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		strncpy(images[i].name, string("input" + std::to_string(i)).c_str(), sizeof(images[i].name));
 	}
 
-	// G'MIC-Qt runs the preview command first, and some main commands need its state: render
-	// these with the preview command when their main command fails (EffectData::previewFallback)
 	const EffectData& effectData = effectDataOf(globalDataP);
 	// a filter with no command never gets here: render() copies Source (pluginPassesSourceThrough)
 	assert(!effectData.command.empty());
-	bool preview = (effectData.previewOnly || sequenceDataP->floatValue[PARAM_PREVIEW][0] > 0);
+	const bool preview = (effectData.previewOnly || sequenceDataP->floatValue[PARAM_PREVIEW][0] > 0);
+	// G'MIC-Qt's Apply follows a run of the preview command, whose _persistent and status the main
+	// command gets (FilterThread.cpp, MainWindow.cpp in c-koi/gmic-qt): the filters whose main
+	// command may need them (EffectData::previewFirst) run their preview command first, on the
+	// same inputs and with the same variables as with Preview/Draft Mode, its results discarded
+	// (GmicRun::kPreviewState: nothing runs after it); then the main command, with the
+	// _persistent that the preview left, and the arguments that its status gives (gmicCommand).
+	// _persistent starts empty on every render, so that a render doesn't depend on the previous
+	// ones (G'MIC-Qt keeps it between its runs of a filter). If the preview command fails, the main
+	// command runs without them, as G'MIC-Qt's Apply after a failed preview.
+	const bool previewFirst = !preview && effectData.previewFirst;
 	// the custom commands, set in the options by fullCommand(): must stay valid until the G'MIC calls return
 	string customCommands;
 	// customCommands goes out of scope: reset the pointer on return, also when G'MIC throws
@@ -2017,11 +2195,14 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		explicit ResetCustomCommands(gmic_interface_options& o) : options(o) {}
 		~ResetCustomCommands() { options.custom_commands = NULL; }
 	} resetCustomCommands(instanceDataP->options());
-	string cmd = fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, preview, customCommands);
+	string cmd = fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, preview ? GmicRun::kPreview : GmicRun::kMain, customCommands);
 	bool aborted = false;
 	int result = 0;
 	string errmsg;
 	string warning; // shown on the node after a successful render (showRenderWarning)
+	// the preview command run first failed (shown with warning; kept with Output Layer "Frame"
+	// results, and shown again for the frames taken from them)
+	string previewWarning;
 	// Output Layer "Frame": the results kept from a previous render, if the key is the same
 	const long long frame = frameNumberOf(sequenceDataP);
 	string cacheKey;
@@ -2036,7 +2217,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	const bool useCache = frameMode && frameCacheBudget() > 0; // OFX_GMIC_FRAME_CACHE_MB=0: no cache
 	if (useCache) {
 		cacheKey = frameCacheKey(globalDataP, cmd, sequenceDataP, nofImages);
-		cachedFrame = frameCacheFind(instanceDataP, cacheKey, frame, effect, &claim.claimed, &aborted);
+		cachedFrame = frameCacheFind(instanceDataP, cacheKey, frame, effect, &claim.claimed, &aborted, &previewWarning);
 	} else {
 		frameCacheRelease(instanceDataP);
 	}
@@ -2045,23 +2226,63 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	const string frameSelect = frameMode ? " -_openfx_gmic_frame_select " + std::to_string(frame) + "," +
 		std::to_string(kMaxFrameResults) + "," + std::to_string((unsigned long long)frameCacheBudget()) : string();
 	if (runGmic) {
-		// counted until both G'MIC runs (the main command and the preview fallback) are done, on
-		// every path; the thread count is added after the cache key was made (see gmicThreadsPrefix)
+		// counted until the G'MIC runs (the preview command first, if any, and the main command)
+		// are done, on every path; the thread count is added after the cache key was made (see
+		// gmicThreadsPrefix), and is the same for both runs
 		const RunningRender running;
 		const string threads = gmicThreadsPrefix();
-		cmd = threads + cmd + frameSelect;
-		result = gmicCallAbortable(effect, effectData.name, cmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(), &aborted);
-		errmsg = string(instanceDataP->options().error_message_buffer);
-		// The retry needs unchanged inputs: gmic_plugin_call() works on copies (no_inplace_processing)
-		// and leaves images[] unchanged on an error. Not after an abort.
-		if (result != 0 && !aborted && !preview && effectData.previewFallback && instanceDataP->options().no_inplace_processing) {
-			gmicLog("G'MIC: %s: the main command failed (%s), rendering with the preview command\n",
-					effectData.name.c_str(), errmsg.c_str());
-			preview = true;
-			cmd = threads + fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, preview, customCommands) + frameSelect;
-			result = gmicCallAbortable(effect, effectData.name, cmd.c_str(), &nofImages, images, maxImages, &instanceDataP->options(), &aborted);
-			if (result != 0 && !aborted) {
-				errmsg += " (with the preview command: " + string(instanceDataP->options().error_message_buffer) + ")";
+		// one progress for the render: the preview run takes the first half of it
+		HostProgress hostProgress(effect, effectData.name);
+		GmicRunState state; // what the preview run left (nothing if it failed)
+		string previewError; // the preview run's error, if it failed
+		bool previewDone = false;
+		if (previewFirst) {
+			const string previewCmd = threads + fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, GmicRun::kPreviewState, customCommands);
+			hostProgress.setRange(0., 0.5);
+			// (the preview's results are discarded, and the inputs stay unchanged: images[] too;
+			// _persistent starts empty: no persistentIn)
+			GmicCall call;
+			call.cmd = previewCmd.c_str();
+			call.nofImages = &nofImages;
+			call.images = images;
+			call.maxImages = maxImages;
+			call.options = &instanceDataP->options();
+			call.stateOut = &state;
+			call.results = GmicResults::kDiscard;
+			result = gmicCallAbortable(effect, hostProgress, call, &aborted);
+			previewDone = result == 0;
+			if (!previewDone && !aborted) {
+				previewError = instanceDataP->options().error_message_buffer;
+				// (render_plugins.py fails a render whose log has kPreviewFirstFailed)
+				gmicLog("G'MIC: %s: the preview command, %s (%s): the main command runs without its state\n",
+						effectData.name.c_str(), kPreviewFirstFailed, previewError.c_str());
+			}
+			hostProgress.setRange(0.5, 0.5);
+		}
+		if (!aborted) {
+			// the main command, with the preview's status (the cache key is made without it: the
+			// status only depends on what the key holds)
+			if (previewFirst) {
+				cmd = fullCommand(sequenceDataP, globalDataP, instanceDataP, nofImages, GmicRun::kMain, customCommands,
+				                  previewDone ? &state.status : nullptr);
+			}
+			cmd = threads + cmd + frameSelect;
+			GmicCall call;
+			call.cmd = cmd.c_str();
+			call.nofImages = &nofImages;
+			call.images = images;
+			call.maxImages = maxImages;
+			call.options = &instanceDataP->options();
+			call.persistentIn = previewDone ? &state.persistent : nullptr;
+			result = gmicCallAbortable(effect, hostProgress, call, &aborted);
+			errmsg = string(instanceDataP->options().error_message_buffer);
+			if (previewFirst && !previewDone && !aborted) {
+				if (result != 0) {
+					errmsg += " (the preview command, run first, failed too: " + previewError + ")";
+				} else {
+					previewWarning = "The preview command, which G'MIC-Qt runs before the main command, failed (" +
+						previewError + "): the main command ran without the state it may need from it.";
+				}
 			}
 		}
 	}
@@ -2143,13 +2364,16 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		if (result == 0 && useCache && runGmic && !selected) {
 			// out of memory: the results not moved to the cache are freed below, as without cache
 			try {
-				warning = frameCacheStore(instanceDataP, cacheKey, images, nofImages, effectData.name);
+				warning = frameCacheStore(instanceDataP, cacheKey, images, nofImages, effectData.name, previewWarning);
 			} catch (const std::bad_alloc&) {
 			}
 		} else if (result == 0 && useCache && selected) {
 			warning = frameCacheNotKept(cacheKey, frameCacheTooLargeWarning(effectData.name));
 		}
 		if (claim.claimed) { claim.claimed = false; frameCacheRunDone(cacheKey); } // the waiting renders go on
+	}
+	if (!previewWarning.empty()) {
+		warning = warning.empty() ? previewWarning : previewWarning + "\n" + warning;
 	}
 	if (result != 0 && !aborted) {
 		// persistent message on the node, instead of a modal message on every render

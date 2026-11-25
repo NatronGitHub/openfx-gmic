@@ -58,6 +58,9 @@
 #include <map>
 #include <set>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -108,6 +111,7 @@ void processCommand(const string& s, EffectData& cd)
 	if (sPos >= 0) r2 = r2.substr(0, sPos);
 	string r3 = r2;
 	sPos = (int)r2.find(",");
+	const bool previewGiven = sPos >= 0; // (else the preview command is the main command)
 	if (sPos >= 0) {
 		r3 = r2.substr(sPos + 1);
 		r2 = r2.substr(0, sPos);
@@ -137,7 +141,13 @@ void processCommand(const string& s, EffectData& cd)
 		command = isNone(preview) ? string() : preview;
 		cd.previewOnly = !command.empty();
 	}
-	if (isNone(preview)) preview = command;
+	// "_none_" or empty after the comma: G'MIC-Qt shows no preview (isNoPreviewFilter), and its
+	// Apply follows no preview run (noPreview). Without a comma, the main command is the preview
+	// command, which G'MIC-Qt does run first.
+	if (isNone(preview)) {
+		cd.noPreview = previewGiven && !command.empty();
+		preview = command;
+	}
 	cd.command = command;
 	cd.preview_command = preview;
 }
@@ -550,7 +560,8 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	cd.preview_command = "";
 	cd.notes = "";
 	cd.previewOnly = false;
-	cd.previewFallback = false;
+	cd.noPreview = false;
+	cd.previewFirst = false;
 	cd.param.clear();
 	vector<VisibilityPropagation> propagation; // one per cd.param entry, until the "pointenabled" ones
 
@@ -753,11 +764,12 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	}
 	cd.multiLayer = usesSeveralLayers(content);
 	// a hidden value() parameter holding a placeholder string (e.g. Shear's "place_string_here")
-	// is filled in by G'MIC-Qt from the status set by the preview command (issue #52)
+	// is filled in by G'MIC-Qt from the status set by the preview command (issue #52): run the
+	// preview command first (see markPersistentFilters for the other rule)
 	for (int i = 0; i < (int)cd.param.size(); i++) {
-		if (cd.param[i].paramType == "value" && !cd.previewOnly && cd.preview_command != cd.command &&
+		if (cd.param[i].paramType == "value" && !cd.command.empty() && !cd.previewOnly && !cd.noPreview &&
 			isPlaceholder(cd.param[i].defaultValue)) {
-			cd.previewFallback = true;
+			cd.previewFirst = true;
 		}
 	}
 	cd.notes = strTrim(cd.notes, "\n");
@@ -812,101 +824,91 @@ static void gmicItems(const string& line, vector<string>& items)
 	if (!item.empty()) items.push_back(item);
 }
 
-// Does the item read $_persistent (other than in a narg($_persistent) test)?
-static bool readsPersistent(const string& item)
+// Calls f(name) for each name in a line of G'MIC code: the longest runs of letters, digits and '_'
+// that don't start with a digit (command and variable names; "$_persistent" gives "_persistent").
+// name is a buffer reused from call to call.
+template<typename F>
+static void forEachGmicName(const string& line, string& name, F f)
 {
-	for (size_t p = item.find("$_persistent"); p != string::npos; p = item.find("$_persistent", p + 1)) {
-		if (!(p >= 5 && item.compare(p - 5, 5, "narg(") == 0)) return true;
+	size_t k = 0;
+	while (k < line.size()) {
+		if (!(isalnum((unsigned char)line[k]) || line[k] == '_')) {
+			++k;
+			continue;
+		}
+		const size_t b = k;
+		while (k < line.size() && (isalnum((unsigned char)line[k]) || line[k] == '_')) ++k;
+		if (!isdigit((unsigned char)line[b])) {
+			name.assign(line, b, k - b);
+			f(name);
+		}
 	}
-	return false;
 }
 
-// Is the condition of an "if"/"elif" a positive narg($_persistent) test?
-static bool persistentGuard(const string& cond)
-{
-	const size_t p = cond.find("narg($_persistent)");
-	return p != string::npos && !(p > 0 && cond[p - 1] == '!');
-}
-
-// G'MIC-Qt always runs the preview command before the main one, and the main command of some
-// filters relies on what the preview stored in the global variable _persistent (issue #52):
-// - Tupper's Self-Referential Formula: "rm $_persistent"; Lavander Binary Map: "error
-//   uninitialized" without it; Bit-Plane Shuffler reads it in both branches;
-// - Array [Random] [Jumble by Px] and Statistical Mode call their preview command with "$*"
-//   without it, which splits text arguments containing blanks.
-// Flag these (previewFallback: rendered with the preview command if the main command fails):
-// the definition of the main command (not the commands it calls) reads $_persistent outside an
-// "if narg($_persistent)" branch, or calls the preview command. Filters that only use
-// _persistent as a cache or compute the result themselves without it (3D Mesh, Diffusion
-// Limited Aggregation, Color Region) are not flagged. Channel Blur-Sharpen-Overblur-Overline is
-// (it calls its preview command), but its main command works. This needs the command
-// definitions in "content": a gmic_ofx.gmic with only #@gui lines flags nothing here.
+// G'MIC-Qt runs a filter's preview command before each Apply, and gives the main command what the
+// preview left (FilterThread.cpp, PersistentMemory.cpp, MainWindow.cpp in c-koi/gmic-qt): the
+// global variable _persistent, and the parameter values that the preview's status sets. Mark the
+// filters whose main command may need either (previewFirst: pluginProcess runs their preview
+// command first, see there):
+// - the definition of the main command, or of a command that it calls, directly or not, names
+//   _persistent. A global variable is seen by every command, so a call counts. Every name of a
+//   defined command in a definition counts as a call (also a variable or a word in a string that
+//   has a command's name): this can only add filters, which then run their preview command once
+//   more for nothing;
+// - a hidden value() parameter holds a placeholder that the status fills (see gmic_parse_single,
+//   which sets previewFirst for these).
+// Not the filters with a "_none_" preview command (noPreview), which G'MIC-Qt doesn't preview.
+// This needs the command definitions in "content": with a gmic_ofx.gmic that has only #@gui
+// lines, only the value() rule applies.
 static void markPersistentFilters(const string& content, vector<EffectData>& cds)
 {
-	map<string, string> mains; // main command -> preview command
-	for (vector<EffectData>::const_iterator it = cds.begin(); it != cds.end(); ++it) {
-		if (!it->previewOnly && it->preview_command != it->command) mains[it->command] = it->preview_command;
-	}
-	set<string> flagged;
-	set<string> defined; // all the commands defined in content
-	stringstream ss(content);
-	string line, cur, rest;
-	vector<bool> guards; // one per enclosing if: is the current branch a narg($_persistent) branch?
-	while (getline(ss, line)) {
-		if (line.empty() || line[0] == '#') continue;
-		string name = commandDefinition(line, rest);
-		if (!name.empty()) {
-			defined.insert(name);
-			cur = mains.count(name) ? name : string();
-			guards.clear();
-		} else {
-			rest = line;
-		}
-		if (cur.empty() || flagged.count(cur)) continue;
-		vector<string> items;
-		gmicItems(rest, items);
-		for (size_t k = 0; k < items.size(); ++k) {
-			const string& it = items[k];
-			if (it[0] == '#') break; // comment
-			if (it == "if" || it == "elif") {
-				const bool g = k + 1 < items.size() && persistentGuard(items[k + 1]);
-				if (it == "if") guards.push_back(g);
-				else if (!guards.empty()) guards.back() = g;
-				++k; // skip the condition
-			} else if (it == "else") {
-				if (!guards.empty()) guards.back() = false;
-			} else if (it == "fi") {
-				if (!guards.empty()) guards.pop_back();
-			} else if (it == mains[cur] || (it[0] == '+' && it.substr(1) == mains[cur])) {
-				flagged.insert(cur);
-			} else if (readsPersistent(it)) {
-				bool guarded = false;
-				for (size_t g = 0; g < guards.size(); ++g) guarded = guarded || guards[g];
-				if (!guarded) flagged.insert(cur);
+	// the definitions, in order: (command, its lines; the first one is the rest of the
+	// definition's line)
+	vector<pair<string, vector<string> > > defs;
+	unordered_set<string> defined;
+	{
+		stringstream ss(content);
+		string line, rest;
+		while (getline(ss, line)) {
+			if (line.empty() || line[0] == '#') continue;
+			string name = commandDefinition(line, rest);
+			if (!name.empty()) {
+				defined.insert(name);
+				defs.push_back(make_pair(std::move(name), vector<string>(1, rest)));
+			} else if (!defs.empty()) {
+				defs.back().second.push_back(line);
 			}
 		}
 	}
-	// Main commands that need the preview's state in a way the rules above can't detect. A listed
-	// command that no longer is the main command of a filter (e.g. after a G'MIC update) is
-	// reported on stderr, and makes the describe test fail (.github/workflows/describe_plugins.sh).
-	// COMMERCIAL builds (OFX_GMIC_COMMERCIAL) do not report one that is not defined at all: their
-	// standard library leaves out its filter (see gmic_stdlib_commercial.txt).
-	// - fx_rep_bitplane_shuffle (Bit-Plane Shuffler): without _persistent it runs
-	//   "rep_bitplane_shuffle ...,$cli_base", and cli_base is only set by its preview command.
-	static const char* const curated[] = { "fx_rep_bitplane_shuffle" };
-	for (size_t c = 0; c < sizeof(curated) / sizeof(curated[0]); ++c) {
-		if (mains.count(curated[c])) {
-			flagged.insert(curated[c]);
-		} else if (!mains.empty()) {
-#ifdef OFX_GMIC_COMMERCIAL
-			if (!defined.count(curated[c])) continue;
-#endif
-			gmicLog("G'MIC: PREVIEW_FALLBACK_UNKNOWN %s: not the main command of a filter, update markPersistentFilters()\n", curated[c]);
+	unordered_map<string, vector<const string*> > callers; // command -> the commands naming it
+	unordered_set<string> reading; // the commands that read _persistent, directly or not
+	vector<const string*> todo;
+	string name;
+	for (size_t d = 0; d < defs.size(); ++d) {
+		const string& cmd = defs[d].first;
+		const vector<string>& lines = defs[d].second;
+		for (size_t l = 0; l < lines.size(); ++l) {
+			forEachGmicName(lines[l], name, [&](const string& n) {
+				if (n == "_persistent") {
+					if (reading.insert(cmd).second) todo.push_back(&cmd);
+				} else if (n != cmd && defined.count(n)) {
+					callers[n].push_back(&cmd);
+				}
+			});
 		}
 	}
-	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
-		if (!it->previewOnly && it->preview_command != it->command && flagged.count(it->command)) {
-			it->previewFallback = true;
+	while (!todo.empty()) {
+		const string* const cmd = todo.back();
+		todo.pop_back();
+		const auto c = callers.find(*cmd);
+		if (c == callers.end()) continue;
+		for (const string* caller : c->second) {
+			if (reading.insert(*caller).second) todo.push_back(caller);
+		}
+	}
+	for (EffectData& cd : cds) {
+		if (!cd.previewOnly && !cd.noPreview && reading.count(cd.command)) {
+			cd.previewFirst = true;
 		}
 	}
 }
@@ -1072,15 +1074,16 @@ static bool hasSuffix(const string& s, const string& suffix)
 // isSplitPreviewChoice, and its point (the next parameter with a value, or a point whose name ends
 // with "Preview Split"). By G'MIC's convention, they are the last arguments, which the preview
 // command passes to gui_split_preview, and which the main command ignores: they only matter with
-// Preview/Draft Mode. Generic rules only, no list of filters: not in the filters that render with
-// their preview command anyway (same command, previewOnly, previewFallback, see
-// markPersistentFilters). A main command that reads these arguments anyway is a bug of the filter:
+// Preview/Draft Mode. Generic rules only, no list of filters: not in the filters that run their
+// preview command anyway (same command, previewOnly), nor in those that run it before their main
+// command (previewFirst, see markPersistentFilters), where these arguments can change the state
+// that the main command gets. A main command that reads these arguments anyway is a bug of the filter:
 // its parameters are marked too (their values are still passed to G'MIC).
 static void markSplitPreviewParams(vector<EffectData>& cds)
 {
 	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
 		EffectData& cd = *it;
-		if (cd.previewOnly || cd.preview_command == cd.command || cd.previewFallback) continue;
+		if (cd.previewOnly || cd.preview_command == cd.command || cd.previewFirst) continue;
 		bool afterChoice = false; // the previous parameter with a value is a split preview choice
 		for (size_t i = 0; i < cd.param.size(); ++i) {
 			EffectParameter& param = cd.param[i];
@@ -1534,7 +1537,7 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 		return;
 	}
 	markPersistentFilters(content, *cds);
-	markSplitPreviewParams(*cds); // (after markPersistentFilters: previewFallback)
+	markSplitPreviewParams(*cds); // (after markPersistentFilters: previewFirst)
 	markMultiInputFilters(content, *cds);
 	markDynamicVisibilityFilters(content, *cds);
     // plug-in identifiers must be unique: G'MIC 4 has several filters with the same name in
