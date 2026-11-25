@@ -368,12 +368,7 @@ jobs:
       # target 14.0, CMakeLists.txt's default, checked by the configure below.
       - name: Deployment target
         run: echo "MACOSX_DEPLOYMENT_TARGET=$(sw_vers -productVersion | cut -d. -f1).0" >> "$GITHUB_ENV"
-      # MacPorts first in PATH for the next steps (pkg-config, cmake, ninja, port); each line is
-      # prepended, so /opt/local/bin comes before /opt/local/sbin
-      - name: MacPorts PATH
-        run: |
-          echo /opt/local/sbin >> "$GITHUB_PATH"
-          echo /opt/local/bin >> "$GITHUB_PATH"
+      # (setup-macports puts /opt/local/bin and /opt/local/sbin first in PATH, for every step)
       # OFX_DEPLOY_BUNDLES: the install step copies the MacPorts libraries into the bundle
       # (osxDeploy.sh) and signs it; the describe test runs on the installed bundle, so that the
       # deployment is tested on each PR

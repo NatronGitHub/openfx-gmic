@@ -31,7 +31,7 @@ fi
 MIN_PLUGINS=$2
 SRC=$(cd "$(dirname "$0")/../.." && pwd)
 WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
+trap 'cd / && rm -rf "$WORK"' EXIT
 CXX=${CXX:-c++}
 
 cp -R "$SRC/openfx/HostSupport/include" "$SRC/openfx/HostSupport/src" "$WORK/"
