@@ -7,8 +7,11 @@ OFX_GMIC_UPDATE_FILE=1, #180), which replaces the built-in filters, or with --us
 user source ~/.gmic, whose filters and commands come after the built-in ones (#206). Its filters call a command
 that the file defines ("Unknown command" before #168), a built-in command, and a built-in
 command that the file replaces: each output must be the uniform color that the filter fills it
-with. The file also defines a command that the
-plug-in hot-fixes, which must be kept, with a note. Its User File Cpus filter fills its output
+with. User File Persistent and User File Persistent Store need the _persistent variable (a
+string, or an image from 'store') and the status that their preview command sets (#206): their
+outputs show that the plug-in ran the preview command first, and gave both to the main
+command. The file also defines a command that the plug-in hot-fixes, which must be kept, with a
+note. Its User File Cpus filter fills its output
 with G'MIC's $_cpus, rendered without OMP_NUM_THREADS so that the plug-in sets it (#188): the
 value, printed, must be the number of CPUs (hostDemo runs one render, whose fair share is all the
 hardware threads). This shows that the count reaches G'MIC, not that the plug-in's prefix is
@@ -44,6 +47,10 @@ EXPECTED = {
     'eu.gmic.UserFileOwnCommand': (0.25, 0.25, 0.25),
     'eu.gmic.UserFileBuiltinCommand': (0.5, 0.0, 1.0),
     'eu.gmic.UserFileOverride': (128 / 255.0,) * 3,
+    # the main command's result, with the preview's _persistent (red) and status (green, blue;
+    # #206), and with an image stored in _persistent
+    'eu.gmic.UserFilePersistent': (0.75, 0.5, 0.3),
+    'eu.gmic.UserFilePersistentStore': (0.25, 0.5, 0.75),
 }
 TOLERANCE = 1e-4
 DEFINED_BY = ' is defined by '  # the note of a kept definition of a hot-fixed command

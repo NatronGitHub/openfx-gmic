@@ -191,6 +191,13 @@ VPATH += $(SRCDIR) $(SRCDIR)/Helpers
 # CXX on the compile line, so it overrides a -std in CXX. Makefile.master turns CXXSTD into the
 # whole flag (-std=c++20). The plug-in list tool (PLUGINLIST_TOOL, above) follows the same rule,
 # but it doesn't use CXXFLAGS: with a -std in CXXFLAGS_EXTRA only, it gets -std=c++17.
+# C++17 is the minimum: refuse an older standard, the last -std (or --std) of the compile line
+# (CXX, then CXXFLAGS, which ends with the CXXSTD flag; Makefile.master makes CXXSTD=--std=c++14
+# -std=--std=c++14).
+GMIC_CXX_STD := $(patsubst --std=%,-std=%,$(patsubst -std=--std=%,-std=%,$(lastword $(filter -std=% --std=% /std:%,$(CXX) $(CXXFLAGS)))))
+ifneq ($(filter $(foreach v,98 03 0x 11 1y 14,-std=c++$(v) -std=gnu++$(v)) /std:c++14,$(GMIC_CXX_STD)),)
+  $(error $(GMIC_CXX_STD): openfx-gmic needs C++17 or later (e.g. CXXSTD=c++17 or CXXSTD=c++20))
+endif
 
 # openmp
 ifeq ($(OPENMP),1)

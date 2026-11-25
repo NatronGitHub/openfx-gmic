@@ -5,10 +5,13 @@
 # GMIC_PLUGIN_COUNT): a filter that a G'MIC update shows or hides (e.g. one that the parser's
 # generic rules no longer hide) then fails the test, and is checked before the count is updated.
 # Uses $CXX (default c++) and $HOST_LDFLAGS (extra link flags, e.g. -L/opt/local/lib).
-# PLUGIN_LIST=<file>: also write the plug-ins' ids, contexts and input clips there (for render_plugins.py).
+# PLUGIN_LIST=<file>: also write the plug-ins' ids, contexts and input clips there (for render_plugins.py),
+# and the plug-ins that run their preview command first. PREVIEW_FIRST_COUNT=<n>: fail unless n
+# plug-ins run their preview command first.
 # The bundle's list of the plug-ins (gmic_ofx_plugins.txt), if any, must be the described plug-ins;
 # DESCRIBE_USER_LIST=1 (once per CI job: it describes them all again) requires the list, and also
-# checks that a user's list that disables two plug-ins leaves them out.
+# checks that a user's list that disables two plug-ins leaves them out, also with a log file and in
+# a profile folder with non-ASCII characters.
 # DESCRIBE_UPDATE_FILE=1 (once per CI job too) also checks G'MIC's update file (update<GMICVER>.gmic,
 # read with OFX_GMIC_UPDATE_FILE=1): ignored when empty, without #@gui or without the opt-in, used
 # otherwise, and the hot fixes leave a command that it defines another way alone.
@@ -86,12 +89,6 @@ if [ "$status" = 0 ] && [ "$described" != "$MIN_PLUGINS" ]; then
 fi
 if grep -E "DUPLICATE_PARAM|DUPLICATE_CLIP" describe.log; then
     echo "FAIL: duplicate param/clip definitions (see above)"
-    status=1
-fi
-# the curated list of filters rendered with their preview command when the main one fails
-# (Helpers/gmic_parser.cpp) names a command that is no longer a filter's main command
-if grep -E "PREVIEW_FALLBACK_UNKNOWN" describe.log; then
-    echo "FAIL: update the curated list in markPersistentFilters() (see above)"
     status=1
 fi
 # a parameter type the parser doesn't know (e.g. new in a G'MIC bump): pluginSetup passes 0 for it
@@ -176,6 +173,26 @@ if [ -f "$SHIPPED_LIST" ] && [ "${DESCRIBE_USER_LIST:-}" = 1 ]; then
         echo "FAIL: with a log file: the line that reports the user's list is still on stderr"
         status=1
     fi
+    # The same in a profile folder with non-ASCII characters, some of them outside Windows' ANSI
+    # code page (issue #201): the user's list and the log file are still found
+    home4="$WORK/home4-Frédéric-日本"
+    mkdir -p "$home4/.config/gmic" "$home4/gmic"
+    cp "$WORK/home2/.config/gmic/gmic_ofx_plugins.txt" "$home4/.config/gmic/"
+    cp "$WORK/home2/.config/gmic/gmic_ofx_plugins.txt" "$home4/gmic/"
+    : > "$home4/.config/gmic/gmic_ofx_log"
+    : > "$home4/gmic/gmic_ofx_log"
+    HOME="$home4" APPDATA="$(native_path "$home4")" OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
+        ./describe_plugins "$expected" > describe4.out 2> describe4.log || true
+    cat "$home4/.config/gmic/gmic_ofx_log" "$home4/gmic/gmic_ofx_log" | tr -d '\r' > describe4.gmiclog
+    if ! tr -d '\r' < describe4.out | grep -qx "plugins=$expected described=$expected failed=0"; then
+        echo "FAIL: non-ASCII profile folder: expected the $expected plug-ins of the user's list, got: $(tr -d '\r' < describe4.out | tail -n 1)"
+        status=1
+    fi
+    if ! grep -x "$summary" describe4.gmiclog > /dev/null; then
+        cat describe4.gmiclog
+        echo "FAIL: non-ASCII profile folder: expected the line that reports the user's list in gmic_ofx_log"
+        status=1
+    fi
 fi
 if [ "${DESCRIBE_UPDATE_FILE:-}" = 1 ]; then
     builtin_count=$(tr -d '\r' < describe.log | grep -c '^PLUGIN ' || true)
@@ -215,6 +232,8 @@ fx_update_file_test :
     # a serialized CImg (still compressed): ignored, with a warning
     printf '1 uint8 little_endian\n%s' "$one_filter" | update_case compressed 1 "$builtin_count" "is compressed"
     printf '%s' "$one_filter" | update_case used 1 1
+    # in a profile folder with non-ASCII characters (issue #201)
+    printf '%s' "$one_filter" | update_case used-Frédéric-日本 1 1
     # the page that G'MIC's update_deprecate inserts into older update files is no plug-in
     printf '%s#@gui ________\n#@gui !<b><i>[ New Version Available! ]</i></b> : _none_, _none_\n' "$one_filter" |
         update_case new-version-page 1 1
@@ -264,9 +283,25 @@ EOF2
         echo "user source: $expected plug-ins, as expected"
     fi
 fi
-# PLUGIN_LIST=<file>: the plug-ins, their context and input clips, for render_plugins.py
+# the plug-ins that run their preview command before their main command (#206): the plug-in logs
+# "openfx-gmic: previewFirst <id>" for each when it loads (gmic_plugin.cpp,
+# loadPluginGlobalData(): keep the text the same). Listed, and checked against
+# $PREVIEW_FIRST_COUNT if set (ci.yml: a G'MIC bump or a change of the rule in
+# Helpers/gmic_parser.cpp changes it). Each id once: the host loads the plug-in twice (HostSupport's
+# scan unloads the binary after OfxGetNumberOfPlugins, and the describe loads it again), and each
+# load logs the lines again.
+tr -d '\r' < describe.log | sed -n -e 's/^openfx-gmic: previewFirst //p' | LC_ALL=C sort -u > preview_first.txt
+preview_first=$(($(wc -l < preview_first.txt)))
+echo "$preview_first plug-ins run their preview command first:" $(cat preview_first.txt)
+if [ -n "${PREVIEW_FIRST_COUNT:-}" ] && [ "$preview_first" != "$PREVIEW_FIRST_COUNT" ]; then
+    echo "FAIL: $preview_first plug-ins run their preview command first, expected PREVIEW_FIRST_COUNT=$PREVIEW_FIRST_COUNT (update it in ci.yml if the change is right)"
+    status=1
+fi
+# PLUGIN_LIST=<file>: the plug-ins, their context and input clips, for render_plugins.py, then a
+# "#previewFirst<tab><id>" line for each plug-in that runs its preview command first
 if [ -n "${PLUGIN_LIST:-}" ]; then
     sed -n -e 's/^RENDERINFO //p' describe.log > "$PLUGIN_LIST"
+    awk '{ printf "#previewFirst\t%s\n", $0 }' preview_first.txt >> "$PLUGIN_LIST"
 fi
 if [ $status != 0 ]; then
     echo "--- last lines of the host log:"
