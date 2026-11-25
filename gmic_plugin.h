@@ -103,14 +103,16 @@ struct GmicStatusRun
 
 // G'MIC-Qt's run of the filter's preview command after a change of its parameters, for the status
 // that the run leaves (MainWindow.cpp in c-koi/gmic-qt: onPreviewImageAvailable(),
-// onGUIDynamismRunDone()): runs the preview command on sequenceData's input images, with its
-// values, as the run made before the main command of a preview-first filter (see pluginProcess),
+// onGUIDynamismRunDone()): runs the preview command with sequenceData's values, as the run made
+// before the main command of a preview-first filter (see pluginProcess), on its input images
+// scaled down to G'MIC-Qt's preview size (at most 512 pixels), with G'MIC-Qt's _preview_timeout,
 // and sets in sequenceData the values that its status gives (FilterParametersWidget::setValues()
 // in G'MIC-Qt). Its own results are discarded. For the press of a push button (issue #174),
-// called from the instance changed action with the button at 1. Uses its own G'MIC options, so
-// that a render of the same instance may run at the same time. Nothing changes if the filter has
-// no preview ("_none_"), if there is no Source image, if the status is empty or has another number
-// of values than the parameters (logged), or if G'MIC fails.
+// called from the instance changed action with the button at 1: the host's progress starts at
+// once, and the user's Cancel stops the run. Uses its own G'MIC options, so that a render of the
+// same instance may run at the same time. Nothing changes if the filter has no preview ("_none_"),
+// if there is no Source image, if the run is cancelled, if the status is empty or has another
+// number of values than the parameters (logged), or if G'MIC fails.
 GmicStatusRun pluginRunStatus(gmic_ofx::SequenceData& sequenceData, const gmic_ofx::GlobalData& globalData, OFX::ImageEffect& effect);
 
 // kOfxActionPurgeCaches: drop the results kept for Output Layer "Frame", of every instance

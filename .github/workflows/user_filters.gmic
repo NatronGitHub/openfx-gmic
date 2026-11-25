@@ -80,7 +80,8 @@ fx_userfile_vars :
 #   sets no status, and the values stay (red 0.25, blue 0.1).
 # - User File Status Visibility: the status hides Hidden Level ("_0") and sets it to 0.6 (red).
 #   The visibility is not applied yet (#173): Hidden Level stays visible, as in every filter that
-#   sets visibilities at run time (#170).
+#   sets visibilities at run time (#170). It also removes the removable point Target ("nan,nan":
+#   its checkbox goes off, and the render gets nan,nan for it: blue 1).
 #@gui User File Button : fx_userfile_button, fx_userfile_button_preview
 #@gui : Level = float(0.25,0,1)
 #@gui : Press = button()
@@ -101,11 +102,12 @@ fx_userfile_button_preview :
 #@gui User File Status Visibility : fx_userfile_visibility, fx_userfile_visibility_preview
 #@gui : Hidden Level = float(0.2,0,1)
 #@gui : Hide = button()
+#@gui : Target = point(30,30,1)
 fx_userfile_visibility :
-  fill_color {$1*255},{$2*255},0
+  fill_color {$1*255},{$2*255},{isnan($3)*255}
 
 fx_userfile_visibility_preview :
-  if $2 u "{0.6}_0{0}" fi
+  if $2 u "{0.6}_0{0}{nan,nan}" fi
   fill_color 255,0,255
 
 # a result with 5 channels, which fails the render as in G'MIC-Qt (#206)

@@ -19,8 +19,8 @@ parameter values, which the report's params then show, also as a key of an anima
 The file also defines a command that the plug-in hot-fixes, which must be kept, with a note. Its
 User File Cpus filter fills its output with G'MIC's $_cpus, rendered without OMP_NUM_THREADS so
 that the plug-in sets it (#188): the value, printed, must be the number of CPUs (hostDemo runs one
-render, whose fair share is all the hardware threads). This shows that the count reaches G'MIC, not that the plug-in's prefix is
-applied: the value is also G'MIC's own default.
+render, whose fair share is all the hardware threads). This shows that the count reaches G'MIC,
+not that the plug-in's prefix is applied: the value is also G'MIC's own default.
 
 With --stdlib, the same filters are then rendered with a copy of the whole built-in standard
 library before them in the file, as in a user's copied gmic_stdlib.gmic: the outputs must be the
@@ -81,7 +81,7 @@ class ButtonCase(collections.namedtuple(
 
     Attributes:
         pid: the plug-in id.
-        button: the name of the push button that is pressed.
+        button: the push button that is pressed, with an optional time (name[@time]).
         args: hostDemo's arguments before the press (-s name=value...).
         output: the RGB value of every output pixel.
         values: the values of parameters after the press (in the report: canonical coordinates for
@@ -98,12 +98,19 @@ BUTTON_CASES = (
                {'Level': 0.75, 'Steps': 4, 'Mode': 2, 'Flag': True,
                 'Tint': [40 / 255.0, 50 / 255.0, 60 / 255.0], 'Spot': SPOT, 'Label': 'after'},
                {}, {}),
-    # an animated parameter: the key at the time of the press (0) gets the value
-    ButtonCase('eu.gmic.UserFileButton', 'Press', ['-s', 'Level@0=0.25', '-s', 'Level@10=0.5'],
-               (0.75, 0.0, 0.4), {'Level': 0.75}, {'Level': [[0.0, 0.75], [10.0, 0.5]]}, {}),
-    # "_0" hides the parameter in G'MIC-Qt: its value is set, its visibility not yet (#173)
-    ButtonCase('eu.gmic.UserFileStatusVisibility', 'Hide', [], (0.6, 0.0, 0.0),
-               {'Hidden Level': 0.6}, {}, {'Hidden Level': False}),
+    # animated parameters, pressed at 5: Level gets a key there; Steps is 4 at 5 (between its keys
+    # 3 and 5), the value that the status gives, so it is unchanged and gets no key. The render, at
+    # 0, gets the keys' values there (Level 0.25, Steps 3)
+    ButtonCase('eu.gmic.UserFileButton', 'Press@5',
+               ['-s', 'Level@0=0.25', '-s', 'Level@10=0.5', '-s', 'Steps@0=3', '-s', 'Steps@10=5'],
+               (0.25, 0.0, 0.3), {'Level': 0.25, 'Steps': 3},
+               {'Level': [[0.0, 0.25], [5.0, 0.75], [10.0, 0.5]],
+                'Steps': [[0.0, 3], [10.0, 5]]},
+               {}),
+    # "_0" hides the parameter in G'MIC-Qt: its value is set, its visibility not yet (#173); the
+    # status removes the removable point Target (its checkbox goes off, the render gets nan,nan)
+    ButtonCase('eu.gmic.UserFileStatusVisibility', 'Hide', [], (0.6, 0.0, 1.0),
+               {'Hidden Level': 0.6, 'Target Enabled': False}, {}, {'Hidden Level': False}),
 )
 
 
@@ -227,6 +234,7 @@ def check_buttons(host, plugins, work):
     problems = []
     for case in BUTTON_CASES:
         name = '%s, %s pressed' % (case.pid, case.button)
+        button = case.button.split('@')[0]
         result = render_plugins.render(host, case.args + ['-s', case.button], plugins, work,
                                        TIMEOUT, (case.pid, CONTEXT, ['Source']))
         problem, errors = result[2], result[5]
@@ -238,9 +246,9 @@ def check_buttons(host, plugins, work):
             report = json.load(f)
         problems += ['%s: %s' % (name, p) for p in check_output(report, case.output)]
         params = report.get('params') or {}
-        if (params.get(case.button) or {}).get('type') != PUSH_BUTTON:
+        if (params.get(button) or {}).get('type') != PUSH_BUTTON:
             problems.append('%s: %s is not a push button (%s)'
-                            % (name, case.button, params.get(case.button)))
+                            % (name, button, params.get(button)))
         par = (((report.get('clipPreferences') or {}).get('clips') or {}).get('Source') or {}).get(
             'pixelAspectRatio') or 1.0
         for param, expected in case.values.items():

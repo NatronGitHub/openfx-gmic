@@ -514,6 +514,13 @@ enum class InputsStatus
 	kNoLayer, // no image for a layer at another frame (layer times)
 };
 
+// what fetchInputs did (C++ Core Guidelines F.21)
+struct InputsResult
+{
+	InputsStatus status = InputsStatus::kOk;
+	std::string message; // why there are no inputs (not kOk)
+};
+
 // ---------------------------------------------------------------------------------------------
 // The effect instance
 
@@ -540,7 +547,7 @@ private:
 
 	// the render fails (a missing image): unless the host aborted it, then the output is discarded
 	void failUnlessAborted() const;
-	InputsStatus fetchInputs(double time, SequenceData& sd, GmicInputs& in, std::string& message);
+	InputsResult fetchInputs(double time, SequenceData& sd, GmicInputs& in) const;
 	void fetchParamValues(SequenceData& sd, const OfxRectI& rect, double par, double t, const OfxPointD& renderScale) const;
 	LayerTimes layerTimesAt(double t) const;
 	double inputTime(const LayerTimes& lt, int i, double t) const;
@@ -559,7 +566,7 @@ private:
 	void pointsUpdateEnabled(int onlyParam);
 	void draftModeUpdateEnabled();
 	void buttonPressed(int button, double time);
-	void setParamValue(int i, const SequenceData& sd, const GmicInputs& in, double time);
+	void setParamValue(int i, const SequenceData& sd, const GmicInputs& in, const OfxPointD& renderScale, double time);
 
 	const GlobalData& _gd;
 	OFX::Clip* _output;
@@ -577,6 +584,7 @@ private:
 	// pointsMoveToSource), also kept in the hidden parameter kPointsFromSourceParam
 	OFX::StringParam* _pointsFromSource = nullptr;
 	std::vector<std::optional<OfxPointD>> _pointFromSource; // per _gd.param
+	bool _pressRunning = false; // a push button's run is going on (see buttonPressed)
 	GmicInstanceData _gmic;
 };
 
@@ -924,8 +932,8 @@ void GMICEffect::changedParam(const OFX::InstanceChangedArgs& args, const std::s
 		break;
 	}
 
-	// a push button pressed (issue #174), by the user or a script (the plug-in never presses one)
-	if (args.reason != OFX::eChangePluginEdit) {
+	// a push button pressed (issue #174), by the user or a script (Natron reports both as user edits)
+	if (args.reason == OFX::eChangeUserEdit) {
 		for (int i = 1; i < _gd.nofParams; i++) {
 			if (_gd.param[i].paramType == ParamType::Button && _gd.param[i].paramName == paramName) {
 				buttonPressed(i, args.time);
@@ -1161,22 +1169,44 @@ void GMICEffect::draftModeUpdateEnabled()
 // reaches the result through the values that the preview's status sets (Mandelbrot's zoom
 // buttons write new coordinates, Randomize Seed a new seed). Here, renders always give 0 for a
 // button; pressing it runs the filter's preview command once, with 1 for it and the other values
-// at the time of the press, on the input images at that time, and sets the parameter values that
-// the run's status gives, as G'MIC-Qt's preview does (pluginRunStatus). These changes are one
-// undo step (an edit block named after the button), set at the time of the press on animated
-// parameters. The run's image is discarded: a button whose filter sets no status does nothing.
-// From the instance changed action, the only place besides interacts where an effect may set its
-// parameters; the host's GUI waits for the run.
+// at the time of the press, on the input images at that time scaled down to G'MIC-Qt's preview
+// size, and sets the parameter values that the run's status gives, as G'MIC-Qt's preview does
+// (pluginRunStatus). These changes are one undo step (an edit block named after the button), set
+// at the time of the press on animated parameters; a parameter whose G'MIC argument stays the
+// same is not set. The run's image is discarded: a button whose filter sets no status does
+// nothing. From the instance changed action, the only place besides interacts where an effect may
+// set its parameters; the host's GUI waits for the run, which the user can cancel.
 void GMICEffect::buttonPressed(int button, double time)
 {
-	SequenceData sd;
-	GmicInputs inputs;
-	std::string message;
-	if (pluginPassesSourceThrough(_gd) || fetchInputs(time, sd, inputs, message) != InputsStatus::kOk) {
-		if (!message.empty()) gmicLog("openfx-gmic: %s: %s: %s\n", _gd.pluginInfo.name.c_str(), _gd.param[button].displayName.c_str(), message.c_str());
+	// one press at a time: the host may process its events while the run goes on (Natron's progress
+	// panel does, so that its Cancel works), and so call the instance changed action again
+	if (_pressRunning) {
+		gmicLog("openfx-gmic: %s: %s: ignored, a press is running\n", _gd.pluginInfo.name.c_str(), _gd.param[button].displayName.c_str());
 		return;
 	}
-	const OfxPointD renderScale = { 1., 1. };
+	struct PressRunning {
+		bool& running;
+		explicit PressRunning(bool& r) : running(r) { running = true; }
+		~PressRunning() { running = false; }
+		PressRunning(const PressRunning&) = delete;
+		PressRunning& operator=(const PressRunning&) = delete;
+	} pressRunning(_pressRunning);
+	if (pluginPassesSourceThrough(_gd)) return;
+	SequenceData sd;
+	GmicInputs inputs;
+	const InputsResult fetched = fetchInputs(time, sd, inputs);
+	if (fetched.status != InputsStatus::kOk) {
+		gmicLog("openfx-gmic: %s: %s: %s\n", _gd.pluginInfo.name.c_str(), _gd.param[button].displayName.c_str(), fetched.message.c_str());
+		return;
+	}
+	// (the host's: 1 in Natron, which gives full-resolution images outside renders)
+	OfxPointD renderScale = { 1., 1. };
+	{
+		const OFX::PropertySet& props = inputs.images[0]->getPropertySet();
+		const std::optional<double> sx = hostQuery([&props] { return props.propGetDouble(kOfxImageEffectPropRenderScale, 0); });
+		const std::optional<double> sy = hostQuery([&props] { return props.propGetDouble(kOfxImageEffectPropRenderScale, 1); });
+		if (sx && sy && *sx > 0. && *sy > 0.) renderScale = { *sx, *sy };
+	}
 	fetchParamValues(sd, inputs.firstRect, inputs.firstPAR, time, renderScale);
 	sd.floatValue[button][0] = 1.f;
 	const GmicStatusRun run = pluginRunStatus(sd, _gd, *this);
@@ -1189,7 +1219,8 @@ void GMICEffect::buttonPressed(int button, double time)
 	EditBlock editBlock(*this, _gd.param[button].displayName, EditBlock::eBeginOnChange, EditBlock::eHostErrorsIgnore);
 	for (const int i : run.changed) {
 		editBlock.open();
-		setParamValue(i, sd, inputs, time);
+		// a value that the host refuses doesn't keep the others from being set
+		hostTry([&] { setParamValue(i, sd, inputs, renderScale, time); });
 	}
 }
 
@@ -1206,9 +1237,8 @@ void setValueOrKey(P* param, double time, const V&... value)
 }
 
 // Sets parameter i to its value in sd, at time (see setValueOrKey): the inverse of
-// fetchParamValues, with a render scale of 1, points relative to in.firstRect. Push buttons have
-// no value.
-void GMICEffect::setParamValue(int i, const SequenceData& sd, const GmicInputs& in, double time)
+// fetchParamValues, points relative to in.firstRect at renderScale. Push buttons have no value.
+void GMICEffect::setParamValue(int i, const SequenceData& sd, const GmicInputs& in, const OfxPointD& renderScale, double time)
 {
 	const Parameter& param = _gd.param[i];
 	const float* const value = sd.floatValue[i];
@@ -1238,8 +1268,8 @@ void GMICEffect::setParamValue(int i, const SequenceData& sd, const GmicInputs& 
 		// percent of Source, from its top-left corner, to canonical coordinates (see fetchParamValues)
 		const OfxRectI& r = in.firstRect;
 		const int w = std::max(1, r.x2 - r.x1), h = std::max(1, r.y2 - r.y1);
-		const double x = (value[0] * w / 100. + r.x1) * in.firstPAR;
-		const double y = (100. - value[1]) * h / 100. + r.y1;
+		const double x = (value[0] * w / 100. + r.x1) * in.firstPAR / renderScale.x;
+		const double y = ((100. - value[1]) * h / 100. + r.y1) / renderScale.y;
 		setValueOrKey(std::get<OFX::Double2DParam*>(_params[i]), time, x, y);
 	} break;
 	case ParamType::Text: {
@@ -1264,8 +1294,8 @@ void checkImageFormat(const OFX::Image& image)
 // and its input images, as in render: the layer inputs up to the first one that is missing, at
 // their layer times, converted to float planar buffers (in.buffers, which sd.inWorld points to) and
 // unpremultiplied. kNoSource: no Source image; kNoLayer: no image for a layer at another frame
-// (unless the host aborted the render), which the render must not drop. message says which one.
-InputsStatus GMICEffect::fetchInputs(double time, SequenceData& sd, GmicInputs& in, std::string& message)
+// (unless the host aborted the render), which the render must not drop; with a message.
+InputsResult GMICEffect::fetchInputs(double time, SequenceData& sd, GmicInputs& in) const
 {
 	const float scale = kGmicValueScale;
 	for (int i = 0; i < _gd.nofParams; i++) {
@@ -1309,16 +1339,14 @@ InputsStatus GMICEffect::fetchInputs(double time, SequenceData& sd, GmicInputs& 
 			// the filters that use frames depend on their order.
 			char msg[512];
 			snprintf(msg, sizeof(msg), "%s: no image from %s at frame %g", inputName(i).c_str(), clipName.c_str(), inTime);
-			message = msg;
-			return InputsStatus::kNoLayer;
+			return { InputsStatus::kNoLayer, msg };
 		}
 		if (!in.images[i]) {
 			sd.inputConnected[i] = false;
 			if (i == 0) {
 				char msg[512];
 				snprintf(msg, sizeof(msg), "No image from %s at frame %g", clipName.c_str(), inTime);
-				message = msg;
-				return InputsStatus::kNoSource;
+				return { InputsStatus::kNoSource, msg };
 			}
 			sd.inWorld[i].data = nullptr;
 			break;
@@ -1352,7 +1380,7 @@ InputsStatus GMICEffect::fetchInputs(double time, SequenceData& sd, GmicInputs& 
 		}
 	}
 	if (!(in.firstPAR > 0.)) in.firstPAR = 1.;
-	return InputsStatus::kOk;
+	return {};
 }
 
 // the process code that the host sees
@@ -1391,18 +1419,18 @@ void GMICEffect::render(const OFX::RenderArguments& args)
 	GmicInputs inputs;
 	inputs.firstRect = dstRect;
 	inputs.firstPAR = outputImg->getPixelAspectRatio();
-	std::string message;
-	switch (fetchInputs(time, sd, inputs, message)) {
+	const InputsResult fetched = fetchInputs(time, sd, inputs);
+	switch (fetched.status) {
 	case InputsStatus::kOk:
 		break;
 	case InputsStatus::kNoLayer:
-		showRenderError(*this, message);
+		showRenderError(*this, fetched.message);
 		OFX::throwSuiteStatusException(kOfxStatFailed);
 		break;
 	case InputsStatus::kNoSource:
 		// the render fails: say why, unless the host aborted it
 		if (!abort()) {
-			showRenderError(*this, message);
+			showRenderError(*this, fetched.message);
 		}
 		failUnlessAborted();
 		return;

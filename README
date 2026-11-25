@@ -343,12 +343,18 @@ filters, the plug-in prints one line for each of these ("openfx-gmic: previewFir
 warning on the node says so.
 
 G'MIC's button() parameters (e.g. Mandelbrot - Julia Sets' Zoom In, Randomize Seed) are push
-buttons. As in G'MIC-Qt, where a click makes a preview with the button pressed, then sets the
-parameter values that the preview's status gives: a press runs the filter's preview command once
-on the input at the current frame, with the button pressed, and sets those values (one undo step;
-the host waits for the run). Renders get 0 for a button, as G'MIC-Qt's Apply, so a button whose
-filter sets no values does nothing. Buttons were checkboxes before: Natron doesn't load such a
-saved checkbox (another parameter type), and the other saved values are unchanged.
+buttons. In G'MIC-Qt, a click makes a preview with the button pressed, then sets the parameter
+values that the preview's status gives. Here, a press runs the filter's preview command once with
+the button pressed, on the input at the current frame scaled down to at most 512 pixels (as
+G'MIC-Qt's preview image; the filter gets G'MIC-Qt's _preview_timeout, 16 seconds), and sets those
+values (one undo step). The host waits for the run: its progress shows at once, and its Cancel
+(e.g. in Natron's Progress panel) stops it, without changing anything. Values that depend on the
+image size may differ slightly from those of a full-size run. Renders get 0 for a button, as
+G'MIC-Qt's Apply, so a button whose filter sets no values does nothing. One difference: in G'MIC-Qt,
+with its Preview off and a filter that sets no status, a click makes no run, and the next Apply
+gets 1 for the button. Buttons were checkboxes before: Natron doesn't load such a saved checkbox
+(another parameter type), and the other saved values are unchanged; a script can't set them
+either (a push button has no value).
 
 Environment
 -----------
