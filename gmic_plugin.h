@@ -131,8 +131,9 @@ struct ResultGeometry
 };
 
 // Does the output keep the result's size with Resize Mode Fixed and Dynamic (issue #175)? Only on
-// a host with multi-resolution: on the others, the output keeps Source's size, the result is
-// resized to it as before, and there is no probe (pluginResultGeometry).
+// a host with multi-resolution (or with the test aid OFX_GMIC_MULTIRES=1): on the others, the
+// output keeps Source's size, the result is resized to it as before, and there is no probe
+// (pluginResultGeometry).
 bool pluginKeepsResultSize();
 
 // Resize Mode Dynamic (issue #175): the geometry of the result that a render with sequenceData's
@@ -145,7 +146,8 @@ bool pluginKeepsResultSize();
 // see kSmallProbesPixels) is probed at its own size. The probes and predictions are kept for
 // their command lines and input sizes (for Output Layer "Frame", per frame), so that they run
 // again only when these change; a lookup of a probe that is running waits for it. All within
-// kPredictionTimeLimit. Empty if the host has no multi-resolution (pluginKeepsResultSize), if even
+// kPredictionTimeLimit. Empty if the host has no multi-resolution (pluginKeepsResultSize, which
+// the test aid OFX_GMIC_MULTIRES can override), if even
 // the probe at the real size failed, ran out of memory or past the time limit (logged; a timeout
 // is remembered for a while, see timedOutRecently), or if it gave no or an empty result: the
 // output then keeps Source's region of definition.

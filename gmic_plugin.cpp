@@ -265,19 +265,32 @@ static const int kNofLayerTimeParams = 2 + 1 + 4;
 // Does the host support multi-resolution (kOfxImageEffectPropSupportsMultiResolution)? Without
 // it, the output keeps Source's size whatever the region of definition says: Resize Mode Fixed and
 // Dynamic then resize the result to Source's size, as before issue #175, and there is no probe.
-// OFX_GMIC_MULTIRES=1 or 0 overrides the host's property, read once: for test hosts that render
-// any region of definition but don't say so (openfx's hostDemo sets the property to 0).
+// OFX_GMIC_MULTIRES=1 or 0 overrides the host's property, read once: a test aid, for test hosts
+// that render any region of definition but don't say so (openfx's hostDemo sets the property to
+// 0). On a host that really lacks multi-resolution, 1 gives wrong outputs. Another value is
+// ignored, with a note; an override that contradicts the host's property gets a note, once.
 static bool hostSupportsMultiResolution()
 {
 	static const std::optional<bool> forced = []() -> std::optional<bool> {
 		const char* const env = std::getenv("OFX_GMIC_MULTIRES");
-		if (env && strcmp(env, "1") == 0) return true;
-		if (env && strcmp(env, "0") == 0) return false;
+		if (!env) return std::nullopt;
+		if (strcmp(env, "1") == 0) return true;
+		if (strcmp(env, "0") == 0) return false;
+		gmicLog("openfx-gmic: OFX_GMIC_MULTIRES=\"%s\" is neither 1 nor 0: ignored\n", env);
 		return std::nullopt;
 	}();
-	if (forced) return *forced;
 	const OFX::ImageEffectHostDescription* const host = OFX::getImageEffectHostDescription();
-	return host && host->supportsMultiResolution;
+	const bool hostProperty = host && host->supportsMultiResolution;
+	if (!forced) return hostProperty;
+	if (*forced != hostProperty) {
+		static std::once_flag noted;
+		std::call_once(noted, [hostProperty] {
+			gmicLog("openfx-gmic: OFX_GMIC_MULTIRES=%d overrides the host's multi-resolution support (%d), a test aid: "
+			        "on a host that doesn't render the plug-in's region of definition, outputs are wrong\n",
+			        hostProperty ? 0 : 1, hostProperty ? 1 : 0);
+		});
+	}
+	return *forced;
 }
 
 // Ignore Alpha (see fullCommand): _openfx_gmic_alpha_split stores the alpha channel of every image
