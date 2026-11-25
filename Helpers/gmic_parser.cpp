@@ -390,8 +390,9 @@ void processParam(const string& s, EffectParameter& cp)
 		// 'folder(_default_foldername)'
 		// Add a foldername parameter (as a folderchooser).
 //		cp.paramType = "text";
+		// an empty default stays empty: the plug-in passes the home folder for an empty value, as
+		// G'MIC-Qt (see gmicCommand)
 		cp.text = strTrim(pval, "\"");
-		if (cp.text == "") cp.text = "./";
 		cp.defaultValue = cp.text;
 	} else if (cp.paramType == "link") {
 		// 'link(_alignment,_label,URL)'
