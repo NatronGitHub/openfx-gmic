@@ -206,7 +206,7 @@ def _progress_problem(report):
     return None
 
 
-def render(host, host_args, plugins, work, timeout, plugin, host_threads=False, frame='0'):
+def render(host, host_args, plugins, work, timeout, plugin, host_threads=False, frame='0', extra_env=None):
     pid, context, clips = plugin
     d = os.path.join(work, pid[len('eu.gmic.'):])
     shutil.rmtree(d, ignore_errors=True)
@@ -221,6 +221,12 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False, 
     # their files (e.g. Valeur Moyenne LCH), is in the work directory
     home = os.path.join(work, 'home')
     env = dict(os.environ, OFX_PLUGIN_PATH=plugins, HOME=home, USERPROFILE=home)
+    # extra_env: variables to set, or to remove (None), for this render only
+    for name, value in (extra_env or {}).items():
+        if value is None:
+            env.pop(name, None)
+        else:
+            env[name] = value
     if host_threads:
         env.pop('OMP_NUM_THREADS', None)
     else:

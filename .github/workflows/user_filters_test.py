@@ -19,21 +19,27 @@ the value, printed, must be the number of CPUs (hostDemo runs one render, whose 
 the hardware threads). This shows that the count reaches G'MIC, not that the plug-in's prefix is
 applied: the value is also G'MIC's own default.
 
-User File Larger, User File Smaller and User File Shifted give results of another size or
-position (#175). hostDemo reports no multi-resolution support: as it is, User File Larger must be
-resized to Source's size, as before #175. The other checks run with OFX_GMIC_MULTIRES=1, which
-makes the plug-in predict the result's size anyway. With Resize Mode Dynamic, the default, the
-output must have the result's size,
-and the region of definition its size and position, from Source's top-left corner; with Resize
-Mode Fixed (Inplace), User File Larger keeps Source's size and region of definition. No render
-may warn that the result doesn't match the output, except User File Content Size, whose size
-depends on the pixels. On a 1800x1080-pixel Source: rotations (User File Rotate) and sizes in
-percent that are no exact fractions (User File Percent) must be predicted within the plug-in's
-1-pixel margin; Larger, Smaller and Shifted must be exact, with no margin; and User File Frame Max
+The result-size checks (#175) run only with the user filter file (not with --update-file or
+--user-source: they don't depend on where the file comes from). hostDemo renders any region of
+definition but reports no multi-resolution support. As it is, without OFX_GMIC_MULTIRES, User
+File Larger (Resize Mode Dynamic) and User File Smaller (Fixed) must be resized to Source's size,
+as before #175, with no warning. The other result-size checks render with OFX_GMIC_MULTIRES=1 (a
+test aid of the plug-in), which makes it predict the result's size, as on Natron; the
+render-scale, CPU and channel checks render without it. With Resize Mode Dynamic, the default,
+User File Larger, User File Smaller and User File Shifted must output the result's size, and the
+region of definition its size and position, from Source's top-left corner; with Fixed
+(Inplace), Source's size and region of definition, cropped or padded. No render may warn that
+the result doesn't match the output, except User File Content Size, whose size depends on the
+pixels. User File Larger and User File Shifted are also rendered at render scale 0.5: the output
+is half the scale-1 output; Larger's canonical region of definition is the scale-1 one, and
+Shifted's pos(10,20), in pixels of the image G'MIC gets, moves it twice as far in canonical
+coordinates. On a 1800x1080-pixel Source: rotations (User File Rotate) and sizes in percent that
+are no exact fractions (User File Percent) must be predicted within the plug-in's 1-pixel
+margin; Larger, Smaller and Shifted must be exact, with no margin; and User File Frame Max
 (percent of max(w,h)), User File Area Size (sqrt(W*H)) and User File Product (W*H/1024) must be
 confirmed at full size, exactly, all without a warning. User File Slow is slower than the
-plug-in's 10 s prediction budget: rendered at frames 0 and 1, its prediction must time out once,
-the second query must not try again, and both outputs have Source's size (about 35 s).
+plug-in's 10 s prediction budget: rendered at frames 0 and 1, its prediction must time out
+once, the second query must not try again, and both outputs have Source's size (about 35 s).
 
 With --stdlib, the same filters are then rendered with a copy of the whole built-in standard
 library before them in the file, as in a user's copied gmic_stdlib.gmic: the outputs must be the
@@ -116,6 +122,8 @@ GEOMETRY_CASES = [
 GEOMETRY_WARNING = "doesn't match the output"
 # the plug-in's override of the host's multi-resolution support (see run_test)
 MULTIRES_ENV = 'OFX_GMIC_MULTIRES'
+MULTIRES_ON = {MULTIRES_ENV: '1'}  # (render_plugins.render()'s extra_env)
+MULTIRES_UNSET = {MULTIRES_ENV: None}
 # the plug-in's notes when it refines a prediction with thin probes, or confirms it with a probe at
 # full size (see resultGeometry)
 REFINED_NOTE = 'refined with thin probes'
@@ -158,6 +166,7 @@ CPUS_PLUGIN = 'eu.gmic.UserFileCpus'  # its output is G'MIC's $_cpus (divided by
 CHANNELS_PLUGIN = 'eu.gmic.UserFileFiveChannels'
 CHANNELS_ERROR = 'has 5 channels (should be at most 4)'
 USER_SOURCE = '.gmic'  # (install_user_file): the user source, ~/.gmic
+USER_FILE = 'gmic_ofx.gmic'  # (install_user_file): the user filter file
 
 
 def update_file_name():
@@ -259,7 +268,7 @@ def large_source_render(host, plugins, work, pid, args):
     """
     sw, sh = LARGE_SOURCE
     result = render_plugins.render(host, ['-i', 'Source=rod:0,0,%d,%d' % (sw, sh)] + args, plugins, work,
-                                   TIMEOUT, (pid, CONTEXT, []))
+                                   TIMEOUT, (pid, CONTEXT, []), extra_env=MULTIRES_ON)
     problem, errors, log = result[2], result[5], result[6]
     if problem:
         return '%s %s' % (problem, ' '.join(errors)), log, {}, [], (0, 0), 1.0
@@ -409,7 +418,8 @@ def check_timeout(host, plugins, work):
         A list of problems, empty if both frames have Source's size, the first prediction timed
         out, and the second query didn't try again (the timeout is remembered).
     """
-    result = render_plugins.render(host, [], plugins, work, TIMEOUT, (SLOW_PLUGIN, CONTEXT, ['Source']), frame='0,1')
+    result = render_plugins.render(host, [], plugins, work, TIMEOUT, (SLOW_PLUGIN, CONTEXT, ['Source']), frame='0,1',
+                                   extra_env=MULTIRES_ON)
     problem, errors, log = result[2], result[5], result[6]
     if problem:
         return ['%s: %s %s' % (SLOW_PLUGIN, problem, ' '.join(errors))]
@@ -428,10 +438,11 @@ def check_timeout(host, plugins, work):
 
 
 def check_no_multires(host, plugins, work):
-    """Renders User File Larger on hostDemo as it is, without multi-resolution support.
+    """Renders results of another size on hostDemo as it is, without multi-resolution support.
 
-    The plug-in must then resize the result to Source's size, as before #175: Source's size and
-    region of definition, no probe and no warning.
+    User File Larger (Resize Mode Dynamic) and User File Smaller (Fixed) must then be resized to
+    Source's size, as before #175: Source's size and region of definition, a uniform output, and
+    no warning or note of a refined or confirmed prediction.
 
     Args:
         host: the path of hostDemo.
@@ -441,25 +452,87 @@ def check_no_multires(host, plugins, work):
     Returns:
         A list of problems.
     """
-    pid = 'eu.gmic.UserFileLarger'
-    result = render_plugins.render(host, [], plugins, work, TIMEOUT, (pid, CONTEXT, ['Source']))
-    problem, errors, log = result[2], result[5], result[6]
-    if problem:
-        return ['%s without multi-resolution: %s %s' % (pid, problem, ' '.join(errors))]
-    with open(os.path.join(work, pid[len('eu.gmic.'):], 'report.json'), encoding='utf-8') as f:
-        report = json.load(f)
-    problems = check_output(report, (1.0, 0.0, 0.0, 1.0))
-    first = (report.get('renders') or [{}])[0]
-    output = first.get('output') or {}
-    if (output.get('w'), output.get('h')) != (render_plugins.INPUT_WIDTH, render_plugins.INPUT_HEIGHT):
-        problems.append('the output is %sx%s, not Source\'s size' % (output.get('w'), output.get('h')))
-    rod = (first.get('regionOfDefinition') or {}).get('rod')
-    src = ((first.get('inputs') or {}).get('Source') or {}).get('regionOfDefinition')
-    if rod != src:
-        problems.append("the region of definition is %s, not Source's %s" % (rod, src))
-    if GEOMETRY_WARNING in log or REFINED_NOTE in log or CONFIRMED_NOTE in log:
-        problems.append('a probe or a warning')
-    return ['%s without multi-resolution: %s' % (pid, p) for p in problems]
+    problems = []
+    for pid, args, color in (('eu.gmic.UserFileLarger', [], (1.0, 0.0, 0.0, 1.0)),
+                             ('eu.gmic.UserFileSmaller', ['-s', 'Resize Mode=0'], (0.0, 1.0, 0.0, 1.0))):
+        name = '%s %s without multi-resolution' % (pid, ' '.join(args))
+        result = render_plugins.render(host, args, plugins, work, TIMEOUT, (pid, CONTEXT, ['Source']),
+                                       extra_env=MULTIRES_UNSET)
+        problem, errors, log = result[2], result[5], result[6]
+        if problem:
+            problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
+            continue
+        with open(os.path.join(work, pid[len('eu.gmic.'):], 'report.json'), encoding='utf-8') as f:
+            report = json.load(f)
+        problems += ['%s: %s' % (name, p) for p in check_output(report, color)]
+        first = (report.get('renders') or [{}])[0]
+        output = first.get('output') or {}
+        if (output.get('w'), output.get('h')) != (render_plugins.INPUT_WIDTH, render_plugins.INPUT_HEIGHT):
+            problems.append('%s: the output is %sx%s, not Source\'s size' % (name, output.get('w'), output.get('h')))
+        rod = (first.get('regionOfDefinition') or {}).get('rod')
+        src = ((first.get('inputs') or {}).get('Source') or {}).get('regionOfDefinition')
+        if rod != src:
+            problems.append("%s: the region of definition is %s, not Source's %s" % (name, rod, src))
+        if GEOMETRY_WARNING in log or REFINED_NOTE in log or CONFIRMED_NOTE in log:
+            problems.append('%s: a warning, or a note of a refined or confirmed prediction' % name)
+    return problems
+
+
+def check_scaled_geometry(host, plugins, work):
+    """Renders User File Larger and User File Shifted at render scales 1 and RENDER_SCALE.
+
+    With OFX_GMIC_MULTIRES=1, on a Source that hostDemo makes in canonical coordinates: at
+    RENDER_SCALE, the output must be the scale-1 output times RENDER_SCALE. Larger's canonical
+    region of definition must be the scale-1 one; Shifted's pos(10,20) is in pixels of the image
+    that G'MIC gets, so its offset from Source is twice the scale-1 one in canonical coordinates.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems.
+    """
+    problems = []
+    for pid in ('eu.gmic.UserFileLarger', 'eu.gmic.UserFileShifted'):
+        renders = {}
+        for scale in (1, RENDER_SCALE):
+            name = '%s at scale %s' % (pid, scale)
+            result = render_plugins.render(host, ['--scale', str(scale), '-i', 'Source=rod:0,0,160,120'], plugins,
+                                           work, TIMEOUT, (pid, CONTEXT, []), extra_env=MULTIRES_ON)
+            problem, errors, log = result[2], result[5], result[6]
+            if problem:
+                problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
+                continue
+            if GEOMETRY_WARNING in log:
+                problems.append('%s: the result does not match the output' % name)
+            with open(os.path.join(work, pid[len('eu.gmic.'):], 'report.json'), encoding='utf-8') as f:
+                renders[scale] = (json.load(f).get('renders') or [{}])[0]
+        if len(renders) != 2:
+            continue
+        full, scaled = renders[1], renders[RENDER_SCALE]
+        out1, out2 = full.get('output') or {}, scaled.get('output') or {}
+        expected = (round((out1.get('w') or 0) * RENDER_SCALE), round((out1.get('h') or 0) * RENDER_SCALE))
+        if (out2.get('w'), out2.get('h')) != expected:
+            problems.append('%s at scale %s: the output is %sx%s, expected %dx%d'
+                            % (pid, RENDER_SCALE, out2.get('w'), out2.get('h'), expected[0], expected[1]))
+        rod1 = (full.get('regionOfDefinition') or {}).get('rod') or []
+        rod2 = (scaled.get('regionOfDefinition') or {}).get('rod') or []
+        src = ((full.get('inputs') or {}).get('Source') or {}).get('regionOfDefinition') or []
+        if len(rod1) != 4 or len(rod2) != 4 or len(src) != 4:
+            problems.append('%s: no region of definition' % pid)
+            continue
+        # the same size in canonical coordinates; the offset from Source's top-left corner (the
+        # scale-1 pos, 0 for Larger: the same region of definition) divided by RENDER_SCALE: pos is
+        # in pixels of the image that G'MIC gets
+        dx1, dy1 = rod1[0] - src[0], src[3] - rod1[3]
+        x1, y2 = src[0] + dx1 / RENDER_SCALE, src[3] - dy1 / RENDER_SCALE
+        want = [x1, y2 - (rod1[3] - rod1[1]), x1 + (rod1[2] - rod1[0]), y2]
+        if any(abs(a - b) > ROD_TOLERANCE for a, b in zip(rod2, want)):
+            problems.append('%s at scale %s: the region of definition is %s, expected %s (%s at scale 1)'
+                            % (pid, RENDER_SCALE, rod2, want, rod1))
+    return problems
 
 
 def check_geometry(host, plugins, work):
@@ -477,7 +550,8 @@ def check_geometry(host, plugins, work):
     for pid, args, geometry, color, warns, path, frame in GEOMETRY_CASES:
         name = '%s %s frame %s' % (pid, ' '.join(args), frame)
         clips = [] if args is OFFSET_SOURCE else ['Source']
-        result = render_plugins.render(host, args, plugins, work, TIMEOUT, (pid, CONTEXT, clips), frame=frame)
+        result = render_plugins.render(host, args, plugins, work, TIMEOUT, (pid, CONTEXT, clips), frame=frame,
+                                       extra_env=MULTIRES_ON)
         problem, errors, log = result[2], result[5], result[6]
         if problem:
             problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
@@ -699,16 +773,13 @@ def run_test(host, plugins, stdlib, runs, work, name):
     problems += check_channels(host, plugins, work)
     if not any(KEPT_NOTE in log for log in logs):
         problems.append("no note that the file's own definition of 'star_tone' is kept")
-    problems += check_no_multires(host, plugins, work)
-    # hostDemo renders any region of definition, but reports no multi-resolution support: the
-    # plug-in's OFX_GMIC_MULTIRES=1 makes it predict the result's size anyway
-    os.environ[MULTIRES_ENV] = '1'
-    try:
+    if name == USER_FILE:
+        # (the result-size checks: only with the user file, see the module docstring)
+        problems += check_no_multires(host, plugins, work)
         problems += check_geometry(host, plugins, work)
+        problems += check_scaled_geometry(host, plugins, work)
         problems += check_large_sources(host, plugins, work)
         problems += check_timeout(host, plugins, work)
-    finally:
-        os.environ.pop(MULTIRES_ENV, None)
     for p in problems:
         print('FAIL (user file): ' + p)
     passed = not problems
@@ -756,7 +827,7 @@ def main():
     # .config/gmic only without GMIC_PATH and XDG_CONFIG_HOME; the renders inherit this environment
     for var in ('GMIC_PATH', 'XDG_CONFIG_HOME', 'OFX_GMIC_UPDATE_FILE'):
         os.environ.pop(var, None)
-    name = 'gmic_ofx.gmic'
+    name = USER_FILE
     if args.update_file:
         name = update_file_name()
         os.environ['OFX_GMIC_UPDATE_FILE'] = '1'
