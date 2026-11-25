@@ -768,10 +768,10 @@ double canonicalEdge(int p, double par, double scale, bool high)
 }
 
 // Resize Mode Dynamic (issue #175): the region of definition of the result, from its geometry
-// (pluginResultGeometry, which runs G'MIC on blank inputs of the sizes of the inputs' regions of
+// (pluginResultGeometry, which predicts it from small probes of the inputs' regions of
 // definition, at the render time, with the layer times). Empty if it is Source's (a result of
 // Source's size at its top-left corner: Source's region of definition, exactly as before), or if
-// it is unknown (G'MIC failed). The pixel rectangle is the result's, its top-left corner at
+// it is unknown (G'MIC failed, or a size that isn't affine). The pixel rectangle is the result's, its top-left corner at
 // Source's moved by the result's pos(x,y), in canonical coordinates (see canonicalEdge).
 std::optional<OfxRectD> GMICEffect::resultRoD(const OfxRectD& sourceRod, double time, const OfxPointD& renderScale) const
 {

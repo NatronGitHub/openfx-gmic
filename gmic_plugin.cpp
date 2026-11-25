@@ -2393,9 +2393,10 @@ static void nameInputImages(const SequenceData* sequenceDataP, unsigned int nofI
 	}
 }
 
-// The probe's time limit, in seconds (0: none): past it, G'MIC is stopped, and the output keeps
-// Source's region of definition. (A maintainer's decision, pending: unlimited for now.)
-static const double kProbeTimeLimit = 0.;
+// The time limit of each of the probe's G'MIC runs, in seconds: a safety limit (the probes run on
+// small images, in a fraction of a second for most filters); past it, G'MIC is stopped, and the
+// output keeps Source's region of definition (logged)
+static const double kProbeTimeLimit = 10.;
 
 // gmic_plugin_call() on a worker thread (GmicWorker), as a render's runs: stopped past timeLimit
 // seconds (0: never), then *timedOut is true (G'MIC's result, which it returns, is then
@@ -2670,28 +2671,22 @@ static ProbeResult probeRun(SequenceData& probe, const GlobalData* globalDataP, 
 	return result;
 }
 
-static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequenceData, const GlobalData& globalData)
+// The geometry of the result that a render of probe's inputs (their sizes and offsets) outputs,
+// from one probe of them (probeRun, cached); empty if it failed or gave no or an empty result.
+// count: the number of results (0 if it failed).
+static std::optional<ResultGeometry> probeGeometry(SequenceData& probe, const GlobalData* globalDataP, unsigned int nofImages,
+	unsigned int& count)
 {
-	SequenceData probe = sequenceData; // (its inputs get the probe's images)
 	SequenceData* const sequenceDataP = &probe;
-	const GlobalData* const globalDataP = &globalData;
 	const EffectData& effectData = effectDataOf(globalDataP);
-	if (effectData.command.empty()) return std::nullopt; // passes Source through
-	unsigned int nofImages = 0;
-	for (int i = 0; i < globalDataP->nofInputs && i < kMaxLayers; i++) {
-		const World& in = sequenceDataP->inWorld[i];
-		if (!sequenceDataP->inputConnected[i] || in.width <= 0 || in.height <= 0) break;
-		nofImages++;
-	}
-	if (nofImages == 0) return std::nullopt;
-
+	count = 0;
 	// the key: the command line of the render (without the thread count, and without the status
 	// of a preview run, which only depends on what the key holds), and the inputs' sizes and
 	// offsets. Not the frame (Output Layer "Frame"): one run gives every frame's result, unless
 	// G'MIC kept only one (selected), as in the render.
 	GmicInstanceData instance;
 	string customCommands;
-	const bool preview = effectDataOf(globalDataP).previewOnly || sequenceDataP->floatValue[PARAM_PREVIEW][0] > 0;
+	const bool preview = effectData.previewOnly || sequenceDataP->floatValue[PARAM_PREVIEW][0] > 0;
 	string key = fullCommand(sequenceDataP, globalDataP, &instance, nofImages, preview ? GmicRun::kPreview : GmicRun::kMain, customCommands);
 	instance.options().custom_commands = NULL;
 	for (unsigned int i = 0; i < nofImages; i++) {
@@ -2708,12 +2703,116 @@ static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequence
 		r = probeRun(probe, globalDataP, nofImages, key, " -_openfx_gmic_frame_select " + std::to_string(frame) + budget);
 	}
 	if (r.results.empty()) return std::nullopt;
-	const ResultGeometry& g = r.results[resultIndexOf(sequenceDataP, globalDataP, (unsigned int)r.results.size(), frame, r.selected)];
+	count = (unsigned int)r.results.size();
+	const ResultGeometry& g = r.results[resultIndexOf(sequenceDataP, globalDataP, count, frame, r.selected)];
 	if (g.width <= 0 || g.height <= 0) {
 		gmicLog("G'MIC: %s: the run that measures the result's size gave an empty image: the output keeps Source's size\n",
 		        effectData.name.c_str());
 		return std::nullopt;
 	}
+	return g;
+}
+
+// The probes' sizes: Source's long side, in pixels (maintainer's decision on #175: small probes and
+// an affine fit, instead of a run at full size). Large enough that the filters' usual fixed borders
+// and outlines (a few to some 20 pixels) leave most of the image; multiples of 16, so that the
+// common percentages (50%, 25%, 12.5%, 150%...) of the long side are whole numbers. Two sizes give
+// the fit; the third one checks it, since a line goes through any two points: a size that isn't
+// an affine function of the input's (e.g. one that depends on W*H) fails it.
+static const int kProbeSizes[3] = { 64, 80, 96 };
+
+// The fit of a size or an offset Y against an input size X (Source's width or height), over the
+// probes, at the real size realX, if it is affine: Y = a*X + b. a is first tried as a fraction p/q
+// with q <= 16 (2, 3/2, 1/4...) and b as an integer, within half a pixel of every probe (the
+// rounding of a size in percent): the prediction is then exact for sizes in percent of the image
+// plus a fixed border. Else the least-squares fit, within 1 pixel of every probe (e.g. a
+// rotation's |cos| + |sin| * H/W, irrational): its prediction may be some pixels off at the real
+// size (the slope of 3 probes 32 pixels apart), which the render then crops or pads, with a
+// warning. Empty if no fit is close enough: not an affine function.
+static std::optional<int> fitAffine(const int (&X)[3], const int (&Y)[3], int realX)
+{
+	const double mx = (X[0] + X[1] + X[2]) / 3., my = (Y[0] + Y[1] + Y[2]) / 3.;
+	double sxx = 0., sxy = 0.;
+	for (int k = 0; k < 3; k++) {
+		sxx += (X[k] - mx) * (X[k] - mx);
+		sxy += (X[k] - mx) * (Y[k] - my);
+	}
+	if (!(sxx > 0.)) return std::nullopt;
+	const double slope = sxy / sxx;
+	const auto fits = [&](double a, double b, double tolerance) {
+		for (int k = 0; k < 3; k++) {
+			if (std::fabs(a * X[k] + b - Y[k]) > tolerance + 1e-9) return false;
+		}
+		return true;
+	};
+	for (int q = 1; q <= 16; q++) {
+		const double a = std::round(slope * q) / q;
+		const double b = std::round(my - a * mx);
+		if (fits(a, b, 0.5)) return (int)std::lround(a * realX + b);
+	}
+	const double b = my - slope * mx;
+	if (fits(slope, b, 1.)) return (int)std::lround(slope * realX + b);
+	return std::nullopt;
+}
+
+static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequenceData, const GlobalData& globalData)
+{
+	const GlobalData* const globalDataP = &globalData;
+	const EffectData& effectData = effectDataOf(globalDataP);
+	if (effectData.command.empty()) return std::nullopt; // passes Source through
+	unsigned int nofImages = 0;
+	for (int i = 0; i < globalDataP->nofInputs && i < kMaxLayers; i++) {
+		const World& in = sequenceData.inWorld[i];
+		if (!sequenceData.inputConnected[i] || in.width <= 0 || in.height <= 0) break;
+		nofImages++;
+	}
+	if (nofImages == 0) return std::nullopt;
+	const World& source = sequenceData.inWorld[0];
+	const int longSide = std::max(source.width, source.height);
+	unsigned int count = 0;
+	if (longSide <= kProbeSizes[2]) {
+		// a small Source: one probe at its own size, exact
+		SequenceData probe = sequenceData;
+		return probeGeometry(probe, globalDataP, nofImages, count);
+	}
+	// the inputs scaled so that Source's long side is each probe size: their aspect ratios,
+	// relative sizes and offsets kept (rounded to pixels)
+	int W[3], H[3], w[3], h[3], x[3], y[3];
+	unsigned int counts[3];
+	for (int k = 0; k < 3; k++) {
+		SequenceData probe = sequenceData;
+		const double scale = (double)kProbeSizes[k] / longSide;
+		for (unsigned int i = 0; i < nofImages; i++) {
+			World& in = probe.inWorld[i];
+			in.origin_x = (int)std::lround(in.origin_x * scale);
+			in.origin_y = (int)std::lround(in.origin_y * scale);
+			in.width = std::max(1, (int)std::lround(in.width * scale));
+			in.height = std::max(1, (int)std::lround(in.height * scale));
+		}
+		W[k] = probe.inWorld[0].width;
+		H[k] = probe.inWorld[0].height;
+		const std::optional<ResultGeometry> g = probeGeometry(probe, globalDataP, nofImages, counts[k]);
+		if (!g) return std::nullopt;
+		w[k] = g->width;
+		h[k] = g->height;
+		x[k] = g->x;
+		y[k] = g->y;
+	}
+	// (Output Layer "Frame": the same number of results, so that the frame picks the same one)
+	const std::optional<int> fw = fitAffine(W, w, source.width), fh = fitAffine(H, h, source.height);
+	const std::optional<int> fx = fitAffine(W, x, source.width), fy = fitAffine(H, y, source.height);
+	if (counts[0] != counts[1] || counts[1] != counts[2] || !fw || !fh || !fx || !fy || *fw <= 0 || *fh <= 0 ||
+		*fw > kMaxPos || *fh > kMaxPos) {
+		gmicLog("G'MIC: %s: the result's size is not an affine function of the input's size (%dx%d, %dx%d, %dx%d for "
+		        "inputs of %dx%d, %dx%d, %dx%d): the output keeps Source's size\n", effectData.name.c_str(),
+		        w[0], h[0], w[1], h[1], w[2], h[2], W[0], H[0], W[1], H[1], W[2], H[2]);
+		return std::nullopt;
+	}
+	ResultGeometry g;
+	g.width = *fw;
+	g.height = *fh;
+	g.x = std::max(-(int)kMaxPos, std::min((int)kMaxPos, *fx));
+	g.y = std::max(-(int)kMaxPos, std::min((int)kMaxPos, *fy));
 	return g;
 }
 
@@ -2973,7 +3072,8 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 			}
 			if (!same && dynamic) {
 				// the output doesn't have the size that the region of definition declared (a size that
-				// depends on the pixels, which the blank inputs of pluginResultGeometry don't have, or
+				// depends on the pixels, which pluginResultGeometry's probes can't predict, a size rule
+				// that isn't affine, a prediction some pixels off, or
 				// a host that gives another output): cropped or padded, never resized
 				geometryWarning = "The result (" + std::to_string(sw) + "x" + std::to_string(sh) + " at " +
 					std::to_string(at.x) + "," + std::to_string(at.y) + " from Source's top-left corner) doesn't match the output (" +
