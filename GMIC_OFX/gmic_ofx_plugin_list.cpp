@@ -5,9 +5,9 @@
 //   gmic_ofx_plugin_list <GMIC.ofx> <output file>
 //
 // It loads the plug-in and calls OfxGetNumberOfPlugins, with OFX_GMIC_WRITE_PLUGIN_LIST set: the
-// plug-in writes the list when it builds it (gmic_plugin.cpp). HOME and APPDATA are set to a
-// directory that does not exist, so that no G'MIC configuration of the user (a gmic_ofx.gmic, or a
-// gmic_ofx_plugins.txt) changes the list. It fails unless the list has one entry per plug-in.
+// plug-in writes the list when it builds it (gmic_plugin.cpp). HOME, APPDATA and USERPROFILE are
+// set to a directory that does not exist, so that no G'MIC configuration of the user (a
+// gmic_ofx.gmic, a gmic_ofx_plugins.txt, or the user source ~/.gmic or user.gmic) changes the list. It fails unless the list has one entry per plug-in.
 // Built and run by CMakeLists.txt (GMIC_PLUGIN_LIST) and GMIC_OFX/Makefile.
 //
 // The plug-in reads these variables with the narrow getenv and writes with a narrow ofstream,
@@ -157,7 +157,8 @@ int run(const Path& pluginArg, const Path& output)
         return 1;
     }
     std::remove(kListName);
-    if (!setEnv("OFX_GMIC_WRITE_PLUGIN_LIST", kListName) || !setEnv("HOME", kNoConfig) || !setEnv("APPDATA", kNoConfig)) {
+    if (!setEnv("OFX_GMIC_WRITE_PLUGIN_LIST", kListName) || !setEnv("HOME", kNoConfig) || !setEnv("APPDATA", kNoConfig) ||
+        !setEnv("USERPROFILE", kNoConfig)) {
         fprintf(stderr, "gmic_ofx_plugin_list: could not set the environment\n");
         return 1;
     }

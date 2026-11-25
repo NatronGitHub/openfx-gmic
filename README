@@ -228,8 +228,9 @@ plug-ins"): a cached list of plug-ins numbers them as the old filter list did.
 
 As in G'MIC-Qt, the user source ~/.gmic (Windows: %USERPROFILE%\user.gmic), which G'MIC's
 command line also loads, is read after these filters (after the file above, or the built-in
-ones): its filters are added at the top level of the menus, and its commands are passed to G'MIC
-on every render, after those of the file above, which they replace. It may hold filters, commands
+ones): its filters are added in their own folders under G'MIC (its folders start again from
+the top), and its commands are passed to G'MIC on every render, after those of the file above,
+which they replace. It may hold filters, commands
 or both. It is read when the host loads the plug-in: after adding, removing or editing it, restart
 the host and clear its plug-in cache, as for a user file (new plug-ins may appear, and the others
 may be numbered differently).
@@ -315,8 +316,8 @@ create that node: re-enable the plug-in (and clear the cache) before opening and
 project.
 
 The bundle's list is made from the standard library built into the plug-in: it doesn't follow a
-user's gmic_ofx.gmic or G'MIC's update file (see "Filters"). For a list of the filters actually loaded, set
-OFX_GMIC_WRITE_PLUGIN_LIST (see "Environment").
+user's gmic_ofx.gmic, G'MIC's update file or ~/.gmic (see "Filters"). For a list of the filters
+actually loaded, set OFX_GMIC_WRITE_PLUGIN_LIST (see "Environment").
 
 Rendering
 ---------

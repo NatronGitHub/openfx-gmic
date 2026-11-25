@@ -121,8 +121,6 @@ void processCommand(const string& s, EffectData& cd)
 	// (G'MIC >= 3, accurate on parameter change). As G'MIC-Qt (FiltersModelReader.cpp), the
 	// preview command is what comes before the first '(', whatever the factor.
 	r3 = r3.substr(0, r3.find('('));
-	strReplace(r3, "+", "");
-	strReplace(r3, "*", "");
 
 	// As G'MIC-Qt (FiltersPresenter::Filter::isNoApplyFilter, isNoPreviewFilter): a command that is
 	// empty or exactly "_none_" is no command. No main command: a preview-only filter, rendered with
@@ -1507,6 +1505,7 @@ struct GuiFilter
 	string text; // its folder line (all its folders, '/'-separated), then its #@gui lines
 	vector<string> plainPath;
 	string plainName;
+	bool hidden = false; // by a hide() line
 };
 
 // Does hide(path) hide the filter (G'MIC-Qt's FiltersModel::Filter::matchFullPath)? Yes if the
@@ -1597,16 +1596,24 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 	endFilter();
 
 	// hide(): as G'MIC-Qt, after all the filters were read (a line also hides the filters of the
-	// filter files before it)
+	// filter files before it). The hidden filters are only marked here: they are left out after
+	// the identifiers are numbered (see below), so that hiding the first of two filters of the
+	// same name doesn't give its identifier to the other (G'MIC-Qt identifies a filter by a hash
+	// of its path, which hiding doesn't change).
 	for (const string& path : hidden) {
 		const vector<string> names = hidePathNames(path);
-		const size_t count = filters.size();
-		filters.erase(std::remove_if(filters.begin(), filters.end(),
-			[&names](const GuiFilter& f) { return hides(names, f); }), filters.end());
-		if (filters.size() == count) {
+		bool found = false;
+		for (GuiFilter& f : filters) {
+			if (!f.hidden && hides(names, f)) {
+				f.hidden = true;
+				found = true;
+			}
+		}
+		if (!found) {
 			gmicLog("openfx-gmic: Warning: hide(%s): no folder or filter with this path\n", path.c_str());
 		}
 	}
+	vector<bool> hiddenCds; // per cds entry: hidden by hide()
 
 	for (vector<GuiFilter>::const_iterator it = filters.begin(); it != filters.end(); ++it) {
 		string line2 = it->text;
@@ -1632,9 +1639,10 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 			// upgrade: no filter, and a plug-in there would shift the index of every other one.
 			doOutput = false;
 		}
-		if (doOutput && !cd.name.empty()) {
+		if (doOutput && !cd.name.empty() && (cds || !it->hidden)) {
 			if (cds) cds->push_back(cd);
 			if (lines) lines->push_back(line2);
+			hiddenCds.push_back(it->hidden);
 		}
 	}
 	if (!cds) {
@@ -1664,6 +1672,12 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
         }
         it->uniqueId = id;
         ids.insert(id);
+    }
+    // the filters that hide() hides, now that the others have their identifiers
+    for (size_t i = cds->size(); i-- > 0; ) {
+        if (!hiddenCds[i]) continue;
+        cds->erase(cds->begin() + (ptrdiff_t)i);
+        if (lines && i < lines->size()) lines->erase(lines->begin() + (ptrdiff_t)i);
     }
     hideBatchFilters(content, *cds, lines);
     for (vector<EffectData>::iterator it = cds->begin(); it != cds->end(); ++it) {

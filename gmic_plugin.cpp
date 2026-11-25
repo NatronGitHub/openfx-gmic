@@ -241,6 +241,19 @@ string get_gmic_rc_path()
 #endif
 }
 
+// The user's home folder in UTF-8, as G'MIC (gmic::path_user) and Qt (QDir::homePath()) find it:
+// $HOME, %USERPROFILE% on Windows; empty if the variable is not set or empty.
+static
+string homeFolder()
+{
+#ifndef _WIN32
+	const char* const home = getenv("HOME");
+	return home ? string(home) : string();
+#else
+	return getenvUtf8(L"USERPROFILE");
+#endif
+}
+
 // parameters added by pluginSetup besides the filter's own: Input, 4 layers, Command, the
 // "Advanced Options" group (start and end) and its 7 parameters; for the filters with layer inputs,
 // also the "Layer Times" group (start and end), Layers from Source and the 4 time offsets
@@ -663,19 +676,18 @@ static FilterFile loadUpdateFile()
 // The user source: G'MIC-Qt's default filter source (SourcesWidget::defaultList, read after the
 // standard library or the update file, Updater::buildFullStdlib), also the file of custom
 // commands that G'MIC's command line loads (gmic::path_user): ~/.gmic (Windows:
-// %USERPROFILE%\user.gmic). Its path and contents, an empty content if it is missing or
-// CImg-compressed (only G'MIC could read it).
+// %USERPROFILE%\user.gmic). G'MIC-Qt's other default source, $GMIC_PATH/.gmic (only when
+// GMIC_PATH is set), is not read. Its path (UTF-8) and contents, an empty content if it is
+// missing or CImg-compressed (only G'MIC could read it).
 static FilterFile loadUserSource()
 {
+	const string home = homeFolder();
+	if (home.empty()) return FilterFile();
 #ifdef _WIN32
-	const char* const home = std::getenv("USERPROFILE");
-	const char* const name = "\\user.gmic";
+	FilterFile file{home + "\\user.gmic", string()};
 #else
-	const char* const home = std::getenv("HOME");
-	const char* const name = "/.gmic";
+	FilterFile file{home + "/.gmic", string()};
 #endif
-	if (!home || !*home) return FilterFile();
-	FilterFile file{string(home) + name, string()};
 	file.content = loadStringFromFile(file.path);
 	static const string kCImgPrefix = "1 uint8 "; // (see loadUpdateFile)
 	if (file.content.compare(0, kCImgPrefix.size(), kCImgPrefix) == 0) {
