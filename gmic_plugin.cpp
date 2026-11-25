@@ -1200,6 +1200,7 @@ static bool isGmicArgument(const GlobalData* globalDataP, int i)
 	case ParamType::Float:
 	case ParamType::Color:
 	case ParamType::Point:
+	case ParamType::Button: // (0, except in the run of a press: see gmicArgument)
 		return true;
 	case ParamType::Bool:
 		return globalDataP->param[i].flags != kParamFlagsPointEnabled;
