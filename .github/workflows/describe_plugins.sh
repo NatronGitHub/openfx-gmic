@@ -210,7 +210,7 @@ if [ -f "$SHIPPED_LIST" ] && [ "${DESCRIBE_USER_LIST:-}" = 1 ]; then
     fi
 fi
 if [ "${DESCRIBE_UPDATE_FILE:-}" = 1 ]; then
-    update_name="update$(sed -n -e 's/^GMICVER *= *//p' "$SRC/Makefile" | tr -d '.\r ').gmic"
+    update_name="update$(sh "$SRC/.github/workflows/gmic_version.sh" "$SRC/Makefile" | tr -d .).gmic"
     # update_case <name> <OFX_GMIC_UPDATE_FILE> <expected number of plug-ins> [<text the log must
     #   have>] < <update file contents>
     # (in G'MIC's folder, see run_host)
