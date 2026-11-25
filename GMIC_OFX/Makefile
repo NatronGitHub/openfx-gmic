@@ -70,7 +70,6 @@ gmic_sources:
 	$(MAKE) -C $(SRCDIR) sources
 $(SRCDIR)/gmic.h $(SRCDIR)/gmic.cpp $(SRCDIR)/CImg.h $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_hotfixes.h \
   $(SRCDIR)/gmic_stdlib_community.h $(SRCDIR)/pocketfft_hdronly.h $(SRCDIR)/Licence_pocketfft.txt: gmic_sources ;
-$(OBJECTPATH)/gmic_plugin.o: $(SRCDIR)/gmic_hotfixes.h
 # COMMERCIAL: check that gmic_stdlib_community.h is the generated one (gmic_stdlib_commercial.sh)
 ifeq ($(LICENSE),COMMERCIAL)
 $(OBJECTPATH)/gmic.o: $(OBJECTPATH)/gmic_stdlib.checked
@@ -79,18 +78,12 @@ $(OBJECTPATH)/gmic_stdlib.checked: $(SRCDIR)/gmic_stdlib_community.h
 	@mkdir -p $(OBJECTPATH) && touch $@
 endif
 
-# Makefile.master's rule only depends on the .cpp: rebuild the objects when the G'MIC headers
-# change, e.g. re-extracted with a new GMICVER or a changed patch (patches/), so that no object
-# keeps inline CImg code compiled from the old headers.
-GMIC_HEADERS = $(SRCDIR)/gmic.h $(SRCDIR)/CImg.h
-ifeq ($(FFT),pocketfft)
-GMIC_HEADERS += $(SRCDIR)/pocketfft_hdronly.h
-endif
-$(OBJECTPATH)/gmic.o: $(GMIC_HEADERS) $(SRCDIR)/gmic_stdlib_community.h
-$(OBJECTPATH)/gmic_plugin_call.o: $(GMIC_HEADERS) $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h $(SRCDIR)/Helpers/gmic_log.h
-$(OBJECTPATH)/gmic_plugin.o: $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h $(SRCDIR)/gmic_plugin.h $(SRCDIR)/Helpers/gmic_log.h
-$(OBJECTPATH)/gmic_ofx.o: $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin.h $(SRCDIR)/Helpers/gmic_log.h
-$(OBJECTPATH)/gmic_parser.o $(OBJECTPATH)/gmic_log.o: $(SRCDIR)/Helpers/gmic_log.h
+# Makefile.master's rule only depends on the .cpp: the compiler writes the headers that each object
+# includes into a .d file next to it (-MMD, below; -MP: no error when a header goes away), so that
+# the objects are rebuilt when a header changes, e.g. the G'MIC headers re-extracted with a new
+# GMICVER or a changed patch (patches/), and no object keeps inline CImg code compiled from the old
+# headers. (A first build has no .d files: build.license, above, makes the sources first.)
+-include $(addprefix $(OBJECTPATH)/,$(PLUGINOBJECTS:.o=.d) $(SUPPORTOBJECTS:.o=.d))
 
 # The OpenFX extensions of openfx's CMake defaults (openfx/CMakeLists.txt's OFX_DEFINITIONS), as
 # CMake builds get them through openfx::Api and openfx::Support: both builds ship the same Support
@@ -104,7 +97,8 @@ CXXFLAGS += $(OFX_DEFINES) \
 -Dcimg_use_abort \
 -Dcimg_display=0 \
 -Dcimg_appname=\"gmic\" \
--Dcimg_verbosity=0
+-Dcimg_verbosity=0 \
+-MMD -MP
 # G'MIC >= 3 compiles CImg in its own namespace (gmic_library, with CImg renamed gmic_image), so
 # it cannot clash with the cimg_library of other plug-ins (e.g. openfx-misc) loaded in the same host.
 
