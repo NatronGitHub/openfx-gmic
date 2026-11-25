@@ -7,8 +7,8 @@ included, gets the same image), in its own directory, with a timeout. The test f
 load, describe, instance or render error, on a missing output, and on NaN pixels in an output,
 except for the plug-ins of KNOWN_NAN. A few plug-ins are skipped (SKIP), are expected to fail with
 a given error (EXPECTED_FAIL), or have a longer timeout (TIMEOUT), with the reason; the test also
-fails when an expected failure renders (XPASS), when a plug-in of KNOWN_NAN renders without NaN,
-or when fewer than --min-rendered plug-ins rendered (default: 100 with --subset pr, 700 with
+fails when an expected failure renders (XPASS), when a plug-in of KNOWN_NAN renders without NaN
+(with --subset all; a warning otherwise), or when fewer than --min-rendered plug-ins rendered (default: 100 with --subset pr, 700 with
 --subset all). It warns when a listed plug-in, or a filter that uses the FFT, is not in the list
 of plug-ins, except for COMMERCIAL builds (--stdlib is their standard library), which leave many
 out.
@@ -84,13 +84,14 @@ SKIP = {
 # missing output or another error is a failure. A listed plug-in that renders is a failure too
 # (XPASS), so that the list never goes stale: remove it from the list.
 EXPECTED_FAIL = {
-    # point defaults outside the input: the plug-in moves them into Source when the user connects
-    # or changes it (#78), but hostDemo connects Source at createInstance, so they stay relative
-    # to the project (720x576), not to the 160x120 Source
+    # point defaults outside the input: the plug-in moves them into Source only when the user
+    # connects or changes it (#78); a host that connects Source when it creates the instance, as
+    # hostDemo does, keeps them relative to the project (720x576), not to the 160x120 Source
     'eu.gmic.KaleidoscopeReptorianPolar': ("Invalid Number - Variable 3",
-                                           "test: point default outside the input"),
+                                           "plug-in (hosts that connect Source at creation): point default "
+                                           "outside the input"),
     'eu.gmic.SolveMaze': ("Command 'minimal_path': Invalid argument '22.5%,-356%,0,427.5%,76%,0'",
-                          "test: point defaults outside the input"),
+                          "plug-in (hosts that connect Source at creation): point defaults outside the input"),
     # no file by default: its Filename (filein()) is empty
     'eu.gmic.ImportData': ("Unknown filename", "imports a file chosen by the user, none by default"),
     # filters for 1 or 2 layers, which get the 4 extra layers that this test connects
@@ -99,14 +100,17 @@ EXPECTED_FAIL = {
     'eu.gmic.DOFManipulation': ("This option is available for single layer only",
                                 "test: its default input mode needs a single layer, and gets the 5 connected layers"),
 }
-# Plug-ins whose output has NaN values with their default parameters (seen with G'MIC 4.0.8 in the
-# weekly run of every plug-in, on Linux): the reason. Any other plug-in with NaN values fails, and
-# so does a listed plug-in that renders without them, so that the list never goes stale.
+# Plug-ins whose output has NaN values with their default parameters, as seen with G'MIC 4.0.8 in
+# the full Linux run (--subset all): what is known. The counts are the same in every run (6 runs
+# checked), so they are not from a race; their cause in the filters is not found yet. Any other plug-in with NaN values fails. A listed plug-in that
+# renders without them fails with --subset all, so that the list never goes stale, and only gets
+# a warning in the pr subsets, which run on other platforms and FFT libraries.
 KNOWN_NAN = {
-    'eu.gmic.MSPatchNR': 'NaN values in G\'MIC\'s result (not investigated)',
-    'eu.gmic.PosterizeRelief': 'NaN values in G\'MIC\'s result (not investigated)',
-    'eu.gmic.ShadedSegmentation': 'NaN values in G\'MIC\'s result, 2 channels of every pixel (not investigated)',
-    'eu.gmic.TargetColorSpot': 'NaN values in G\'MIC\'s result (not investigated)',
+    'eu.gmic.MSPatchNR': '288 NaN values in G\'MIC\'s result, in every full Linux run',
+    'eu.gmic.PosterizeRelief': '2 NaN values in G\'MIC\'s result, in every full Linux run',
+    'eu.gmic.ShadedSegmentation': '38400 NaN values in G\'MIC\'s result (2 channels of every pixel), in every full '
+                                  'Linux run',
+    'eu.gmic.TargetColorSpot': '4 NaN values in G\'MIC\'s result, in every full Linux run',
 }
 # Slow plug-ins (minutes on a CI runner): their own timeout (seconds); not in the pr subset
 TIMEOUT = {
@@ -168,68 +172,6 @@ def host_demo_path(host, config):
     return None
 
 
-def _strip_tags(text):
-    """text without its markup tags, as strRemoveXmlTags() (Helpers/gmic_string.cpp).
-
-    A tag is '<' followed by a letter, '/' or '!', up to the next '>'; it starts before the last
-    '>' of text. Any other '<' or '>' is text.
-    """
-    last_gt = text.rfind('>')
-    out, in_tag = [], False
-    for i, c in enumerate(text):
-        if in_tag:
-            in_tag = c != '>'
-        elif (c == '<' and i + 1 < last_gt and
-              (text[i + 1].isascii() and text[i + 1].isalpha() or text[i + 1] in '/!')):
-            in_tag = True
-        else:
-            out.append(c)
-    return ''.join(out)
-
-
-_NAMED_ENTITIES = {'amp': '&', 'lt': '<', 'gt': '>', 'quot': '"', 'apos': "'", 'nbsp': ' ',
-                   'hearts': '\u2665'}
-_ENTITY = re.compile(r'\\251|&([^;&]{1,10});')
-
-
-def _replace_entities(text):
-    """text with the entities that utf8Entities() (Helpers/gmic_string.cpp) replaces replaced."""
-    def character(match):
-        name = match.group(1)
-        if name is None:
-            return '\u00a9'  # G'MIC's "\251"
-        if name in _NAMED_ENTITIES:
-            return _NAMED_ENTITIES[name]
-        number = re.fullmatch(r'#([0-9]+)|#[xX]([0-9a-fA-F]+)', name)
-        if not number:
-            return match.group(0)
-        code = int(number.group(1), 10) if number.group(1) else int(number.group(2), 16)
-        return chr(code) if code <= 0x10FFFF else '\ufffd'
-    return _ENTITY.sub(character, text)
-
-
-def gui_filter(line):
-    """The plug-in id and the command of the filter of a '#@gui <name> : <command>, ...' line.
-
-    The id follows the plug-in's rule (Helpers/gmic_parser.cpp, processCommand() and
-    getUniqueId()): the name, without its markup tags and entities, keeps only its ASCII letters
-    and digits. The plug-in also adds a number to the second filter with the same id: not here.
-
-    Args:
-        line: a line of the G'MIC standard library.
-
-    Returns:
-        (id, command), or None if the line is not a filter with a command.
-    """
-    match = re.match(r'#@gui ([^:]+):\s*([A-Za-z_][A-Za-z0-9_]*)', _strip_tags(line))
-    if not match or match.group(2) == '_none_':
-        return None
-    name = _replace_entities(_strip_tags(match.group(1).strip()))
-    if not name or name.startswith('_'):
-        return None
-    return ID_PREFIX + re.sub(r'[^A-Za-z0-9]', '', name), match.group(2)
-
-
 def fft_plugins(stdlib_header):
     """Ids of the filters whose command (or its _<command> helpers) uses the FFT."""
     text = stdlib_text(stdlib_header)
@@ -244,13 +186,15 @@ def fft_plugins(stdlib_header):
     bodies = {k: '\n'.join(v) for k, v in defs.items()}
     ids = set()
     for line in text.split('\n'):
-        gui = gui_filter(line)
-        if gui is None:
+        # the plug-in's id rule (getUniqueId, Helpers/gmic_parser.cpp) on a plain name: main()
+        # warns about the ids that are not plug-ins
+        gui = re.match(r'#@gui ([^:_][^:]*?)\s*:\s*([A-Za-z_][A-Za-z0-9_]*)', line)
+        if not gui or gui.group(2) == '_none_':
             continue
-        pid, cmd = gui
+        cmd = gui.group(2)
         body = bodies.get(cmd, '') + ''.join(v for k, v in bodies.items() if k.startswith('_' + cmd))
         if FFT_COMMANDS.search(body):
-            ids.add(pid)
+            ids.add(ID_PREFIX + re.sub(r'[^A-Za-z0-9]', '', gui.group(1)))
     return ids
 
 
@@ -276,17 +220,30 @@ def _progress_problem(report):
 
 
 class RenderResult(typing.NamedTuple):
-    """The result of render(), in this order (callers may also index it)."""
-    pid: str  # the plug-in id
-    rc: typing.Optional[int]  # hostDemo's exit status (negative: a signal), None if timed out
-    problem: typing.Optional[str]  # why the render failed, None if it rendered
-    nan: int  # the number of NaN values in the outputs
-    seconds: float  # the render time
-    errors: typing.List[str]  # the first error lines of the log
-    log: str  # hostDemo's output, with the plug-in's log
-    updates: int  # the number of progress updates that the host got
+    """The result of render(), in this order (callers may also index it).
+
+    Attributes:
+        pid: the plug-in id.
+        rc: hostDemo's exit status (negative: a signal), None if it timed out.
+        problem: why the render failed, None if it rendered.
+        nan: the number of NaN values in the outputs.
+        seconds: the render time.
+        errors: the first error lines of the log.
+        log: hostDemo's output, with the plug-in's log.
+        updates: the number of progress updates that the host got.
+        timed_out: whether the render timed out.
+        report: the parsed report.json (hostDemo --report), None if there is none.
+    """
+    pid: str
+    rc: typing.Optional[int]
+    problem: typing.Optional[str]
+    nan: int
+    seconds: float
+    errors: typing.List[str]
+    log: str
+    updates: int
     timed_out: bool
-    report: typing.Optional[dict]  # the parsed report.json (hostDemo --report), None if none
+    report: typing.Optional[dict]
 
 
 def work_dir(work, pid):
@@ -323,8 +280,8 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
         cmd += ['-i', c + '=file:../input.pfm']
     # the home folder (Windows: USERPROFILE), where filters with an empty folder parameter write
     # their files (e.g. Valeur Moyenne LCH), is in the work directory; so is G'MIC's folder
-    # (gmic::path_rc(): HOME's .config/gmic, or %APPDATA%/gmic), but only without GMIC_PATH and
-    # XDG_CONFIG_HOME
+    # (gmic::path_rc(): HOME's .config/gmic, without GMIC_PATH and XDG_CONFIG_HOME), except on
+    # Windows, where it is the runner's %APPDATA%/gmic (APPDATA is not changed)
     home = os.path.join(work, 'home')
     env = dict(os.environ, OFX_PLUGIN_PATH=plugins, HOME=home, USERPROFILE=home)
     for var in ('GMIC_PATH', 'XDG_CONFIG_HOME'):
@@ -515,10 +472,13 @@ def main():
         print('FAIL: %d plug-ins have NaN values in their output, fix them or add them to KNOWN_NAN: %s' % (
             len(new_nans), ' '.join(new_nans)))
         status = 1
-    if stale_nans:
+    if stale_nans and args.subset == 'all':
         print('FAIL: %d plug-ins of KNOWN_NAN rendered without NaN values, remove them from KNOWN_NAN: %s' % (
             len(stale_nans), ' '.join(stale_nans)))
         status = 1
+    elif stale_nans:
+        print('WARNING: %d plug-ins of KNOWN_NAN rendered without NaN values here (the list is checked with '
+              '--subset all): %s' % (len(stale_nans), ' '.join(stale_nans)))
     if rendered < min_rendered:
         print('FAIL: only %d plug-ins rendered, fewer than %d (--min-rendered)' % (rendered, min_rendered))
         status = 1

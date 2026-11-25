@@ -41,6 +41,7 @@ import argparse
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -81,18 +82,20 @@ USER_SOURCE = '.gmic'  # (install_user_file): the user source, ~/.gmic
 
 
 def update_file_name():
-    """Returns the name of G'MIC's update file for the Makefile's GMICVER.
+    """Returns the name of G'MIC's update file for the Makefile's GMICVER (gmic_version.sh).
 
     Returns:
         update<major><minor><patch>.gmic, e.g. update408.gmic for G'MIC 4.0.8.
 
     Raises:
-        ValueError: the Makefile has no GMICVER=<major>.<minor>.<patch> line.
+        subprocess.CalledProcessError: gmic_version.sh found no GMICVER in the Makefile.
+        ValueError: GMICVER is not <major>.<minor>.<patch>.
     """
-    with open(os.path.join(HERE, '..', '..', 'Makefile'), encoding='utf-8') as f:
-        match = re.search(r'^GMICVER\s*=\s*(\d+)\.(\d+)\.(\d+)\s*$', f.read(), re.MULTILINE)
+    version = subprocess.run(['sh', os.path.join(HERE, 'gmic_version.sh'), os.path.join(HERE, '..', '..', 'Makefile')],
+                             stdout=subprocess.PIPE, check=True, universal_newlines=True).stdout.strip()
+    match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)', version)
     if not match:
-        raise ValueError('no GMICVER=<major>.<minor>.<patch> in the Makefile')
+        raise ValueError('GMICVER is "%s", not <major>.<minor>.<patch>' % version)
     return 'update%s.gmic' % ''.join(match.groups())
 
 
