@@ -137,15 +137,20 @@ bool pluginKeepsResultSize();
 
 // Resize Mode Dynamic (issue #175): the geometry of the result that a render with sequenceData's
 // values and input sizes gives, for the region of definition, which OFX needs before the render.
-// Runs the filter as the render does (pluginProcess), on a worker thread, on three small opaque
+// Runs the filter as the render does (pluginProcess), on a worker thread, on small and thin opaque
 // gradient images (their data is ignored: the region of definition action has no images), and
-// predicts the size and position at the real size from an affine fit (see fitAffine); a Source of
-// at most 96 pixels is probed at its own size. Each probe's geometries are kept for its command
+// predicts the size and position at the real size from affine fits (fitAxis, fitPlane in
+// gmic_plugin.cpp), or, if they fail, from one probe at the real size; a Source of at most 96
+// pixels is probed at its own size. Each probe's geometries are kept for its command
 // line and input sizes (for Output Layer "Frame", every frame's), so that they run again only
 // when these change; a lookup of a probe that is running waits for it. Empty if the host has no
 // multi-resolution (pluginKeepsResultSize), if the size isn't affine, or if G'MIC failed, gave no
-// or an empty result, ran out of memory or past its time limit (logged): the output then keeps
+// or an empty result, ran out of memory or past its time budget (logged): the output then keeps
 // Source's region of definition.
 std::optional<ResultGeometry> pluginResultGeometry(const gmic_ofx::SequenceData& sequenceData, const gmic_ofx::GlobalData& globalData);
+
+// The prediction that pluginResultGeometry last made for these values and input sizes, if it is
+// still in its cache (never a new prediction: for the render)
+std::optional<ResultGeometry> pluginCachedResultGeometry(const gmic_ofx::SequenceData& sequenceData, const gmic_ofx::GlobalData& globalData);
 
 #endif
