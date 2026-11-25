@@ -780,7 +780,11 @@ double canonicalEdge(int p, double par, double scale, bool high)
 // (pluginResultGeometry, which predicts it from small probes of the inputs' regions of
 // definition, at the render time, with the layer times). Empty if it is Source's (a result of
 // Source's size at its top-left corner: Source's region of definition, exactly as before), or if
-// it is unknown (G'MIC failed, or a size that isn't affine). The pixel rectangle is the result's, its top-left corner at
+// it is unknown (G'MIC failed, or a size that isn't affine).
+// At the action's render scale (issue #179: the filters whose preview factor ends with "+" in
+// Natron, every filter elsewhere): the inputs' pixels and the point percentages at that scale,
+// as the render gets them, so the probes' command lines and cache keys are the render's at that
+// scale. (Natron's other filters refuse a render scale here, before any probe.) The pixel rectangle is the result's, its top-left corner at
 // Source's moved by the result's pos(x,y), in canonical coordinates (see canonicalEdge).
 std::optional<OfxRectD> GMICEffect::resultRoD(const OfxRectD& sourceRod, double time, const OfxPointD& renderScale) const
 {
