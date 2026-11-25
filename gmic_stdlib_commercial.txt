@@ -90,6 +90,7 @@ filter samj_CeKoaSa_003 calls ancien_gimp_morpho, which calls negative (david_ts
 #    Copyright, Visible Watermark, and other filters that draw text
 #  gmic_demos.cimgz: Games & Demos
 #  img/style_*.png (style images): Stylize
-#  sample images: Sample Image, Gmicky - Roddy, Film Grain
-#  all the files above: Download External Data
-# Send Feedback sends the message typed in it to gmic.eu.
+#  sample images: Sample Image, Gmicky Roddy, Film Grain
+#  all the files above: Download External Data, which the plug-in hides (it writes into G'MIC's
+#    cache folder, see hideBatchFilters in Helpers/gmic_parser.cpp)
+# Send Feedback, which sends the message typed in it to gmic.eu, is hidden the same way.

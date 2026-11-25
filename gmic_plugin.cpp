@@ -1000,6 +1000,9 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		globalDataP->param[p] = Parameter("Layer Times", "", ParamType::TopicEnd);
 		++p;
 	}
+	// Not read: a filter with no command passes Source through (pluginPassesSourceThrough). Hidden
+	// on every plug-in; kept because PARAM_COMMAND, the bound of the filter's own parameters in
+	// gmicCommand, and the other PARAM_* macros count from the end of the table.
 	globalDataP->param[p] = Parameter("Command", "", ParamType::Text, 0, 0, 0, 0, 0, 0, "-blur 2");
 	globalDataP->param[p].displayStatus = DisplayStatus::Hidden;
 	++p;
@@ -1077,10 +1080,9 @@ gmicCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, bo
     const EffectData& effectData = effectDataOf(globalDataP);
     string cmd = preview ? effectData.preview_command : effectData.command;
 
-    if (cmd == "") {
-        cmd = sequenceDataP->textValue[PARAM_COMMAND];
-        strReplace(cmd, "\r", " ");
-        strReplace(cmd, "\n", " ");
+    if (cmd.empty()) {
+        // a filter with no command: G'MIC doesn't run (render passes Source through)
+        return cmd;
     } else {
         cmd = "-" + strTrim(cmd, " \t\r\n") + " ";
         // the filter parameters only: they come first, the layers and their times follow
@@ -1954,6 +1956,11 @@ static long long frameNumberOf(const SequenceData* sequenceDataP)
 	return (long long)std::floor(sequenceDataP->time - sequenceDataP->frameRangeStart + 0.5);
 }
 
+bool pluginPassesSourceThrough(const GlobalData& globalData)
+{
+	return effectDataOf(&globalData).command.empty();
+}
+
 bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, GmicInstanceData& instanceData, OFX::ImageEffect& effect)
 {
 	// (the names used by the PARAM_* macros)
@@ -1999,8 +2006,9 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	// G'MIC-Qt runs the preview command first, and some main commands need its state: render
 	// these with the preview command when their main command fails (EffectData::previewFallback)
 	const EffectData& effectData = effectDataOf(globalDataP);
-	const bool hasContent = !effectData.command.empty();
-	bool preview = hasContent && (effectData.previewOnly || sequenceDataP->floatValue[PARAM_PREVIEW][0] > 0);
+	// a filter with no command never gets here: render() copies Source (pluginPassesSourceThrough)
+	assert(!effectData.command.empty());
+	bool preview = (effectData.previewOnly || sequenceDataP->floatValue[PARAM_PREVIEW][0] > 0);
 	// the custom commands, set in the options by fullCommand(): must stay valid until the G'MIC calls return
 	string customCommands;
 	// customCommands goes out of scope: reset the pointer on return, also when G'MIC throws

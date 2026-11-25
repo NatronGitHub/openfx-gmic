@@ -59,6 +59,7 @@ SKIP = {
                         '(empty by default: the root folder)',
     # they download data at render time (G'MIC's input_cached, from gmic.eu, or another site),
     # which CI runners may not reach (UpscaleCNN2x failed on Windows)
+    'eu.gmic.GmickyRoddy': 'downloads its mascot images (sp gmicky...: img/sample_*.png)',
     'eu.gmic.GenerateRandomPortrait': 'downloads its image (portrait: thispersondoesnotexist.com)',
     'eu.gmic.UpscaleCNN2x': 'downloads its network (gmic_scale2x_cnn.gmz)',
     'eu.gmic.DenoiseCNN': 'downloads its network (gmic_denoise_cnn.gmz)',

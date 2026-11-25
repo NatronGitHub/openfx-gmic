@@ -83,11 +83,14 @@ struct EffectData {
 	std::string category;
 	std::string name;
 	std::string uniqueId;
+	// the command that the plug-in runs (the preview command of a preview-only filter), empty for a
+	// page with no command ("_none_" or empty main and preview commands), which passes Source through
 	std::string command;
 	std::string preview_command;
 	std::string notes;
 	bool multiLayer;
-	// "_none_" main command: always render with the preview command, as G'MIC-Qt's preview
+	// no main command ("_none_" or empty) but a preview command: always render with the preview
+	// command, as G'MIC-Qt's preview
 	bool previewOnly;
 	// the main command may need the state left by G'MIC-Qt's preview (_persistent, or the status
 	// that fills a value() parameter): if it fails, render with the preview command (issue #52).
