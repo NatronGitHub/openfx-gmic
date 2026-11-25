@@ -112,10 +112,7 @@ STATUS_MISMATCH = "the preview's status has"
 EVERY = 30
 
 
-INPUT_WIDTH, INPUT_HEIGHT = 160, 120  # the size of the input image (write_input)
-
-
-def write_input(path, w=INPUT_WIDTH, h=INPUT_HEIGHT):
+def write_input(path, w=160, h=120):
     """Float RGB PFM, bottom row first: gradients, stripes and a red rectangle (edges)."""
     rows = []
     for y in range(h - 1, -1, -1):

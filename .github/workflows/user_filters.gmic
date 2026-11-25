@@ -77,13 +77,15 @@ fx_userfile_vars :
 fx_userfile_five_channels :
   r 100%,100%,1,5
 
-# a filter whose preview factor ends with "+" (accurate at any zoom), so that the plug-in accepts
-# render scales (#179): R and G are 255 if the preview area that the plug-in gives G'MIC
-# ($_preview_x1, $_preview_y1) ends at the image's last column and row, B is the image width,
-# which is half of Source's at render scale 0.5
+# a filter whose preview factor ends with "+" (accurate at any zoom), so that Natron may render it
+# at a render scale (#179), rendered by user_filters_test.py at render scales 1 and 0.5: R and G
+# are the x and y percentages of the Spot point that G'MIC gets (from the point's canonical
+# coordinates, the render scale and the pixel aspect ratio), B is 255 if the preview area
+# ($_preview_x1, $_preview_y1) ends at the image's last column and row
 #@gui User File Render Scale : fx_userfile_render_scale, fx_userfile_render_scale(0)+
+#@gui : Spot = point(50,50)
 fx_userfile_render_scale :
-  fill_color {(0$_preview_x1+1==w)*255},{(0$_preview_y1+1==h)*255},{w}
+  fill_color {$1*2.55},{$2*2.55},{(0$_preview_x1+1==w&&0$_preview_y1+1==h)*255}
 
 # replaces the built-in 'fc' (fill_color)
 fc :
