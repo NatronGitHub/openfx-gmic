@@ -14,8 +14,11 @@
 #include "gmic.h"
 #include "gmic_plugin_call.h"
 #include "gmic_log.h"
-#if defined(_WIN32) && defined(_OPENMP)
+#ifdef _OPENMP
 #include <omp.h>
+#ifndef _WIN32
+#include <dlfcn.h>
+#endif
 #endif
 
 // as in gmic_libc.cpp
@@ -250,6 +253,24 @@ int gmic_plugin_call(const GmicCall& call)
 		                          (LPCWSTR)(void*)&omp_get_max_threads, &h) != 0;
 	}();
 	(void)vcompPinned;
+#elif defined(_OPENMP)
+	// The same on Linux and macOS (issue #213): GCC's libgomp is not marked NODELETE, so when the
+	// host unloads GMIC.ofx (dlclose), libgomp, which only GMIC.ofx uses, is unmapped too, while
+	// threads of its pools may still run its code: those of a pool being freed (each G'MIC run has
+	// a worker thread of its own, see gmicCallAbortable() in gmic_plugin.cpp: its pool is freed
+	// when it exits, and the pool's threads finish exiting after the worker thread is joined), and
+	// idle threads still spinning before they sleep. A thread scheduled after the unmapping crashes
+	// (SIGSEGV). It happened intermittently in CI's Linux render test (hostDemo unloads the plug-in
+	// before exiting), more often with more OpenMP threads than CPUs. Pin the module that defines
+	// omp_get_max_threads (libgomp; libomp with Apple clang; GMIC.ofx itself with a static runtime,
+	// which is harmless): RTLD_NOLOAD finds the loaded module, RTLD_NODELETE keeps it until the
+	// process exits, and the handle is never closed.
+	static const bool ompPinned = [] {
+		Dl_info info;
+		return dladdr(reinterpret_cast<void*>(&omp_get_max_threads), &info) != 0 && info.dli_fname &&
+		       dlopen(info.dli_fname, RTLD_LAZY | RTLD_NOLOAD | RTLD_NODELETE) != NULL;
+	}();
+	(void)ompPinned;
 #endif
 	const unsigned int nofInputs = *call.nofImages;
 	gmic_list<float> list(nofInputs);
