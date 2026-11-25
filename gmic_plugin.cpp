@@ -576,17 +576,17 @@ string pluginListSummary(const string& path, const std::set<string>& disabled, c
 	return "openfx-gmic: " + path + ": " + std::to_string(nDisabled) + (nDisabled == 1 ? " plug-in" : " plug-ins") + " disabled" + unknown;
 }
 
-// Write the list of the plug-ins pluginData to "path": grouped by menu (in their order within
+// Write the list of the plug-ins "filters" to "path": grouped by menu (in their order within
 // each), each with its menu and label in a comment, those in "disabled" commented out. The build
 // writes the bundle's list so, with every plug-in enabled (GMIC_OFX/gmic_ofx_plugin_list.cpp).
 // It is written to "<path>.tmp", then renamed: false if it could not be written, and then a file
 // that was at "path" is kept.
-[[nodiscard]] bool writePluginList(const string& path, const vector<EffectData>& pluginData, const std::set<string>& disabled)
+[[nodiscard]] bool writePluginList(const string& path, const vector<Filter>& filters, const std::set<string>& disabled)
 {
 	vector<const EffectData*> sorted;
-	sorted.reserve(pluginData.size());
-	for (const EffectData& d : pluginData) {
-		sorted.push_back(&d);
+	sorted.reserve(filters.size());
+	for (const Filter& f : filters) {
+		sorted.push_back(&f.data);
 	}
 	std::stable_sort(sorted.begin(), sorted.end(), [](const EffectData* a, const EffectData* b) { return a->category < b->category; });
 	const string tmp = path + ".tmp";
@@ -620,8 +620,7 @@ string pluginListSummary(const string& path, const std::set<string>& disabled, c
 // The filters, parsed from the G'MIC stdlib (or a user file) once, on first use.
 struct PluginGlobalData
 {
-	vector<EffectData> pluginData;
-	vector<string> pluginContent;
+	vector<Filter> filters;
 	// The filter file (gmic_ofx.gmic, gmic_stdlib.gmic or G'MIC's update file), when the filters
 	// come from one, then the user source (~/.gmic, see loadUserSource): custom commands for every
 	// run, so that their filters find the commands they define, as in G'MIC-Qt. Without them
@@ -718,8 +717,7 @@ static FilterFile loadFilterFile(const string& rcPath)
 PluginGlobalData loadPluginGlobalData()
 {
 	PluginGlobalData data;
-	vector<EffectData>& pluginData = data.pluginData;
-	vector<string>& pluginContent = data.pluginContent;
+	vector<Filter>& filters = data.filters;
 	{
 		// The hot fixes are checked against the built-in stdlib, which G'MIC always loads, and the
 		// filter file's commands, which replace its own: decompress it once here (~35 ms), even
@@ -767,22 +765,12 @@ PluginGlobalData loadPluginGlobalData()
 		if (!userSource.content.empty()) {
 			effectContent += "\n" + kTopLevel + userSource.content + "\n" + kTopLevel;
 		}
-		gmic_parse_multi(effectContent, &pluginData, &pluginContent);
+		filters = gmic_parse_multi(effectContent);
 		data.userCommands = std::move(userCommands);
 		// leave out the filters for which leaveOut(filter) is true
-		const auto leaveOutFilters = [&pluginData, &pluginContent](const auto& leaveOut) {
-			size_t n = 0;
-			for (size_t i = 0; i < pluginData.size(); ++i) {
-				if (!leaveOut(pluginData[i])) {
-					if (n != i) {
-						pluginData[n] = std::move(pluginData[i]);
-						pluginContent[n] = std::move(pluginContent[i]);
-					}
-					++n;
-				}
-			}
-			pluginData.resize(n);
-			pluginContent.resize(n);
+		const auto leaveOutFilters = [&filters](const auto& leaveOut) {
+			filters.erase(std::remove_if(filters.begin(), filters.end(), [&leaveOut](const Filter& f) { return leaveOut(f.data); }),
+			              filters.end());
 		};
 		// Each plug-in has a fixed table of kMaxParams parameters: the filter's own parameters,
 		// up to 4 extra layers and the fixed trailing parameters (see pluginSetup). Leave out the
@@ -798,13 +786,13 @@ PluginGlobalData loadPluginGlobalData()
 		const std::set<string> disabled = disabledPlugins(userList);
 		if (!userList.empty()) { // (on stderr or in the log file: Natron's GUI shows neither)
 			std::set<string> pluginIds;
-			for (const EffectData& d : pluginData) {
-				pluginIds.insert(d.uniqueId);
+			for (const Filter& f : filters) {
+				pluginIds.insert(f.data.uniqueId);
 			}
 			gmicLog("%s\n", pluginListSummary(rcPath + kPluginListFile, disabled, pluginIds).c_str());
 		}
 		const char* const listPath = std::getenv("OFX_GMIC_WRITE_PLUGIN_LIST");
-		if (listPath && *listPath && !writePluginList(listPath, pluginData, disabled)) {
+		if (listPath && *listPath && !writePluginList(listPath, filters, disabled)) {
 			gmicLog("openfx-gmic: Error: could not write the plug-in list %s\n", listPath);
 		}
 		if (!disabled.empty()) {
@@ -812,8 +800,8 @@ PluginGlobalData loadPluginGlobalData()
 		}
 		// the plug-ins that run their preview command first (#206), one line each. CI's describe
 		// test (.github/workflows/describe_plugins.sh) reads these lines: keep their text the same
-		for (const EffectData& d : pluginData) {
-			if (d.previewFirst) gmicLog("openfx-gmic: previewFirst %s\n", d.uniqueId.c_str());
+		for (const Filter& f : filters) {
+			if (f.data.previewFirst) gmicLog("openfx-gmic: previewFirst %s\n", f.data.uniqueId.c_str());
 		}
 	}
 	return data;
@@ -902,7 +890,7 @@ static string layerTimesNote(const EffectData& effectData)
 static string pluginDescription(const EffectData& effectData)
 {
 	// OFX strings are UTF-8, as G'MIC's: no transliteration on the OFX path
-	string d = strRemoveXmlTags(effectData.notes, true);
+	string d = strXmlToText(effectData.notes);
 	strReplace(d, "<", "(");
 	strReplace(d, ">", ")");
 	return d + ignoreAlphaNote(effectData) + layerTimesNote(effectData) + "\n" + PLUGIN_DESCRIPTION;
@@ -944,7 +932,7 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 	globalDataP->pluginInfo = pluginInfo;
 
 	// a copy: the note() parameters are appended to its notes (the description)
-	EffectData effectData = pluginGlobalData().pluginData[globalDataP->pluginIndex];
+	EffectData effectData = pluginGlobalData().filters[globalDataP->pluginIndex].data;
 
 	globalDataP->param[0] = Parameter(kOfxImageEffectSimpleSourceClipName, "", ParamType::Layer);
 	int p = 1;
@@ -1179,7 +1167,7 @@ static
 const EffectData&
 effectDataOf(const GlobalData* globalDataP)
 {
-    return pluginGlobalData().pluginData[globalDataP->pluginIndex];
+    return pluginGlobalData().filters[globalDataP->pluginIndex].data;
 }
 
 // Is filter parameter i passed to G'MIC (one argument, of one or more values)? Not the notes and
@@ -1494,7 +1482,7 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 	// comment lines in between. The filter's #@gui lines are comments for G'MIC, which the file
 	// already holds)
 	static const string kNoLines;
-	const string& filterLines = data.filterFile ? kNoLines : data.pluginContent[globalDataP->pluginIndex];
+	const string& filterLines = data.filterFile ? kNoLines : data.filters[globalDataP->pluginIndex].guiLines;
 	customCommands.clear();
 	// (and the few helper commands added below)
 	customCommands.reserve(data.userCommands.size() + filterLines.size() + data.hotfixes.size() + 4096);
@@ -2587,15 +2575,16 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 
 int getNofPlugins()
 {
-	return (int)pluginGlobalData().pluginData.size();
+	return (int)pluginGlobalData().filters.size();
 }
 
 PluginInfo getPluginInfo(int pluginIndex)
 {
 	PluginInfo pluginInfo;
-	pluginInfo.name = pluginGlobalData().pluginData[pluginIndex].name;
-	pluginInfo.identifier = pluginGlobalData().pluginData[pluginIndex].uniqueId;
-	pluginInfo.category = pluginGlobalData().pluginData[pluginIndex].category;
+	const EffectData& effectData = pluginGlobalData().filters[pluginIndex].data;
+	pluginInfo.name = effectData.name;
+	pluginInfo.identifier = effectData.uniqueId;
+	pluginInfo.category = effectData.category;
 	// (the description is made by pluginSetup)
 	pluginInfo.major_version = MAJOR_VERSION;
 	pluginInfo.minor_version = MINOR_VERSION;

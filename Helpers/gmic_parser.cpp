@@ -107,7 +107,7 @@ void processCommand(const string& s, EffectData& cd)
 	const string dst_prefix = dst_prefix_c;
 	string r = s;
 	if (r == dst_prefix + " :") return;
-	r = strRemoveXmlTags(r, false);
+	r = strRemoveXmlTags(r);
 	int sPos = (int)r.find(":");
 	if (sPos < 0) return;
 	string r1 = r.substr(0, sPos); // G'MIC >= 3 writes "Name:cmd,preview" without spaces
@@ -170,9 +170,10 @@ static bool isPlaceholder(const string& v)
 		if (e == string::npos) e = v.size();
 		const string piece = strTrim(v.substr(b, e - b), " \t");
 		if (!piece.empty()) {
-			char* end = NULL;
-			strtod(piece.c_str(), &end);
-			if (end == piece.c_str() || *end != '\0') return true;
+			// a number for strtod in the "C" locale, whatever the host's (G'MIC's syntax)
+			size_t length = 0;
+			(void)stringToDouble(piece, &length);
+			if (length != piece.size()) return true;
 		}
 		b = e + 1;
 	}
@@ -186,25 +187,6 @@ static string textUnquoted(const string& s)
 	const string t = strTrim(s, " \t\r\n\v\f");
 	if (t.size() >= 2 && t[0] == '"' && t[t.size() - 1] == '"') return t.substr(1, t.size() - 2);
 	return t;
-}
-
-static void appendUtf8(string& d, unsigned int c)
-{
-	if (c <= 0x7f) {
-		d += (char)c;
-	} else if (c <= 0x7ff) {
-		d += (char)((c >> 6) | 0xc0);
-		d += (char)((c & 0x3f) | 0x80);
-	} else if (c <= 0xffff) {
-		d += (char)((c >> 12) | 0xe0);
-		d += (char)(((c >> 6) & 0x3f) | 0x80);
-		d += (char)((c & 0x3f) | 0x80);
-	} else {
-		d += (char)((c >> 18) | 0xf0);
-		d += (char)(((c >> 12) & 0x3f) | 0x80);
-		d += (char)(((c >> 6) & 0x3f) | 0x80);
-		d += (char)((c & 0x3f) | 0x80);
-	}
 }
 
 // G'MIC-Qt's unescaped(), i.e. cimg::strunescape: \n \t \\ \" etc., octal \ooo, hex \xHH,
@@ -245,7 +227,7 @@ static string textUnescaped(const string& s)
 			bool ok = true;
 			for (size_t k = 1; ok && k <= n; ++k) ok = i + k < s.size() && isxdigit((unsigned char)s[i + k]);
 			if (ok) {
-				appendUtf8(d, (unsigned int)strtoul(s.substr(i + 1, n).c_str(), NULL, 16));
+				appendUtf8(d, strtoul(s.substr(i + 1, n).c_str(), nullptr, 16));
 				i += n + 1;
 			} else {
 				d += s[i++];
@@ -381,7 +363,6 @@ void processParam(const string& s, EffectParameter& cp)
 	} else if (cp.paramType == "file" || cp.paramType == "filein" || cp.paramType == "fileout") {
 		// 'file[_in,_out](_default_filename)'
 		// Add a filename parameter (as a filechooser).
-//		cp.paramType = "text";
 		cp.text = strTrim(pval, "\"");
 		// no default: leave it empty (a made-up "test.txt" made filters fail with "Unknown filename")
 		cp.defaultValue = cp.text;
@@ -408,7 +389,6 @@ void processParam(const string& s, EffectParameter& cp)
 	} else if (cp.paramType == "folder") {
 		// 'folder(_default_foldername)'
 		// Add a foldername parameter (as a folderchooser).
-//		cp.paramType = "text";
 		// an empty default stays empty: the plug-in passes the home folder for an empty value, as
 		// G'MIC-Qt (see gmicCommand)
 		cp.text = strTrim(pval, "\"");
@@ -433,7 +413,7 @@ void processParam(const string& s, EffectParameter& cp)
 		// 'note(_label)'
 		// Display a label (do not add a parameter).
 		cp.text = pval;
-	} else if (cp.paramType == "text") { // || cp.paramType == "flags") {
+	} else if (cp.paramType == "text") {
 		// 'text(_is_multiline={ 0 | 1 },_default text)'
 		// Add a single or multi-line text parameter (as a text entry).
 		// As G'MIC-Qt (TextParameter::initFromText): a leading "0," or "1," (regex "^\s*(0|1)\s*,")
@@ -455,8 +435,7 @@ void processParam(const string& s, EffectParameter& cp)
 		cp.defaultValue = cp.text;
 	} else if (cp.paramType == "separator") {
 		// 'separator()'
-		// Display an horizontal separator (do not add a parameter).Add a single or multi-line text parameter (as a text entry).
-		(void)0;
+		// Display an horizontal separator (do not add a parameter).
 	} else if (cp.paramType == "input") {
 		// ???? not in the G'MIC doc (see gmic_stdlib.gmic)
 		cp.defaultValue = strTrim(pval, "\"");
@@ -496,7 +475,8 @@ static bool usesSeveralLayers(const string& content)
 		}
 		break; // only the first (filter) line declares the input mode
 	}
-	if ((int)content.find(" layers") > 0) {
+	const size_t layers = content.find(" layers");
+	if (layers != string::npos && layers > 0) {
 		return true;
 	}
 	const string lc = strLowercase(content);
@@ -548,6 +528,22 @@ static VisibilitySuffix parseVisibilitySuffix(const string& s, size_t pos)
 	return r;
 }
 
+// base, or the first of "<base>_2", "<base>_3"... that is not taken (taken(name) is false)
+template <class Taken>
+static string uniqueName(const string& base, Taken taken)
+{
+	string name = base;
+	for (int n = 2; taken(name); n++) name = base + "_" + std::to_string(n);
+	return name;
+}
+
+string pointDisplayName(string name)
+{
+	const size_t percent = name.find(" (%)");
+	if (percent != string::npos) name.erase(percent, 4);
+	return name;
+}
+
 // a parameter without a value of its own (passes no argument to the commands): G'MIC-Qt's
 // NoValueParameters, which also ignore their own visibility suffix
 static bool isNoValueParameter(const EffectParameter& p)
@@ -555,14 +551,13 @@ static bool isNoValueParameter(const EffectParameter& p)
 	return p.paramType == "note" || p.paramType == "link" || p.paramType == "separator";
 }
 
-string gmic_parse_single(const string& content, EffectData& cd)
+static void gmic_parse_single(const string& content, EffectData& cd)
 {
 	const string src_prefix_old = src_prefix_old_c;
 	const string src_prefix = src_prefix_c;
 	const string src_prefix_en = src_prefix + "_en";
 	const string dst_prefix = dst_prefix_c;
 	const string dst_prefix_en = dst_prefix + "_en";
-	string result;
 	bool inMulti = false;
 	std::string inMultiClose = "";
 	cd.name = "";
@@ -578,9 +573,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 
 	const vector<string> lines = strSplit(content, '\n');
 	for (int i = 0; i < (int)lines.size(); i++) {
-		//printf("[%d]: %s\n", i,lines[i].c_str());
 		string line = strTrim(lines[i], " \r\n\t");
-		if (line.size() > 0 && line[0] != '#') result += line + "\n";
 		strReplace(line, src_prefix_old, dst_prefix);
 		strReplace(line, src_prefix_en, dst_prefix);
 		strReplace(line, src_prefix, dst_prefix);
@@ -648,7 +641,6 @@ string gmic_parse_single(const string& content, EffectData& cd)
 								// there is one more param
 								EffectParameter p;
 								p.name = line.substr(0, pEnd+1);
-								//std::cout << p.name << std::endl;
 								const VisibilitySuffix v = parseVisibilitySuffix(line, pEnd + 1);
 								p.visibility = v.visibility;
 								cd.param.push_back(p);
@@ -681,7 +673,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 			sPos = (int)n.find(" ");
 			if (sPos >= 0) {
 				n = n.substr(sPos);
-				n = strRemoveXmlTags(n, false);
+				n = strRemoveXmlTags(n);
 				strReplace(n, " & ", " and ");
 				n = strTrim(n, " \r\n\t_");
 				if (n != "") {
@@ -700,28 +692,17 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	// the name of another parameter of the filter.
 	for (int i = 0; i < (int)cd.param.size(); i++) {
 		if (!cd.param[i].name.empty()) continue;
-		const string base = "Parameter " + std::to_string(i + 1);
-		string name = base;
-		for (int n = 2; realNames.count(name); n++) name = base + "_" + std::to_string(n);
+		const string name = uniqueName("Parameter " + std::to_string(i + 1), [&realNames](const string& n) { return realNames.count(n) > 0; });
 		cd.param[i].name = name;
 		realNames.insert(name);
 		gmicLog("openfx-gmic: Warning: %s parameter without a name: named \"%s\"\n",
 			cd.param[i].paramType.c_str(), name.c_str());
 	}
-	for (int i = 0; i < (int)cd.param.size(); i++) {
-		bool ok = false;
-		int cnt = 2;
-		string t = cd.param[i].name;
-		while (!ok) {
-			ok = true;
-			for (int j = 0; j < i; j++) {
-				if (cd.param[j].name == cd.param[i].name) {
-					cd.param[i].name = t + "_" + std::to_string(cnt++);
-					ok = false;
-					break;
-				}
-			}
-		}
+	// the same name as an earlier parameter: the first free "<name>_2", "<name>_3"...
+	for (size_t i = 0; i < cd.param.size(); i++) {
+		cd.param[i].name = uniqueName(cd.param[i].name, [&cd, i](const string& n) {
+			return std::any_of(cd.param.begin(), cd.param.begin() + (ptrdiff_t)i, [&n](const EffectParameter& p) { return p.name == n; });
+		});
 	}
 	// As G'MIC-Qt (FilterParametersWidget::setVisibilityStates, with the default states): a
 	// note, link or separator has no visibility of its own; a parameter with '-' ('+') gives its
@@ -755,17 +736,9 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	for (int i = (int)cd.param.size() - 1; i >= 0; i--) {
 		if (cd.param[i].paramType != "point" || cd.param[i].removable == 0) continue;
 		EffectParameter e;
-		string base = cd.param[i].name;
-		const size_t pc = base.find(" (%)");
-		if (pc != string::npos) base.erase(pc, 4);
-		base = strTrim(base, " \t") + " Enabled";
-		e.name = base;
-		for (int cnt = 2; ; cnt++) {
-			bool clash = false;
-			for (int j = 0; j < (int)cd.param.size() && !clash; j++) clash = (cd.param[j].name == e.name);
-			if (!clash) break;
-			e.name = base + "_" + std::to_string(cnt);
-		}
+		e.name = uniqueName(strTrim(pointDisplayName(cd.param[i].name), " \t") + " Enabled", [&cd](const string& n) {
+			return std::any_of(cd.param.begin(), cd.param.end(), [&n](const EffectParameter& p) { return p.name == n; });
+		});
 		e.paramType = "pointenabled";
 		e.defaultValue = (cd.param[i].removable < 0) ? "0" : "1";
 		e.minValue = "0";
@@ -785,12 +758,10 @@ string gmic_parse_single(const string& content, EffectData& cd)
 	}
 	cd.notes = strTrim(cd.notes, "\n");
 
-	cd.name = strRemoveXmlTags(cd.name, true);
-	cd.category = strRemoveXmlTags(cd.category, true);
-	cd.notes = strRemoveXmlTags(cd.notes, true);
+	cd.name = strXmlToText(cd.name);
+	cd.category = strXmlToText(cd.category);
+	cd.notes = strXmlToText(cd.notes);
 	cd.uniqueId = getUniqueId(cd.name);
-
-	return result;
 }
 
 // Is "line" the definition of a G'MIC custom command ("[+]name :[ body]", not "name:=expr")?
@@ -835,6 +806,16 @@ static void gmicItems(const string& line, vector<string>& items)
 	if (!item.empty()) items.push_back(item);
 }
 
+// The command name of an item: its leading name (letters, digits and '_'), after a "-" or "+"
+// prefix, without the rest ("+cmd", "cmd[0]", "ot..", "cmd$x")
+static string commandName(const string& item)
+{
+	const size_t b = (!item.empty() && (item[0] == '-' || item[0] == '+')) ? 1 : 0;
+	size_t e = b;
+	while (e < item.size() && (isalnum((unsigned char)item[e]) || item[e] == '_')) ++e;
+	return item.substr(b, e - b);
+}
+
 // Calls f(name) for each name in a line of G'MIC code: the longest runs of letters, digits and '_'
 // that don't start with a digit (command and variable names; "$_persistent" gives "_persistent").
 // name is a buffer reused from call to call.
@@ -856,6 +837,68 @@ static void forEachGmicName(const string& line, string& name, F f)
 	}
 }
 
+// If the text at s[pos] starts with blanks (spaces or tabs) and '#', the position after the '#',
+// else npos (G'MIC-Qt's containsLeadingSpaceAndCrossSign)
+static size_t commentStart(const string& s, size_t pos)
+{
+	pos = s.find_first_not_of(" \t", pos);
+	return (pos != string::npos && s[pos] == '#') ? pos + 1 : string::npos;
+}
+
+// getline() for G'MIC code: a code line that ends with '\' goes on with the next line, without
+// its leading blanks (the unminified gmic_stdlib.gmic splits long "u" commands this way). Only code
+// lines are joined here; comment lines (a '#', maybe after blanks, see commentStart), which hold
+// the #@gui definitions, are joined by getGuiLine().
+static bool getCodeLine(istream& in, string& line)
+{
+	if (!getline(in, line)) return false;
+	string next;
+	while (!line.empty() && commentStart(line, 0) == string::npos && line[line.size() - 1] == '\\' && getline(in, next)) {
+		line.erase(line.size() - 1);
+		line += next.substr(min(next.find_first_not_of(" \t"), next.size()));
+	}
+	return true;
+}
+
+// A custom command definition of a G'MIC command file: the command, and its code lines (the first
+// one is the rest of the definition's line)
+struct CommandDefinition
+{
+	string name;
+	vector<string> lines;
+};
+
+// The command definitions of a G'MIC command file, read once for the rules below
+// (markPersistentFilters, markDynamicVisibilityFilters, markMultiInputFilters, hideBatchFilters)
+struct CommandFile
+{
+	vector<CommandDefinition> definitions; // in file order (a command defined again has several)
+	set<string> documented; // the commands that a "#@cli" line documents
+};
+
+// The command definitions of "content", from its code lines (getCodeLine; the lines starting with
+// '#' are comments, the lines before the first definition are skipped)
+static CommandFile readCommandFile(const string& content)
+{
+	CommandFile file;
+	stringstream ss(content);
+	string line, rest;
+	while (getCodeLine(ss, line)) {
+		if (line.compare(0, 6, "#@cli ") == 0) {
+			const size_t b = line.find_first_not_of(' ', 6), e = line.find_first_of(" :", b);
+			if (b != string::npos && e != b) file.documented.insert(line.substr(b, e == string::npos ? string::npos : e - b));
+		}
+		if (line.empty() || line[0] == '#') continue;
+		string name = commandDefinition(line, rest);
+		if (!name.empty()) {
+			file.definitions.push_back(CommandDefinition{std::move(name), vector<string>(1, rest)});
+		} else if (!file.definitions.empty()) {
+			file.definitions.back().lines.push_back(line);
+		}
+	}
+	return file;
+}
+
 // G'MIC-Qt runs a filter's preview command before each Apply, and gives the main command what the
 // preview left (FilterThread.cpp, PersistentMemory.cpp, MainWindow.cpp in c-koi/gmic-qt): the
 // global variable _persistent, and the parameter values that the preview's status sets. Mark the
@@ -869,37 +912,20 @@ static void forEachGmicName(const string& line, string& name, F f)
 // - a hidden value() parameter holds a placeholder that the status fills (see gmic_parse_single,
 //   which sets previewFirst for these).
 // Not the filters with a "_none_" preview command (noPreview), which G'MIC-Qt doesn't preview.
-// This needs the command definitions in "content": with a gmic_ofx.gmic that has only #@gui
-// lines, only the value() rule applies.
-static void markPersistentFilters(const string& content, vector<EffectData>& cds)
+// This needs the command definitions: with a gmic_ofx.gmic that has only #@gui lines, only the
+// value() rule applies.
+static void markPersistentFilters(const CommandFile& file, vector<Filter>& filters)
 {
-	// the definitions, in order: (command, its lines; the first one is the rest of the
-	// definition's line)
-	vector<pair<string, vector<string> > > defs;
 	unordered_set<string> defined;
-	{
-		stringstream ss(content);
-		string line, rest;
-		while (getline(ss, line)) {
-			if (line.empty() || line[0] == '#') continue;
-			string name = commandDefinition(line, rest);
-			if (!name.empty()) {
-				defined.insert(name);
-				defs.push_back(make_pair(std::move(name), vector<string>(1, rest)));
-			} else if (!defs.empty()) {
-				defs.back().second.push_back(line);
-			}
-		}
-	}
+	for (const CommandDefinition& def : file.definitions) defined.insert(def.name);
 	unordered_map<string, vector<const string*> > callers; // command -> the commands naming it
 	unordered_set<string> reading; // the commands that read _persistent, directly or not
 	vector<const string*> todo;
 	string name;
-	for (size_t d = 0; d < defs.size(); ++d) {
-		const string& cmd = defs[d].first;
-		const vector<string>& lines = defs[d].second;
-		for (size_t l = 0; l < lines.size(); ++l) {
-			forEachGmicName(lines[l], name, [&](const string& n) {
+	for (const CommandDefinition& def : file.definitions) {
+		const string& cmd = def.name;
+		for (const string& line : def.lines) {
+			forEachGmicName(line, name, [&](const string& n) {
 				if (n == "_persistent") {
 					if (reading.insert(cmd).second) todo.push_back(&cmd);
 				} else if (n != cmd && defined.count(n)) {
@@ -917,7 +943,8 @@ static void markPersistentFilters(const string& content, vector<EffectData>& cds
 			if (reading.insert(*caller).second) todo.push_back(caller);
 		}
 	}
-	for (EffectData& cd : cds) {
+	for (Filter& f : filters) {
+		EffectData& cd = f.data;
 		if (!cd.previewOnly && !cd.noPreview && reading.count(cd.command)) {
 			cd.previewFirst = true;
 		}
@@ -947,88 +974,45 @@ static bool setsVisibilityStatus(const vector<string>& items)
 	return false;
 }
 
-// If the text at s[pos] starts with blanks (spaces or tabs) and '#', the position after the '#',
-// else npos (G'MIC-Qt's containsLeadingSpaceAndCrossSign)
-static size_t commentStart(const string& s, size_t pos)
-{
-	pos = s.find_first_not_of(" \t", pos);
-	return (pos != string::npos && s[pos] == '#') ? pos + 1 : string::npos;
-}
-
-// getline() for G'MIC code: a code line that ends with '\' goes on with the next line, without
-// its leading blanks (the unminified gmic_stdlib.gmic splits long "u" commands this way). Only code
-// lines are joined here; comment lines (a '#', maybe after blanks, see commentStart), which hold
-// the #@gui definitions, are joined by getGuiLine().
-static bool getCodeLine(istream& in, string& line)
-{
-	if (!getline(in, line)) return false;
-	string next;
-	while (!line.empty() && commentStart(line, 0) == string::npos && line[line.size() - 1] == '\\' && getline(in, next)) {
-		line.erase(line.size() - 1);
-		line += next.substr(min(next.find_first_not_of(" \t"), next.size()));
-	}
-	return true;
-}
-
 // The visibility suffixes ("_0", "_1") are G'MIC-Qt's initial state, which some filters change
 // at run time through their status (see setsVisibilityStatus): e.g. Marker Drawing enables
 // Background Blur when Background Type is "Blur". The plug-in can't follow such changes, and
 // would leave these parameters hidden or disabled for good: in such a filter, every parameter
 // stays visible and enabled. A filter changes the visibility when its main or preview command,
 // or a command that one of them calls directly (one level, e.g. Mitchell Concatenation's
-// _fx_rep_mitchell_concatenation_base), sets such a status. This needs the command definitions
-// in "content": with a gmic_ofx.gmic that has only #@gui lines, every filter is static.
-static void markDynamicVisibilityFilters(const string& content, vector<EffectData>& cds)
+// _fx_rep_mitchell_concatenation_base), sets such a status. This needs the command definitions:
+// with a gmic_ofx.gmic that has only #@gui lines, every filter is static.
+static void markDynamicVisibilityFilters(const CommandFile& file, vector<Filter>& filters)
 {
 	set<string> filterCommands;
-	for (vector<EffectData>::const_iterator it = cds.begin(); it != cds.end(); ++it) {
-		filterCommands.insert(it->command);
-		filterCommands.insert(it->preview_command);
+	for (const Filter& f : filters) {
+		filterCommands.insert(f.data.command);
+		filterCommands.insert(f.data.preview_command);
 	}
-	// pass 1: the defined commands, and those that set a visibility status themselves
-	set<string> defined, dynamic;
-	{
-		stringstream ss(content);
-		string line, cur, rest;
-		while (getCodeLine(ss, line)) {
-			if (line.empty() || line[0] == '#') continue;
-			const string name = commandDefinition(line, rest);
-			if (!name.empty()) {
-				cur = name;
-				defined.insert(name);
-			} else {
-				rest = line;
-			}
-			if (cur.empty() || dynamic.count(cur)) continue;
+	// pass 1: the commands that set a visibility status themselves
+	set<string> dynamic;
+	for (const CommandDefinition& def : file.definitions) {
+		for (const string& line : def.lines) {
+			if (dynamic.count(def.name)) break;
 			vector<string> items;
-			gmicItems(rest, items);
-			if (setsVisibilityStatus(items)) dynamic.insert(cur);
+			gmicItems(line, items);
+			if (setsVisibilityStatus(items)) dynamic.insert(def.name);
 		}
 	}
 	// pass 2: a filter command that calls one of them
 	set<string> dynamicFilterCommands;
-	{
-		stringstream ss(content);
-		string line, cur, rest;
-		while (getCodeLine(ss, line)) {
-			if (line.empty() || line[0] == '#') continue;
-			const string name = commandDefinition(line, rest);
-			if (!name.empty()) {
-				cur = filterCommands.count(name) ? name : string();
-				if (dynamic.count(name) && !cur.empty()) dynamicFilterCommands.insert(name);
-			} else {
-				rest = line;
-			}
-			if (cur.empty() || dynamicFilterCommands.count(cur)) continue;
+	for (const CommandDefinition& def : file.definitions) {
+		const string& cur = def.name;
+		if (!filterCommands.count(cur)) continue;
+		if (dynamic.count(cur)) dynamicFilterCommands.insert(cur);
+		for (const string& line : def.lines) {
+			if (dynamicFilterCommands.count(cur)) break;
 			vector<string> items;
-			gmicItems(rest, items);
+			gmicItems(line, items);
 			for (size_t k = 0; k < items.size(); ++k) {
 				const string& it = items[k];
 				if (it[0] == '#') break; // comment
-				// the command name of the item: "+cmd", "cmd[0]", "cmd.", "cmd arg"
-				size_t b = (it[0] == '+') ? 1 : 0, e = b;
-				while (e < it.size() && (isalnum((unsigned char)it[e]) || it[e] == '_')) ++e;
-				const string callee = it.substr(b, e - b);
+				const string callee = commandName(it);
 				if (!callee.empty() && callee != cur && dynamic.count(callee)) {
 					dynamicFilterCommands.insert(cur);
 					break;
@@ -1039,10 +1023,11 @@ static void markDynamicVisibilityFilters(const string& content, vector<EffectDat
 	// About G'MIC gathers the pages of the About folder (see gmic_parse_multi), whose own commands
 	// are not kept: one of them, What's New?, changes the visibility at run time
 	dynamicFilterCommands.insert("fx_gmicky");
-	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
-		if (!dynamicFilterCommands.count(it->command) && !dynamicFilterCommands.count(it->preview_command)) continue;
-		for (size_t i = 0; i < it->param.size(); ++i) {
-			it->param[i].visibility = EffectParameter::Visibility::Visible;
+	for (Filter& f : filters) {
+		EffectData& cd = f.data;
+		if (!dynamicFilterCommands.count(cd.command) && !dynamicFilterCommands.count(cd.preview_command)) continue;
+		for (EffectParameter& param : cd.param) {
+			param.visibility = EffectParameter::Visibility::Visible;
 		}
 	}
 }
@@ -1098,10 +1083,10 @@ static bool hasSuffix(const string& s, const string& suffix)
 // command (previewFirst, see markPersistentFilters), where these arguments can change the state
 // that the main command gets. A main command that reads these arguments anyway is a bug of the filter:
 // its parameters are marked too (their values are still passed to G'MIC).
-static void markSplitPreviewParams(vector<EffectData>& cds)
+static void markSplitPreviewParams(vector<Filter>& filters)
 {
-	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
-		EffectData& cd = *it;
+	for (Filter& f : filters) {
+		EffectData& cd = f.data;
 		if (cd.previewOnly || cd.preview_command == cd.command || cd.previewFirst) continue;
 		bool afterChoice = false; // the previous parameter with a value is a split preview choice
 		for (size_t i = 0; i < cd.param.size(); ++i) {
@@ -1130,7 +1115,7 @@ static void markSplitPreviewParams(vector<EffectData>& cds)
 // - a first command that is not "+..." (nor "(...)", an image given by its values) selecting
 //   image 1 ("cmd[1]", "cmd[0,1]") or reading it in an unquoted argument ("{1,w}", "#1"): Fourier
 //   Picture Watermark ("rs[0] {1,w*$1},{1,h*$1}", the watermark is the second image).
-// This needs the command definitions in "content".
+// This needs the command definitions.
 static bool selectsImage1(const string& cmd)
 {
 	const size_t b = cmd.find('[');
@@ -1198,29 +1183,24 @@ static bool needsSeveralImages(const vector<string>& items)
 	return false;
 }
 
-static void markMultiInputFilters(const string& content, vector<EffectData>& cds)
+static void markMultiInputFilters(const CommandFile& file, vector<Filter>& filters)
 {
 	set<string> mains;
-	for (vector<EffectData>::const_iterator it = cds.begin(); it != cds.end(); ++it) {
-		if (!it->multiLayer) mains.insert(it->command);
+	for (const Filter& f : filters) {
+		if (!f.data.multiLayer) mains.insert(f.data.command);
 	}
-	map<string, vector<string> > starts; // main command -> the first items of its definition
-	stringstream ss(content);
-	string line, cur, rest;
-	while (getline(ss, line)) {
-		if (line.empty() || line[0] == '#') continue;
-		string name = commandDefinition(line, rest);
-		if (!name.empty()) {
-			cur = (mains.count(name) && !starts.count(name)) ? name : string();
-		} else {
-			rest = line;
+	map<string, vector<string> > starts; // main command -> the first items of its (first) definition
+	for (const CommandDefinition& def : file.definitions) {
+		if (!mains.count(def.name) || starts.count(def.name)) continue;
+		vector<string>& items = starts[def.name];
+		for (const string& line : def.lines) {
+			if (items.size() >= 64) break;
+			gmicItems(line, items);
 		}
-		if (cur.empty() || starts[cur].size() >= 64) continue;
-		gmicItems(rest, starts[cur]);
 	}
-	for (vector<EffectData>::iterator it = cds.begin(); it != cds.end(); ++it) {
-		map<string, vector<string> >::const_iterator s = starts.find(it->command);
-		if (s != starts.end() && needsSeveralImages(s->second)) it->multiLayer = true;
+	for (Filter& f : filters) {
+		const auto s = starts.find(f.data.command);
+		if (s != starts.end() && needsSeveralImages(s->second)) f.data.multiLayer = true;
 	}
 }
 
@@ -1287,16 +1267,6 @@ static void substitutedVariables(const string& s, vector<string>& names)
 		while (e < s.size() && (isalnum((unsigned char)s[e]) || s[e] == '_')) ++e;
 		if (e > k && !isdigit((unsigned char)s[k])) names.push_back(s.substr(k, e - k));
 	}
-}
-
-// The command name of an item: without a "-" or "+" prefix, a selection ("o[0]") or dots ("ot..")
-static string commandName(const string& item)
-{
-	const size_t b = (!item.empty() && (item[0] == '-' || item[0] == '+')) ? 1 : 0;
-	const size_t sel = item.find('[');
-	string cmd = item.substr(b, sel == string::npos ? string::npos : sel - b);
-	while (!cmd.empty() && cmd[cmd.size() - 1] == '.') cmd.erase(cmd.size() - 1);
-	return cmd;
 }
 
 // Is the item a command that writes a file: "output" and its shortcuts in G'MIC 4.0.8's command
@@ -1377,39 +1347,25 @@ static bool writesGmicChosenFile(const vector<string>& items)
 // There is no list of filters: as in G'MIC-Qt, which hides none, a filter that these rules miss is
 // shown (e.g. Intarsia, which writes its HTML page and images into the Output Directory that the
 // user chooses), and if it really can't work in a host, it is for upstream to mark it.
-// This needs the command definitions in "content": with a gmic_ofx.gmic that only has #@gui lines,
-// only the parameter rule applies.
-static void hideBatchFilters(const string& content, vector<EffectData>& cds, vector<string>* lines)
+// This needs the command definitions: with a gmic_ofx.gmic that only has #@gui lines, only the
+// parameter rule applies.
+static void hideBatchFilters(const CommandFile& file, vector<Filter>& filters)
 {
 	set<string> mains;
-	for (vector<EffectData>::const_iterator it = cds.begin(); it != cds.end(); ++it) {
-		if (!it->command.empty()) mains.insert(it->command); // (not a page with no command)
+	for (const Filter& f : filters) {
+		if (!f.data.command.empty()) mains.insert(f.data.command); // (not a page with no command)
 	}
-	// the items of every definition, without the comments, and the documented commands (#@cli)
+	// the items of every definition, without the comments
 	map<string, vector<string> > bodies;
-	set<string> documented;
-	{
-		stringstream ss(content);
-		string line, rest;
-		vector<string>* body = nullptr;
-		while (getline(ss, line)) {
-			if (line.compare(0, 6, "#@cli ") == 0) {
-				const size_t b = line.find_first_not_of(' ', 6), e = line.find_first_of(" :", b);
-				if (b != string::npos && e != b) documented.insert(line.substr(b, e == string::npos ? string::npos : e - b));
-			}
-			if (line.empty() || line[0] == '#') continue;
-			const string name = commandDefinition(line, rest);
-			if (!name.empty()) {
-				body = &bodies[name];
-			} else {
-				rest = line;
-			}
-			if (!body) continue;
+	for (const CommandDefinition& def : file.definitions) {
+		vector<string>& body = bodies[def.name];
+		for (const string& line : def.lines) {
 			vector<string> items;
-			gmicItems(rest, items);
-			for (size_t k = 0; k < items.size() && items[k][0] != '#'; ++k) body->push_back(items[k]);
+			gmicItems(line, items);
+			for (size_t k = 0; k < items.size() && items[k][0] != '#'; ++k) body.push_back(items[k]);
 		}
 	}
+	const set<string>& documented = file.documented;
 	map<string, bool> writes; // command -> writesGmicChosenFile(its definition), computed once
 	const auto writesFile = [&bodies, &writes](const string& cmd) {
 		const map<string, bool>::const_iterator w = writes.find(cmd);
@@ -1429,8 +1385,8 @@ static void hideBatchFilters(const string& content, vector<EffectData>& cds, vec
 		}
 		if (hide) hidden.insert(*m);
 	}
-	for (size_t i = cds.size(); i-- > 0; ) {
-		const EffectData& cd = cds[i];
+	for (size_t i = filters.size(); i-- > 0; ) {
+		const EffectData& cd = filters[i].data;
 		bool readsFiles = false, frames = namesFrames(cd.name);
 		for (size_t j = 0; j < cd.param.size(); ++j) {
 			const string& t = cd.param[j].paramType;
@@ -1438,8 +1394,7 @@ static void hideBatchFilters(const string& content, vector<EffectData>& cds, vec
 			frames = frames || namesFrames(cd.param[j].name);
 		}
 		if ((readsFiles && frames) || hidden.count(cd.command)) {
-			cds.erase(cds.begin() + i);
-			if (lines && i < lines->size()) lines->erase(lines->begin() + i);
+			filters.erase(filters.begin() + (ptrdiff_t)i);
 		}
 	}
 }
@@ -1474,7 +1429,7 @@ static bool getGuiLine(const string& content, size_t& pos, string& line)
 // collapsed and trimmed, as QTextDocument::toPlainText() does
 static string plainText(const string& s)
 {
-	const string t = strRemoveXmlTags(s, true);
+	const string t = strXmlToText(s);
 	string r;
 	r.reserve(t.size());
 	for (const char c : t) {
@@ -1536,7 +1491,7 @@ static bool hides(const vector<string>& path, const GuiFilter& filter)
 	return k == path.size() || (k == filter.plainPath.size() && filter.plainName == path[k]);
 }
 
-void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<string>* lines)
+vector<Filter> gmic_parse_multi(const string& content)
 {
 	const string src_prefix_old = src_prefix_old_c;
 	const string src_prefix = src_prefix_c;
@@ -1632,10 +1587,8 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 			gmicLog("openfx-gmic: Warning: hide(%s): no folder or filter with this path\n", path.c_str());
 		}
 	}
-	// per entry that this call adds to cds (and lines), from these positions: hidden by hide()
-	vector<bool> hiddenCds;
-	const size_t cdsStart = cds ? cds->size() : 0;
-	const size_t linesStart = lines ? lines->size() : 0;
+	vector<Filter> result;
+	vector<bool> hiddenResults; // per entry of result: hidden by hide()
 
 	for (vector<GuiFilter>::const_iterator it = filters.begin(); it != filters.end(); ++it) {
 		string line2 = it->text;
@@ -1643,37 +1596,28 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 		strReplace(line2, src_prefix_old, dst_prefix);
 		cd.category.clear(); // (no folder: the filter is at the top level)
 		gmic_parse_single(line2, cd);
-		//printf("%s/%s\n", cd.category.c_str(), cd.name.c_str());
 		// the rules below look at the filter's own folder, the last one of its path (e.g.
 		// Testing/Samj/Sequences is a Sequences folder)
 		const string folder = it->plainPath.empty() ? string() : it->plainPath.back();
-		bool doOutput = true;
-		if (folder == "Various") {
-			//doOutput = false;
-			doOutput = true;
-		} else if ((int)strLowercase(line2).find("[interactive]") >= 0) {
-			doOutput = false;
-		} else if (folder == "Sequences" || (int)strLowercase(line2).find("[animated]") >= 0) {
-			doOutput = false;
-		} else if (line2.find("[ New Version Available! ]") != string::npos) {
-			// The page that G'MIC's update_deprecate inserts into the update file of an older
-			// G'MIC version (update408.gmic once a newer G'MIC is out), which tells G'MIC-Qt users to
-			// upgrade: no filter, and a plug-in there would shift the index of every other one.
-			doOutput = false;
-		}
-		if (doOutput && !cd.name.empty() && (cds || !it->hidden)) {
-			if (cds) cds->push_back(cd);
-			if (lines) lines->push_back(line2);
-			hiddenCds.push_back(it->hidden);
+		// Left out: the interactive and animated filters (anywhere in their lines, e.g. a choice
+		// label), the Sequences folders, and the page that G'MIC's update_deprecate inserts into
+		// the update file of an older G'MIC version (update408.gmic once a newer G'MIC is out),
+		// which tells G'MIC-Qt users to upgrade: no filter, and a plug-in there would shift the
+		// index of every other one. A Various folder keeps all its filters (e.g. CeKoaSa 009,
+		// whose choice "New Curves [interactive]" is one option).
+		const string lc = strLowercase(line2);
+		const bool leftOut = lc.find("[interactive]") != string::npos || folder == "Sequences" ||
+			lc.find("[animated]") != string::npos || line2.find("[ New Version Available! ]") != string::npos;
+		if ((folder == "Various" || !leftOut) && !cd.name.empty()) {
+			result.push_back(Filter{cd, line2});
+			hiddenResults.push_back(it->hidden);
 		}
 	}
-	if (!cds) {
-		return;
-	}
-	markPersistentFilters(content, *cds);
-	markSplitPreviewParams(*cds); // (after markPersistentFilters: previewFirst)
-	markMultiInputFilters(content, *cds);
-	markDynamicVisibilityFilters(content, *cds);
+	const CommandFile commandFile = readCommandFile(content);
+	markPersistentFilters(commandFile, result);
+	markSplitPreviewParams(result); // (after markPersistentFilters: previewFirst)
+	markMultiInputFilters(commandFile, result);
+	markDynamicVisibilityFilters(commandFile, result);
     // plug-in identifiers must be unique: G'MIC 4 has several filters with the same name in
     // different folders (in 4.0.7: the "About" page of each Testing author, giving About and
     // About2..About5, and "Color Harmonies", giving ColorHarmonies2). The first one in stdlib
@@ -1683,28 +1627,27 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
     // existing projects). A suffixed identifier never takes the identifier of a real filter
     // (e.g. a filter named "Foo 2", whatever its position): those are reserved first.
     set<string> realIds;
-    for (vector<EffectData>::const_iterator it = cds->begin(); it != cds->end(); ++it) {
-        realIds.insert(it->uniqueId);
+    for (const Filter& f : result) {
+        realIds.insert(f.data.uniqueId);
     }
     set<string> ids;
-    for (vector<EffectData>::iterator it = cds->begin(); it != cds->end(); ++it) {
-        string id = it->uniqueId;
-        for (int n = 2; ids.count(id) || (id != it->uniqueId && realIds.count(id)); ++n) {
-            id = it->uniqueId + std::to_string(n);
+    for (Filter& f : result) {
+        const string base = f.data.uniqueId; // (a copy: uniqueId is assigned below)
+        string id = base;
+        for (int n = 2; ids.count(id) || (id != base && realIds.count(id)); ++n) {
+            id = base + std::to_string(n);
         }
-        it->uniqueId = id;
+        f.data.uniqueId = id;
         ids.insert(id);
     }
     // the filters that hide() hides, now that the others have their identifiers
-    for (size_t k = hiddenCds.size(); k-- > 0; ) {
-        if (!hiddenCds[k]) continue;
-        cds->erase(cds->begin() + (ptrdiff_t)(cdsStart + k));
-        if (lines && linesStart + k < lines->size()) lines->erase(lines->begin() + (ptrdiff_t)(linesStart + k));
+    for (size_t k = hiddenResults.size(); k-- > 0; ) {
+        if (hiddenResults[k]) result.erase(result.begin() + (ptrdiff_t)k);
     }
-    hideBatchFilters(content, *cds, lines);
-    for (vector<EffectData>::iterator it = cds->begin(); it != cds->end(); ++it) {
+    hideBatchFilters(commandFile, result);
+    for (Filter& f : result) {
         // post-process
-        EffectData& cd = *it;
+        EffectData& cd = f.data;
         // (nested folders: "G'MIC/Testing/Afre/Colors", see gmic_parse_multi; a filter in no
         // folder is in the G'MIC group itself)
         if (cd.category == "About") {
@@ -1718,6 +1661,7 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
         strReplace(cd.name, " - ", " ");
         strReplace(cd.name, "inverse", "inv.");
     }
+    return result;
 }
 
 }

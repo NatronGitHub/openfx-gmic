@@ -51,6 +51,8 @@
 #ifndef GMIC_STRING_H
 #define GMIC_STRING_H
 
+#include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -77,12 +79,32 @@ void strReplace(std::string& str, std::string_view search, std::string_view repl
 // (printf's "%.8g" in the "C" locale, e.g. "0.1" and "0.33333334"), whatever the locale
 [[nodiscard]] std::string floatToString(float f);
 
-// parse a number written with '.' as the decimal separator, whatever the locale (0 if none)
-[[nodiscard]] double stringToDouble(const std::string& s);
+// parse a number written with '.' as the decimal separator, whatever the locale (0 if none), as
+// strtod does in the "C" locale. length: if not null, set to the number of characters read (0 if
+// there is no number), as std::stod's pos.
+[[nodiscard]] double stringToDouble(const std::string& s, std::size_t* length = nullptr);
 
-// s without its markup tags ("<b>", "</i>", "<!-- -->"); replaceEntities: also replace the HTML
-// entities with their UTF-8 characters
-[[nodiscard]] std::string strRemoveXmlTags(std::string_view s, bool replaceEntities = false);
+// The syntax that parseDecimal accepts: digits with an optional sign (SignedInteger), or digits
+// with an optional '.' and fraction, then an optional exponent ("2e3", "1.5E-2"), with
+// (SignedDecimal) or without (UnsignedDecimal) a sign
+enum class DecimalSyntax { SignedInteger, UnsignedDecimal, SignedDecimal };
+
+// s as a number of that syntax, '.' as the decimal point whatever the locale, blanks (" \t\r\n")
+// around it allowed; nothing for any other text ("inf", "nan", hexadecimal, other characters) and
+// on an overflow (an underflow gives 0). Only this syntax reaches the conversion, so the result
+// needs no isnan/isinf test (which -ffinite-math-only folds to false).
+[[nodiscard]] std::optional<double> parseDecimal(std::string_view s, DecimalSyntax syntax);
+
+// Append the UTF-8 encoding of the code point cp (up to U+10FFFF; not checked: the callers replace
+// invalid code points first if they need to)
+void appendUtf8(std::string& out, unsigned long cp);
+
+// s without its markup tags ("<b>", "</i>", "<!-- -->")
+[[nodiscard]] std::string strRemoveXmlTags(std::string_view s);
+
+// s without its markup tags (strRemoveXmlTags), with its HTML entities ("&amp;", "&#233;") and
+// G'MIC's "\251" replaced with their UTF-8 characters
+[[nodiscard]] std::string strXmlToText(std::string_view s);
 
 } // namespace gmic_ofx
 

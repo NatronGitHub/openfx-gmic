@@ -115,9 +115,22 @@ struct EffectData {
 };
 
 
-std::string gmic_parse_single(const std::string& content, EffectData& cd);
+// A filter of a G'MIC filter file
+struct Filter {
+	EffectData data;
+	// its #@gui lines, with "#@gmic_plugin" instead of "#@gui": a folder line with all its folders
+	// ('/'-separated), then its own lines (comments for G'MIC, added to its custom commands)
+	std::string guiLines;
+};
 
-void gmic_parse_multi(const std::string& content, std::vector<EffectData>* cds, std::vector<std::string>* lines);
+// The filters of a G'MIC filter file (the #@gui lines and the command definitions of "content"),
+// in file order, without those that the plug-in hides (see gmic_parser.cpp), each with a unique
+// identifier (EffectData::uniqueId)
+std::vector<Filter> gmic_parse_multi(const std::string& content);
+
+// The name of a point() parameter as the plug-in shows it: without its " (%)" (a host's point is in
+// pixels)
+std::string pointDisplayName(std::string name);
 
 }
 #endif

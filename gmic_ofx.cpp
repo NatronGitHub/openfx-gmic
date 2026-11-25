@@ -1471,7 +1471,7 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 				textType = 1;
 			}
 			if (textType == 4) {
-				txt = gmic_ofx::strTrim(gmic_ofx::strRemoveXmlTags(txt, true), " \t\r\n'\"");
+				txt = gmic_ofx::strTrim(gmic_ofx::strXmlToText(txt), " \t\r\n'\"");
 			}
 			OFX::StringParamDescriptor* p = desc.defineStringParam(name);
 			if (textType >= 0 && textType <= 4) {
