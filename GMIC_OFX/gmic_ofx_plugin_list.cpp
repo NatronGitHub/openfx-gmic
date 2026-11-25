@@ -7,12 +7,14 @@
 // It loads the plug-in and calls OfxGetNumberOfPlugins, with OFX_GMIC_WRITE_PLUGIN_LIST set: the
 // plug-in writes the list when it builds it (gmic_plugin.cpp). HOME, APPDATA and USERPROFILE are
 // set to a directory that does not exist, so that no G'MIC configuration of the user (a
-// gmic_ofx.gmic, a gmic_ofx_plugins.txt, or the user source ~/.gmic or user.gmic) changes the list. It fails unless the list has one entry per plug-in.
+// gmic_ofx.gmic, a gmic_ofx_plugins.txt, or the user source ~/.gmic or user.gmic) changes the
+// list. It fails unless the list has one entry per plug-in.
 // Built and run by CMakeLists.txt (GMIC_PLUGIN_LIST) and GMIC_OFX/Makefile.
 //
-// The plug-in reads these variables with the narrow getenv and writes with a narrow ofstream,
-// which can't represent every path (e.g. a non-ASCII one on Windows): the tool runs in the
-// output's directory and gives them relative ASCII names, then renames the list to the output.
+// The plug-in reads OFX_GMIC_WRITE_PLUGIN_LIST with the narrow getenv and writes the list with a
+// narrow ofstream, which can't represent every path (e.g. a non-ASCII one on Windows): the tool
+// runs in the output's directory and gives the list (and the folder that HOME, APPDATA and
+// USERPROFILE name) relative ASCII names, then renames the list to the output.
 // Windows: UTF-16 paths (wmain; MinGW links it with -municode). No std::filesystem, which macOS
 // only has from 10.15 (the plug-in may target older versions).
 #ifdef _WIN32

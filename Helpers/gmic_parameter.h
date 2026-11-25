@@ -110,6 +110,7 @@ struct World
 	float* data = nullptr; // not owned, width * height * 4 floats
 	int origin_x = 0;
 	int origin_y = 0;
+	std::string name; // an input's: the name of the clip it comes from (see pluginProcess)
 };
 
 struct PluginInfo

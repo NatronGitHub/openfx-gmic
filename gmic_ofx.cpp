@@ -1224,6 +1224,7 @@ void GMICEffect::render(const OFX::RenderArguments& args)
 			firstSrcPAR = img.getPixelAspectRatio();
 		}
 		World& in = sd.inWorld[i];
+		in.name = clipName;
 		in.origin_x = srcRect.x1;
 		in.origin_y = srcRect.y1;
 		in.width = srcRect.x2 - srcRect.x1;

@@ -64,6 +64,19 @@ fx_userfile_persistent_store_preview :
   (0.25,0.5,0.75) +store. _persistent rm.
   fill_color 255,0,255
 
+# fills the image with what the plug-in gives G'MIC on every run, as G'MIC-Qt does (#206): R is 255
+# if $_host is ofx, G is 10*$_input_layers+$_output_mode (10: Source only, and _output_mode is 0
+# in every Output Layer mode), B is 255 if the input's layer name (pos(0,0),name(Source)) is Source
+#@gui User File Run Variables : fx_userfile_vars, fx_userfile_vars
+fx_userfile_vars :
+  nm=${-gui_layer_name}
+  fill_color {same('$_host','ofx')*255},{10*0$_input_layers+0$_output_mode},{same('$nm','Source')*255}
+
+# a result with 5 channels, which fails the render as in G'MIC-Qt (#206)
+#@gui User File Five Channels : fx_userfile_five_channels, fx_userfile_five_channels
+fx_userfile_five_channels :
+  r 100%,100%,1,5
+
 # replaces the built-in 'fc' (fill_color)
 fc :
   f 128

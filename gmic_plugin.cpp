@@ -1161,7 +1161,9 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 	globalDataP->param[p].hint = "Add the frame number to the Global Random Seed, so that the random numbers change "
 		"from frame to frame (reproducibility: see Global Random Seed).";
 	++p;
-	globalDataP->param[p] = Parameter("Log Verbosity", "", ParamType::Select, 0, 4, 0, 0, 0, 0, "Off|Level 1|Level 2|Level 3|");
+	// (see verbosityLevel; the options are unchanged: strSplit drops the empty field that the
+	// text used to end with)
+	globalDataP->param[p] = Parameter("Log Verbosity", "", ParamType::Select, 0, 3, 0, 0, 0, 0, "Off|Level 1|Level 2|Level 3");
 	++p;
 	globalDataP->param[p] = Parameter("Advanced Options", "", ParamType::TopicEnd);
 	++p;
@@ -1314,8 +1316,16 @@ static string gmicArgument(const SequenceData* sequenceDataP, const GlobalData* 
 			return floatToString((float)std::min(std::max(v, (double)par.minValue), (double)par.maxValue));
 		}
 		return floatToString(sequenceDataP->floatValue[i][0]);
-	case ParamType::Text:
-		return quotedArgument(globalDataP, i, value ? *value : sequenceDataP->textValue[i]);
+	case ParamType::Text: {
+		string text = value ? *value : sequenceDataP->textValue[i];
+		// an empty folder() is the home folder, as in G'MIC-Qt (FolderParameter::setValue(), with
+		// Settings' FolderParameterDefaultValue): Qt gives it with '/'. Empty if there is none.
+		if (par.flags == 3 && text.empty()) {
+			text = homeFolder();
+			std::replace(text.begin(), text.end(), '\\', '/');
+		}
+		return quotedArgument(globalDataP, i, text);
+	}
 	case ParamType::Color: {
 		const bool alpha = par.flags == kParamFlagsColorRGBA;
 		const vector<string> c = value ? statusFields(*value) : vector<string>();
@@ -1425,6 +1435,26 @@ static const char* const kFrameSelectCommand =
 	"  b=0 repeat $! { b={$b+w#$>*h#$>*d#$>*s#$>*4} }\n"
 	"  if $!>$2||$b>$3 k[{(($1%$!)+$!)%$!}] nm openfx_gmic_frame_selected fi\n";
 
+// Log Verbosity: Off, Level 1, Level 2, Level 3 (0 to 3), from the parameter's value
+static int verbosityLevel(float value)
+{
+	return std::min(std::max((int)value, 0), 3);
+}
+
+// G'MIC's verbosity for a Log Verbosity level: -1 (quiet), 0, 1, or 3 for Level 3, as G'MIC-Qt's
+// "Very verbose" output messages ("v 3", commandFromOutputMessageMode in Misc.cpp)
+static int gmicVerbosity(int level)
+{
+	return level >= 3 ? 3 : level - 1;
+}
+
+// G'MIC-Qt's OutputMessageMode (GmicQt.h) for a Log Verbosity level, for _output_messages: Quiet
+// (0), VerboseConsole (2), VeryVerboseConsole (4, which runs "v 3")
+static int outputMessageMode(int level)
+{
+	return level == 0 ? 0 : (level >= 3 ? 4 : 2);
+}
+
 // in the log line of a failed preview-first run (see pluginProcess), which
 // .github/workflows/render_plugins.py (PREVIEW_FIRST_FAILED) looks for: keep them the same
 static const char* const kPreviewFirstFailed = "run before the main command, failed";
@@ -1508,19 +1538,31 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 
 	instanceDataP->options().custom_commands = customCommands.c_str();
 	
-	// Variables that G'MIC-Qt defines for the filters (GmicProcessor.cpp, FilterThread.cpp), with
-	// the whole image as the preview area. Its size is the largest input size, as G'MIC-Qt's
-	// LayersExtentProxy::getExtent() (all the inputs have the size of the first one if the Resize
-	// Mode downsamples them).
+	// Variables that G'MIC-Qt defines for the filters (GmicProcessor.cpp, HeadlessProcessor.cpp,
+	// FilterThread.cpp), with the whole image as the preview area. Its size is the largest input
+	// size, as G'MIC-Qt's LayersExtentProxy::getExtent() (all the inputs have the size of the
+	// first one if the Resize Mode downsamples them).
+	// - On every run, as G'MIC-Qt (also the run of the preview command before the main command,
+	//   GmicRun::kPreviewState, which also gets the same image names, see pluginProcess):
+	//   - _host, G'MIC-Qt's host short name: the stdlib compares it with "cli" or "paintdotnet".
+	//     Array [Random] [Jumble by Px]'s main command, through its preview command, then crops to
+	//     the preview area ('$_host'!='$cli' is always true when _host is defined), i.e. the whole
+	//     image here.
+	//   - _input_layers: G'MIC-Qt's InputMode (GmicQt.h) that matches the inputs: 1 (Active:
+	//     Source only), or 3 (ActiveAndBelow: Source, then the layer inputs, see Output Layer) for
+	//     the filters with layer inputs.
+	//   - _output_mode: G'MIC-Qt's OutputMode, 0 (InPlace, its default) for every Output Layer:
+	//     with 1 (NewLayers), filters such as Bokeh, Lens Flare or Pixel Stretch return only their
+	//     effect layer, for the host to composite over the input, which an OFX output doesn't do.
+	//     (Results as separate layers are for multi-plane output, issue #207.)
+	//   - _output_messages: G'MIC-Qt's OutputMessageMode for the Log Verbosity: 0 (Quiet) for Off,
+	//     2 (VerboseConsole) for Level 1 and 2, 4 (VeryVerboseConsole) for Level 3.
 	// - _preview_x0/y0/x1/y1, defined by G'MIC-Qt for the preview and when applying the filter:
 	//   e.g. the preview command of Array [Random] [Jumble by Px], which its main command calls,
 	//   crops to it.
 	// - _preview_width/height and _preview_area_width/height only for a preview run: main
 	//   commands use them to detect a preview (Speech Bubble draws its guides). For a preview,
 	//   gui_preview_wh now returns the image size instead of 400x400 for small images.
-	// - _host (G'MIC-Qt's host short name) only for a preview run: the stdlib compares it with
-	//   "cli" or "paintdotnet", but Array [Random] [Jumble by Px]'s preview tests
-	//   '$_host'!='$cli' (always true when _host is defined), so main runs keep it undefined.
 	// _persistent is not in the command line: the filters that need it run their preview command
 	// first, which sets it for the main command (see pluginProcess).
 	int extentW = 0, extentH = 0;
@@ -1536,9 +1578,13 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 		}
 	}
 	const string W = std::to_string(extentW), H = std::to_string(extentH);
-	string env = "_preview_x0=0 _preview_y0=0 _preview_x1=" + std::to_string(extentW - 1) + " _preview_y1=" + std::to_string(extentH - 1) + " ";
+	const bool layerInputs = effectDataOf(globalDataP).multiLayer;
+	string env = "_host=ofx _input_layers=" + string(layerInputs ? "3" : "1") +
+		" _output_mode=0" +
+		" _output_messages=" + std::to_string(outputMessageMode(verbosityLevel(sequenceDataP->floatValue[PARAM_VERBOSITY][0]))) + " ";
+	env += "_preview_x0=0 _preview_y0=0 _preview_x1=" + std::to_string(extentW - 1) + " _preview_y1=" + std::to_string(extentH - 1) + " ";
 	if (isPreview) {
-		env += "_host=ofx _preview_width=" + W + " _preview_height=" + H +
+		env += "_preview_width=" + W + " _preview_height=" + H +
 			" _preview_area_width=" + W + " _preview_area_height=" + H + " ";
 	}
 	cmd = env + cmd;
@@ -1561,7 +1607,7 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 			cmd += " -resize " + std::to_string(sequenceDataP->inWorld[0].width) + "," + std::to_string(sequenceDataP->inWorld[0].height);
 		}
 	}
-	int verbosity = (int)sequenceDataP->floatValue[PARAM_VERBOSITY][0] - 1;
+	const int verbosity = gmicVerbosity(verbosityLevel(sequenceDataP->floatValue[PARAM_VERBOSITY][0]));
 	int seed = (int)sequenceDataP->floatValue[PARAM_SRAND][0];
 	bool animated_seed = (int)sequenceDataP->floatValue[PARAM_ANIMSEED][0];
 	if (animated_seed) {
@@ -1569,10 +1615,6 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 	}
 
 	cmd = "-v " + std::to_string(verbosity) + " -srand " + std::to_string(seed) + " " + cmd;
-	// cmd += " -display";
-	// set some variables that are defined globally for the GIMP plugin
-	// not really needed as the effects should work independently of GIMP
-//	cmd = "_input_mode=1 _output_mode=0 _verbosity_mode=0 _preview_mode=0 _preview_size=0 " + cmd;
 
 	return cmd;
 }
@@ -2234,6 +2276,18 @@ bool pluginPassesSourceThrough(const GlobalData& globalData)
 	return effectDataOf(&globalData).command.empty();
 }
 
+// The G'MIC name of an input image, as G'MIC-Qt names its layers (host_none.cpp, and the GIMP
+// host): "pos(0,0),name(<clip name>)", with the parentheses of the name replaced by the control
+// characters 21 and 22, as G'MIC-Qt's hosts do. The filters read it with gui_layer_name and
+// gui_layer_pos.
+static string gmicImageName(const string& clipName)
+{
+	string name = clipName;
+	std::replace(name.begin(), name.end(), '(', '\x15');
+	std::replace(name.begin(), name.end(), ')', '\x16');
+	return "pos(0,0),name(" + name + ")";
+}
+
 bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, GmicInstanceData& instanceData, OFX::ImageEffect& effect)
 {
 	// (the names used by the PARAM_* macros)
@@ -2270,10 +2324,11 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		images[i].data = sequenceDataP->inWorld[i].data;
 		images[i].spectrum = 4;
 		images[i].depth = 1;
-		images[i].name[0] = '\0';
 		images[i].format = E_FORMAT_FLOAT;
 		images[i].is_interleaved = false;
-		strncpy(images[i].name, string("input" + std::to_string(i)).c_str(), sizeof(images[i].name));
+		const string name = gmicImageName(sequenceDataP->inWorld[i].name);
+		strncpy(images[i].name, name.c_str(), sizeof(images[i].name) - 1);
+		images[i].name[sizeof(images[i].name) - 1] = '\0';
 	}
 
 	const EffectData& effectData = effectDataOf(globalDataP);
@@ -2418,8 +2473,15 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		if (!res || res->spectrum == 0 || !res->data) {
 			result = -1;
 			errmsg = "The image produced by G'MIC is empty.";
+		} else if (res->spectrum > 4) {
+			// fail rather than drop the extra channels, as G'MIC-Qt (GmicProcessor.cpp,
+			// checkImageSpectrumAtMost4). Only the result that is output is checked (G'MIC-Qt
+			// outputs them all), never the discarded results of the preview command run first.
+			// Frame: each frame checks its own result, also one taken from the kept results.
+			result = -1;
+			errmsg = "The image produced by G'MIC has " + std::to_string(res->spectrum) + " channels (should be at most 4).";
 		} else {
-			// Planar output R,G,B,A from 1 (G), 2 (GA), 3 (RGB) or 4+ (RGBA) channels. The G'MIC
+			// Planar output R,G,B,A from 1 (G), 2 (GA), 3 (RGB) or 4 (RGBA) channels. The G'MIC
 			// result is anchored at the first input's rectangle, the output has its own rectangle
 			// (both in pixels, rows top-down in the planar buffers): copy the overlap, clear the rest.
 			const World& out = sequenceDataP->outWorld;
@@ -2434,11 +2496,11 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 			float* const dst = out.data;
 			const float* const src = (const float*)res->data;
 			const unsigned int spectrum = res->spectrum;
-			sequenceDataP->resultHasAlpha = (spectrum == 2 || spectrum >= 4);
+			sequenceDataP->resultHasAlpha = (spectrum == 2 || spectrum == 4);
 			// source plane for each output channel, or NULL for opaque alpha
 			const float* plane[4];
 			for (int c = 0; c < 3; ++c) plane[c] = src + (spectrum >= 3 ? splane * c : 0);
-			plane[3] = (spectrum == 2) ? src + splane : (spectrum >= 4 ? src + splane * 3 : NULL);
+			plane[3] = (spectrum == 2) ? src + splane : (spectrum == 4 ? src + splane * 3 : nullptr);
 			const bool same = (sw == dw && sh == dh && sx1 == dx1 && sy1 == dy1);
 			if (!same) {
 				memset(dst, 0, dplane * 4 * sizeof(float));

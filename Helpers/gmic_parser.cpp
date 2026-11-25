@@ -392,8 +392,9 @@ void processParam(const string& s, EffectParameter& cp)
 		// 'folder(_default_foldername)'
 		// Add a foldername parameter (as a folderchooser).
 //		cp.paramType = "text";
+		// an empty default stays empty: the plug-in passes the home folder for an empty value, as
+		// G'MIC-Qt (see gmicCommand)
 		cp.text = strTrim(pval, "\"");
-		if (cp.text == "") cp.text = "./";
 		cp.defaultValue = cp.text;
 	} else if (cp.paramType == "link") {
 		// 'link(_alignment,_label,URL)'
@@ -1613,7 +1614,10 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
 			gmicLog("openfx-gmic: Warning: hide(%s): no folder or filter with this path\n", path.c_str());
 		}
 	}
-	vector<bool> hiddenCds; // per cds entry: hidden by hide()
+	// per entry that this call adds to cds (and lines), from these positions: hidden by hide()
+	vector<bool> hiddenCds;
+	const size_t cdsStart = cds ? cds->size() : 0;
+	const size_t linesStart = lines ? lines->size() : 0;
 
 	for (vector<GuiFilter>::const_iterator it = filters.begin(); it != filters.end(); ++it) {
 		string line2 = it->text;
@@ -1674,10 +1678,10 @@ void gmic_parse_multi(const string& content, vector<EffectData>* cds, vector<str
         ids.insert(id);
     }
     // the filters that hide() hides, now that the others have their identifiers
-    for (size_t i = cds->size(); i-- > 0; ) {
-        if (!hiddenCds[i]) continue;
-        cds->erase(cds->begin() + (ptrdiff_t)i);
-        if (lines && i < lines->size()) lines->erase(lines->begin() + (ptrdiff_t)i);
+    for (size_t k = hiddenCds.size(); k-- > 0; ) {
+        if (!hiddenCds[k]) continue;
+        cds->erase(cds->begin() + (ptrdiff_t)(cdsStart + k));
+        if (lines && linesStart + k < lines->size()) lines->erase(lines->begin() + (ptrdiff_t)(linesStart + k));
     }
     hideBatchFilters(content, *cds, lines);
     for (vector<EffectData>::iterator it = cds->begin(); it != cds->end(); ++it) {
