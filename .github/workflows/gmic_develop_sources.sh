@@ -108,8 +108,7 @@ cp "$src/CImg.h" "$src/gmic.cpp" "$WORK/"
     echo
     echo "A patch's own check tells \"applied\", \"not needed\" (it found upstream's fix) and \"does not apply\"; each"
     echo "needs a review at the next bump: the check may be wrong, the code may have moved with the bug still"
-    echo "there, and upstream may have changed what the patch relies on (e.g. cimg-vargkth2.sh applies at CImg"
-    echo "2f5e7e8, where vargkth() counts from 1: openfx-gmic#235)."
+    echo "there, and upstream may have changed what the patch relies on."
     echo
     echo "| Patch | File | Outcome |"
     echo "|---|---|---|"

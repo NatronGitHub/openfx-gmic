@@ -19,7 +19,23 @@
 
 using namespace OFX::Host;
 
-// The values of a property of a parameter descriptor, comma-separated ("" if it has none)
+// text with backslash, tab, CR and LF escaped as \\, \t, \r and \n: one field of a one-line log entry
+static std::string escaped(const std::string& text)
+{
+    std::string out;
+    for (const char c : text) {
+        switch (c) {
+        case '\\': out += "\\\\"; break;
+        case '\t': out += "\\t"; break;
+        case '\r': out += "\\r"; break;
+        case '\n': out += "\\n"; break;
+        default: out += c;
+        }
+    }
+    return out;
+}
+
+// The values of a property of a parameter descriptor, comma-separated ("" if it has none), escaped
 static std::string propertyValues(const Param::Descriptor& param, const char* name)
 {
     Property::Property* prop = param.getProperties().fetchProperty(name);
@@ -27,7 +43,7 @@ static std::string propertyValues(const Param::Descriptor& param, const char* na
     for (int i = 0; prop && i < prop->getDimension(); ++i) {
         values += (i ? "," : "") + prop->getStringValue(i);
     }
-    return values;
+    return escaped(values);
 }
 
 class DescribeHost : public ImageEffect::Host
@@ -95,8 +111,11 @@ int main(int argc, char** argv)
                     fprintf(stderr, "PUSHBUTTON %s\t%s\n", id.c_str(), (*p)->getName().c_str());
                 }
                 // for gmic_develop_report.py: each parameter as the host sees it (type, label,
-                // default, range, choice options, secret), tab-separated
-                std::string line = "PARAM " + id + "\t" + (*p)->getName() + "\t" + (*p)->getType() + "\t" + (*p)->getLabel();
+                // default, range, choice options, secret), tab-separated, each field escaped so
+                // that the line stays one line (describe_plugins.sh counts lines that start with
+                // PLUGIN, or contain some texts)
+                std::string line = "PARAM " + id + "\t" + escaped((*p)->getName()) + "\t" + (*p)->getType() + "\t" +
+                                   escaped((*p)->getLabel());
                 const char* const props[] = { kOfxParamPropDefault, kOfxParamPropMin, kOfxParamPropMax,
                                               kOfxParamPropChoiceOption, kOfxParamPropSecret };
                 for (const char* name : props) {

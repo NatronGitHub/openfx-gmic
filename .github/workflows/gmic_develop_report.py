@@ -3,8 +3,8 @@
 
 Reads the results directories of gmic_develop_tests.sh for the release and for develop (a
 missing file reads as empty: the test table then says "not run"), and prints a Markdown summary:
-- the sources (the report of gmic_develop_sources.sh), the patches whose outcome differs from the
-  release, and each test's exit status; a render log cut short is flagged;
+- the sources (the report of gmic_develop_sources.sh, with the outcome of each patch) and each
+  test's exit status; a render log cut short is flagged;
 - the plug-ins that develop adds or removes, and those whose menu category or inputs change;
 - the describe problems that only develop has, and the outcome of each hot fix on both sides;
 - the renders that differ: failures with their first G'MIC error (crashes and timeouts
@@ -58,6 +58,9 @@ _PARAM_LINE = re.compile(r'^PARAM (\S+)\t([^\t\n]*)\t([^\t\n]*)\t([^\t\n]*)((?:\
 _PARAM_FIELDS = ('type', 'OfxParamPropDefault', 'OfxParamPropMin', 'OfxParamPropMax', 'label',
                  'OfxParamPropChoiceOption', 'OfxParamPropSecret')
 _VALUE_FIELDS = ('type', 'OfxParamPropDefault', 'OfxParamPropMin', 'OfxParamPropMax')
+# the name that the plug-in gives a parameter without a label: its position (notes, separators),
+# which shifts whenever a parameter is added or removed before it; left out of the comparison
+_POSITION_NAME = re.compile(r'^__\d+$')
 # a row of gmic_develop_sources.sh's patch table: patch, file, outcome
 _PATCH_ROW = re.compile(r'^\| `(patches/[^`]+)` \| [^|]+ \| (.*) \|$', re.MULTILINE)
 _PFM_HEADER = re.compile(rb'(P[Ff])\s+(\d+)\s+(\d+)\s+([-+0-9.eE]+)\s')
@@ -141,7 +144,8 @@ def read_results(directory):
     for pid, name, kind, label, props in _PARAM_LINE.findall(host_log):
         fields = {'type': kind, 'label': label}
         fields.update(prop.split('=', 1) for prop in props.split('\t')[1:] if '=' in prop)
-        params[pid][name] = fields
+        if not _POSITION_NAME.match(name):
+            params[pid][name] = fields
     describe_lines = (host_log + '\n' + _read(os.path.join(directory, 'describe.log'))).splitlines()
     describe = {line.strip() for line in describe_lines
                 if _DESCRIBE_PROBLEM.search(line) and not _DESCRIBE_COUNT.match(line)}
@@ -418,7 +422,6 @@ def differences(release, develop, renders, again, trees, sources):
         'status': {test: {'release': release.status.get(test), 'develop': develop.status.get(test)}
                    for test in _TESTS},
         'render_cut': {'release': release.render_cut, 'develop': develop.render_cut},
-        'patches_changed': {patch: outcome for patch, outcome in patches.items() if not outcome.startswith('applied')},
         'random_expected': any('does not apply' in outcome for patch, outcome in patches.items()
                                if patch.endswith('cimg-omp-rand.sh')),
         'plugins': {
@@ -498,10 +501,13 @@ def _summary_lines(diff):
     if diff['random_expected']:
         out += ['', '`cimg-omp-rand.sh` does not apply to develop: the random numbers of its OpenMP loops depend '
                 'on the thread scheduling, so the outputs of filters that use them are expected to differ.']
-    for side, unstable in diff['outputs_unstable'].items():
-        if unstable:
-            out += ['', 'Not reproducible with %s (another output when rendered again): %d' % (side, len(unstable))]
-            out += _items(sorted(unstable))
+    unstable = diff['outputs_unstable']
+    groups = (('release (and maybe develop)', sorted(unstable['release'])),
+              ('develop only', sorted(set(unstable['develop']) - set(unstable['release']))))
+    for title, ids in groups:
+        if ids:
+            out += ['', 'Not reproducible with %s (another output when rendered again): %d' % (title, len(ids))]
+            out += _items(ids)
     return out
 
 
@@ -516,9 +522,6 @@ def markdown(diff, sources):
     for side, cut in diff['render_cut'].items():
         if cut:
             out += ['', '**The %s render log has no summary line: the render was cut short.**' % side]
-    if diff['patches_changed']:
-        out += ['', 'Patches whose outcome differs from the release (where they all apply): '
-                + ', '.join('`%s`' % patch for patch in diff['patches_changed'])]
     out += _summary_lines(diff)
     out += ['', '### Commands that develop removed and may still call: %d' % len(diff['removed_commands']), '']
     out += _items(['`%s`: named by %s; plug-ins that may call it: %s'
