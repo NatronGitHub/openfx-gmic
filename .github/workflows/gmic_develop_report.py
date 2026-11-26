@@ -418,7 +418,7 @@ def differences(release, develop, renders, again, trees, sources):
         'status': {test: {'release': release.status.get(test), 'develop': develop.status.get(test)}
                    for test in _TESTS},
         'render_cut': {'release': release.render_cut, 'develop': develop.render_cut},
-        'patches_changed': {patch: outcome for patch, outcome in patches.items() if outcome != 'applied'},
+        'patches_changed': {patch: outcome for patch, outcome in patches.items() if not outcome.startswith('applied')},
         'random_expected': any('does not apply' in outcome for patch, outcome in patches.items()
                                if patch.endswith('cimg-omp-rand.sh')),
         'plugins': {

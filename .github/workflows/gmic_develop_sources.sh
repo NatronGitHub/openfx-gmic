@@ -106,8 +106,10 @@ cp "$src/CImg.h" "$src/gmic.cpp" "$WORK/"
     echo
     echo "### Local patches"
     echo
-    echo "A patch's own check tells \"not needed\" (it found upstream's fix) from \"does not apply\"; each needs"
-    echo "a review at the next bump: the check may be wrong, and the code may have moved with the bug still there."
+    echo "A patch's own check tells \"applied\", \"not needed\" (it found upstream's fix) and \"does not apply\"; each"
+    echo "needs a review at the next bump: the check may be wrong, the code may have moved with the bug still"
+    echo "there, and upstream may have changed what the patch relies on (e.g. cimg-vargkth2.sh applies at CImg"
+    echo "2f5e7e8, where vargkth() counts from 1: openfx-gmic#235)."
     echo
     echo "| Patch | File | Outcome |"
     echo "|---|---|---|"
@@ -121,7 +123,7 @@ for list in CIMG_PATCHES:CImg.h GMIC_PATCHES:gmic.cpp; do
             kept="$kept $p"
             case $out in
                 *"not patched"*|*"already"*) outcome="not needed, by the patch's own check (review it): $(echo "$out" | tail -n 1)";;
-                *) outcome="applied";;
+                *) outcome="applied (review it)";;
             esac
         else
             outcome="**does not apply**, left out (review: fixed upstream, or the code changed): $(echo "$out" | head -n 1)"
