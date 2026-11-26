@@ -155,16 +155,23 @@ void pluginOutputLayerChanged(GmicInstanceData& instanceData, int outputLayer);
 
 // The size and position of the result that a render outputs, in pixels: its offset from the
 // top-left corner of the first input (Source), x to the right and y down as in G'MIC (the pos(x,y)
-// in the result's name, as G'MIC-Qt's hosts read it), and its size.
+// in the result's name, as G'MIC-Qt's hosts read it), and its size. A result with no position of
+// its own (no pos(x,y), or Source's name kept: G'MIC didn't place it, e.g. an upscale, a frame or
+// a rotation) keeps Source's bottom-left corner instead, the origin of OFX images, so that it
+// grows up and to the right (issue #238); its x and y are then 0.
 struct ResultGeometry
 {
 	int x = 0;
 	int y = 0;
 	int width = 0;
 	int height = 0;
+	bool atSourceBottom = false; // no position of its own: at Source's bottom-left corner
+	// its bottom row in pixels (y up), for Source's rows [sourceY1, sourceY2); without the margin
+	int bottom(int sourceY1, int sourceY2) const { return atSourceBottom ? sourceY1 : sourceY2 - y - height; }
 	// a transparent margin around it in the region of definition, in pixels (0 or 1 per side:
 	// left, top, right, bottom, G'MIC's orientation): a refined prediction that is not an exact
-	// fraction may be 1 pixel off (see pluginResultGeometry); a result within it fits the output
+	// fraction may be 1 pixel off (see pluginResultGeometry), its size on the side away from its
+	// corner (right, and bottom, or top if atSourceBottom); a result within it fits the output
 	int marginLeft = 0;
 	int marginTop = 0;
 	int marginRight = 0;

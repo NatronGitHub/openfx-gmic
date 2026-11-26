@@ -31,8 +31,10 @@ support. With OFX_GMIC_MULTIRES=0 (a test aid of the plug-in: it then acts as on
 it), User File Larger (Resize Mode Dynamic) and User File Smaller (Fixed) must be resized to
 Source's size, as before #175, with no warning. The other checks render on hostDemo as it is,
 where the plug-in predicts the result's size, as on Natron. With Resize Mode Dynamic, the default,
-User File Larger, User File Smaller and User File Shifted must output the result's size, and the
-region of definition its size and position, from Source's top-left corner; with Fixed
+User File Larger, User File Smaller, User File Taller and User File Shifted must output the
+result's size, and the region of definition its size and position: Shifted's pos(10,20) from
+Source's top-left corner, the others (no position of their own) at Source's bottom-left corner
+(#238; Taller, twice Source's height, must have its top half red at the top); with Fixed
 (Inplace), Source's size and region of definition, cropped or padded. No render may warn that
 the result doesn't match the output, except User File Content Size, whose size depends on the
 pixels. User File Larger and User File Shifted are also rendered at render scale 0.5: the output
@@ -111,35 +113,43 @@ TOLERANCE = 1e-4
 DEFINED_BY = ' is defined by '  # the note of a kept definition of a hot-fixed command
 # (#175) the cases of check_geometry(): plug-in id, hostDemo arguments (a Source input that
 # doesn't start at 0,0: OFFSET_SOURCE), the expected output size relative to Source's and its
-# pos(x,y) (pixels, y down), the RGBA value of every output pixel (PADDED: the result in its
-# top-left part, transparent black elsewhere, both checked through the minimum and maximum), and
-# whether the render must warn that the result doesn't match the output
+# position: a pos(x,y) of its own (pixels from Source's top-left corner, y down), or
+# AT_SOURCE_BOTTOM, Source's bottom-left corner, for a result without one (#238), the RGBA value of
+# every output pixel (PADDED: the result in its top-left part, transparent black elsewhere, both
+# checked through the minimum and maximum; SPLIT: the top half of the output red, the bottom half
+# green, checked in the output file), and whether the render must warn that the result doesn't
+# match the output
 OFFSET_SOURCE = ['-i', 'Source=file:../input.pfm@20,10']
+AT_SOURCE_BOTTOM = 'at Source bottom'
 PADDED = 'padded'
+SPLIT = 'split'
 # (each case: plug-in id, hostDemo arguments, the output's size and pos as above, its color, whether
 # the render warns, how the size is found: EXACT, with no note (exact fractions; the test's small
 # Source is probed at its own size), CONFIRMED by a probe at full size after a failed fit, or
 # NO_PROBE (Fixed, Downsample), and the frame)
 EXACT, CONFIRMED, NO_PROBE = 'exact', 'confirmed', 'no probe'
 GEOMETRY_CASES = [
-    ('eu.gmic.UserFileLarger', [], (2.0, 1.5, 0, 0), (1.0, 0.0, 0.0, 1.0), False, EXACT, '0'),
-    ('eu.gmic.UserFileSmaller', [], (0.5, 0.25, 0, 0), (0.0, 1.0, 0.0, 1.0), False, EXACT, '0'),
-    ('eu.gmic.UserFileShifted', [], (1.0, 1.0, 10, 20), (0.0, 0.0, 1.0, 1.0), False, EXACT, '0'),
-    ('eu.gmic.UserFileLarger', OFFSET_SOURCE, (2.0, 1.5, 0, 0), (1.0, 0.0, 0.0, 1.0), False, EXACT, '0'),
-    ('eu.gmic.UserFileShifted', OFFSET_SOURCE, (1.0, 1.0, 10, 20), (0.0, 0.0, 1.0, 1.0), False, EXACT, '0'),
+    ('eu.gmic.UserFileLarger', [], (2.0, 1.5, AT_SOURCE_BOTTOM), (1.0, 0.0, 0.0, 1.0), False, EXACT, '0'),
+    ('eu.gmic.UserFileSmaller', [], (0.5, 0.25, AT_SOURCE_BOTTOM), (0.0, 1.0, 0.0, 1.0), False, EXACT, '0'),
+    ('eu.gmic.UserFileShifted', [], (1.0, 1.0, (10, 20)), (0.0, 0.0, 1.0, 1.0), False, EXACT, '0'),
+    ('eu.gmic.UserFileLarger', OFFSET_SOURCE, (2.0, 1.5, AT_SOURCE_BOTTOM), (1.0, 0.0, 0.0, 1.0), False, EXACT, '0'),
+    ('eu.gmic.UserFileShifted', OFFSET_SOURCE, (1.0, 1.0, (10, 20)), (0.0, 0.0, 1.0, 1.0), False, EXACT, '0'),
+    # taller than Source, its top half red: the output's top half (#238)
+    ('eu.gmic.UserFileTaller', [], (1.0, 2.0, AT_SOURCE_BOTTOM), SPLIT, False, EXACT, '0'),
+    ('eu.gmic.UserFileTaller', OFFSET_SOURCE, (1.0, 2.0, AT_SOURCE_BOTTOM), SPLIT, False, EXACT, '0'),
     # Fixed (Inplace): Source's rectangle, cropped, padded, pos() ignored
-    ('eu.gmic.UserFileLarger', ['-s', 'Resize Mode=0'], (1.0, 1.0, 0, 0), (1.0, 0.0, 0.0, 1.0), False, NO_PROBE, '0'),
-    ('eu.gmic.UserFileSmaller', ['-s', 'Resize Mode=0'], (1.0, 1.0, 0, 0), PADDED, False, NO_PROBE, '0'),
-    ('eu.gmic.UserFileShifted', ['-s', 'Resize Mode=0'], (1.0, 1.0, 0, 0), (0.0, 0.0, 1.0, 1.0), False, NO_PROBE, '0'),
+    ('eu.gmic.UserFileLarger', ['-s', 'Resize Mode=0'], (1.0, 1.0, (0, 0)), (1.0, 0.0, 0.0, 1.0), False, NO_PROBE, '0'),
+    ('eu.gmic.UserFileSmaller', ['-s', 'Resize Mode=0'], (1.0, 1.0, (0, 0)), PADDED, False, NO_PROBE, '0'),
+    ('eu.gmic.UserFileShifted', ['-s', 'Resize Mode=0'], (1.0, 1.0, (0, 0)), (0.0, 0.0, 1.0, 1.0), False, NO_PROBE, '0'),
     # Downsample 1/2: resized to Source's size
-    ('eu.gmic.UserFileLarger', ['-s', 'Resize Mode=2'], (1.0, 1.0, 0, 0), (1.0, 0.0, 0.0, 1.0), False, NO_PROBE, '0'),
+    ('eu.gmic.UserFileLarger', ['-s', 'Resize Mode=2'], (1.0, 1.0, (0, 0)), (1.0, 0.0, 0.0, 1.0), False, NO_PROBE, '0'),
     # the probes' size (40x60), and the warning
-    ('eu.gmic.UserFileContentSize', [], (0.25, 0.5, 0, 0), (1.0, 1.0, 0.0, 1.0), True, EXACT, '0'),
+    ('eu.gmic.UserFileContentSize', [], (0.25, 0.5, AT_SOURCE_BOTTOM), (1.0, 1.0, 0.0, 1.0), True, EXACT, '0'),
     # not affine, sqrt(W*H) = 139 wide: a small Source, probed at its own size
-    ('eu.gmic.UserFileAreaSize', [], (139 / 160.0, 1.0, 0, 0), (0.0, 1.0, 1.0, 1.0), False, EXACT, '0'),
-    # Output Layer "Frame": result [0] at frame 0, [1] (Source's size) at frame 1
-    ('eu.gmic.UserFileFrames', ['-s', 'Output Layer=11'], (0.5, 0.5, 5, 6), (1.0, 0.0, 1.0, 1.0), False, EXACT, '0'),
-    ('eu.gmic.UserFileFrames', ['-s', 'Output Layer=11'], (1.0, 1.0, 0, 0), (1.0, 0.0, 1.0, 1.0), False, EXACT, '1'),
+    ('eu.gmic.UserFileAreaSize', [], (139 / 160.0, 1.0, AT_SOURCE_BOTTOM), (0.0, 1.0, 1.0, 1.0), False, EXACT, '0'),
+    # Output Layer "Frame": result [0] at frame 0 (a pos of its own), [1] (Source's size) at frame 1
+    ('eu.gmic.UserFileFrames', ['-s', 'Output Layer=11'], (0.5, 0.5, (5, 6)), (1.0, 0.0, 1.0, 1.0), False, EXACT, '0'),
+    ('eu.gmic.UserFileFrames', ['-s', 'Output Layer=11'], (1.0, 1.0, AT_SOURCE_BOTTOM), (1.0, 0.0, 1.0, 1.0), False, EXACT, '1'),
 ]
 GEOMETRY_WARNING = "doesn't match the output"
 # the plug-in's override of the host's multi-resolution support: as on a host without it (see
@@ -158,10 +168,10 @@ ROTATE_ANGLES = (10.0, 20.0, 30.0, 45.0, 60.0, 70.0, 89.5)
 AREA_PLUGIN = 'eu.gmic.UserFileAreaSize'
 PRODUCT_PLUGIN = 'eu.gmic.UserFileProduct'
 # on the large Source: exact fractions, predicted exactly, with neither note and no margin (plug-in
-# id, size relative to Source's, pos, color)
+# id, size relative to Source's, position as in GEOMETRY_CASES, color)
 LARGE_EXACT_CASES = [
-    ('eu.gmic.UserFileLarger', (2.0, 1.5), (0, 0), (1.0, 0.0, 0.0, 1.0)),
-    ('eu.gmic.UserFileSmaller', (0.5, 0.25), (0, 0), (0.0, 1.0, 0.0, 1.0)),
+    ('eu.gmic.UserFileLarger', (2.0, 1.5), AT_SOURCE_BOTTOM, (1.0, 0.0, 0.0, 1.0)),
+    ('eu.gmic.UserFileSmaller', (0.5, 0.25), AT_SOURCE_BOTTOM, (0.0, 1.0, 0.0, 1.0)),
     ('eu.gmic.UserFileShifted', (1.0, 1.0), (10, 20), (0.0, 0.0, 1.0, 1.0)),
 ]
 SLOW_PLUGIN = 'eu.gmic.UserFileSlow'
@@ -351,6 +361,56 @@ def first_render(report):
     return renders[0] if renders else {}
 
 
+def expected_rod(src, par, width, height, pos):
+    """The canonical region of definition of a result of width x height pixels.
+
+    Args:
+        src: Source's region of definition [x1, y1, x2, y2].
+        par: the pixel aspect ratio.
+        width, height: the result's size in pixels.
+        pos: the result's position, as in GEOMETRY_CASES: a pos(x,y) of its own, in pixels from
+            Source's top-left corner (y down), or AT_SOURCE_BOTTOM (Source's bottom-left corner).
+
+    Returns:
+        [x1, y1, x2, y2].
+    """
+    if pos == AT_SOURCE_BOTTOM:
+        x1, y1 = src[0], src[1]
+    else:
+        x1, y1 = src[0] + pos[0] * par, src[3] - pos[1] - height
+    return [x1, y1, x1 + width * par, y1 + height]
+
+
+def check_split(report, directory):
+    """Checks an output whose top half is opaque red and bottom half opaque green (SPLIT).
+
+    Args:
+        report: the parsed report.json of the render.
+        directory: the render's directory, with its output files.
+
+    Returns:
+        A list of problems, empty if every row of the output file (bottom row first) has its color.
+    """
+    output = first_render(report).get('output') or {}
+    files = [f for f in output.get('files') or [] if not f.endswith('.alpha.pfm')]
+    image = render_plugins.read_pfm(os.path.join(directory, files[0])) if files else None
+    if not image or image[2] != 3:
+        return ['no RGB output file (%s)' % output.get('files')]
+    width, height, _, values = image
+    problems = []
+    for row in range(height):
+        # (PFM: bottom row first)
+        expected = (0.0, 1.0, 0.0) if row < height // 2 else (1.0, 0.0, 0.0)
+        pixels = values[row * width * 3:(row + 1) * width * 3]
+        if any(abs(v - expected[k % 3]) > TOLERANCE for k, v in enumerate(pixels)):
+            problems.append('row %d from the bottom (of %d) is not %s' % (row, height, expected))
+            break
+    lows, highs = output.get('min') or [], output.get('max') or []
+    if len(lows) < 4 or len(highs) < 4 or None in (lows[3], highs[3]) or min(lows[3], highs[3]) < 1.0 - TOLERANCE:
+        problems.append('not opaque (alpha in %s, %s)' % (lows[3:4], highs[3:4]))
+    return problems
+
+
 def check_output(report, expected):
     """Checks that the first output of a render has every pixel of the expected color.
 
@@ -450,8 +510,9 @@ def check_large_sources(host, plugins, work):
     """Renders ROTATE_PLUGIN, PERCENT_PLUGIN and FRAME_MAX_PLUGIN on a LARGE_SOURCE Source.
 
     The rotations (ROTATE_ANGLES) and percentages (PERCENTS) are refined with thin probes, within
-    a pixel, with a 1-pixel margin on the right and bottom sides: the output is the result's size
-    plus 0 to 2 pixels, at Source's top-left corner, with no warning. The frame in percent of
+    a pixel, with a 1-pixel margin on the right and top sides: the output is the result's size
+    plus 0 to 2 pixels, at Source's bottom-left corner (they have no position of their own), with
+    no warning. The frame in percent of
     max(w,h) and the size in sqrt(W*H) (AREA_PLUGIN) are confirmed at full size: exact.
 
     Args:
@@ -486,8 +547,9 @@ def check_large_sources(host, plugins, work):
             problems.append('%s: the output is %sx%s, expected %dx%d plus at most 2 pixels'
                             % (name, w, h, rw, rh))
         rod = (first.get('regionOfDefinition') or {}).get('rod') or []
-        if len(rod) != 4 or abs(rod[0] - src[0]) > ROD_TOLERANCE or abs(rod[3] - src[3]) > ROD_TOLERANCE:
-            problems.append("%s: the region of definition %s doesn't start at Source's top-left corner %s"
+        # (no position of its own: at Source's bottom-left corner, the margin at the top, #238)
+        if len(rod) != 4 or abs(rod[0] - src[0]) > ROD_TOLERANCE or abs(rod[1] - src[1]) > ROD_TOLERANCE:
+            problems.append("%s: the region of definition %s doesn't start at Source's bottom-left corner %s"
                             % (name, rod, src))
     for percent in PERCENTS:
         name = '%s Percent=%g' % (PERCENT_PLUGIN, percent)
@@ -504,7 +566,11 @@ def check_large_sources(host, plugins, work):
         w, h = output.get('w') or 0, output.get('h') or 0
         if not (math.floor(pw) <= w <= math.ceil(pw) + 2 and math.floor(ph) <= h <= math.ceil(ph) + 2):
             problems.append('%s: the output is %sx%s, expected %gx%g plus at most 2 pixels' % (name, w, h, pw, ph))
-    for pid, (sx, sy), (dx, dy), color in LARGE_EXACT_CASES:
+        rod = (first.get('regionOfDefinition') or {}).get('rod') or []
+        if len(rod) != 4 or abs(rod[0] - src[0]) > ROD_TOLERANCE or abs(rod[1] - src[1]) > ROD_TOLERANCE:
+            problems.append("%s: the region of definition %s doesn't start at Source's bottom-left corner %s"
+                            % (name, rod, src))
+    for pid, (sx, sy), pos, color in LARGE_EXACT_CASES:
         problem, log, first, src, (width, height), par = large_source_render(host, plugins, work, pid, [])
         if problem:
             problems.append('%s on the large Source: %s' % (pid, problem))
@@ -515,8 +581,7 @@ def check_large_sources(host, plugins, work):
             problems.append('%s on the large Source: the output is %sx%s, expected %dx%d exactly (no margin)'
                             % (pid, output.get('w'), output.get('h'), ew, eh))
         rod = (first.get('regionOfDefinition') or {}).get('rod') or []
-        x1, y2 = src[0] + dx * par, src[3] - dy
-        expected = [x1, y2 - eh, x1 + ew * par, y2]
+        expected = expected_rod(src, par, ew, eh, pos)
         if len(rod) != 4 or any(abs(r - e) > ROD_TOLERANCE for r, e in zip(rod, expected)):
             problems.append('%s on the large Source: the region of definition is %s, expected %s' % (pid, rod, expected))
         if GEOMETRY_WARNING in log or REFINED_NOTE in log or CONFIRMED_NOTE in log:
@@ -627,9 +692,10 @@ def check_scaled_geometry(host, plugins, work):
     """Renders User File Larger and User File Shifted at render scales 1 and RENDER_SCALE.
 
     On a Source that hostDemo makes in canonical coordinates: at RENDER_SCALE, the output must be
-    the scale-1 output times RENDER_SCALE. Larger's canonical region of definition must be the
-    scale-1 one; Shifted's pos(10,20) is in pixels of the image that G'MIC gets, so its offset
-    from Source is twice the scale-1 one in canonical coordinates.
+    the scale-1 output times RENDER_SCALE. Larger (no position of its own) must be at Source's
+    bottom-left corner, its canonical region of definition the scale-1 one; Shifted's pos(10,20) is
+    in pixels of the image that G'MIC gets, so its offset from Source's top-left corner is twice the
+    scale-1 one in canonical coordinates.
 
     Args:
         host: the path of hostDemo.
@@ -640,7 +706,7 @@ def check_scaled_geometry(host, plugins, work):
         A list of problems.
     """
     problems = []
-    for pid in ('eu.gmic.UserFileLarger', 'eu.gmic.UserFileShifted'):
+    for pid, pos_in_pixels in (('eu.gmic.UserFileLarger', False), ('eu.gmic.UserFileShifted', True)):
         renders = {}
         for scale in (1, RENDER_SCALE):
             name = '%s at scale %s' % (pid, scale)
@@ -668,12 +734,16 @@ def check_scaled_geometry(host, plugins, work):
         if len(rod1) != 4 or len(rod2) != 4 or len(src) != 4:
             problems.append('%s: no region of definition' % pid)
             continue
-        # the same size in canonical coordinates; the offset from Source's top-left corner (the
-        # scale-1 pos, 0 for Larger: the same region of definition) divided by RENDER_SCALE: pos is
-        # in pixels of the image that G'MIC gets
-        dx1, dy1 = rod1[0] - src[0], src[3] - rod1[3]
-        x1, y2 = src[0] + dx1 / RENDER_SCALE, src[3] - dy1 / RENDER_SCALE
-        want = [x1, y2 - (rod1[3] - rod1[1]), x1 + (rod1[2] - rod1[0]), y2]
+        if not pos_in_pixels and any(abs(a - b) > ROD_TOLERANCE for a, b in zip(rod1[:2], src[:2])):
+            problems.append("%s at scale 1: the region of definition %s doesn't start at Source's bottom-left corner %s"
+                            % (pid, rod1, src))
+        # the same size in canonical coordinates; Shifted: the offset from Source's top-left corner
+        # (the scale-1 pos) divided by RENDER_SCALE, pos being in pixels of the image that G'MIC gets
+        want = list(rod1)
+        if pos_in_pixels:
+            dx1, dy1 = rod1[0] - src[0], src[3] - rod1[3]
+            x1, y2 = src[0] + dx1 / RENDER_SCALE, src[3] - dy1 / RENDER_SCALE
+            want = [x1, y2 - (rod1[3] - rod1[1]), x1 + (rod1[2] - rod1[0]), y2]
         if any(abs(a - b) > ROD_TOLERANCE for a, b in zip(rod2, want)):
             problems.append('%s at scale %s: the region of definition is %s, expected %s (%s at scale 1)'
                             % (pid, RENDER_SCALE, rod2, want, rod1))
@@ -711,8 +781,12 @@ def check_geometry(host, plugins, work):
         report_path = os.path.join(work, pid[len('eu.gmic.'):], 'report.json')
         with open(report_path, encoding='utf-8') as f:
             report = json.load(f)
-        problems += ['%s: %s' % (name, p) for p in
-                     (check_padded(report) if color == PADDED else check_output(report, color))]
+        if color == PADDED:
+            problems += ['%s: %s' % (name, p) for p in check_padded(report)]
+        elif color == SPLIT:
+            problems += ['%s: %s' % (name, p) for p in check_split(report, os.path.dirname(report_path))]
+        else:
+            problems += ['%s: %s' % (name, p) for p in check_output(report, color)]
         renders = report.get('renders') or []
         first = renders[0] if renders else {}
         output = first.get('output') or {}
@@ -726,11 +800,9 @@ def check_geometry(host, plugins, work):
         # over its pixel width
         src_w, src_h = render_plugins.INPUT_WIDTH, render_plugins.INPUT_HEIGHT
         par = (src[2] - src[0]) / src_w
-        sx, sy, dx, dy = geometry
+        sx, sy, pos = geometry
         width, height = round(src_w * sx), round(src_h * sy)
-        x1 = src[0] + dx * par
-        y2 = src[3] - dy
-        expected = [x1, y2 - height, x1 + width * par, y2]
+        expected = expected_rod(src, par, width, height, pos)
         if (output.get('w'), output.get('h')) != (width, height):
             problems.append('%s: the output is %sx%s, expected %dx%d'
                             % (name, output.get('w'), output.get('h'), width, height))

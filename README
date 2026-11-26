@@ -339,8 +339,13 @@ Rendering
 Results of another size (issue #175): as in G'MIC-Qt, a filter's result may be larger, smaller or
 moved (Rotate, frames, crops, Upscale [Scale2x]..., or a pos(x,y) in the result's name, from
 Source's top-left corner). The Resize Mode (in Advanced Options) chooses the output:
-- Dynamic, the default: the result's size and position. OpenFX needs them before the render: the
-  plug-in runs the filter on opaque gradient images and predicts them:
+- Dynamic, the default: the result's size and position. A result with a pos(x,y) of its own is
+  placed there, its top-left corner moved by x to the right and y down from Source's, as G'MIC-Qt
+  places a layer. A result without one (no pos, or Source's name kept: most filters, e.g.
+  Upscale [Scale2x], frames, rotations) keeps Source's bottom-left corner, the origin of OFX images:
+  a 2x upscale of a 1920x1080 Source at 0,0 is at 0,0-3840,2160 (issue #238). OpenFX needs the
+  size and position before the render: the plug-in runs the filter on opaque gradient images and
+  predicts them:
   - three small probes with Source's long side at 64, 80 and 96 pixels (the inputs' proportions
     kept, about 15k pixels), two thin probes that span the real size, Source's real width x 48
     pixels and 48 pixels x its real height, and a check probe with Source's long side at 256

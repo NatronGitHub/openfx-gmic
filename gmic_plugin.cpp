@@ -2409,17 +2409,19 @@ static unsigned int resultIndexOf(const SequenceData* sequenceDataP, const Globa
 }
 
 // The geometry of a result: its size, and the pos(x,y) of its name, read as G'MIC-Qt's GIMP host
-// does (get_output_layer_props in host_gimp.cpp: integers, any one character between them). The
-// inputs are named pos(0,0) (gmicImageName): a result that keeps its input's name, or has no pos,
-// is at Source's top-left corner.
+// does (get_output_layer_props in host_gimp.cpp: integers, any one character between them).
+// sourceName: Source's name in G'MIC (gmicInputName, pos(0,0)). A result that keeps it, or has no
+// pos, has no position of its own: it is at Source's bottom-left corner (atSourceBottom, issue
+// #238). A result that keeps another input's name has that input's pos.
 static const long kMaxPos = 1000000;
-static ResultGeometry resultGeometryOf(const gmic_interface_image& image)
+static ResultGeometry resultGeometryOf(const gmic_interface_image& image, const string& sourceName)
 {
 	ResultGeometry g;
 	g.width = (int)image.width;
 	g.height = (int)image.height;
 	const char* const pos = strstr(image.name, "pos(");
-	if (pos) {
+	g.atSourceBottom = !pos || sourceName == image.name;
+	if (pos && !g.atSourceBottom) {
 		const char* p = pos + 4;
 		char* end = nullptr;
 		const long x = strtol(p, &end, 10);
@@ -2789,8 +2791,9 @@ static ProbeResult probeRun(SequenceData& probe, const GlobalData* globalDataP, 
 			return result;
 		}
 		result.selected = outputIsFrame(sequenceDataP, globalDataP) && n == 1 && strcmp(images[0].name, "openfx_gmic_frame_selected") == 0;
+		const string sourceName = gmicInputName(sequenceDataP, 0);
 		for (unsigned int i = 0; i < n; i++) {
-			result.results.push_back(images[i].data ? resultGeometryOf(images[i]) : ResultGeometry());
+			result.results.push_back(images[i].data ? resultGeometryOf(images[i], sourceName) : ResultGeometry());
 		}
 		store.keep = true;
 		if (n == 0) {
@@ -3052,6 +3055,7 @@ static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequence
 	// [0..2]: the small probes, [3..4]: the thin ones, [5]: the check probe
 	const int kN = 6;
 	int W[kN], H[kN], w[kN], h[kN], x[kN], y[kN];
+	bool atSourceBottom[kN];
 	unsigned int counts[kN];
 	for (int k = 0; k < kN; k++) {
 		// (not "small": a macro of the Windows headers, rpcndr.h)
@@ -3067,6 +3071,10 @@ static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequence
 		h[k] = g.height;
 		x[k] = g.x;
 		y[k] = g.y;
+		atSourceBottom[k] = g.atSourceBottom;
+	}
+	if (!std::all_of(atSourceBottom, atSourceBottom + kN, [&](bool b) { return b == atSourceBottom[0]; })) {
+		return fullSize("a position of its own at some sizes only");
 	}
 	// Output Layer "Frame": the same number of results, so that the frame picks the same one
 	if (outputIsFrame(&sequenceData, globalDataP)) {
@@ -3077,6 +3085,7 @@ static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequence
 	// one value: exact if an exact fraction gives the thin and check probes too, else the joint fit
 	// over the small and thin probes, if it gives the check probe within a pixel
 	ResultGeometry g;
+	g.atSourceBottom = atSourceBottom[0];
 	bool refined = false;
 	const auto predict = [&](const int* X, const int* Y, int real, int& value, bool& margin) {
 		const std::optional<AxisFit> f = fitAxis(X, Y);
@@ -3097,12 +3106,12 @@ static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequence
 		!predict(W, x, source.width, g.x, mx) || !predict(H, y, source.height, g.y, my)) {
 		return fullSize("not an affine function of the input's size");
 	}
-	// a margin on each side that a value 1 pixel off could leave short: a size, its far side; an
-	// offset, both sides
+	// a margin on each side that a value 1 pixel off could leave short: a size, the side away from
+	// the result's corner (the bottom, or the top if atSourceBottom); an offset, both sides
 	g.marginRight = (mw ? 1 : 0) + (mx ? 1 : 0);
 	g.marginLeft = mx ? 1 : 0;
-	g.marginBottom = (mh ? 1 : 0) + (my ? 1 : 0);
-	g.marginTop = my ? 1 : 0;
+	g.marginBottom = (mh && !g.atSourceBottom ? 1 : 0) + (my ? 1 : 0);
+	g.marginTop = (mh && g.atSourceBottom ? 1 : 0) + (my ? 1 : 0);
 	if (g.width <= 0 || g.height <= 0 || g.width > kMaxPos || g.height > kMaxPos) return fullSize("an implausible size");
 	if (refined) {
 		gmicLog("openfx-gmic: %s: the result's size, %dx%d, refined with thin probes (a 1-pixel margin)\n", effectData.name.c_str(),
@@ -3478,14 +3487,18 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 			const World& out = sequenceDataP->outWorld;
 			const int dw = out.width, dh = out.height;
 			const int sw = (int)res->width, sh = (int)res->height;
-			// G'MIC anchors images at their top-left corner: a result of another size than the first
-			// input keeps the input's left and top edges (pixel y goes up). Resize Mode Dynamic: moved
-			// by the pos(x,y) of its name (G'MIC's y goes down), as the region of definition
-			// (pluginResultGeometry)
+			// Fixed: a result of another size than the first input keeps the input's left and top
+			// edges (pixel y goes up). Resize Mode Dynamic: as the region of definition
+			// (pluginResultGeometry), moved by the pos(x,y) of its name (G'MIC's y goes down) from
+			// there, or at the input's bottom-left corner if it has no position of its own
 			const bool dynamic = resizeModeOf(sequenceDataP, globalDataP) == kResizeModeDynamic && hostSupportsMultiResolution();
-			const ResultGeometry at = dynamic ? resultGeometryOf(*res) : ResultGeometry();
-			const int sx1 = sequenceDataP->inWorld[0].origin_x + at.x;
-			const int sy1 = sequenceDataP->inWorld[0].origin_y + sequenceDataP->inWorld[0].height - at.y - sh;
+			const World& source = sequenceDataP->inWorld[0];
+			ResultGeometry at; // (Fixed: pos(x,y) ignored)
+			at.width = sw;
+			at.height = sh;
+			if (dynamic) at = resultGeometryOf(*res, gmicInputName(sequenceDataP, 0));
+			const int sx1 = source.origin_x + at.x;
+			const int sy1 = at.bottom(source.origin_y, source.origin_y + source.height);
 			const int dx1 = out.origin_x, dy1 = out.origin_y;
 			const size_t dplane = (size_t)dw * (size_t)dh, splane = (size_t)sw * (size_t)sh;
 			float* const dst = out.data;
@@ -3514,9 +3527,10 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 				// depends on the pixels, which pluginResultGeometry's probes can't predict, a size rule
 				// that isn't affine, a prediction some pixels off, or
 				// a host that gives another output): cropped or padded, never resized
-				geometryWarning = "The result (" + std::to_string(sw) + "x" + std::to_string(sh) + " at " +
-					std::to_string(at.x) + "," + std::to_string(at.y) + " from Source's top-left corner) doesn't match the output (" +
-					std::to_string(dw) + "x" + std::to_string(dh) + "): it is cropped or padded.";
+				const string where = at.atSourceBottom ? string("Source's bottom-left corner")
+					: std::to_string(at.x) + "," + std::to_string(at.y) + " from Source's top-left corner";
+				geometryWarning = "The result (" + std::to_string(sw) + "x" + std::to_string(sh) + " at " + where +
+					") doesn't match the output (" + std::to_string(dw) + "x" + std::to_string(dh) + "): it is cropped or padded.";
 			}
 			// overlap, in pixel coordinates (y up)
 			const int x1 = std::max(sx1, dx1), x2 = std::min(sx1 + sw, dx1 + dw);

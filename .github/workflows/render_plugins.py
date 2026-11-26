@@ -36,6 +36,7 @@ so that the plug-in sets G'MIC's thread count (hostDemo's multithread suite repo
 plug-in's fair share gives the single render of a hostDemo process all the hardware threads).
 """
 import argparse
+import array
 import concurrent.futures
 import json
 import math
@@ -133,6 +134,8 @@ EVERY = 30
 ID_PREFIX = 'eu.gmic.'
 
 
+# a PFM file's header (read_pfm): its type, width, height and scale
+PFM_HEADER = re.compile(rb'(P[Ff])\s+(\d+)\s+(\d+)\s+([-+0-9.eE]+)\s')
 INPUT_WIDTH, INPUT_HEIGHT = 160, 120  # the size of the input image (write_input)
 
 
@@ -152,6 +155,28 @@ def write_input(path, w=INPUT_WIDTH, h=INPUT_HEIGHT):
     with open(path, 'wb') as f:
         f.write(b'PF\n%d %d\n-1.0\n' % (w, h))
         f.write(b''.join(rows))
+
+
+def read_pfm(path):
+    """Returns (width, height, channels, values) of a PFM file, or None if it can't be read."""
+    try:
+        with open(path, 'rb') as stream:
+            data = stream.read()
+    except OSError:
+        return None
+    # one whitespace byte after the scale: the pixels may start with bytes that look like more
+    header = PFM_HEADER.match(data)
+    if not header:
+        return None
+    width, height, channels = int(header.group(2)), int(header.group(3)), 3 if header.group(1) == b'PF' else 1
+    size = width * height * channels * 4
+    if len(data) - header.end() < size:
+        return None
+    values = array.array('f')
+    values.frombytes(data[header.end():header.end() + size])
+    if float(header.group(4)) > 0:  # big-endian
+        values.byteswap()
+    return width, height, channels, values
 
 
 def stdlib_text(stdlib_header):
