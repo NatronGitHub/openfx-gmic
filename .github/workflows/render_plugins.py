@@ -3,10 +3,10 @@
 
 Each plug-in is rendered at frame 0 with its default parameters, on a small fixed test input
 (160x120 float RGB with gradients, stripes and a rectangle: every input clip, the extra layers
-included, gets the same image), in its own directory, with a timeout. The test fails on any
-load, describe, instance or render error, and on a missing output (a crash is reported as "at
-exit" when hostDemo had written report.json and the outputs); NaN pixels in an output are
-reported as warnings. A few plug-ins are skipped (SKIP), are expected to fail with a given error
+included, gets the same image), in its own directory, which keeps the host's output (hostDemo.log),
+with a timeout. The test fails on any load, describe, instance or render error, and on a missing
+output (a crash is reported as "at exit" when hostDemo had written report.json and the outputs);
+NaN pixels in an output are reported as warnings. A few plug-ins are skipped (SKIP), are expected to fail with a given error
 (EXPECTED_FAIL), or have a longer timeout (TIMEOUT), with the reason; the test also fails when an
 expected failure renders (XPASS), or when fewer than --min-rendered plug-ins rendered (default:
 100 with --subset pr, 700 with --subset all). It warns when a listed plug-in is not in the list of
@@ -252,6 +252,9 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False, 
     except subprocess.TimeoutExpired as e:
         rc, log = 'timeout', (e.stdout or b'').decode('utf-8', 'replace')
     t = time.time() - start
+    # the host's output (with the plug-in's log), kept for the failures' triage
+    with open(os.path.join(d, 'hostDemo.log'), 'w', encoding='utf-8') as f:
+        f.write(log)
     problem, nan, updates = None, 0, 0
     if rc != 0:
         if rc == 'timeout':

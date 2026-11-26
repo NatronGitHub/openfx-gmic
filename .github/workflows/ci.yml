@@ -7,6 +7,8 @@ name: Continuous Integration
 # builds C++17, Qt6 builds C++20); build artifacts are uploaded only on demand or for pre-release
 # tags, and the Windows bundle (x64 + Arm, merged) also weekly. On demand, "only: windows-arm" runs just
 # the Windows on Arm job (gh workflow run ci.yml -f only=windows-arm).
+# "gmic: develop" runs just the job that tests G'MIC's develop sources against the pinned release
+# (gh workflow run ci.yml -f gmic=develop, see the gmic-develop job).
 #
 # CI builds with CMake (NatronGitHub/Natron#1181), as Natron's build-plugins.sh does by default.
 # The top-level Makefile is a fallback (build-plugins.sh's PLUGINS_BUILD_SYSTEM=make), kept tested
@@ -58,6 +60,21 @@ on:
         type: choice
         options: [ all, windows-arm ]
         default: all
+      # develop: only the G'MIC develop job (gmic-develop, #226), with the refs below
+      gmic:
+        description: "release: the pinned G'MIC (GMICVER); develop: only the job that tests G'MIC develop against it"
+        type: choice
+        options: [ release, develop ]
+        default: release
+      gmic-ref:
+        description: "gmic: develop: the GreycLab/gmic branch, tag or commit"
+        default: develop
+      cimg-ref:
+        description: "gmic: develop: the GreycLab/CImg branch, tag or commit"
+        default: develop
+      community-ref:
+        description: "gmic: develop: the GreycLab/gmic-community branch, tag or commit"
+        default: master
   schedule:
     - cron: '17 3 * * 6' # weekly, Saturday 03:17 UTC: also builds the variants (debug, C++20)
   # pushes to master (and tags) only: pull requests are built by the pull_request trigger,
@@ -80,9 +97,10 @@ on:
 
 # One group per event type and PR number (branch names can collide across forks) or ref (master,
 # tags): a new run cancels the superseded one, except for tags. The event type keeps a master push
-# from cancelling the weekly or on-demand run, which also builds the variants.
+# from cancelling the weekly or on-demand run, which also builds the variants, and a G'MIC develop
+# run is in a group of its own.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}${{ inputs.gmic == 'develop' && '-gmic-develop' || '' }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
@@ -116,15 +134,20 @@ jobs:
       run: ${{ steps.check.outputs.run }}
       # the Windows ARM64/Arm64EC/Arm64X job: weekly and on demand only
       arm: ${{ steps.check.outputs.arm }}
+      # the G'MIC develop job (gmic: develop), alone
+      develop: ${{ steps.check.outputs.develop }}
     steps:
       - id: check
         run: |
           run=true
           arm=false
           case "${{ github.event_name }}" in schedule|workflow_dispatch) arm=$run;; esac
+          develop=false
           if [ "${{ inputs.only }}" = windows-arm ]; then run=false; arm=true; fi
+          if [ "${{ inputs.gmic }}" = develop ]; then run=false; arm=false; develop=true; fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
           echo "arm=$arm" >> "$GITHUB_OUTPUT"
+          echo "develop=$develop" >> "$GITHUB_OUTPUT"
 
   linux:
     name: Linux (Ubuntu 24.04)
@@ -989,3 +1012,73 @@ jobs:
           path: merged
           retention-days: 14
           compression-level: 9
+
+  # G'MIC develop (#226), on demand only (gmic: develop, with gmic-ref, cimg-ref, community-ref):
+  # builds the plug-in with the pinned G'MIC release (in release/) and with GreycLab/gmic develop,
+  # GreycLab/CImg develop and GreycLab/gmic-community master (in develop/, made by
+  # gmic_develop_sources.sh: a G'MIC bump in that checkout only, with the local patches that still
+  # apply), runs the describe, full render, FFT and user-file tests on both
+  # (gmic_develop_tests.sh), and compares them (gmic_develop_report.py): the job summary, and the
+  # results artifact (logs, summary.md, summary.json, the develop standard library). Test failures
+  # are findings, not job failures: the job fails only if a build or the comparison fails. Shared
+  # zlib and libpng (GMIC_STATIC_DEPS=OFF): the bundles are not shipped.
+  gmic-develop:
+    name: Linux (Ubuntu 24.04), G'MIC develop
+    runs-on: ubuntu-24.04
+    needs: changes
+    if: needs.changes.outputs.develop == 'true'
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash -eo pipefail {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: release
+          submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          path: develop
+          submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          repository: GreycLab/gmic
+          ref: ${{ inputs.gmic-ref }}
+          path: upstream/gmic
+      - uses: actions/checkout@v4
+        with:
+          repository: GreycLab/CImg
+          ref: ${{ inputs.cimg-ref }}
+          path: upstream/CImg
+      - uses: actions/checkout@v4
+        with:
+          repository: GreycLab/gmic-community
+          ref: ${{ inputs.community-ref }}
+          path: upstream/gmic-community
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config zlib1g-dev libpng-dev libexpat1-dev \
+            libgl-dev
+      - name: G'MIC develop sources
+        run: |
+          mkdir -p results
+          develop/.github/workflows/gmic_develop_sources.sh upstream/gmic upstream/CImg upstream/gmic-community \
+            develop results/sources.md
+          cp develop/update*.gmic results/
+      - name: Test the pinned G'MIC release
+        run: release/.github/workflows/gmic_develop_tests.sh release results/release $GMIC_PLUGIN_COUNT
+      - name: Test G'MIC develop
+        run: develop/.github/workflows/gmic_develop_tests.sh develop results/develop $GMIC_PLUGIN_COUNT
+      - name: Compare
+        run: |
+          python3 develop/.github/workflows/gmic_develop_report.py --release results/release \
+            --develop results/develop --sources results/sources.md --json results/summary.json > results/summary.md
+          cat results/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: gmic-develop-results
+          path: results
+          retention-days: 14
