@@ -483,7 +483,11 @@ static string gmicGetHotfixes(const string& stdlib, const string& userCommands, 
 			continue;
 		}
 		if (!defs[command].empty() && std::find(others[i].begin(), others[i].end(), gmicChecksum(defs[command])) != others[i].end()) {
-			continue; // a definition that this block leaves alone (another G'MIC version)
+			// a definition that this block leaves alone (another G'MIC version)
+			if (logOutcomes) {
+				gmicLog("openfx-gmic: hot fix for the G'MIC command '%s' not needed: a definition that this fix leaves alone\n", command.c_str());
+			}
+			continue;
 		}
 		bool ok = true;
 		for (size_t k = 0; k < checks[i].size(); ++k) {

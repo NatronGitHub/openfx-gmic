@@ -46,7 +46,12 @@ plugins=install/OFX/Plugins
 run_test describe env OFX_GMIC_TEST_LOG_HOTFIXES=1 DESCRIBE_LOG="$RESULTS/describe-host.log" PLUGIN_LIST="$RESULTS/plugins.txt" \
     .github/workflows/describe_plugins.sh "$plugins" "$COUNT"
 [ -s "$RESULTS/plugins.txt" ] || { echo "No plug-in list: the other tests are skipped"; exit 0; }
-run_test fft_smoke .github/workflows/fft_smoke.sh build/gmic
+run_test fft_smoke env GMIC_CLI_OUT="$TREE/gmic-cli" .github/workflows/fft_smoke.sh build/gmic
+# the repros of the local fixes, with that interpreter (skipped without it, or in a checkout that
+# doesn't have the test)
+if [ -x "$TREE/gmic-cli" ] && [ -f "$TREE/.github/workflows/gmic_fix_tests.sh" ]; then
+    run_test fix_tests .github/workflows/gmic_fix_tests.sh "$TREE/gmic-cli" "$stdlib"
+fi
 run_test render env OFX_GMIC_MULTIRES=1 python3 .github/workflows/render_plugins.py --host build \
     --plugins "$plugins" --list "$RESULTS/plugins.txt" --stdlib "$stdlib" --subset all --jobs 2 \
     --work "$TREE/render-all"

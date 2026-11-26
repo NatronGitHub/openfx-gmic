@@ -70,8 +70,8 @@ _DEFINITION = re.compile(r'^\+?([A-Za-z_]\w*)\s*:(?!=)')
 # the reference, not commands such as 'ac "cmd ${^0}"') are left out first
 _CALL = re.compile(r'(?:^|(?<=[\s"{;]))[+-]?([A-Za-z_]\w*)(?=$|[\s\[."};])', re.MULTILINE)
 _LONG_STRING = re.compile(r'"[^"\n]{80,}"')
-_TESTS = ('build', 'describe', 'fft_smoke', 'render', 'user_file', 'update_file', 'user_source')
-_OTHER_TESTS = ('fft_smoke', 'user_file', 'update_file', 'user_source')
+_TESTS = ('build', 'describe', 'fft_smoke', 'fix_tests', 'render', 'user_file', 'update_file', 'user_source')
+_OTHER_TESTS = ('fft_smoke', 'fix_tests', 'user_file', 'update_file', 'user_source')
 _MAX_ITEMS = 100  # the longest list printed in the summary (the JSON has them all)
 _OUTPUT_TOLERANCE = 1e-4  # the largest difference of two outputs that counts as none
 
