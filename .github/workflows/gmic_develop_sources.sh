@@ -100,7 +100,7 @@ cp "$src/CImg.h" "$src/gmic.cpp" "$WORK/"
     row GreycLab/CImg "$CIMG"
     row GreycLab/gmic-community "$COMMUNITY"
     echo
-    echo "Version $ver (gmic_version $number); standard library: $(grep -c '^#@gui [^:_][^:]* :' "$update") filters, from upload_filters."
+    echo "Version $ver (gmic_version $number); standard library: $(grep -c '^#@gui [^:_][^:]*:' "$update") filters, from upload_filters."
     echo
     echo "### Local patches"
     echo

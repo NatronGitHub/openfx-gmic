@@ -17,7 +17,7 @@ import json
 import os
 import re
 
-import render_plugins
+import render_plugins  # (next to this script: its directory is on sys.path)
 
 # the describe test's problems: its own FAIL lines, and the host's and the plug-in's
 _DESCRIBE_PROBLEM = re.compile(
@@ -95,7 +95,7 @@ def read_results(directory):
     describe_lines = (host_log + '\n' + _read(os.path.join(directory, 'describe.log'))).splitlines()
     describe = {l.strip() for l in describe_lines if _DESCRIBE_PROBLEM.search(l)}
     render_lines = _read(os.path.join(directory, 'render.log')).splitlines()
-    renders = dict(m.groups() for m in map(_RENDER_FAIL.match, render_lines) if m)
+    renders = {m.group(1): m.group(2) for m in map(_RENDER_FAIL.match, render_lines) if m}
     nans = {m.group(1): int(m.group(2)) for m in map(_RENDER_NAN.match, render_lines) if m}
     logs = {t: _read(os.path.join(directory, t + '.log')) for t in _TESTS}
     return Results(status, plugins, describe, renders, nans,
