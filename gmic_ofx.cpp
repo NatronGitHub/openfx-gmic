@@ -555,7 +555,7 @@ public:
 
 private:
 	// the point handles: they use the point functions below (globalData, pointIsOn,
-	// pointChangedByUser)
+	// pointIsOnParams, pointChangedByUser)
 	friend class GMICPointsInteract;
 
 	void render(const OFX::RenderArguments& args) override;
@@ -588,7 +588,8 @@ private:
 	const GlobalData& globalData() const { return _gd; }
 	// parameter i if it is a point, else NULL
 	OFX::Double2DParam* pointParamAt(int i) const;
-	bool pointIsOn(int i) const;
+	bool pointIsOn(int i, double time) const;
+	std::vector<OFX::Param*> pointIsOnParams() const;
 	std::optional<OfxRectD> sourceRoD(double time) const;
 	void pointChangedByUser(int i, double time, bool moveToSource = true);
 	bool pointIsDefault(const Parameter& param, double x, double y) const;
@@ -1389,14 +1390,25 @@ void GMICEffect::pointUpdateEnabled(int checkbox, bool draft)
 	hostTry([point, enabled] { point->setEnabled(enabled); }); // (also called from createInstance)
 }
 
-// Whether point i is in use, as pointUpdateEnabled enables it: not disabled, its checkbox on if it
-// is removable, and Preview/Draft Mode on if only the preview uses it (true if the host fails)
-bool GMICEffect::pointIsOn(int i) const
+// Whether point i is in use at time, as pointUpdateEnabled enables it: not disabled, its checkbox on
+// if it is removable, and Preview/Draft Mode on if only the preview uses it (true if the host fails)
+bool GMICEffect::pointIsOn(int i, double time) const
 {
-	if (!mayBeEnabled(i, draftModeValue().value_or(true))) return false;
+	const std::optional<bool> draft = hostQuery([this, time] { return _draftMode->getValueAtTime(time); });
+	if (!mayBeEnabled(i, draft.value_or(true))) return false;
 	if (!isPointCheckbox(i + 1)) return true;
 	OFX::BooleanParam* const box = std::get<OFX::BooleanParam*>(_params[i + 1]);
-	return hostQuery([box] { return box->getValue(); }).value_or(true);
+	return hostQuery([box, time] { return box->getValueAtTime(time); }).value_or(true);
+}
+
+// the parameters that pointIsOn reads: each removable point's checkbox, and Preview/Draft Mode
+std::vector<OFX::Param*> GMICEffect::pointIsOnParams() const
+{
+	std::vector<OFX::Param*> params{ _draftMode };
+	for (int i = 1; i < _gd.nofParams; i++) {
+		if (isPointCheckbox(i)) params.push_back(std::get<OFX::BooleanParam*>(_params[i]));
+	}
+	return params;
 }
 
 // The removable points (see pointUpdateEnabled). onlyParam >= 0: only for that checkbox.
@@ -1827,6 +1839,9 @@ private:
 		, _effect(effect)
 		, _param(pointIndices(effect.globalData()))
 	{
+		// redrawn when the checkboxes or Preview/Draft Mode change, which isPointShown reads (the base
+		// class slaves the points)
+		for (OFX::Param* p : effect.pointIsOnParams()) addParamToSlaveTo(p);
 	}
 
 	// the index in GlobalData::param of each point, in the order of points()
@@ -1861,9 +1876,9 @@ std::vector<OFX::PointsInteractPoint> GMICPointsInteract::points(const GlobalDat
 	return points;
 }
 
-bool GMICPointsInteract::isPointShown(int i, double /*time*/) const
+bool GMICPointsInteract::isPointShown(int i, double time) const
 {
-	return _effect.pointIsOn(_param[i]);
+	return _effect.pointIsOn(_param[i], time);
 }
 
 // An edit block for every change, opened and closed here, so that the plug-in's bookkeeping
