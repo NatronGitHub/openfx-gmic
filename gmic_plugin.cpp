@@ -1360,7 +1360,8 @@ static bool isRemovablePoint(const GlobalData* globalDataP, int i)
 // is not 3 or 4 values, is ignored; a bool is on for "1" only; a button is left as it is.
 // Visibilities are not applied. False if nothing was set (an empty status, or another number of
 // values).
-static bool setStatusValues(const std::vector<std::string>& status, const GlobalData* globalDataP, SequenceData* sequenceDataP)
+static bool setStatusValues(const std::vector<std::string>& status, const GlobalData* globalDataP, SequenceData* sequenceDataP,
+	std::map<int, double>* exact = nullptr)
 {
 	if (status.empty()) return false;
 	const vector<int> args = gmicArguments(globalDataP);
@@ -1398,7 +1399,9 @@ static bool setStatusValues(const std::vector<std::string>& status, const Global
 			break;
 		case ParamType::Float:
 			if (statusNumber(value, false, v)) {
-				fv[0] = (float)std::min(std::max(v, (double)par.minValue), (double)par.maxValue);
+				const double clamped = std::min(std::max(v, (double)par.minValue), (double)par.maxValue);
+				fv[0] = (float)clamped;
+				if (exact) (*exact)[i] = clamped;
 			}
 			break;
 		case ParamType::Text:
@@ -3666,7 +3669,11 @@ GmicStatusRun pluginRunStatus(SequenceData& sequenceData, const GlobalData& glob
 	const EffectData& effectData = effectDataOf(globalDataP);
 	// G'MIC-Qt makes no preview run for a filter whose preview command is "_none_"
 	// (MainWindow::onPreviewUpdateRequested(), isNoPreviewFilter()), nor for a page without command
-	if (effectData.command.empty() || effectData.noPreview) return run;
+	if (effectData.command.empty()) return run;
+	if (effectData.noPreview) {
+		run.warning = "the filter has no preview command (\"_none_\"), which a press runs: nothing done.";
+		return run;
+	}
 	std::vector<gmic_interface_image> images((size_t)std::max(1, globalDataP->nofInputs));
 	unsigned int nofImages = gmicInputImages(sequenceDataP, globalDataP, images.data());
 	if (nofImages == 0) return run; // no Source image
@@ -3722,7 +3729,12 @@ GmicStatusRun pluginRunStatus(SequenceData& sequenceData, const GlobalData& glob
 		}
 	}
 	const SequenceData before = sequenceData;
-	if (!setStatusValues(state.status, globalDataP, sequenceDataP)) return run;
+	const size_t nofArguments = gmicArguments(globalDataP).size();
+	if (!state.status.empty() && state.status.size() != nofArguments) {
+		run.warning = "the filter's preview gives " + std::to_string(state.status.size()) + " values, for " +
+			std::to_string(nofArguments) + " parameters: nothing changed.";
+	}
+	if (!setStatusValues(state.status, globalDataP, sequenceDataP, &run.exact)) return run;
 	// Changed: what G'MIC would get differs. The values themselves may differ without that: a
 	// status often gives the values that the run got back, whose text has 8 significant digits.
 	for (const int i : gmicArguments(globalDataP)) {

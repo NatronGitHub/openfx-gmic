@@ -14,6 +14,7 @@
 #define GMIC_PLUGIN_H
 
 #include <array>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -114,6 +115,12 @@ struct GmicStatusRun
 	// removed or put back), in order; never a push button
 	std::vector<int> changed;
 	std::string error; // G'MIC's message, if the run failed
+	// why the run changed nothing, for the user: no preview command, or a status with another
+	// number of values than the parameters
+	std::string warning;
+	// the value that the status gives each float parameter that it sets, as a double (sequenceData
+	// has a float: the status's "0.3" stays 0.3)
+	std::map<int, double> exact;
 };
 
 // G'MIC-Qt's run of the filter's preview command after a change of its parameters, for the status

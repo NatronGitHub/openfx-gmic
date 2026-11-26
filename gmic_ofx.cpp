@@ -551,7 +551,8 @@ private:
 	void pointsUpdateEnabled(int onlyParam);
 	void draftModeUpdateEnabled();
 	void buttonPressed(int button, double time);
-	void setParamValue(int i, const SequenceData& sd, const GmicInputs& in, const OfxPointD& renderScale, double time);
+	void setParamValue(int i, const SequenceData& sd, const GmicInputs& in, const OfxPointD& renderScale, double time,
+		std::optional<double> exact = std::nullopt);
 
 	const GlobalData& _gd;
 	OFX::Clip* _output;
@@ -675,6 +676,22 @@ void GMICEffect::refuseRenderScale(const OfxPointD& renderScale) const
 	}
 }
 
+// A point parameter's canonical coordinates as G'MIC's: percent of the image rect (in pixels, of
+// pixel aspect ratio par) at renderScale, from its top-left corner (G'MIC's y goes down); an empty
+// rect (no input, empty output) counts as 1 pixel, so as not to divide by 0. pointFromPercent is
+// its inverse.
+static OfxPointD pointToPercent(const OfxPointD& p, const OfxRectI& rect, double par, const OfxPointD& renderScale)
+{
+	const int w = std::max(1, rect.x2 - rect.x1), h = std::max(1, rect.y2 - rect.y1);
+	return { (p.x * renderScale.x / par - rect.x1) * 100. / w, 100. - (p.y * renderScale.y - rect.y1) * 100. / h };
+}
+
+static OfxPointD pointFromPercent(const OfxPointD& percent, const OfxRectI& rect, double par, const OfxPointD& renderScale)
+{
+	const int w = std::max(1, rect.x2 - rect.x1), h = std::max(1, rect.y2 - rect.y1);
+	return { (percent.x * w / 100. + rect.x1) * par / renderScale.x, ((100. - percent.y) * h / 100. + rect.y1) / renderScale.y };
+}
+
 // dstRect is in pixels; point parameters are in canonical coordinates: pixel x = canonical x *
 // renderScale.x / par, pixel y = canonical y * renderScale.y (par: the pixel aspect ratio of the
 // image dstRect belongs to)
@@ -706,12 +723,9 @@ void GMICEffect::fetchParamValues(SequenceData& sd, const OfxRectI& dstRect, dou
 			}
 			break;
 		case ParamType::Point: {
-			// percent of the image, from its top-left corner (G'MIC's y goes down); an empty dstRect
-			// (no input, empty output) counts as 1 pixel, so as not to divide by 0
-			const OfxPointD p = std::get<OFX::Double2DParam*>(_params[i])->getValueAtTime(t);
-			const int w = std::max(1, dstRect.x2 - dstRect.x1), h = std::max(1, dstRect.y2 - dstRect.y1);
-			value[0] = static_cast<float>((p.x * renderScale.x / par - dstRect.x1) * 100. / w);
-			value[1] = 100.f - static_cast<float>((p.y * renderScale.y - dstRect.y1) * 100. / h);
+			const OfxPointD p = pointToPercent(std::get<OFX::Double2DParam*>(_params[i])->getValueAtTime(t), dstRect, par, renderScale);
+			value[0] = static_cast<float>(p.x);
+			value[1] = static_cast<float>(p.y);
 		} break;
 		case ParamType::Select:
 			value[0] = static_cast<float>(std::get<OFX::ChoiceParam*>(_params[i])->getValueAtTime(t));
@@ -1300,7 +1314,10 @@ void GMICEffect::buttonPressed(int button, double time)
 	GmicInputs inputs;
 	const InputsResult fetched = fetchInputs(time, sd, inputs);
 	if (fetched.status != InputsStatus::kOk) {
+		// a warning, so that the button doesn't just look broken (no Source, or no image from the
+		// host in the instance changed action)
 		gmicLog("openfx-gmic: %s: %s: %s\n", _gd.pluginInfo.name.c_str(), _gd.param[button].displayName.c_str(), fetched.message.c_str());
+		sendMessage(OFX::Message::eMessageWarning, "", _gd.param[button].displayName + ": nothing done. " + fetched.message);
 		return;
 	}
 	// (the host's: 1 in Natron, which gives full-resolution images outside renders)
@@ -1319,6 +1336,9 @@ void GMICEffect::buttonPressed(int button, double time)
 		sendMessage(OFX::Message::eMessageError, "", _gd.param[button].displayName + ": " + run.error);
 		return;
 	}
+	if (!run.warning.empty()) {
+		sendMessage(OFX::Message::eMessageWarning, "", _gd.param[button].displayName + ": " + run.warning);
+	}
 	// one undo step, begun at the first change only; best-effort: without an undo block if the host
 	// refuses it
 	EditBlock editBlock(*this, _gd.param[button].displayName, EditBlock::eBeginOnChange, EditBlock::eHostErrorsIgnore);
@@ -1336,7 +1356,9 @@ void GMICEffect::buttonPressed(int button, double time)
 		}
 		editBlock.open();
 		// a value that the host refuses doesn't keep the others from being set
-		hostTry([&] { setParamValue(i, sd, inputs, renderScale, time); });
+		const auto exact = run.exact.find(i);
+		const std::optional<double> exactValue = (exact != run.exact.end()) ? std::optional<double>(exact->second) : std::nullopt;
+		hostTry([&] { setParamValue(i, sd, inputs, renderScale, time, exactValue); });
 	}
 }
 
@@ -1354,13 +1376,14 @@ void setValueOrKey(P* param, double time, const V&... value)
 
 // Sets parameter i to its value in sd, at time (see setValueOrKey): the inverse of
 // fetchParamValues, points relative to in.firstRect at renderScale. Push buttons have no value.
-void GMICEffect::setParamValue(int i, const SequenceData& sd, const GmicInputs& in, const OfxPointD& renderScale, double time)
+void GMICEffect::setParamValue(int i, const SequenceData& sd, const GmicInputs& in, const OfxPointD& renderScale, double time,
+	std::optional<double> exact)
 {
 	const Parameter& param = _gd.param[i];
 	const float* const value = sd.floatValue[i];
 	switch (param.paramType) {
-	case ParamType::Float:
-		setValueOrKey(std::get<OFX::DoubleParam*>(_params[i]), time, static_cast<double>(value[0]));
+	case ParamType::Float: // (exact: the status's number, which sd only has as a float)
+		setValueOrKey(std::get<OFX::DoubleParam*>(_params[i]), time, exact.value_or(static_cast<double>(value[0])));
 		break;
 	case ParamType::Int:
 		setValueOrKey(std::get<OFX::IntParam*>(_params[i]), time, static_cast<int>(value[0]));
@@ -1381,12 +1404,9 @@ void GMICEffect::setParamValue(int i, const SequenceData& sd, const GmicInputs& 
 		}
 		break;
 	case ParamType::Point: {
-		// percent of Source, from its top-left corner, to canonical coordinates (see fetchParamValues)
-		const OfxRectI& r = in.firstRect;
-		const int w = std::max(1, r.x2 - r.x1), h = std::max(1, r.y2 - r.y1);
-		const double x = (value[0] * w / 100. + r.x1) * in.firstPAR / renderScale.x;
-		const double y = ((100. - value[1]) * h / 100. + r.y1) / renderScale.y;
-		setValueOrKey(std::get<OFX::Double2DParam*>(_params[i]), time, x, y);
+		// percent of Source to canonical coordinates (see fetchParamValues)
+		const OfxPointD p = pointFromPercent({ value[0], value[1] }, in.firstRect, in.firstPAR, renderScale);
+		setValueOrKey(std::get<OFX::Double2DParam*>(_params[i]), time, p.x, p.y);
 	} break;
 	case ParamType::Text: {
 		OFX::StringParam* const text = std::get<OFX::StringParam*>(_params[i]);

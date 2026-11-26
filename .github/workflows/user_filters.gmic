@@ -110,6 +110,21 @@ fx_userfile_visibility_preview :
   if $2 u "{0.6}_0{0}{nan,nan}" fi
   fill_color 255,0,255
 
+# - User File Press Size: the status gives the size of the image that the press's run got (at most
+#   512 pixels, G'MIC-Qt's preview image, also with Resize Mode "Downsample 1/2", which downsamples
+#   it again), and 0.3 for Exact, which must stay 0.3 (not the float 0.30000001...)
+#@gui User File Press Size : fx_userfile_press_size, fx_userfile_press_size_preview
+#@gui : Width = int(0,0,10000)
+#@gui : Height = int(0,0,10000)
+#@gui : Exact = float(0,0,1)
+#@gui : Size = button()
+fx_userfile_press_size :
+  fill_color 0,0,255
+
+fx_userfile_press_size_preview :
+  if $4 u "{"{w}"}{"{h}"}{0.3}{0}" fi
+  fill_color 255,0,255
+
 # a result with 5 channels, which fails the render as in G'MIC-Qt (#206)
 #@gui User File Five Channels : fx_userfile_five_channels, fx_userfile_five_channels
 fx_userfile_five_channels :

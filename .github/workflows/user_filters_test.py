@@ -91,6 +91,7 @@ EXPECTED = {
     # without a press: the parameters' defaults, and 0 for the push button (green; #174)
     'eu.gmic.UserFileButton': (0.25, 0.0, 0.1),
     'eu.gmic.UserFileStatusVisibility': (0.2, 0.0, 0.0),
+    'eu.gmic.UserFilePressSize': (0.0, 0.0, 1.0),
 }
 TOLERANCE = 1e-4
 DEFINED_BY = ' is defined by '  # the note of a kept definition of a hot-fixed command
@@ -177,7 +178,8 @@ PUSH_BUTTON = 'OfxParamTypePushButton'
 
 
 class ButtonCase(collections.namedtuple(
-        'ButtonCase', 'pid button args output values keys secret')):
+        'ButtonCase', 'pid button args output values keys secret large exact',
+        defaults=(False, {}))):
     """A render after the press of a push button (#174), and what it must give.
 
     Attributes:
@@ -189,6 +191,8 @@ class ButtonCase(collections.namedtuple(
             a point, 0..1 for a color), SPOT for the point that the status moves.
         keys: the keys of parameters after the press ([[time, value]...]).
         secret: the secret flag of parameters after the press.
+        large: on a LARGE_SOURCE Source made by hostDemo, not the 160x120 input.
+        exact: values of parameters after the press, compared exactly (no TOLERANCE).
     """
 
 
@@ -212,6 +216,13 @@ BUTTON_CASES = (
     # status removes the removable point Target (its checkbox goes off, the render gets nan,nan)
     ButtonCase('eu.gmic.UserFileStatusVisibility', 'Hide', [], (0.6, 0.0, 1.0),
                {'Hidden Level': 0.6, 'Target Enabled': False}, {}, {'Hidden Level': False}),
+    # the press's image on a 1800x1080-pixel Source: scaled down so that it fits in 512 pixels
+    # (512x307), also with Downsample 1/2 (1024x614, which the filter gets downsampled to 512x307);
+    # a float status value is set as it is
+    ButtonCase('eu.gmic.UserFilePressSize', 'Size', [], (0.0, 0.0, 1.0),
+               {'Width': 512, 'Height': 307}, {}, {}, True, {'Exact': 0.3}),
+    ButtonCase('eu.gmic.UserFilePressSize', 'Size', ['-s', 'Resize Mode=2'], (0.0, 0.0, 1.0),
+               {'Width': 512, 'Height': 307}, {}, {}, True),
 )
 USER_FILE = 'gmic_ofx.gmic'  # (install_user_file): the user filter file
 
@@ -316,7 +327,7 @@ def large_source_render(host, plugins, work, pid, args):
     sw, sh = LARGE_SOURCE
     result = render_plugins.render(host, ['-i', 'Source=rod:0,0,%d,%d' % (sw, sh)] + args, plugins, work,
                                    TIMEOUT, (pid, CONTEXT, []), extra_env=MULTIRES_ON)
-    problem, errors, log = result[2], result[5], result[6]
+    _, _, problem, _, _, errors, log, _ = result
     if problem:
         return '%s %s' % (problem, ' '.join(errors)), log, {}, [], (0, 0), 1.0
     with open(os.path.join(work, pid[len('eu.gmic.'):], 'report.json'), encoding='utf-8') as f:
@@ -467,7 +478,7 @@ def check_timeout(host, plugins, work):
     """
     result = render_plugins.render(host, [], plugins, work, TIMEOUT, (SLOW_PLUGIN, CONTEXT, ['Source']), frame='0,1',
                                    extra_env=MULTIRES_ON)
-    problem, errors, log = result[2], result[5], result[6]
+    _, _, problem, _, _, errors, log, _ = result
     if problem:
         return ['%s: %s %s' % (SLOW_PLUGIN, problem, ' '.join(errors))]
     problems = []
@@ -505,7 +516,7 @@ def check_no_multires(host, plugins, work):
         name = '%s %s without multi-resolution' % (pid, ' '.join(args))
         result = render_plugins.render(host, args, plugins, work, TIMEOUT, (pid, CONTEXT, ['Source']),
                                        extra_env=MULTIRES_UNSET)
-        problem, errors, log = result[2], result[5], result[6]
+        _, _, problem, _, _, errors, log, _ = result
         if problem:
             problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
             continue
@@ -548,7 +559,7 @@ def check_scaled_geometry(host, plugins, work):
             name = '%s at scale %s' % (pid, scale)
             result = render_plugins.render(host, ['--scale', str(scale), '-i', 'Source=rod:0,0,160,120'], plugins,
                                            work, TIMEOUT, (pid, CONTEXT, []), extra_env=MULTIRES_ON)
-            problem, errors, log = result[2], result[5], result[6]
+            _, _, problem, _, _, errors, log, _ = result
             if problem:
                 problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
                 continue
@@ -599,7 +610,7 @@ def check_geometry(host, plugins, work):
         clips = [] if args is OFFSET_SOURCE else ['Source']
         result = render_plugins.render(host, args, plugins, work, TIMEOUT, (pid, CONTEXT, clips), frame=frame,
                                        extra_env=MULTIRES_ON)
-        problem, errors, log = result[2], result[5], result[6]
+        _, _, problem, _, _, errors, log, _ = result
         if problem:
             problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
             continue
@@ -701,9 +712,14 @@ def check_buttons(host, plugins, work):
     for case in BUTTON_CASES:
         name = '%s, %s pressed' % (case.pid, case.button)
         button = case.button.split('@')[0]
-        result = render_plugins.render(host, case.args + ['-s', case.button], plugins, work,
-                                       TIMEOUT, (case.pid, CONTEXT, ['Source']))
-        problem, errors = result[2], result[5]
+        if case.large:
+            name += ' on the large Source'
+            source_args = ['-i', 'Source=rod:0,0,%d,%d' % LARGE_SOURCE]
+        else:
+            source_args = []
+        _, _, problem, _, _, errors, _, _ = render_plugins.render(
+            host, source_args + case.args + ['-s', case.button], plugins, work, TIMEOUT,
+            (case.pid, CONTEXT, [] if case.large else ['Source']))
         if problem:
             problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
             continue
@@ -723,6 +739,11 @@ def check_buttons(host, plugins, work):
             value = (params.get(param) or {}).get('value')
             if not same_value(value, expected):
                 problems.append('%s: %s is %r, expected %r' % (name, param, value, expected))
+        for param, expected in case.exact.items():
+            value = (params.get(param) or {}).get('value')
+            if value != expected:
+                problems.append('%s: %s is %r, expected exactly %r'
+                                % (name, param, value, expected))
         for param, expected in case.keys.items():
             keys = (params.get(param) or {}).get('keys')
             if not same_value(keys, expected):
@@ -752,7 +773,7 @@ def check_cpus(host, plugins, work):
     """
     result = render_plugins.render(
         host, [], plugins, work, TIMEOUT, (CPUS_PLUGIN, CONTEXT, ['Source']), host_threads=True)
-    problem, errors = result[2], result[5]  # (independent of the number of results)
+    _, _, problem, _, _, errors, _, _ = result
     if problem:
         return ['%s: %s %s' % (CPUS_PLUGIN, problem, ' '.join(errors))]
     report_path = os.path.join(work, CPUS_PLUGIN[len('eu.gmic.'):], 'report.json')
@@ -783,7 +804,7 @@ def check_channels(host, plugins, work):
     """
     result = render_plugins.render(
         host, [], plugins, work, TIMEOUT, (CHANNELS_PLUGIN, CONTEXT, ['Source']))
-    problem, log = result[2], result[6]
+    _, _, problem, _, _, _, log, _ = result
     if not problem:
         return ['%s: rendered, expected a failure (%s)' % (CHANNELS_PLUGIN, CHANNELS_ERROR)]
     if CHANNELS_ERROR not in log:
@@ -806,7 +827,7 @@ def render_scaled(host, plugins, work, scale):
     """
     result = render_plugins.render(host, ['--scale', str(scale)] + SCALE_ARGS, plugins, work,
                                    TIMEOUT, (SCALE_PLUGIN, CONTEXT, []))
-    problem, errors = result[2], result[5]
+    _, _, problem, _, _, errors, _, _ = result
     if problem:
         return '%s %s' % (problem, ' '.join(errors)), {}
     report_path = os.path.join(work, SCALE_PLUGIN[len('eu.gmic.'):], 'report.json')
