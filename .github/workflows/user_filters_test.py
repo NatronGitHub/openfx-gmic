@@ -19,6 +19,8 @@ parameter values, which the report's params then show, also as a key of an anima
 User File Status Edit sets a status after each edit (hostDemo's -s name=value, #173): the plug-in
 runs the preview command at the end of the edit, and sets the values and, with
 OFX_GMIC_TEST_STATUS_VISIBILITY=1 (as on Natron), the secret and enabled flags that it gives.
+User File Status Keep gives the empty value "{}" for every parameter, which must keep its value
+whatever its type, also with a visibility ("{}_0", "{}_1", #231).
 The file also defines a command that the plug-in hot-fixes, which must be kept, with a note. Its
 User File Cpus filter fills its output with G'MIC's $_cpus, rendered without OMP_NUM_THREADS so
 that the plug-in sets it (#188): the value, printed, must be the number of CPUs (hostDemo runs one
@@ -108,6 +110,7 @@ EXPECTED = {
     'eu.gmic.UserFileStatusVariable': (0.1, 0.0, 0.0),
     'eu.gmic.UserFileStatusExpression': (0.1, 0.0, 0.0),
     'eu.gmic.UserFileStatusMainOnly': (0.1, 0.0, 0.0),
+    'eu.gmic.UserFileStatusKeep': (0.25, 1.0, 0.3),
     'eu.gmic.UserFilePressSize': (0.0, 0.0, 1.0),
 }
 TOLERANCE = 1e-4
@@ -286,6 +289,14 @@ USER_FILE = 'gmic_ofx.gmic'  # (install_user_file): the user filter file
 
 STATUS_EDIT = 'eu.gmic.UserFileStatusEdit'
 STATUS_DOWN = 'eu.gmic.UserFileStatusDown'
+STATUS_KEEP = 'eu.gmic.UserFileStatusKeep'
+# (#231) User File Status Keep's edits of a parameter of each type (Flag keeps its default, on),
+# before its Mode's, and the values that the empty status values must keep
+KEEP_EDITS = ['-s', 'Level=0.6', '-s', 'Steps=5', '-s', 'Pick=2', '-s', 'Tint=0.2,0.4,0.6',
+              '-s', 'Spot=40,30', '-s', 'Label=edited', '-s', 'Path=edited.txt',
+              '-s', 'Folder=edited']
+KEEP_VALUES = {'Level': 0.6, 'Steps': 5, 'Pick': 2, 'Flag': True, 'Tint': [0.2, 0.4, 0.6],
+               'Spot': [40.0, 30.0], 'Label': 'edited', 'Path': 'edited.txt', 'Folder': 'edited'}
 STATUS_CASES = (
     # the initial states: Amount and the note before it hidden, Echo disabled; other hosts show
     # and enable every parameter of such a filter
@@ -322,6 +333,18 @@ STATUS_CASES = (
     # "u {expr}" is no status list: an edit runs nothing
     StatusCase('eu.gmic.UserFileStatusExpression', ['-s', 'A=0.3'], True, (0.3, 0.0, 0.0),
                {}, {}, {}, 0),
+    # "{}" for every parameter: each keeps its value (the edits', Mode's 1), and its initial
+    # state (shown and enabled)
+    StatusCase(STATUS_KEEP, KEEP_EDITS + ['-s', 'Mode=1'], True, (0.6, 1.0, 0.5),
+               dict(KEEP_VALUES, Mode=1), {p: False for p in KEEP_VALUES}, {'Steps': True},
+               len(KEEP_EDITS) // 2 + 1),
+    # "{}_0" and "{}_1": the values stay, and every other parameter is hidden or disabled
+    StatusCase(STATUS_KEEP, KEEP_EDITS + ['-s', 'Mode=2'], True, (0.6, 1.0, 0.5),
+               dict(KEEP_VALUES, Mode=2),
+               {'Level': True, 'Pick': True, 'Tint': True, 'Label': True, 'Folder': True,
+                'Steps': False},
+               {'Steps': False, 'Flag': False, 'Spot': False, 'Path': False},
+               len(KEEP_EDITS) // 2 + 1),
     # a press's status hides Hidden Level ("_0")
     StatusCase('eu.gmic.UserFileStatusVisibility', ['-s', 'Hide'], True, (0.6, 0.0, 1.0),
                {'Hidden Level': 0.6}, {'Hidden Level': True}, {}, 1),

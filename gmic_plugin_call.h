@@ -22,7 +22,8 @@ struct GmicRunState
 	std::string persistent;
 	// the run's status ('u' command), if it is a list of values "{a}{b}..." (a "_0", "_1" or "_2"
 	// visibility after a value is ignored): the values, as G'MIC-Qt splits them
-	// (FilterThread::status2StringList()); else empty
+	// (FilterThread::status2StringList()), "" for an empty item "{}" (the parameter keeps its
+	// value, see setStatusValues); else empty
 	std::vector<std::string> status;
 	// the visibility state that the status gives each value, as G'MIC-Qt reads them
 	// (FilterThread::status2Visibilities()): hidden, disabled or visible for a value followed by
