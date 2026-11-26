@@ -884,10 +884,12 @@ static bool isContinued(const string& code)
 // comment lines are skipped), from its first non-blank character, without the '\' (the unminified
 // gmic_stdlib.gmic splits long "u" commands this way). A line that doesn't go on is given as it is,
 // with its comment. Only code lines are joined here; comment lines (a '#', maybe after blanks, see
-// commentStart), which hold the #@gui definitions, are joined by getGuiLine().
-static bool getCodeLine(istream& in, string& line)
+// commentStart), which hold the #@gui definitions, are joined by getGuiLine(). first: set to the
+// first physical line, where G'MIC looks for a command definition.
+static bool getCodeLine(istream& in, string& line, string& first)
 {
 	if (!getline(in, line)) return false;
+	first = line;
 	string code = codeOf(line);
 	if (!isContinued(code)) return true;
 	code.pop_back();
@@ -921,19 +923,26 @@ struct CommandFile
 };
 
 // The command definitions of "content", from its code lines (getCodeLine; the lines starting with
-// '#' are comments, the lines before the first definition are skipped)
+// '#' are comments, the lines before the first definition are skipped). As in G'MIC, a definition
+// is on one physical line ("name :" there); a "#@cli" line counts wherever it is, also between
+// the parts of a continued line.
 static CommandFile readCommandFile(const string& content)
 {
 	CommandFile file;
-	stringstream ss(content);
-	string line, rest;
-	while (getCodeLine(ss, line)) {
-		if (line.compare(0, 6, "#@cli ") == 0) {
+	{
+		stringstream ss(content);
+		string line;
+		while (getline(ss, line)) {
+			if (line.compare(0, 6, "#@cli ") != 0) continue;
 			const size_t b = line.find_first_not_of(' ', 6), e = line.find_first_of(" :", b);
 			if (b != string::npos && e != b) file.documented.insert(line.substr(b, e == string::npos ? string::npos : e - b));
 		}
+	}
+	stringstream ss(content);
+	string line, first, rest;
+	while (getCodeLine(ss, line, first)) {
 		if (line.empty() || line[0] == '#') continue;
-		string name = commandDefinition(line, rest);
+		string name = commandDefinition(codeOf(first), rest).empty() ? string() : commandDefinition(line, rest);
 		if (!name.empty()) {
 			file.definitions.push_back(CommandDefinition{std::move(name), vector<string>(1, rest)});
 		} else if (!file.definitions.empty()) {

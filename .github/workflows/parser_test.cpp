@@ -28,6 +28,12 @@ const char* const kFilters =
 	"#@gui : F = float(1,0,2)\n"
 	"#@gui Test Joined : fx_tg, fx_tg\n"
 	"#@gui : G = float(1,0,2)\n"
+	"#@gui Test Cli In Continued : fx_tj, fx_tj\n"
+	"#@gui : J = float(1,0,2)\n"
+	"#@gui Test Split Def : fx_tk, fx_tk\n"
+	"#@gui : K = float(1,0,2)\n"
+	"#@gui Test Split Def B : fx_tl, fx_tl\n"
+	"#@gui : L = float(1,0,2)\n"
 	"#@gui Test Dynamic Arg : fx_th, fx_th\n"
 	"#@gui : H = float(1,0,2)\n"
 	"#@gui Test Dynamic Minus : fx_ti, fx_ti\n"
@@ -57,6 +63,19 @@ const char* const kFilters =
 	"\n"
 	"fx_tg :\n"
 	"  _persistent=1\n"
+	// a "#@cli" line between the parts of a continued line still documents its command, whose
+	// file isn't then one that the filter writes itself: shown
+	"fx_tj :\n"
+	"  _tj_helper \\\n"
+	"#@cli _tj_helper : documented\n"
+	"  [0]\n"
+	"_tj_helper :\n"
+	"  o ${-path_rc}x.txt\n"
+	// a definition is on one physical line: "fx_tl \" then ": _persistent=1" is a line of fx_tk
+	"fx_tk :\n"
+	"  blur 1\n"
+	"fx_tl \\\n"
+	"  : _persistent=1\n"
 	// the status rules (markStatusFilters): _th_helper sets a status with a visibility, so a filter
 	// whose preview command calls it has a dynamic visibility; "_th_helper$1" is not a call,
 	// "-_th_helper" is
@@ -105,6 +124,9 @@ int main()
 		{ "eu.gmic.TestCallee", false, false },
 		{ "eu.gmic.TestContinued", true, true },
 		{ "eu.gmic.TestJoined", true, false },
+		{ "eu.gmic.TestCliInContinued", true, false },
+		{ "eu.gmic.TestSplitDef", true, true },
+		{ "eu.gmic.TestSplitDefB", true, false },
 	};
 	int failed = 0;
 	// the calls of a command that sets a status with a visibility
