@@ -56,14 +56,16 @@ home="$WORK/home"
 mkdir -p "$home/work/src" "$home/.config/gmic"
 ln -s "$GMIC" "$home/work/src/gmic"
 ln -s "$COMMUNITY" "$home/work/src/gmic-community"
-# its definition, from the line 'upload_filters :' to the next command, without its 'git pull's;
+# its definition, from the line 'upload_filters :' to the next command, without its 'git pull's,
+# and with the files it writes into /tmp (the compressed update file, the filter list) in $WORK;
 # _upload (to the gmic.eu server) does nothing
 # shellcheck disable=SC2016
-awk '/^upload_filters :/ { p = 1; print; next } p && /^[^ \t#]/ { exit } p' "$GMIC/src/gmic_stdlib.gmic" |
+awk -v work="$WORK/" '/^upload_filters :/ { p = 1; print; next } p && /^[^ \t#]/ { exit }
+    p { gsub("/tmp/", work); print }' "$GMIC/src/gmic_stdlib.gmic" |
     grep -v '^ *x "cd "\$HOME"/work/src/[a-z-]* && git pull"$' > "$WORK/upload_filters.gmic"
 grep -q '^upload_filters :' "$WORK/upload_filters.gmic" || { echo "Error: no upload_filters command in gmic_stdlib.gmic"; exit 1; }
-if grep -n 'git pull' "$WORK/upload_filters.gmic"; then
-    echo "Error: upload_filters still runs 'git pull' (G'MIC changed it): update $0"
+if grep -n 'git pull' "$WORK/upload_filters.gmic" || grep -v -F "$WORK/" "$WORK/upload_filters.gmic" | grep '/tmp/'; then
+    echo "Error: upload_filters still runs 'git pull' or writes into /tmp (G'MIC changed it): update $0"
     exit 1
 fi
 # shellcheck disable=SC2016
@@ -104,6 +106,9 @@ cp "$src/CImg.h" "$src/gmic.cpp" "$WORK/"
     echo
     echo "### Local patches"
     echo
+    echo "A patch's own check tells \"not needed\" (it found upstream's fix) from \"does not apply\"; each needs"
+    echo "a review at the next bump: the check may be wrong, and the code may have moved with the bug still there."
+    echo
     echo "| Patch | File | Outcome |"
     echo "|---|---|---|"
 } > "$REPORT"
@@ -115,17 +120,22 @@ for list in CIMG_PATCHES:CImg.h GMIC_PATCHES:gmic.cpp; do
         if out=$(cd "$WORK" && sh "$TREE/$p" "$file" 2>&1); then
             kept="$kept $p"
             case $out in
-                *"not patched"*|*"already"*) outcome="not needed: $(echo "$out" | tail -n 1)";;
+                *"not patched"*|*"already"*) outcome="not needed, by the patch's own check (review it): $(echo "$out" | tail -n 1)";;
                 *) outcome="applied";;
             esac
         else
-            outcome="**does not apply** (left out): $(echo "$out" | head -n 1)"
+            outcome="**does not apply**, left out (review: fixed upstream, or the code changed): $(echo "$out" | head -n 1)"
         fi
         echo "$p: $outcome"
         echo "| \`$p\` | $file | ${outcome//|/\\|} |" >> "$REPORT"
     done
     kept=${kept# }
-    [ -n "$kept" ] || { echo "Error: no $var patch applies (CMakeLists.txt needs one): update $0"; exit 1; }
+    # CMakeLists.txt needs a non-empty list: a patch that does nothing when none applies
+    if [ -z "$kept" ]; then
+        kept=patches/develop-none-$file.sh
+        printf '#!/bin/sh\n# (gmic_develop_sources.sh: no patch of this list applies)\nexit 0\n' > "$TREE/$kept"
+        echo "| (none of the $var applies) | $file | |" >> "$REPORT"
+    fi
     case $var in CIMG_PATCHES) cimg_kept=$kept;; GMIC_PATCHES) gmic_kept=$kept;; esac
 done
 # the Makefile: GMICVER, its checksum (before 'GMICSRC_SHA256=', which picks the one of GMICVER)

@@ -462,7 +462,10 @@ static string gmicGetHotfixes(const string& stdlib, const string& userCommands, 
 			continue;
 		}
 		if (!defs[command].empty() && gmicChecksum(defs[command]) == ownChecksum) {
-			continue; // already fixed in G'MIC (then the callees do not matter)
+			// already fixed in G'MIC (then the callees do not matter); logged for the CI, which
+			// lists the hot fixes that a G'MIC update makes unneeded (gmic_develop_report.py)
+			gmicLog("openfx-gmic: hot fix for the G'MIC command '%s' not needed: G'MIC has the fixed definition\n", command.c_str());
+			continue;
 		}
 		bool ok = true;
 		for (size_t k = 0; k < checks[i].size(); ++k) {
@@ -489,6 +492,7 @@ static string gmicGetHotfixes(const string& stdlib, const string& userCommands, 
 			}
 		}
 		if (ok) {
+			gmicLog("openfx-gmic: hot fix for the G'MIC command '%s' applied\n", command.c_str());
 			hotfixes += texts[i];
 		}
 	}
