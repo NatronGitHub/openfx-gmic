@@ -21,17 +21,22 @@ load=()
 load+=(m "$WORK/hotfixes.gmic")
 status=0
 
-# check <issue> <description> <expected output> <gmic arguments>...: the last line of the output
-# must be <expected>, or, for '!~<regex>', not match the extended regular expression
+# check <issue> <description> <expected output> <gmic arguments>...: gmic must succeed, and the
+# last line of its output be <expected>, or, for '!~<regex>', be non-empty and not match the
+# extended regular expression
 check() {
-  local issue=$1 what=$2 expected=$3 out ok=0
+  local issue=$1 what=$2 expected=$3 out rc=0 ok=0
   shift 3
-  out=$(cd "$WORK" && timeout 300 "$GMIC" -v -1 "${load[@]}" "$@" 2>&1 | tail -n 1)
-  case $expected in
-    '!~'*) printf '%s\n' "$out" | grep -Eq -- "${expected#!~}" || ok=1
-           case $out in *rror*) ok=0;; esac;;
-    *) [ "$out" = "$expected" ] && ok=1;;
-  esac
+  out=$(cd "$WORK" && timeout 300 "$GMIC" -v -1 "${load[@]}" "$@" 2>&1) || rc=$?
+  out=$(printf '%s\n' "$out" | tail -n 1)
+  if [ $rc = 0 ]; then
+    case $expected in
+      '!~'*) [ -n "$out" ] && ! printf '%s\n' "$out" | grep -Eq -- "${expected#!~}" && ok=1;;
+      *) [ "$out" = "$expected" ] && ok=1;;
+    esac
+  else
+    out="$out (exit status $rc)"
+  fi
   if [ $ok = 1 ]; then
     echo "OK   #$issue $what"
   else
