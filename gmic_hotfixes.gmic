@@ -10,8 +10,8 @@
 #                definition replaces the built-in one, also when the command is called by
 #                another one (e.g. rep_ncee from fx_ncee).
 #
-#  Format      : '#@hotfix <command> <original> <fixed> [<callee>:<checksum>...]' starts a
-#                block, which ends at the next '#@hotfix' line. The checksums are FNV-1a
+#  Format      : '#@hotfix <command> <original> <fixed>[,<other>...] [<callee>:<checksum>...]'
+#                starts a block, which ends at the next '#@hotfix' line. The checksums are FNV-1a
 #                64-bit hashes of command definitions as G'MIC reads them (comments and
 #                blank lines removed, lines trimmed, each followed by a newline): <original>
 #                is the one of the built-in definition the fix was made from, and <fixed>
@@ -28,6 +28,10 @@
 #                  fix still fits);
 #                - it is <fixed>: upstream has made the same fix, and the block is skipped
 #                  silently (whatever the callees);
+#                - it is one of the <other> checksums: a definition that the block leaves
+#                  alone, also skipped silently: another G'MIC version, which doesn't have
+#                  the bug (a fix for develop only), or whose bug another block of the same
+#                  command fixes (one block per version, when the definitions differ);
 #                - anything else (or a callee changed or missing): the block is skipped with
 #                  a warning giving the checksum found, on which the CI describe test fails.
 #                  Review the fix against the new G'MIC sources: drop it if upstream fixed
@@ -227,3 +231,486 @@ equalize[-1] 256
 blend alpha,0.5,1
 gt 128
 mul 255
+
+#@hotfix fx_apply_curve - bc84f280209c2719
+# gmic-community 0b7424dd (after 4.0.8) removed fx_apply_curve, _fx_apply_curve, negative and
+# transfer_colors from include/david_tschumperle.gmic, but 9 filters of other community files
+# still call them, and fail with "Unknown command": Zone System, Metallic Look, Simple Noise
+# Canvas, Make Old Squiggly, Morphology Painting, Night HDR Image Black Noise Correction
+# (fx_apply_curve), CeKoaSa 010 (transfer_colors), Test Dither Color and Chalk It Up with
+# Invert Colors on (negative). https://github.com/NatronGitHub/openfx-gmic/issues/229. The four blocks restore them, as
+# G'MIC 4.0.8's built-in standard library defines them: with 4.0.8, each is that definition
+# (the block is skipped silently).
+fx_apply_curve :
+ac "_fx_apply_curve ${1-13}",$14,$15
+
+#@hotfix _fx_apply_curve - c8780b96a8cfdfcd apply_curve
+# See fx_apply_curve above.
+_fx_apply_curve :
+apply_curve $13,0,$1,${"if $2>=0 u $2,$3, else u \"\" fi"}${"if $4>=0 u $4,$5, else u \"\" fi"}${"if $6>=0 u $6,$7, else u \"\" fi"}${"if $8>=0 u $8,$9, else u \"\" fi"}${"if $10>=0 u $10,$11, else u \"\" fi"}255,$12
+
+#@hotfix negative - 1c30c3cde7cfb451
+# See fx_apply_curve above.
+negative :
+e[^-1] "Compute negative of image$?."
+v - repeat $! l[$>] - {iM} done done * -1 v +
+
+#@hotfix transfer_colors - 4bca2144105c8a74 histogram_cumul rgb2ycbcr split_opacity to_colormode to_rgb ycbcr2rgb
+# See fx_apply_curve above.
+transfer_colors : skip ${2=0}
+e[^-1] "Transfer colors of image $1 to image$?."
+v - pass$1 0 mv. 0 to_rgb[0] to_colormode[^0] {max(3,${-max_s})} c 0,255
+repeat $! l[$>] split_opacity rgb2ycbcr[0] a c done done
+l[0] s c histogram_cumul 256,1,0,255 a c * 255 done
+repeat $!-1 l[0,{$<+1}]
+if $2 repeat 3 sh[0,1] $> equalize. 256,0,255 index. ..,0,0 rm[-2,-1] done
+else repeat 2 sh[0,1] {$>+1} equalize. 256,0,255 index. ..,0,0 rm[-2,-1] done
+fi
+done done rm[0]
+repeat $! l[$>] split_opacity ycbcr2rgb[0] a c done done
+c 0,255
+v +
+
+#@hotfix _hcolor 4035fe4434fd33e6 a2732c7959ccb53d
+# Hair Locks (gtutor_hairlock) draws its hues with '360.0*(...)%1', meant as 360 times the
+# fractional part: that is what CImg 4.0.8 computes, where '%' binds tighter than '*', but CImg
+# develop (8364cdc) gives '%' the precedence of '*' (left to right, as in C), and the hues
+# collapse to under 1 degree. https://github.com/NatronGitHub/openfx-gmic/issues/234. From include/garry_osgood.gmic
+# (gmic-community; the same in 4.0.8 and develop); fix: '360.0*((...)%1)', right with both rules.
+_hcolor : skip ${1=40},${2=0.5},${3=0.5},${4=0},${5=0.5},${6=1},${7=1}
+repeat $!
+l[$>]
+pcnt={0.5*w*h*$5}
+{$pcnt},1,1,1,({0,w}*(1-$6)/2)+{0,w}*$6*u
+{$pcnt},1,1,1,({0,h}*(1-$6)/2)+{0,h}*$6*u
+{$pcnt},1,1,1
+ra={$1/360.0}
+if $7
+{$pcnt},{s},1,1,360.0*(($ra+$4*(2*g-1))%1)
+{$pcnt},{s},1,1,($2+$4*(2*g-1))%1
+{$pcnt},{s},1,1,($3+$4*(2*g-1))%1
+else
+{$pcnt},{s},1,1,360.0*($ra+$4*(2*g-1))
+{$pcnt},{s},1,1,$2+$4*(2*g-1)
+{$pcnt},{s},1,1,$3+$4*(2*g-1)
+fi
+a[^0] y
+pointcloud. 0,{-2,w},{-2,h},1,{-2,s}
+rm..
+hsl2rgb.
+done
+done
+
+#@hotfix fx_jpeg_preview 050f452c1bac1fa6 8d27ee94af969da7
+# JPEG Encoder's status ends with '#####################': the last line of fx_jpeg_preview
+# (include/joan_rake.gmic) ends with '\', which joins the next line, a comment, to it in the
+# built-in standard library; the plug-in then doesn't read the status as a list of values.
+# https://github.com/NatronGitHub/openfx-gmic/issues/239. From the built-in standard library (the same in 4.0.8 and
+# develop); fix: the status without the comment.
+fx_jpeg_preview:
+if $9
+o0,o1,o2,o3,o4,o5=${10-15}
+else
+repeat 6
+o$>=0
+done
+fi
+fx_jpeg ${1-8},$o0,$o1,$o2,$o3,$o4,$o5
+u "{$1}""{$2}""{$3}""{$4}""{$5}""{$6}""{$7}""{$8}""{$9}""{"$o0"}_"{$9?2:0}"{"$o1"}_"{$9?2:0}"{"$o2"}_"{$9?2:0}"{"$o3"}_"{$9?2:0}"{"$o4"}_"{$9?2:0}"{"$o5"}_"{$9?2:0}
+
+#@hotfix fx_tk_animateobject 8d8d4e9cb0d660a6 58981509f29ddeb0 zoom
+# Object Animation fails with "Unknown command 'fx_zoom'": include/tom_keil.gmic calls the
+# old Zoom filter, which G'MIC 3.3.6 replaced (fx_zoom_v2). https://github.com/NatronGitHub/openfx-gmic/issues/240.
+# From the built-in standard library (the same in 4.0.8 and develop); fix: the 'zoom' command,
+# whose centre is a fraction in [0,1], as the filter's Camera X/Y are.
+fx_tk_animateobject :
+if $!<=1 return fi
+if $15==0
+to_rgb if $9==0
+r {w*{$6/max(w,h)}},{h*{$6/max(w,h)}},1,{s},6 c 0,255
+if $14==0
+[-1,-2] [0] rv[0,1]
+b[0] xy,$11 ir[0] $13,256 n[0] 0,255
+tk_fx_replace_color[0] 1,0,0,0,0,255,0,0,0,0
+b[0] xy,$12 inpaint[1] [0]
+rm[0] rv[-1,-2]
+else [0] rv[0,1] rv[-1,-2]
+[0] [0]
+... .
+to_gray[-1,-2] ir[-1,-2] 128,256 n[-1,-2] 0,255
+s[1] c a[1,2,3,-1] c
+s[2] c a[2,3,4,-1] c
+rv[1,-1] compose_rgba[1,-1]
+rv[2,-1] compose_rgba[2,-1]
+to_rgb[1,2]
+fi
+dx={$1/$7} dy={$2/$7} dz=1 repeat $7
+shift[-1,-2] $dx%,$dy%
+if $3>=0 dz={$dz+{{$3}/$7}}
+else dz={$dz-{{{1-{10.01+$3}/10}}/$7}} fi
++zoom[-1,-2] $dz,$4,$5,0.5,0
+to_gray. ir. 128,256 n. 0,255 to_rgb..
+s.. c a[-4,-3,-2,-1] c
+if $10!=0 unsharp. {$10/5},{$10/2},0 cut. 0,255  fi
+mv. -3 done rm[-1,-2] rv rv[-1,-2]
+index={-3} repeat $7
+.. rv[-1,-2] index={$index-1}
+rv[-3,$index] compose_rgba[-3,$index]
+done rm.. if $8==1 rv fi
+else
+if $14==0 frames={$!-1} counter={-5}
+[-1,-2]
++b. xy,$11 ir. $13,256 n. 0,255
+tk_fx_replace_color. 1,0,0,0,0,255,0,0,0,0
+b. xy,$12
+repeat $frames inpaint[$counter] .
+counter={$counter-1} done rm[-1,-4]
+[-1,-2]
+else frames={$!-2} +to_gray.
+s... c a[-5,-4,-3,-1] c
++to_gray. +fc. 0,0,0
+rv[-1,-4] compose_rgba[-1,-4] mv. -3
+fi
+counter={-6} dx=0 dy=0 dz=1 repeat $frames
+[-1,-2]
+shift[-1,-2] $dx%,$dy%
+if $3>=0 dz={$dz+{{$3}/$frames}}
+else dz={$dz-{{{1-{10.01+$3}/10}}/$frames}} fi
++zoom[-1,-2] $dz,$4,$5,0.5,0
+to_gray. ir. 128,256 n. 0,255 to_rgb..
+s.. c a[-4,-3,-2,-1] c
+if $10!=0 unsharp. {$10/5},{$10/2},0 cut. 0,255 fi
+mv. $counter
+compose_rgba[$counter,{$counter-1}]
+dx={$dx+{$1/$frames}} dy={$dy+{$2/$frames}}
+counter={$counter-1}
+rm[-1,-2]
+done  rm[-1,-2,-3,0]
+fi
+else
+to_rgb if $9==0
+r {w*{$6/max(w,h)}},{h*{$6/max(w,h)}},1,{s},6 c 0,255 fi
+dx=0 dy=0 dz=1 if $9==0 counter=$7 else counter={$!-1} fi
+index={-2} repeat $counter
+if $9==0 . mv. $index fi
+dx={$dx+{$1/$7}} dy={$dy+{$2/$7}}
+shift[$index] $dx%,$dy%
+if $3>=0 dz={$dz+{{$3}/$7}}
+else dz={$dz-{{{1-{10.01+$3}/10}}/$7}} fi
+zoom[$index] $16,$4,$5,0.5,0
+zoom[$index] $dz,$4,$5,0.5,0
+if $10!=0 unsharp[$index] {$10/5},{$10/2},0 cut[$index] 0,255 fi
+index={$index-1} done
+if $16!=1 rm. fi fi
+
+#@hotfix iain_pixel_denoise_p 77d72228e28cc0e7 abd26f9bd90dfe3c iain_hybrid_median
+# Pixel Denoise fails with Method "Hybrid Median" and Parallel Processing "Off": it calls
+# iain_hybrid_median_p, which nothing defines. https://github.com/NatronGitHub/openfx-gmic/issues/240. From
+# include/iain_fergusson.gmic (the same in 4.0.8 and develop); fix: iain_hybrid_median, as the
+# parallel branch calls it.
+iain_pixel_denoise_p:
+if $5
+if $1==0
+ac "
+repeat $2
+apply_parallel_overlap \"megaclean \",4,0
+done
+",$3
+elif $1==1
+ac "
+apply_parallel_overlap \"iain_hybrid_median[0] $2\",4,0
+",$3
+elif $1==2
+ac "
+apply_parallel_overlap \"
++l[0]
+(1,1,1;1,0,1;1,1,1)
+dilate[0] [1]
+rm[1]
+done
++l[0]
+(1,1,1;1,0,1;1,1,1)
+erode[0] [1]
+rm[1]
+done
+min[0,1]
+max[0,1]
+\",4,0
+",$3
+fi
+else
+if $1==0
+ac "
+repeat $2
+megaclean
+done
+",$3
+elif $1==1
+ac "
+iain_hybrid_median[0] $2
+",$3
+elif $1==2
+ac "
++l[0]
+(1,1,1;1,0,1;1,1,1)
+dilate[0] [1]
+rm[1]
+done
++l[0]
+(1,1,1;1,0,1;1,1,1)
+erode[0] [1]
+rm[1]
+done
+min[0,1]
+max[0,1]
+",$3
+fi
+fi
+time=$|
+
+#@hotfix fx_customize_clut_preview 1f22af540c3a76e1 d4c079452f738dd3,4edb0ced838f661c
+# Customize CLUT's "3D CLUT (Precise)" preview uses the Fast resolution in G'MIC develop,
+# whose 535cb97 renumbered Preview Type but not the resolution test. https://github.com/NatronGitHub/openfx-gmic/issues/241.
+# From the develop standard library; fix: '_N:=$11>=3?64:32'. G'MIC 4.0.8's definition, right
+# with its own numbering, is left alone (the second checksum).
+fx_customize_clut_preview :
+if !$11 fx_customize_clut ${1-9},0,0,${12--1}
+elif $11==1
+rm fx_customize_clut ${1-9},1,0,${12--1}
+elif $11>=2
+_N:=$11>=3?64:32
+k[0] to_rgb w,h={w},{h}
++fx_customize_clut ${1-9},1,0,${12--1} mv. 1
+r. $_N,$_N,$_N,3,-1 pointcloud3d. o3d. $12
+l[] {
+if $2
+uniform_distribution {(1+$2)^3},3
+repeat w { circle3d {0,round($_N*I[$>])},0.75 col3d. {0,255*I[$>]} } rm[0]
+fi
+$=arg
+repeat 24 {
+mode=${arg{13+7*$<}}
+if $mode
+sr=${arg{14+7*$<}} sg=${arg{15+7*$<}} sb=${arg{16+7*$<}}
+tr=${arg{17+7*$<}} tg=${arg{18+7*$<}} tb=${arg{19+7*$<}}
+xy:=round(($_N/255)*[$sr,$sg])
+z:=round(($_N/255)*$sb)-0.1
+circle3d $xy,$z,0.75 col3d. {$mode==2?[$tr,$tg,$tb]:[$sr,$sg,$sb]}
+fi
+}
+colorcube3d *3d. {$_N/255} o3d. 0.5 col3d. 0 p3d. 1
+}
++3d[2--1]
+pose3d. 5.10656,2.04904,2.723,-316.115,-0.0815767,4.97762,-3.59262,-41.7094,-3.40685,2.95212,4.16756,-118.811,0,0,203,1
+if $w>$h
+rs[0,1] {0,round(w/2)}
+to[0] "Before",2,0,13,1,0.75
+to[1] "After",2,0,13,1,0.75
+a[0,1] y r[0] 100%,$h,1,3,0
+else
+rs[0,1] ,{0,round(h/2)}
+to[0] "Before",2,0,13,1,0.75
+to[1] "After",2,0,13,1,0.75
+a[0,1] x r[0] $w,100%,1,3,0
+fi
+snapshot3d. {0,round(1.1*min(w,h))},1.2,64,64,64
+autocrop. -. 64 r. {0,max(w,$w-w)},{0,max(h,$h-h)},1,3,0,0,0.5,0.5 +. 64
+to. "RGB CLUT",2,0,13,1,0.75
+a {`$w>$h?_'x':_'y'`}
+fi
+
+#@hotfix fx_mix_pca 9c06daa05f25b1f7 70abdb1cdaa75325,8a328cca39b6d205
+# Mixer [PCA]'s status has '${13}' instead of '{$13}': one value without braces, so the plug-in
+# doesn't read it, and the covariance cache is never kept. https://github.com/NatronGitHub/openfx-gmic/issues/242.
+# The definitions of 4.0.8 and develop differ: one block each, which leaves the other one alone.
+# This one: G'MIC 4.0.8.
+fx_mix_pca :
+foreach { split_opacity l[0] {
+to_rgb
+if [$14]==round(stats()[0,4],0.1) _avg:=[$15][0,3] C:=[$15][3,9] status=
+else
++rs 256,256,2 C=${"covariance_vectors. _avg"} rm.
+__status="{$1}{$2}{$3}{$4}""{$5}{$6}{$7}{$8}""{$9}{$10}{$11}{$12}""{$13}""{"{round(stats()[0,4],0.1)}"}""{"$_avg,$C"}""{$16}{${17,18}}"
+fi
+if "$4 || $8 || $12" +l {
+f "begin(avg = ["$_avg"]; eig = eig(["$C"]); Pt = eig[3,9]); Pt*(I-avg)"
+s c repeat $! { vmax$>={$>,1.1*max(abs(im),abs(iM))} }
+rm
+} else vmax0,vmax1,vmax2=1 fi
+f "begin(
+do_gamma(val,vmax,gamma) = (vmax*sign(val)*(abs(val)/vmax)^gamma);
+const gamma0 = 10^-($4%);
+const gamma1 = 10^-($8%);
+const gamma2 = 10^-($12%);
+const vmax0 = "$vmax0";
+const vmax1 = "$vmax1";
+const vmax2 = "$vmax2";
+avg = ["$_avg"];
+eig = eig(["$C"]);
+for (k = 3, k<12, k+=3, eig[k]<0?copy(eig[k],eig[k,3]*=-1,3));
+Pt = eig[3,9];
+P = transpose(Pt,3);
+T = mul(P,diag(10^[$1,$5,$9]),3);
+R1 = rot(eig[3,3],$3°);
+R2 = rot(eig[6,3],$7°);
+R3 = rot(eig[9,3],$11°);
+T = mul(R1,mul(R2,mul(R3,T,3),3),3);
+avg_shift = avg + $2*eig[3,3] + $6*eig[6,3] + $10*eig[9,3];
+if ("0$_is_preview",
+L = [ 2,5,10]*sqrt(1e-5 + eig[0,3]);
+run('__cols=',v2s(round([
+avg - L[0]*eig[3,3],
+avg + L[0]*eig[3,3],
+avg - L[1]*eig[6,3],
+avg + L[1]*eig[6,3],
+avg - L[2]*eig[9,3],
+avg + L[2]*eig[9,3] ])));
+);
+);
+nI = Pt*(I - avg);
+($4 || $8 || $12)?(
+nI[0] = do_gamma(nI[0],vmax0,gamma0);
+nI[1] = do_gamma(nI[1],vmax1,gamma1);
+nI[2] = do_gamma(nI[2],vmax2,gamma2);
+);
+avg_shift + T*nI"
+c 0,255
+} a c } u $__status
+
+#@hotfix fx_mix_pca 8a328cca39b6d205 c2460922d2ef8afb,9c06daa05f25b1f7
+# See the block above. This one: G'MIC develop.
+fx_mix_pca :
+foreach { split_opacity l[0] {
+to_rgb
+if [$14]==round(stats()[0,4],0.1) _avg:=[$15][0,3] C:=[$15][3,9] status=
+else
++rs 256,256,2 C=${"covariance_vectors. _avg"} rm.
+__status="{$1}{$2}{$3}{$4}""{$5}{$6}{$7}{$8}""{$9}{$10}{$11}{$12}""{$13}""{"{round(stats()[0,4],0.1)}"}""{"$_avg,$C"}"
+fi
+if "$4 || $8 || $12" +l {
+f "begin(avg = ["$_avg"]; eig = eig(["$C"]); Pt = eig[3,9]); Pt*(I-avg)"
+s c repeat $! { vmax$>={$>,1.1*max(abs(im),abs(iM))} }
+rm
+} else vmax0,vmax1,vmax2=1 fi
+f "begin(
+do_gamma(val,vmax,gamma) = (vmax*sign(val)*(abs(val)/vmax)^gamma);
+const gamma0 = 10^-($4%);
+const gamma1 = 10^-($8%);
+const gamma2 = 10^-($12%);
+const vmax0 = "$vmax0";
+const vmax1 = "$vmax1";
+const vmax2 = "$vmax2";
+avg = ["$_avg"];
+eig = eig(["$C"]);
+for (k = 3, k<12, k+=3, eig[k]<0?copy(eig[k],eig[k,3]*=-1,3));
+Pt = eig[3,9];
+P = transpose(Pt,3);
+T = mul(P,diag(10^[$1,$5,$9]),3);
+R1 = rot(eig[3,3],$3°);
+R2 = rot(eig[6,3],$7°);
+R3 = rot(eig[9,3],$11°);
+T = mul(R1,mul(R2,mul(R3,T,3),3),3);
+avg_shift = avg + $2*eig[3,3] + $6*eig[6,3] + $10*eig[9,3];
+if ("0$_is_preview",
+L = [ 2,5,10]*sqrt(1e-5 + eig[0,3]);
+run('__cols=',v2s(round([
+avg - L[0]*eig[3,3],
+avg + L[0]*eig[3,3],
+avg - L[1]*eig[6,3],
+avg + L[1]*eig[6,3],
+avg - L[2]*eig[9,3],
+avg + L[2]*eig[9,3] ])));
+);
+);
+nI = Pt*(I - avg);
+($4 || $8 || $12)?(
+nI[0] = do_gamma(nI[0],vmax0,gamma0);
+nI[1] = do_gamma(nI[1],vmax1,gamma1);
+nI[2] = do_gamma(nI[2],vmax2,gamma2);
+);
+avg_shift + T*nI"
+c 0,255
+} a c } u $__status
+
+#@hotfix gcd_boxfilter_local 6ab102d30e97dfb5 82ccd27dc95a7024
+# gcd_boxfilter_local and gcd_boxfilter_local_hp (include/andy_kelday.gmic) read the window size
+# with 'i#1' at the current channel: with a reference image of fewer channels, the size is 0 on
+# the others, and the output there NaN or -inf. https://github.com/NatronGitHub/openfx-gmic/issues/247. From the
+# built-in standard library (the same in 4.0.8 and develop); fix: the reference's last channel
+# for the channels it lacks, 'R=i(#1,x,y,z,min(c,s#1-1))'.
+gcd_boxfilter_local : check ${"is_image_arg $1"}
+pass$1 0 max. 1
+repeat $!-1 l[$>,-1]
+av={ia#0} sub.. $av cumulate.. xy
+f.. "
+begin(
+const boundary=1;
+const interpolation=1;
+const W=w-1; const H=h-1;
+T(X,Y)=Y>1?i(X,Y-1):Y*i(X,0);
+B(X,Y)=Y<H?i(X,Y):(1+Y-H)*i(X,H)-(Y-H)*i(X,H-1);
+D(X,Y)=X>1?T(X-1,Y):X*T(0,Y);
+E(X,Y)=X<W?T(X,Y):(1+X-W)*T(W,Y)-(X-W)*T(W-1,Y);
+F(X,Y)=X>1?B(X-1,Y):X*B(0,Y);
+G(X,Y)=X<W?B(X,Y):(1+X-W)*B(W,Y)-(X-W)*B(W-1,Y);
+);
+R=i(#1,x,y,z,min(c,s#1-1)); S=R*R; K=(R-1)/2;
+x0 = x - K;
+y0 = y - K;
+x1 = x + K;
+y1 = y + K;
+(G(x1,y1) - E(x1,y0) - F(x0,y1) + D(x0,y0))/S"
+add.. $av
+done done rm.
+
+#@hotfix gcd_boxfilter_local_hp 1764a230cd7d6b89 5f0455e5e6b68350
+# See gcd_boxfilter_local above.
+gcd_boxfilter_local_hp : check ${"is_image_arg $1"}
+pass$1 0 max. 1
+repeat $!-1 l[$>,-1]
+av={ia#0} sub.. $av
+f.. "
+begin(
+const boundary=1;
+ref(crop(#0),img);
+const W=w-1; const H=h-1;
+px(x,y) = (img[x + y*w#0 + c*wh#0]);
+qx(x,y) = (
+xA=floor(x);
+xB=ceil(x);
+yA=floor(y);
+yB=ceil(y);
+lx=x-xA;
+lerp(
+lerp(px(xA,yA),px(xB,yA),lx),
+lerp(px(xA,yB),px(xB,yB),lx),
+y-yA
+)
+);
+T(X,Y)=Y>1?qx(X,Y-1):Y*qx(X,0);
+B(X,Y)=Y<H?qx(X,Y):(1+Y-H)*qx(X,H)-(Y-H)*qx(X,H-1);
+D(X,Y)=X>1?T(X-1,Y):X*T(0,Y);
+E(X,Y)=X<W?T(X,Y):(1+X-W)*T(W,Y)-(X-W)*T(W-1,Y);
+F(X,Y)=X>1?B(X-1,Y):X*B(0,Y);
+G(X,Y)=X<W?B(X,Y):(1+X-W)*B(W,Y)-(X-W)*B(W-1,Y);
+for (C = 0; P = 0, C<s#0, ++C,
+for (X = 0; S = 0, X<w#0, ++X; ++P,
+S += img[P];
+img[P] = S;
+);
+for (Y = 1, Y<h#0, ++Y,
+for (X = 0; S = 0, X<w#0, ++X; ++P,
+S += img[P];
+img[P] = img[P-w#0]+S;
+)
+)
+)
+);
+R=i(#1,x,y,z,min(c,s#1-1)); S=R*R; K=(R-1)/2;
+x0 = x - K;
+y0 = y - K;
+x1 = x + K;
+y1 = y + K;
+(G(x1,y1) - E(x1,y0) - F(x0,y1) + D(x0,y0))/S"
+add.. $av
+done done rm.

@@ -397,13 +397,15 @@ static string gmicChecksum(const string& def)
 // The hot fixes that apply to the commands that G'MIC runs: those of the standard library stdlib,
 // replaced by those that userCommands defines again (the user's filter file userFile, passed as
 // custom commands, see PluginGlobalData::userCommands; empty with the built-in filters). Each
-// block of gmic_hotfixes.gmic starts with '#@hotfix <command> <original> <fixed>
+// block of gmic_hotfixes.gmic starts with '#@hotfix <command> <original> <fixed>[,<other>...]
 // [<callee>:<checksum>...]': the FNV-1a 64-bit hashes of the built-in definition the fix was made
 // from, of the fixed definition (the block's own), and of the built-in definitions of the commands
 // the fix relies on; <original> is "-" for a command that the built-in G'MIC no longer defines
-// (but still calls). A block is applied if the command is the original one (or, for "-", is not
-// defined) and the callees are unchanged, and skipped silently if the command already is the fixed
-// one (fixed upstream). Otherwise it is skipped: with a note if the user's file defines the
+// (but still calls); the <other> definitions are those the block leaves alone (another G'MIC
+// version that doesn't have the bug, or whose bug another block fixes). A block is applied if the
+// command is the original one (or, for "-", is not defined) and the callees are unchanged, and
+// skipped silently if the command already is the fixed one (fixed upstream) or one of the others.
+// Otherwise it is skipped: with a note if the user's file defines the
 // command or a callee another way (its definition is kept: a copy of the built-in definition
 // still gets the fix), else with a warning for the developers.
 static string gmicGetHotfixes(const string& stdlib, const string& userCommands, const string& userFile)
@@ -411,6 +413,7 @@ static string gmicGetHotfixes(const string& stdlib, const string& userCommands, 
 	static const string marker = "#@hotfix ";
 	vector<vector<std::pair<string, string> > > checks; // per block: (command, checksum)
 	vector<string> fixed, texts; // per block: checksum of the fixed definition, block text
+	vector<vector<string> > others; // per block: the checksums of the definitions it leaves alone
 	std::istringstream ss(string((const char*)gmic_hotfixes));
 	string line;
 	while (getline(ss, line)) {
@@ -425,7 +428,13 @@ static string gmicGetHotfixes(const string& stdlib, const string& userCommands, 
 				check.push_back(std::make_pair(callee.substr(0, colon), colon == string::npos ? string() : callee.substr(colon + 1)));
 			}
 			checks.push_back(check);
-			fixed.push_back(fixedChecksum);
+			vector<string> sums;
+			std::istringstream fs(fixedChecksum);
+			for (string sum; getline(fs, sum, ',');) {
+				sums.push_back(sum);
+			}
+			fixed.push_back(sums.empty() ? string() : sums[0]);
+			others.push_back(sums.size() > 1 ? vector<string>(sums.begin() + 1, sums.end()) : vector<string>());
 			texts.push_back(string());
 		}
 		if (!texts.empty()) {
@@ -463,6 +472,9 @@ static string gmicGetHotfixes(const string& stdlib, const string& userCommands, 
 		}
 		if (!defs[command].empty() && gmicChecksum(defs[command]) == ownChecksum) {
 			continue; // already fixed in G'MIC (then the callees do not matter)
+		}
+		if (!defs[command].empty() && std::find(others[i].begin(), others[i].end(), gmicChecksum(defs[command])) != others[i].end()) {
+			continue; // a definition that this block leaves alone (another G'MIC version)
 		}
 		bool ok = true;
 		for (size_t k = 0; k < checks[i].size(); ++k) {
