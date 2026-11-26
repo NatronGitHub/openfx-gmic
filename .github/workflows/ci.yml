@@ -178,7 +178,11 @@ jobs:
       # the default FFT (pocketfft) on a non-power-of-two image, with an interpreter built from the
       # same sources
       - name: Render FFT filters (720x576)
-        run: .github/workflows/fft_smoke.sh build/gmic
+        run: GMIC_CLI_OUT="$RUNNER_TEMP/gmic" .github/workflows/fft_smoke.sh build/gmic
+      # the local fixes of G'MIC, CImg and gmic-community bugs (patches/, gmic_hotfixes.gmic):
+      # their repros, with the interpreter that fft_smoke.sh built from the build's sources
+      - name: Local fixes of upstream bugs
+        run: .github/workflows/gmic_fix_tests.sh "$RUNNER_TEMP/gmic" build/gmic/gmic_stdlib_community.h
       # all the plug-ins on the weekly and on-demand runs, a subset per PR. hostDemo renders any
       # region of definition but reports no multi-resolution support: OFX_GMIC_MULTIRES=1 makes
       # the plug-in predict each result's size (#175), as on Natron. The OFX 1.4 step below runs

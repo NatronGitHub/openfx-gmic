@@ -6,7 +6,7 @@
 # Usage (from the top-level directory, where gmic_<version>.tar.gz is): fft_smoke.sh [<sources dir>]
 # <sources dir>: where the G'MIC sources are, "." (default) after make (any LICENSE, FFT=pocketfft),
 # or <build>/gmic after a CMake build with FFT=pocketfft.
-# Uses $CXX (default c++), and pkg-config for zlib.
+# Uses $CXX (default c++), and pkg-config for zlib. GMIC_CLI_OUT=<path> keeps the interpreter there.
 set -euo pipefail
 CXX=${CXX:-c++}
 WORK=$(mktemp -d)
@@ -22,6 +22,8 @@ $CXX -O1 -w -I"$SRCDIR" -Dcimg_display=0 $(pkg-config --cflags zlib) -c "$WORK/g
 # shellcheck disable=SC2046
 $CXX "$WORK/gmic.o" "$WORK/gmic_cli.o" -o "$WORK/gmic" $(pkg-config --libs zlib) -lpthread
 G="$WORK/gmic"
+# GMIC_CLI_OUT=<path>: keep the interpreter there (for gmic_fix_tests.sh)
+if [ -n "${GMIC_CLI_OUT:-}" ]; then cp "$G" "$GMIC_CLI_OUT"; fi
 in="srand 1 720,576,1,3 rand 0,255 b 2"
 err=$($G -v -1 $in +fft ifft[-2,-1] k[0,-2] sub[0] [1] abs[0] echo '{0,iM}' 2>&1)
 echo "FFT round trip on 720x576: max error $err"
