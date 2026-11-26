@@ -30,7 +30,7 @@ Getting the sources
 -------------------
 
     git clone --recursive https://github.com/NatronGitHub/openfx-gmic.git
-    git submodule update -i    # in an existing clone: the openfx submodule is required
+    git submodule update -i    # in an existing clone: the openfx and SupportExt submodules are required
 
 The G'MIC sources (version GMICVER in the Makefile, 4.0.8) are downloaded at build time and are
 not in git: the release tarball gmic_<version>.tar.gz, from the GitHub release of GreycLab/gmic,
@@ -60,14 +60,17 @@ Requirements
   PKG_CONFIG_PATH=<prefix>/lib/pkgconfig. GMIC_STATIC_DEPS=0 (CMake: -DGMIC_STATIC_DEPS=OFF) links
   the shared zlib and libpng instead: distribution packages and Natron's
   release builds use it (Natron's installer bundles these libraries).
+- The OpenGL headers and library (e.g. libgl-dev, mesa-libGL-devel; macOS and Windows have them),
+  for the point handles (openfx-supportext, in the SupportExt submodule), except in COMMERCIAL
+  builds.
 - Python 3, for the render test only.
 - Platforms: Linux, macOS (Apple clang; libraries from MacPorts or Homebrew) and Windows: MSVC
   x64 with CMake, as in CI (see "Building with MSVC" below), or MSYS2 (UCRT64, tested weekly; with make or CMake;
   libraries from its packages: mingw-w64-ucrt-x86_64-zlib, -libpng, -libgomp and -pkgconf).
 
 Runtime requirements on Linux: GMIC.ofx needs only the system libraries libc, libm, libstdc++,
-libgcc_s and libgomp (OpenMP builds; libgomp is a separate package, which minimal systems may not
-have), plus libpthread, libdl and librt before glibc 2.34. Natron 2.6's Linux baseline is Rocky
+libgcc_s, libgomp (OpenMP builds; libgomp is a separate package, which minimal systems may not
+have) and libGL (or libOpenGL and libGLX; not in COMMERCIAL builds), plus libpthread, libdl and librt before glibc 2.34. Natron 2.6's Linux baseline is Rocky
 Linux 9 (glibc 2.34, GCC 11's libstdc++): a build there runs on newer distributions.
 
 Downloads: the plug-in doesn't use libcurl, on any system. The filters that download data (CLUTs
@@ -324,11 +327,11 @@ Points
 ------
 
 A filter's points (its point() parameters) are handles on the host's viewer, as G'MIC-Qt's
-keypoints are on its preview: discs of the colour and size that the filter gives them. A point
-with no opacity is not drawn, but can still be dragged. Most points render while they are dragged
-(G'MIC's "burst" points); the others when they are released. A removable point that is off (its
-"Enabled" checkbox), or a point that only the filter's preview uses without Preview/Draft Mode,
-has no handle. In hosts without overlays, the points keep the host's own handles, if it has some.
+keypoints are on its preview, each in the colour that the filter gives it. Drag a point to move
+it: most points render while they are dragged (G'MIC's "burst" points), the others when they are
+released. A removable point that is off (its "Enabled" checkbox), or a point that only the
+filter's preview uses without Preview/Draft Mode, has no handle. COMMERCIAL builds, and hosts
+without overlays, keep the host's own handles, if it has some.
 
 Rendering
 ---------

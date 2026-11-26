@@ -52,7 +52,9 @@
 #include <vector>
 
 #include "ofxsImageEffect.h"
-#include "ofxsInteract.h"
+#ifndef OFX_GMIC_COMMERCIAL
+#include "ofxsPositionInteract.h" // OFX::PointsInteract (SupportExt, GPL)
+#endif
 
 #include "gmic_plugin.h"
 #include "gmic_log.h"
@@ -115,11 +117,6 @@ bool hostIsNatron()
 #else
 	return false;
 #endif
-}
-
-bool hostSupportsOverlays()
-{
-	return OFX::getImageEffectHostDescription()->supportsOverlays;
 }
 
 // Does the plug-in show, hide, enable and disable the parameters as the filter's status says
@@ -549,7 +546,7 @@ struct InputsResult
 // ---------------------------------------------------------------------------------------------
 // The effect instance
 
-class PointsInteract; // its point handles (below)
+class GMICPointsInteract; // its point handles (below)
 
 class GMICEffect final : public OFX::ImageEffect
 {
@@ -557,9 +554,9 @@ public:
 	GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData);
 
 private:
-	// the point handles: they use the point functions below (globalData, pointParam, sourceRoD,
+	// the point handles: they use the point functions below (globalData, pointIsOn,
 	// pointChangedByUser)
-	friend class PointsInteract;
+	friend class GMICPointsInteract;
 
 	void render(const OFX::RenderArguments& args) override;
 	bool isIdentity(const OFX::IsIdentityArguments& args, OFX::Clip*& identityClip, double& identityTime
@@ -591,6 +588,7 @@ private:
 	const GlobalData& globalData() const { return _gd; }
 	// parameter i if it is a point, else NULL
 	OFX::Double2DParam* pointParam(int i) const;
+	bool pointIsOn(int i) const;
 	std::optional<OfxRectD> sourceRoD(double time) const;
 	void pointChangedByUser(int i, double time, bool moveToSource = true);
 	bool pointIsDefault(const Parameter& param, double x, double y) const;
@@ -1178,7 +1176,7 @@ OFX::Double2DParam* GMICEffect::pointParam(int i) const
 	return point ? *point : nullptr;
 }
 
-// Point i changed by the user, in the parameters or with its handle (PointsInteract, whose changes
+// Point i changed by the user, in the parameters or with its handle (GMICPointsInteract, whose changes
 // the host reports as plug-in edits), from the instance changed action or an interact action: reset
 // to its default (if moveToSource), it goes within Source too (pointsMoveToSource sets parameters:
 // the instance changed actions this causes are plug-in edits, ignored in changedParam); moved
@@ -1246,7 +1244,8 @@ void GMICEffect::endChanged(OFX::InstanceChangeReason /*reason*/)
 // instance changed action or in interacts), each point parameter still at its default is moved to its G'MIC default within
 // Source's region of definition, as openfx-misc's Transform does with its center; so is a point that
 // the user resets to its default (or sets to it), in the parameters or with its handle (instance
-// changed action, or the overlay's actions: see pointChangedByUser). Points don't follow Source when its size changes
+// changed action, or the overlay's actions: see pointChangedByUser). Points don't follow Source
+// when its size changes
 // otherwise (e.g. a Reformat upstream edited), as with openfx-misc. A point is at its default if it
 // is not animated and has the default converted with the project size and offset, with the size only
 // (Natron ignores the offset), or unconverted (hosts without a project size); or the value the
@@ -1390,6 +1389,16 @@ void GMICEffect::pointUpdateEnabled(int checkbox, bool draft)
 	OFX::Double2DParam* const point = std::get<OFX::Double2DParam*>(_params[checkbox - 1]);
 	const bool enabled = *on && mayBeEnabled(checkbox - 1, draft);
 	hostTry([point, enabled] { point->setEnabled(enabled); }); // (also called from createInstance)
+}
+
+// Whether point i is in use, as pointUpdateEnabled enables it: not disabled, its checkbox on if it
+// is removable, and Preview/Draft Mode on if only the preview uses it (true if the host fails)
+bool GMICEffect::pointIsOn(int i) const
+{
+	if (!mayBeEnabled(i, draftModeValue().value_or(true))) return false;
+	if (!isPointCheckbox(i + 1)) return true;
+	OFX::BooleanParam* const box = std::get<OFX::BooleanParam*>(_params[i + 1]);
+	return hostQuery([box] { return box->getValue(); }).value_or(true);
 }
 
 // The removable points (see pointUpdateEnabled). onlyParam >= 0: only for that checkbox.
@@ -1797,248 +1806,95 @@ void GMICEffect::render(const OFX::RenderArguments& args)
 // ---------------------------------------------------------------------------------------------
 // Point handles (issue #176)
 
-// v rounded to the power of 10 at or below the size of a screen pixel (in canonical coordinates),
-// as the host's handles (Natron's PositionInteract) and openfx-misc's do: no 17-digit values from a
-// drag
-double roundToPixel(double v, double pixelScale)
-{
-	if (!(pixelScale > 0.)) return v;
-	const double step = std::pow(10., std::floor(std::log10(pixelScale)));
-	return step * std::floor(v / step + 0.5);
-}
-
-// The overlay of the plug-ins with points: each point parameter is a handle, drawn and moved as
-// G'MIC-Qt's keypoints (https://github.com/c-koi/gmic-qt/blob/aa4a6f4ab174b37fcdf4df5f94fde0898856523a/src/Widgets/PreviewWidget.cpp,
-// paintKeypoints and the mouse events):
-// - a disc of the point's colour (PointHandle) with a black outline of the same opacity, of its
-//   radius in screen pixels, or in percent of Source's diagonal on screen (at least 2 pixels); the
-//   first point is on top. Points with alpha 0 are not drawn, but can be dragged.
-// - a press within 2 pixels of a disc picks the first such point; while it is dragged it is at the
-//   pen, opaque unless it keeps its opacity (PointHandle::keepOpacity). A burst point's parameter is
-//   set at each pen motion, so the host renders while it moves; the others at pen-up only (G'MIC-Qt
-//   updates their spin boxes during the drag without rendering: in OFX every value change renders).
-// - a point whose parameter is disabled (a removable point that is off, or a preview-only point
-//   without Preview/Draft Mode, see pointUpdateEnabled) or hidden has no handle.
-// Undo: the first value change of a drag and the plug-in's bookkeeping for it (pointChangedByUser,
-// which may write kPointsFromSourceParam) are in one edit block, so that the host makes one undo
-// command of them (Natron then merges the other changes of the drag into it). Each edit block
-// begins and ends in one action: Natron closes the blocks of a plug-in when its outermost action
-// returns, and a block over the whole drag would hold the burst renders back until its end.
-// Drawn with getDrawContext(): the host's DrawSuite, or OpenGL (the Support library loads it at run
-// time) on hosts without it.
-class PointsInteract final : public OFX::OverlayInteract
+#ifndef OFX_GMIC_COMMERCIAL
+// The point handles: SupportExt's OFX::PointsInteract (GPL: COMMERCIAL builds keep the host's own
+// handles), one per point parameter, in the colour that point() gives it (pointHandleArgs in
+// gmic_parser.cpp). Burst points set their value at each pen motion, so the host renders while
+// they move; the others when they are released. A point is shown when its parameter is enabled
+// and visible (pointUpdateEnabled), and when it is in use (GMICEffect::pointIsOn), for the hosts
+// that don't follow the enabled state at run time.
+class GMICPointsInteract final : public OFX::PointsInteract
 {
 public:
-	PointsInteract(OfxInteractHandle handle, OFX::ImageEffect* effect);
+	// (the Support library only makes it for the effects of the factories that register it,
+	// GMICEffect: dynamic_cast throws std::bad_cast otherwise)
+	GMICPointsInteract(OfxInteractHandle handle, OFX::ImageEffect* effect)
+		: GMICPointsInteract(handle, dynamic_cast<GMICEffect&>(*effect))
+	{
+	}
 
 private:
-	bool draw(const OFX::DrawArgs& args) override;
-	bool penDown(const OFX::PenArgs& args) override;
-	bool penMotion(const OFX::PenArgs& args) override;
-	bool penUp(const OFX::PenArgs& args) override;
-	void loseFocus(const OFX::FocusArgs& args) override;
+	GMICPointsInteract(OfxInteractHandle handle, GMICEffect& effect)
+		: OFX::PointsInteract(handle, &effect, points(effect.globalData()))
+		, _effect(effect)
+		, _param(pointIndices(effect.globalData()))
+	{
+	}
 
-	std::optional<OfxPointD> shownPosition(int i, double time) const;
-	double sourceDiagonalOnScreen(double time, const OfxPointD& pixelScale) const;
-	int pointUnderPen(const OFX::PenArgs& args) const;
-	bool setPosition(int i, double time, const OfxPointD& p, bool last);
-	void endDrag(double time, const std::optional<OfxPointD>& to);
+	// the index in GlobalData::param of each point, in the order of points()
+	static std::vector<int> pointIndices(const GlobalData& gd);
+	static std::vector<OFX::PointsInteractPoint> points(const GlobalData& gd);
+	bool isPointShown(int i, double time) const override;
+	void setPointValue(int i, double time, const OfxPointD& p, bool firstChange, bool dragEnd) override;
 
 	GMICEffect& _effect;
-	bool _percentRadius = false; // whether a handle has a radius in percent (see sourceDiagonalOnScreen)
-	int _dragged = -1; // the parameter of the point being dragged, -1 if none
-	OfxPointD _dragPosition{}; // where it is
-	bool _dragSet = true; // whether its parameter has _dragPosition
-	bool _dragChanged = false; // whether the drag changed its parameter
+	const std::vector<int> _param;
 };
 
-class PointsOverlayDescriptor final : public OFX::DefaultEffectOverlayDescriptor<PointsOverlayDescriptor, PointsInteract>
+std::vector<int> GMICPointsInteract::pointIndices(const GlobalData& gd)
 {
-};
-
-// in screen pixels: the radius of a handle (as G'MIC-Qt's actualRadiusFromPreviewSize, without
-// rounding the radius in pixels), and how far from its disc a press still picks it
-double handleRadius(const PointHandle& h, double sourceDiagonal)
-{
-	return (h.radius >= 0.f) ? (double)h.radius : std::max(2., std::round(-(double)h.radius * sourceDiagonal / 100.));
-}
-constexpr double kHandlePickTolerance = 2.;
-constexpr int kHandleVertices = 64; // a disc is a polygon (within 1/2 pixel up to a radius of 400)
-constexpr double kPi = 3.14159265358979323846;
-
-// (the Support library only makes PointsInteract for the effects of the factories that register it,
-// GMICEffect: dynamic_cast throws std::bad_cast otherwise)
-PointsInteract::PointsInteract(OfxInteractHandle handle, OFX::ImageEffect* effect)
-	: OFX::OverlayInteract(handle)
-	, _effect(dynamic_cast<GMICEffect&>(*effect))
-{
-	// redrawn when a point, its checkbox or Preview/Draft Mode (which enable it) change
-	const GlobalData& gd = _effect.globalData();
+	std::vector<int> indices;
 	for (int i = 0; i < gd.nofParams; i++) {
-		if (OFX::Double2DParam* point = _effect.pointParam(i)) {
-			addParamToSlaveTo(point);
-			_percentRadius = _percentRadius || gd.param[i].pointHandle.radius < 0.f;
-		} else if (gd.param[i].paramType == ParamType::Bool && gd.param[i].flags == kParamFlagsPointEnabled) {
-			addParamToSlaveTo(_effect.fetchBooleanParam(gd.param[i].paramName));
-		}
+		if (gd.param[i].paramType == ParamType::Point) indices.push_back(i);
 	}
-	addParamToSlaveTo(_effect.fetchBooleanParam(kDraftModeParam));
+	return indices;
 }
 
-// where the handle of parameter i is, if it has one: a point whose parameter is enabled and not
-// hidden, and whose value the host gives
-std::optional<OfxPointD> PointsInteract::shownPosition(int i, double time) const
+std::vector<OFX::PointsInteractPoint> GMICPointsInteract::points(const GlobalData& gd)
 {
-	const OFX::Double2DParam* point = _effect.pointParam(i);
-	if (!point) return std::nullopt;
-	if (!hostQuery([point] { return point->getIsEnable() && !point->getIsSecret(); }).value_or(true)) return std::nullopt;
-	if (i == _dragged) return _dragPosition;
-	return hostQuery([point, time] { return point->getValueAtTime(time); });
-}
-
-// the diagonal of Source (the image that point coordinates are relative to, see fetchParamValues)
-// in screen pixels, or of the project if it is not connected, 0 if neither is known. Only for the
-// radii in percent: the region of definition of Source may be expensive (an upstream effect's).
-double PointsInteract::sourceDiagonalOnScreen(double time, const OfxPointD& pixelScale) const
-{
-	if (!_percentRadius || !(pixelScale.x > 0. && pixelScale.y > 0.)) return 0.;
-	OfxPointD size{ 0., 0. };
-	if (const std::optional<OfxRectD> rod = _effect.sourceRoD(time)) {
-		size = { rod->x2 - rod->x1, rod->y2 - rod->y1 };
-	} else if (const std::optional<OfxPointD> project = hostQuery([this] { return _effect.getProjectSize(); })) {
-		size = *project;
-	}
-	return std::hypot(size.x / pixelScale.x, size.y / pixelScale.y);
-}
-
-bool PointsInteract::draw(const OFX::DrawArgs& args)
-{
-	const OFX::DrawContext& d = args.getDrawContext();
-	if (!d.canDraw()) return false;
-	const GlobalData& gd = _effect.globalData();
-	const double diagonal = sourceDiagonalOnScreen(args.time, args.pixelScale);
-	bool drawn = false;
-	for (int i = gd.nofParams - 1; i >= 0; i--) { // the first point on top
-		const std::optional<OfxPointD> c = shownPosition(i, args.time);
-		if (!c) continue;
+	std::vector<OFX::PointsInteractPoint> points;
+	for (const int i : pointIndices(gd)) {
 		const PointHandle& h = gd.param[i].pointHandle;
-		const float alpha = (i == _dragged && !h.keepOpacity) ? 1.f : (float)h.color[3] / 255.f;
-		if (!(alpha > 0.f)) continue;
-		const double r = handleRadius(h, diagonal);
-		std::array<OfxPointD, kHandleVertices> disc;
-		for (int k = 0; k < kHandleVertices; k++) {
-			const double a = 2. * kPi * k / kHandleVertices;
-			disc[k] = { c->x + r * args.pixelScale.x * std::cos(a), c->y + r * args.pixelScale.y * std::sin(a) };
-		}
-		d.setColour((float)h.color[0] / 255.f, (float)h.color[1] / 255.f, (float)h.color[2] / 255.f, alpha);
-		d.draw(kOfxDrawPrimitivePolygon, disc.data(), kHandleVertices);
-		d.setColour(0.f, 0.f, 0.f, alpha);
-		d.setLineWidth(2.f);
-		d.draw(kOfxDrawPrimitiveLineLoop, disc.data(), kHandleVertices);
-		drawn = true;
+		OFX::PointsInteractPoint p(gd.param[i].paramName);
+		p.colour = { h.color[0] / 255., h.color[1] / 255., h.color[2] / 255. };
+		p.updateWhileDragging = h.burst;
+		points.push_back(p);
 	}
-	return drawn;
+	return points;
 }
 
-// the first point whose handle is within kHandlePickTolerance pixels of the pen, -1 if none
-int PointsInteract::pointUnderPen(const OFX::PenArgs& args) const
+bool GMICPointsInteract::isPointShown(int i, double /*time*/) const
 {
-	if (!(args.pixelScale.x > 0. && args.pixelScale.y > 0.)) return -1;
-	const GlobalData& gd = _effect.globalData();
-	const double diagonal = sourceDiagonalOnScreen(args.time, args.pixelScale);
-	for (int i = 0; i < gd.nofParams; i++) {
-		const std::optional<OfxPointD> c = shownPosition(i, args.time);
-		if (!c) continue;
-		const double dx = (args.penPosition.x - c->x) / args.pixelScale.x, dy = (args.penPosition.y - c->y) / args.pixelScale.y;
-		if (std::hypot(dx, dy) <= handleRadius(gd.param[i].pointHandle, diagonal) + kHandlePickTolerance) return i;
-	}
-	return -1;
+	return _effect.pointIsOn(_param[i]);
 }
 
-// Sets point i to p (at time if it is animated, a key there): true if the host took it. With its
-// first change in the drag, or the last one (at pen-up), the plug-in's bookkeeping is in the same
-// edit block (see the class comment): the last one also moves a point dropped on its default within
-// Source. Never throws for a host error (best effort, as the host's own handles).
-bool PointsInteract::setPosition(int i, double time, const OfxPointD& p, bool last)
+// An edit block for every change, opened and closed here, so that the plug-in's bookkeeping
+// (pointChangedByUser: the hidden kPointsFromSourceParam, or the move within Source of a point
+// dropped on its default) is in the same undo step as the value: at the first change of the drag,
+// and at its end.
+void GMICPointsInteract::setPointValue(int i, double time, const OfxPointD& p, bool firstChange, bool dragEnd)
 {
-	OFX::Double2DParam* point = _effect.pointParam(i);
-	OFX::ParamSet::EditBlock block(_effect, "Move point", OFX::ParamSet::EditBlock::eBeginNow,
+	OFX::ParamSet::EditBlock block(_effect, "Move point", true, OFX::ParamSet::EditBlock::eBeginNow,
 		OFX::ParamSet::EditBlock::eHostErrorsIgnore);
-	const bool set = hostTry([point, time, &p] {
-		const unsigned int keys = hostQuery([point] { return point->getNumKeys(); }).value_or(0);
-		if (keys > 0) {
-			point->setValueAtTime(time, p.x, p.y);
-		} else {
-			point->setValue(p.x, p.y);
-		}
-	});
-	if (!set) return false;
-	const bool first = !_dragChanged;
-	_dragChanged = true;
-	if (first || last) hostTry([this, i, time, last] { _effect.pointChangedByUser(i, time, last); });
-	return true;
-}
-
-// The drag ends, at to (pen-up: as G'MIC-Qt, the point goes where the pen is released, also without
-// a motion), or where its parameter is (the focus was lost: a point that is not a burst point stays
-// where it was). The drag state is reset first, so that a host error can't leave the point
-// following the pointer (hosts send pen motions with no button pressed too).
-void PointsInteract::endDrag(double time, const std::optional<OfxPointD>& to)
-{
-	const int i = _dragged;
-	const bool set = _dragSet;
-	const OfxPointD from = _dragPosition;
-	_dragged = -1;
-	_dragSet = true;
-	requestRedraw();
-	if (to && (!set || to->x != from.x || to->y != from.y)) {
-		setPosition(i, time, *to, true);
-	} else if (_dragChanged) {
-		// a burst point, set at its last motion: only the move within Source if it is at its default
-		// (its first motion forgot the value the plug-in gave it), with pointsMoveToSource's own edit
-		// block: a change of its own
-		hostTry([this, i, time] { _effect.pointChangedByUser(i, time); });
+	OFX::Double2DParam* point = pointParam(i);
+	if (hostQuery([point] { return point->getNumKeys(); }).value_or(0) > 0) {
+		point->setValueAtTime(time, p.x, p.y); // animated: a key at time
+	} else {
+		point->setValue(p.x, p.y);
 	}
+	if (firstChange || dragEnd) _effect.pointChangedByUser(_param[i], time, dragEnd);
 }
+#endif // OFX_GMIC_COMMERCIAL
 
-bool PointsInteract::penDown(const OFX::PenArgs& args)
+// whether the plug-in draws the point handles (GMICPointsInteract): not in COMMERCIAL builds, nor
+// on hosts without overlays (ofxsSetOverlayInteractDescriptorV2 then registers nothing)
+bool pluginDrawsPoints()
 {
-	const int i = pointUnderPen(args);
-	if (i < 0) return false;
-	const std::optional<OfxPointD> p = shownPosition(i, args.time);
-	if (!p) return false;
-	_dragPosition = *p;
-	_dragged = i;
-	_dragSet = true;
-	_dragChanged = false;
-	requestRedraw();
-	return true;
-}
-
-// the dragged point to the pen: its parameter too if it is a burst point
-bool PointsInteract::penMotion(const OFX::PenArgs& args)
-{
-	if (_dragged < 0) return false;
-	const OfxPointD p = { roundToPixel(args.penPosition.x, args.pixelScale.x), roundToPixel(args.penPosition.y, args.pixelScale.y) };
-	if (p.x != _dragPosition.x || p.y != _dragPosition.y) {
-		_dragPosition = p;
-		_dragSet = _effect.globalData().param[_dragged].pointHandle.burst && setPosition(_dragged, args.time, p, false);
-		requestRedraw();
-	}
-	return true;
-}
-
-bool PointsInteract::penUp(const OFX::PenArgs& args)
-{
-	if (_dragged < 0) return false;
-	endDrag(args.time, OfxPointD{ roundToPixel(args.penPosition.x, args.pixelScale.x), roundToPixel(args.penPosition.y, args.pixelScale.y) });
-	return true;
-}
-
-void PointsInteract::loseFocus(const OFX::FocusArgs& args)
-{
-	if (_dragged < 0) return;
-	endDrag(args.time, std::nullopt);
+#ifdef OFX_GMIC_COMMERCIAL
+	return false;
+#else
+	return OFX::getImageEffectHostDescription()->supportsOverlays;
+#endif
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2145,11 +2001,12 @@ void GMICPluginFactory::describe(OFX::ImageEffectDescriptor& desc)
 		desc.setTemporalClipAccess(true);
 	}
 
+#ifndef OFX_GMIC_COMMERCIAL
 	if (hasPoints(gd)) {
-		// the point handles (PointsInteract; nothing is registered if the host has no overlays). The
-		// Support library owns the descriptor.
-		desc.setOverlayInteractDescriptorV2(new PointsOverlayDescriptor);
+		// the point handles (see pluginDrawsPoints); desc owns the descriptor
+		OFX::ofxsSetOverlayInteractDescriptorV2(desc, new OFX::PointsOverlayDescriptorV2<GMICPointsInteract>);
 	}
+#endif
 }
 
 // describe the plugin in context
@@ -2281,9 +2138,10 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			p->setDefault(n.x, n.y);
 			p->setDoubleType(OFX::eDoubleTypeXYAbsolute);
 			p->setDefaultCoordinateSystem(OFX::eCoordinatesNormalised);
-			// the host's handle only on hosts without overlays, where PointsInteract can't be (Natron
-			// draws its own handle for a point of an effect with an overlay only if this is set)
-			p->setUseHostNativeOverlayHandle(!hostSupportsOverlays());
+			// the host's handle where the plug-in draws none (pluginDrawsPoints), or where the host
+			// has one for the point (PointsInteract then doesn't draw it). Natron draws its own handle
+			// for a point of an effect with an overlay only if this is set.
+			p->setUseHostNativeOverlayHandle(!pluginDrawsPoints() || p->getHostHasNativeOverlayHandle());
 			paramDesc = p;
 		} break;
 		case ParamType::Button: {

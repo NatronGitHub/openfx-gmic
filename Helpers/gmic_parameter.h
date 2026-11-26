@@ -128,15 +128,12 @@ struct PluginInfo
 	int minor_version = 0;
 };
 
-// the handle of a point parameter (ParamType::Point) on the host's viewer, as G'MIC-Qt draws and moves
-// its keypoint (issue #176): the rest of the arguments of point(X,Y,_removable,_burst,_R,_G,_B,_[-]A,
-// _radius[%]), read by the parser (pointHandleArgs, pointColormap in gmic_parser.cpp); the overlay,
-// PointsInteract, is in gmic_ofx.cpp
+// the handle of a point parameter (ParamType::Point) on the host's viewer (issue #176): from the
+// _burst and _R,_G,_B arguments of point(X,Y,_removable,_burst,_R,_G,_B,...), read by the parser
+// (pointHandleArgs, pointColormap in gmic_parser.cpp); drawn by GMICPointsInteract (gmic_ofx.cpp)
 struct PointHandle
 {
-	int color[4] = { 255, 255, 255, 255 }; // RGBA, 0..255 as G'MIC-Qt's QColor (alpha 0: not drawn, still draggable)
-	bool keepOpacity = false; // a negative alpha ("-0" too): drawn with its alpha while dragged; otherwise opaque then
-	float radius = 9.f; // in screen pixels; negative: in percent of Source's diagonal on screen (G'MIC-Qt's encoding)
+	int color[3] = { 255, 255, 255 }; // RGB, 0..255
 	bool burst = false; // set at each pen motion while dragged (so rendered), else at pen-up only
 };
 

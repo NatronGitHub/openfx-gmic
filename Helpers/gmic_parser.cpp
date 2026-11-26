@@ -272,39 +272,12 @@ static std::optional<int> pointIntArg(const string& s)
 	return v;
 }
 
-// a decimal number argument of point() (the radius), the whole string: [+-]digits[.digits][e[+-]digits],
-// or [+-].digits[e[+-]digits] ('.' whatever the locale, see stringToDouble)
-static std::optional<float> pointFloatArg(const string& s)
-{
-	size_t i = 0;
-	const auto digits = [&s, &i] {
-		const size_t b = i;
-		while (i < s.size() && isdigit((unsigned char)s[i])) ++i;
-		return i > b;
-	};
-	if (i < s.size() && (s[i] == '+' || s[i] == '-')) ++i;
-	bool mantissa = digits();
-	if (i < s.size() && s[i] == '.') {
-		++i;
-		mantissa = digits() || mantissa;
-	}
-	if (!mantissa) return std::nullopt;
-	if (i < s.size() && (s[i] == 'e' || s[i] == 'E')) {
-		++i;
-		if (i < s.size() && (s[i] == '+' || s[i] == '-')) ++i;
-		if (!digits()) return std::nullopt;
-	}
-	if (i != s.size()) return std::nullopt;
-	return (float)stringToDouble(s);
-}
-
-// The handle of a point(X,Y,_removable,_burst,_R,_G,_B,_[-]A,_radius[%]) (its arguments, without
-// the empty ones), as G'MIC-Qt reads its keypoint (PointParameter::initFromText): _burst is any
-// non-zero integer; _R alone is a gray, _R,_G has blue 0; a negative _A ("-0" too) keeps the
-// opacity while the point is dragged (otherwise it is opaque then); _radius is in pixels, or in
-// percent of the image diagonal with "%" (stored negative). G'MIC-Qt rejects a filter with a
-// malformed argument: here only that argument is ignored (e.g. the radius stays 9). Without _R, the
-// colour is the next one of G'MIC-Qt's colormap (see pointColormap).
+// The handle of a point(X,Y,_removable,_burst,_R,_G,_B,...) (its arguments, without the empty
+// ones), as G'MIC-Qt reads its keypoint (PointParameter::initFromText): _burst is any non-zero
+// integer; _R alone is a gray, _R,_G has blue 0. The other arguments (the opacity and radius of
+// G'MIC-Qt's keypoint) are not used. G'MIC-Qt rejects a filter with a malformed argument: here only
+// that argument is ignored. Without _R, the colour is the next one of G'MIC-Qt's colormap (see
+// pointColormap).
 static void pointHandleArgs(const vector<string>& a, EffectParameter& cp)
 {
 	PointHandle& h = cp.pointHandle;
@@ -325,18 +298,6 @@ static void pointHandleArgs(const vector<string>& a, EffectParameter& cp)
 	}
 	if (a.size() >= 7) {
 		if (const std::optional<int> b = pointIntArg(a[6])) h.color[2] = *b;
-	}
-	if (a.size() >= 8) {
-		if (const std::optional<int> alpha = pointIntArg(a[7])) {
-			h.keepOpacity = (a[7][0] == '-' || *alpha < 0);
-			h.color[3] = std::abs(std::clamp(*alpha, -255, 255));
-		}
-	}
-	if (a.size() >= 9) {
-		string s = a[8];
-		const bool percent = !s.empty() && s.back() == '%';
-		if (percent) s = strTrim(s.substr(0, s.size() - 1));
-		if (const std::optional<float> v = pointFloatArg(s)) h.radius = percent ? -*v : *v;
 	}
 	for (int& c : h.color) c = std::clamp(c, 0, 255); // (QColor's range)
 }
@@ -368,7 +329,6 @@ static void pointColormap(vector<EffectParameter>& params)
 			color[1] = randomChannel();
 			color[2] = randomChannel();
 		}
-		color[3] = 255;
 		++next;
 	}
 }
