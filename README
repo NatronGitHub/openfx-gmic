@@ -323,6 +323,43 @@ actually loaded, set OFX_GMIC_WRITE_PLUGIN_LIST (see "Environment").
 Rendering
 ---------
 
+Results of another size (issue #175): as in G'MIC-Qt, a filter's result may be larger, smaller or
+moved (Rotate, frames, crops, Upscale [Scale2x]..., or a pos(x,y) in the result's name, from
+Source's top-left corner). The Resize Mode (in Advanced Options) chooses the output:
+- Dynamic, the default: the result's size and position. OpenFX needs them before the render: the
+  plug-in runs the filter on opaque gradient images and predicts them:
+  - three small probes with Source's long side at 64, 80 and 96 pixels (the inputs' proportions
+    kept, about 15k pixels), two thin probes that span the real size, Source's real width x 48
+    pixels and 48 pixels x its real height, and a check probe with Source's long side at 256
+    pixels: about 195k pixels in all for 1920x1080;
+  - a size or position that the small probes give as an exact fraction of the input's (2x, 50%,
+    150%, fixed borders), and that also gives the thin and check probes exactly, is exact;
+  - any other affine one (e.g. a rotation, 10%) is fitted against both the width and the height
+    of the small and thin probes, and must give the check probe within a pixel: the prediction
+    is then within a pixel, with a 1-pixel transparent margin on the sides that could be short,
+    so that the result fits without a warning;
+  - if a fit fails (a size in rounded percent of max(w,h), as some frames, one that isn't an
+    affine function of the input's, such as sqrt(W*H) or W*H/1024, or a Source so thin that its
+    small probes are 1 pixel high), or a probe fails: one probe at the real size, exact, at the
+    cost of a render on a gradient. A Source no larger than the probes would be (e.g. 160x120)
+    is probed at its own size.
+  The probes run again only after an edit, on every frame when a parameter is animated, or when
+  an input's size changes (for Output Layer "Frame", on every frame). A prediction stops after
+  10 s in all: the output then keeps Source's size (a note on stderr), and the same values and
+  sizes are not tried again for 30 s, so that a slow filter doesn't block the host on every
+  query. A prediction that runs out of memory keeps Source's size too, and is tried again at the
+  next query. Sizes that depend on the image's content (automatic crops, crops of the
+  transparent parts) can't be predicted. A result that doesn't fit the output is cropped or
+  padded, with a warning on the node.
+- Fixed (Inplace): Source's size and position. A result of another size is cropped or padded,
+  from its top-left corner, never resized.
+- Downsample 1/N: the filter runs on Source downsampled N times, and the result is resized to
+  Source's size.
+Results of Source's size render as before in every mode. The inputs may have any size and
+position (the plug-in supports OpenFX multi-resolution); a layer input elsewhere than Source gets
+its offset from Source as its pos(x,y), as in G'MIC-Qt. On hosts without multi-resolution, the
+output always has Source's size, and Fixed and Dynamic resize the result to it, as before.
+
 A render can be aborted while G'MIC runs. The filters that report their progress to G'MIC (with
 its progress command; most filters don't) show it in the host's progress bar, e.g. Natron's
 Progress panel, which lists a render once it is expected to last a few seconds. The plug-in
@@ -363,6 +400,37 @@ filters, the plug-in prints one line for each of these ("openfx-gmic: previewFir
 "Messages"). If the preview command fails, the main command runs without its state, and a
 warning on the node says so.
 
+G'MIC's button() parameters (e.g. Mandelbrot - Julia Sets' Zoom In, Randomize Seed) are push
+buttons. In G'MIC-Qt, a click makes a preview with the button pressed, then sets the parameter
+values that the preview's status gives. Here, a press runs the filter's preview command once with
+the button pressed, on the input at the current frame scaled down to at most 512 pixels (as
+G'MIC-Qt's preview image; the filter gets G'MIC-Qt's _preview_timeout, 16 seconds), and sets those
+values (one undo step). The host waits for the run: its progress shows at once, and its Cancel
+(e.g. in Natron's Progress panel) stops it, without changing anything. Values that depend on the
+image size may differ slightly from those of a full-size run. Renders get 0 for a button, as
+G'MIC-Qt's Apply, so a button whose filter sets no values does nothing. One difference: in G'MIC-Qt,
+with its Preview off and a filter that sets no status, a click makes no run, and the next Apply
+gets 1 for the button. Buttons were checkboxes before: Natron doesn't load such a saved checkbox
+(another parameter type), and the other saved values are unchanged; a script can't set them
+either (a push button has no value).
+
+Many filters change their own parameters as you use them (e.g. Transfer Colors [Multi] shows Source
+Color 1 to 8 only when Color Correspondences is above 0): after each preview, G'MIC-Qt applies the
+status that the filter's preview command sets, which gives parameter values, and shows, hides or
+disables parameters. Here, for the filters whose preview command sets a status, the plug-in runs
+that command after each edit of the filter's parameters (once per change that the host reports),
+and when Source is connected, the same way as a press (512 pixels, 16 seconds, Cancel), and sets
+the values that the status gives (not an undo step of its own: undoing the edit runs the status
+again). On Natron only, it also shows, hides and disables the parameters as the status says, and
+they start as in G'MIC-Qt; Natron saves this state in projects. In a project saved with an older
+version of the plug-in, which showed every parameter of these filters, the parameters left at their
+default value start in G'MIC-Qt's initial state (some hidden or disabled), the others shown: edit
+any parameter of the node to update them. The visibilities follow the values at the time of the
+edit: moving to another frame of an animation doesn't update them. Other hosts show and enable
+every parameter of these filters. Points and their checkboxes always stay visible, since a host draws no
+handle for a hidden or disabled parameter. The run makes the host wait after each edit, more so with
+a large input or a slow filter.
+
 Environment
 -----------
 
@@ -370,6 +438,13 @@ Environment
   no user filter file comes first (see "Filters"); unset (the default) or any other value (with a
   note on stderr): the file is ignored. After G'MIC-Qt updates the file, clear the host's plug-in cache. Ignored by
   COMMERCIAL builds.
+- OFX_GMIC_MULTIRES: a test aid. 1: the plug-in acts as on a host with multi-resolution support
+  (Resize Mode Dynamic gives the result's size and position; Fixed keeps Source's size and crops
+  or pads the result, see "Rendering"); 0: as on a host without it (both resize the result to
+  Source's size); unset, the host's own property decides; any other value is ignored, with a
+  note on stderr. Only for test hosts that render any region of definition without saying so,
+  such as openfx's hostDemo (the CI tests set it): on a host that doesn't, 1 gives wrong outputs,
+  which the host crops or stretches. The plug-in prints a note when it overrides the host.
 - OFX_GMIC_FRAME_CACHE_MB: memory budget, in MB, of the cache of Output Layer "Frame" results
   (default: 1/8 of the physical memory, between 1 and 4 GiB; 0 disables the cache).
   A decimal number >= 0 ("512", "0.5", "2e3"; '.' as decimal point whatever the locale,
@@ -412,7 +487,8 @@ the bundle's plug-in list (OFX_GMIC_WRITE_PLUGIN_LIST), keeps its messages on st
 
 After a successful render, a warning on the node (Natron: its persistent message) tells when
 Output Layer "Frame" runs the filter on every frame, because its results are too many or too
-large to keep, or one of them is empty. G'MIC errors stay error messages on the node.
+large to keep, or one of them is empty, and when a result doesn't fit the output that Resize Mode
+Dynamic declared (it is then cropped or padded). G'MIC errors stay error messages on the node.
 
 Tests
 -----

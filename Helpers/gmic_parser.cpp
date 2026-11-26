@@ -293,8 +293,9 @@ void processParam(const string& s, EffectParameter& cp)
 		cp.maxValue = "1";
 	} else if (cp.paramType == "button") {
 		// 'button(_alignment)'
-		// Add a boolean parameter (0 or 1) (as a button).
-		cp.paramType = "bool";
+		// Add a boolean parameter (0 or 1) (as a button). Kept as "button" (issue #174): an OFX
+		// push button, which gives 1 only to the run made when it is pressed, as G'MIC-Qt's
+		// ButtonParameter (1 for one run, then cleared)
 		cp.minValue = "0";
 		cp.maxValue = "1";
 		cp.defaultValue = "0";
@@ -503,7 +504,7 @@ static bool usesSeveralLayers(const string& content)
 }
 
 // Visibility propagation of a parameter, as G'MIC-Qt's AbstractParameter::VisibilityPropagation
-enum class VisibilityPropagation { None, Up, Down };
+using VisibilityPropagation = EffectParameter::Propagation;
 
 struct VisibilitySuffix {
 	size_t length = 0; // 0: no suffix
@@ -567,6 +568,8 @@ static void gmic_parse_single(const string& content, EffectData& cd)
 	cd.previewOnly = false;
 	cd.noPreview = false;
 	cd.previewFirst = false;
+	cd.statusOnEdit = false;
+	cd.dynamicVisibility = false;
 	cd.previewFactor = EffectData::PreviewFactor::NoFactor;
 	cd.param.clear();
 	vector<VisibilityPropagation> propagation; // one per cd.param entry, until the "pointenabled" ones
@@ -715,6 +718,7 @@ static void gmic_parse_single(const string& content, EffectData& cd)
 		}
 	}
 	for (size_t i = 0; i < cd.param.size(); i++) {
+		cd.param[i].propagation = propagation[i];
 		if (isNoValueParameter(cd.param[i])) continue;
 		const EffectParameter::Visibility v = cd.param[i].visibility;
 		if (propagation[i] == VisibilityPropagation::Up) {
@@ -909,7 +913,7 @@ struct CommandDefinition
 };
 
 // The command definitions of a G'MIC command file, read once for the rules below
-// (markPersistentFilters, markDynamicVisibilityFilters, markMultiInputFilters, hideBatchFilters)
+// (markPersistentFilters, markStatusFilters, markMultiInputFilters, hideBatchFilters)
 struct CommandFile
 {
 	vector<CommandDefinition> definitions; // in file order (a command defined again has several)
@@ -991,70 +995,146 @@ static void markPersistentFilters(const CommandFile& file, vector<Filter>& filte
 	}
 }
 
-// Does the line set a G'MIC-Qt status with a visibility marker? G'MIC-Qt reads the status that a
-// filter's command sets (with "u" or "status") as "{value}{value}...", where a value may be
-// followed by "_0", "_1" or "_2", its new visibility (FilterThread's status2Visibilities). In the
-// G'MIC code, the argument of "u" starts with {, "{ or \{, and a marker follows the end of a
-// value (} or ") with '_' then a digit or an expression ($var, {expr}, "...), e.g. Marker
-// Drawing's preview: u "{"$b_type"}{"$b_blur"}_"{$b_type==0?2:1}"... A status held in a
-// variable ("u $s") isn't seen.
-static bool setsVisibilityStatus(const vector<string>& items)
+// What the code of a command sets of a G'MIC-Qt status. G'MIC-Qt reads the status that a filter's
+// command sets (with "u" or "status") as "{value}{value}...", with G'MIC's codes for the outer
+// braces, where a value may be followed by "_0", "_1" or "_2", its new visibility (FilterThread's
+// status2StringList, status2Visibilities). In the G'MIC code, the braces of such a list are
+// quoted or escaped: the argument of "u" starts with "{ or \{, or it is a variable ("u $s",
+// "u ${s}") that the command assigns such a text ("s=\{...", "s="{..."; e.g. Mandelbrot's
+// status=\{$x0\}...). An unquoted "u {expr}" is a math substitution, a number, never a list
+// (e.g. colormap's and time's). A visibility marker follows the end of a value (} or ") with '_'
+// then a digit or an expression ($var, {expr}, "..."), e.g. Marker Drawing's preview:
+// u "{"$b_type"}{"$b_blur"}_"{$b_type==0?2:1}"...
+struct StatusUse
 {
-	for (size_t k = 0; k + 1 < items.size(); ++k) {
-		const string& it = items[k];
-		if (it[0] == '#') return false; // comment
-		if (it != "u" && it != "status") continue;
-		const string& a = items[k + 1];
-		if (a.compare(0, 1, "{") != 0 && a.compare(0, 2, "\"{") != 0 && a.compare(0, 2, "\\{") != 0) continue;
-		for (size_t p = a.find('_', 1); p != string::npos && p + 1 < a.size(); p = a.find('_', p + 1)) {
-			const char c = a[p + 1];
-			if ((a[p - 1] == '}' || a[p - 1] == '"') && ((c >= '0' && c <= '2') || c == '"' || c == '$' || c == '{')) return true;
-		}
+	bool values = false; // sets a status list
+	bool visibility = false; // ... with visibility markers
+	set<string> listVariables, visibilityVariables, statusVariables; // assigned a list; read by u
+};
+
+static bool startsStatusList(const string& a)
+{
+	return a.compare(0, 2, "\"{") == 0 || a.compare(0, 2, "\\{") == 0;
+}
+
+static bool hasVisibilityMarker(const string& a)
+{
+	for (size_t p = a.find('_', 1); p != string::npos && p + 1 < a.size(); p = a.find('_', p + 1)) {
+		const char c = a[p + 1];
+		if ((a[p - 1] == '}' || a[p - 1] == '"') && ((c >= '0' && c <= '2') || c == '"' || c == '$' || c == '{')) return true;
 	}
 	return false;
 }
 
-// The visibility suffixes ("_0", "_1") are G'MIC-Qt's initial state, which some filters change
-// at run time through their status (see setsVisibilityStatus): e.g. Marker Drawing enables
-// Background Blur when Background Type is "Blur". The plug-in can't follow such changes, and
-// would leave these parameters hidden or disabled for good: in such a filter, every parameter
-// stays visible and enabled. A filter changes the visibility when its main or preview command,
-// or a command that one of them calls directly (one level, e.g. Mitchell Concatenation's
-// _fx_rep_mitchell_concatenation_base), sets such a status. This needs the command definitions:
-// with a gmic_ofx.gmic that has only #@gui lines, every filter is static.
-static void markDynamicVisibilityFilters(const CommandFile& file, vector<Filter>& filters)
+// the variable name at the start of s, if s starts with one (letters, digits, '_', not a digit first)
+static string variableName(const string& s, size_t b = 0)
+{
+	size_t e = b;
+	while (e < s.size() && (isalnum((unsigned char)s[e]) || s[e] == '_')) ++e;
+	return (e > b && !isdigit((unsigned char)s[b])) ? s.substr(b, e - b) : string();
+}
+
+// Adds what one line (its items, see gmicItems) sets to use
+static void scanStatus(const vector<string>& items, StatusUse& use)
+{
+	for (size_t k = 0; k < items.size(); ++k) {
+		const string& it = items[k];
+		if (it[0] == '#') break; // comment
+		if ((it == "u" || it == "status") && k + 1 < items.size()) {
+			const string& a = items[k + 1];
+			if (startsStatusList(a)) {
+				use.values = true;
+				use.visibility = use.visibility || hasVisibilityMarker(a);
+			} else if (a[0] == '$') {
+				const string name = variableName(a, (a.size() > 1 && a[1] == '{') ? 2 : 1);
+				if (!name.empty()) use.statusVariables.insert(name);
+			}
+			++k;
+			continue;
+		}
+		const size_t eq = it.find('=');
+		if (eq == string::npos || eq == 0) continue;
+		const string name = variableName(it);
+		if (name.size() != eq) continue; // not "name=..."
+		const string value = it.substr(eq + 1);
+		if (!startsStatusList(value)) continue;
+		use.listVariables.insert(name);
+		if (hasVisibilityMarker(value)) use.visibilityVariables.insert(name);
+	}
+}
+
+// Does the command, all its lines scanned, set a status list? (with visibility: visibility)
+static bool setsStatus(const StatusUse& use, bool visibility)
+{
+	if (visibility ? use.visibility : use.values) return true;
+	const set<string>& assigned = visibility ? use.visibilityVariables : use.listVariables;
+	for (const string& name : use.statusVariables) {
+		if (assigned.count(name)) return true;
+	}
+	return false;
+}
+
+// The filters whose status G'MIC-Qt applies at run time (see FilterThread's status2StringList and
+// status2Visibilities; MainWindow::onPreviewImageAvailable(), onGUIDynamismRunDone()):
+// - statusOnEdit: the preview command, or a command that it calls directly (one level, e.g.
+//   Mitchell Concatenation's _fx_rep_mitchell_concatenation_base), sets a status (see setsStatus).
+//   The plug-in runs the preview command after each user edit of the filter's parameters, for its
+//   status (issue #173). Not the filters without a preview run ("_none_" preview, or no command).
+// - dynamicVisibility: a statusOnEdit filter whose preview command, or a command that it calls
+//   directly, sets a status with visibility markers. The visibility suffixes ("_0", "_1") are
+//   then only the initial state: e.g. Marker Drawing enables Background Blur when Background Type
+//   is "Blur". The parameters keep it, and the plug-in follows the status on Natron (other hosts
+//   show every parameter, see describeInContext). In a filter whose visibility markers are in a
+//   status that never runs after an edit (in its main command only, or without a preview run),
+//   every parameter stays visible and enabled, as the plug-in can't follow its changes (issue
+//   #170): a status without markers would put every parameter back to its initial state.
+// A call is an item that commandName() names ("cmd", "+cmd", "-cmd", "cmd[0]", not "cmd$1").
+// This needs the command definitions: with a gmic_ofx.gmic that has only #@gui lines, every
+// filter is static.
+static void markStatusFilters(const CommandFile& file, vector<Filter>& filters)
 {
 	set<string> filterCommands;
 	for (const Filter& f : filters) {
 		filterCommands.insert(f.data.command);
 		filterCommands.insert(f.data.preview_command);
 	}
-	// pass 1: the commands that set a visibility status themselves
-	set<string> dynamic;
-	for (const CommandDefinition& def : file.definitions) {
-		for (const string& line : def.lines) {
-			if (dynamic.count(def.name)) break;
-			vector<string> items;
-			gmicItems(line, items);
-			if (setsVisibilityStatus(items)) dynamic.insert(def.name);
+	// pass 1: the commands that set a status themselves (with visibility markers: also in
+	// visibility)
+	set<string> status, visibility;
+	{
+		map<string, StatusUse> uses;
+		for (const CommandDefinition& def : file.definitions) {
+			StatusUse& use = uses[def.name];
+			for (const string& line : def.lines) {
+				vector<string> items;
+				gmicItems(line, items);
+				scanStatus(items, use);
+			}
+		}
+		for (const auto& u : uses) {
+			if (setsStatus(u.second, false)) status.insert(u.first);
+			if (setsStatus(u.second, true)) visibility.insert(u.first);
 		}
 	}
-	// pass 2: a filter command that calls one of them
-	set<string> dynamicFilterCommands;
+	// pass 2: the filter commands that set one, or call a command that does
+	set<string> statusFilterCommands, visibilityFilterCommands;
 	for (const CommandDefinition& def : file.definitions) {
 		const string& cur = def.name;
 		if (!filterCommands.count(cur)) continue;
-		if (dynamic.count(cur)) dynamicFilterCommands.insert(cur);
+		if (status.count(cur)) statusFilterCommands.insert(cur);
+		if (visibility.count(cur)) visibilityFilterCommands.insert(cur);
 		for (const string& line : def.lines) {
-			if (dynamicFilterCommands.count(cur)) break;
+			if (visibilityFilterCommands.count(cur)) break;
 			vector<string> items;
 			gmicItems(line, items);
 			for (size_t k = 0; k < items.size(); ++k) {
 				const string& it = items[k];
 				if (it[0] == '#') break; // comment
 				const string callee = commandName(it);
-				if (!callee.empty() && callee != cur && dynamic.count(callee)) {
-					dynamicFilterCommands.insert(cur);
+				if (callee.empty() || callee == cur) continue;
+				if (status.count(callee)) statusFilterCommands.insert(cur);
+				if (visibility.count(callee)) {
+					visibilityFilterCommands.insert(cur);
 					break;
 				}
 			}
@@ -1062,11 +1142,15 @@ static void markDynamicVisibilityFilters(const CommandFile& file, vector<Filter>
 	}
 	// About G'MIC gathers the pages of the About folder (see gmic_parse_multi), whose own commands
 	// are not kept: one of them, What's New?, changes the visibility at run time
-	dynamicFilterCommands.insert("fx_gmicky");
+	visibilityFilterCommands.insert("fx_gmicky");
 	for (Filter& f : filters) {
 		EffectData& cd = f.data;
-		if (!dynamicFilterCommands.count(cd.command) && !dynamicFilterCommands.count(cd.preview_command)) continue;
-		for (EffectParameter& param : cd.param) {
+		cd.statusOnEdit = !cd.command.empty() && !cd.noPreview && statusFilterCommands.count(cd.preview_command);
+		// (the runs for the status run the preview command)
+		cd.dynamicVisibility = cd.statusOnEdit && visibilityFilterCommands.count(cd.preview_command);
+		const bool changesVisibility = visibilityFilterCommands.count(cd.command) || visibilityFilterCommands.count(cd.preview_command);
+		if (cd.dynamicVisibility || !changesVisibility) continue;
+		for (EffectParameter& param : cd.param) { // (see above)
 			param.visibility = EffectParameter::Visibility::Visible;
 		}
 	}
@@ -1657,7 +1741,7 @@ vector<Filter> gmic_parse_multi(const string& content)
 	markPersistentFilters(commandFile, result);
 	markSplitPreviewParams(result); // (after markPersistentFilters: previewFirst)
 	markMultiInputFilters(commandFile, result);
-	markDynamicVisibilityFilters(commandFile, result);
+	markStatusFilters(commandFile, result);
     // plug-in identifiers must be unique: G'MIC 4 has several filters with the same name in
     // different folders (in 4.0.7: the "About" page of each Testing author, giving About and
     // About2..About5, and "Color Harmonies", giving ColorHarmonies2). The first one in stdlib

@@ -3,7 +3,8 @@
 // kOfxImageEffectActionDescribeInContext (Filter if the plug-in supports it, else General) on each,
 // and fails if any plug-in cannot be described or if fewer than argv[1] plug-ins were found.
 //
-// stderr: a PLUGIN, a GROUPING and a RENDERINFO line per plug-in (describe_plugins.sh reads them),
+// stderr: a PLUGIN, a GROUPING and a RENDERINFO line per plug-in, and a PUSHBUTTON line per push
+// button (describe_plugins.sh reads them),
 // and the plug-ins' messages; stdout: the DESCRIBE_FAILED lines and the summary line.
 // Duplicate param/clip definitions are rejected by HostSupport with kOfxStatErrExists:
 // describe_plugins.sh builds HostSupport with small patches that log them as DUPLICATE_PARAM /
@@ -11,6 +12,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <list>
 #include <set>
 #include <string>
 #include <vector>
@@ -79,6 +81,14 @@ int main(int argc, char** argv)
                 clips += "\t" + byOrder[c]->getName();
             }
             std::fprintf(stderr, "RENDERINFO %s\t%s%s\n", id.c_str(), context.c_str(), clips.c_str());
+            // for describe_plugins.sh (PUSH_BUTTON_COUNT): the push buttons, i.e. G'MIC's button()
+            // parameters (issue #174)
+            const std::list<Param::Descriptor*>& params = d->getParamList();
+            for (std::list<Param::Descriptor*>::const_iterator p = params.begin(); p != params.end(); ++p) {
+                if ((*p)->getType() == kOfxParamTypePushButton) {
+                    std::fprintf(stderr, "PUSHBUTTON %s\t%s\n", id.c_str(), (*p)->getName().c_str());
+                }
+            }
         } else {
             ++failed;
             std::printf("DESCRIBE_FAILED %s (context: %s)\n", id.c_str(), context.empty() ? "no Filter or General context" : context.c_str());

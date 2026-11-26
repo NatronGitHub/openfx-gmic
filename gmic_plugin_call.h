@@ -7,6 +7,8 @@
 #define GMIC_PLUGIN_CALL_H
 
 #include "gmic_libc.h"
+#include "gmic_visibility.h"
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -22,6 +24,12 @@ struct GmicRunState
 	// visibility after a value is ignored): the values, as G'MIC-Qt splits them
 	// (FilterThread::status2StringList()); else empty
 	std::vector<std::string> status;
+	// the visibility state that the status gives each value, as G'MIC-Qt reads them
+	// (FilterThread::status2Visibilities()): hidden, disabled or visible for a value followed by
+	// "_0", "_1" or "_2", none (G'MIC-Qt's Unspecified: the parameter's initial state) for one
+	// without; empty if the status is not a list of values "{a}{b}...", or has another text after
+	// a value
+	std::vector<std::optional<gmic_ofx::ParamVisibility>> visibilities;
 };
 
 // What to do with the images that G'MIC returns

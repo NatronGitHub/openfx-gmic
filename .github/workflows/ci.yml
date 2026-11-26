@@ -94,6 +94,9 @@ env:
   # of them, those that run their preview command before their main command (#206; read by
   # describe_plugins.sh): update when upgrading G'MIC or changing the rule (Helpers/gmic_parser.cpp)
   PREVIEW_FIRST_COUNT: 10
+  # the push buttons of those plug-ins (#174: G'MIC's button() parameters; read by
+  # describe_plugins.sh): update when upgrading G'MIC
+  PUSH_BUTTON_COUNT: 67
   # extra variants (debug, C++20) only on the weekly schedule or on demand
   BUILD_VARIANTS: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
   # artifacts only on demand or for pre-release tags (containing "alpha", "beta" or "rc", e.g.
@@ -174,8 +177,13 @@ jobs:
       # same sources
       - name: Render FFT filters (720x576)
         run: .github/workflows/fft_smoke.sh build/gmic
-      # all the plug-ins on the weekly and on-demand runs, a subset per PR
+      # all the plug-ins on the weekly and on-demand runs, a subset per PR. hostDemo renders any
+      # region of definition but reports no multi-resolution support: OFX_GMIC_MULTIRES=1 makes
+      # the plug-in predict each result's size (#175), as on Natron. The OFX 1.4 step below runs
+      # without it, and keeps the old path (results resized to Source's size) covered.
       - name: Render plug-ins
+        env:
+          OFX_GMIC_MULTIRES: '1'
         run: |
           python3 .github/workflows/render_plugins.py --host build \
             --plugins install/OFX/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
@@ -190,6 +198,41 @@ jobs:
           python3 .github/workflows/render_plugins.py --host build --host-arg=--ofx14 --host-threads \
             --plugins install/OFX/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset pr --jobs 2 --work render-ofx14
+      # the OpenMP runtime stays loaded when the host unloads GMIC.ofx (#213): libgomp, unloaded
+      # with it, crashed intermittently under its threads that were still exiting. In glibc's
+      # LD_DEBUG=files log of hostDemo (one ld.<pid> file per process), the plug-in's pin is
+      # "activating NODELETE" for libgomp, at the first render; after it, GMIC.ofx is unloaded
+      # ("destroying link map") and libgomp is not. hostDemo also loads and unloads GMIC.ofx for
+      # the plug-in scan, before any render: libgomp, not pinned yet, is unloaded then, harmlessly
+      # (no OpenMP thread exists before the first G'MIC run), and loaded again for the render
+      - name: Check that unloading the plug-in keeps libgomp loaded
+        run: |
+          rm -rf ld-debug && mkdir ld-debug
+          LD_DEBUG=files LD_DEBUG_OUTPUT="$PWD/ld-debug/ld" python3 .github/workflows/render_plugins.py \
+            --host build --plugins install/OFX/Plugins --list plugins.txt --only eu.gmic.ExtractObjects \
+            --work render-unload
+          status=0 pinned=0
+          for f in ld-debug/ld.*; do
+            # the loads, unloads and NODELETE pins of libgomp and GMIC.ofx in this process
+            lines=$(grep -E '(libgomp[^ ]*|GMIC\.ofx) \[[0-9]+\]; +(generating|destroying) link map|NODELETE for [^ ]*libgomp' "$f") ||
+              continue
+            echo "${f##*/}:" && echo "$lines"
+            rc=0
+            echo "$lines" | awk '/activating NODELETE for [^ ]*libgomp/ { pin = 1; next }
+              pin && /libgomp[^ ]* \[[0-9]+\]; +destroying link map/ { unpinned = 1 }
+              pin && /GMIC\.ofx \[[0-9]+\]; +destroying link map/ { unloaded = 1 }
+              END { exit !pin ? 1 : unpinned ? 2 : unloaded ? 0 : 3 }' || rc=$?
+            case $rc in
+              0) ;;
+              1) continue ;;  # no render in this process
+              2) echo "FAIL: ${f##*/}: libgomp was unloaded after the plug-in pinned it"; status=1 ;;
+              *) echo "FAIL: ${f##*/}: GMIC.ofx was not unloaded after the pin: the check proves nothing"; status=1 ;;
+            esac
+            pinned=1
+          done
+          [ $pinned = 1 ] || { echo "FAIL: libgomp was not pinned (no 'activating NODELETE' in the LD_DEBUG logs)"; status=1; }
+          [ $status = 0 ] && echo "libgomp stays loaded after the plug-in is unloaded"
+          exit $status
       # a user filter file (~/.config/gmic/gmic_ofx.gmic) whose filters call the commands it
       # defines, and replace a built-in one (#168): checks the pixels and the hot-fix notes, and
       # prints the render times with a small file and with a copy of the standard library

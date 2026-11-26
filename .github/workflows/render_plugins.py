@@ -4,14 +4,15 @@
 Each plug-in is rendered at frame 0 with its default parameters, on a small fixed test input
 (160x120 float RGB with gradients, stripes and a rectangle: every input clip, the extra layers
 included, gets the same image), in its own directory, with a timeout. The test fails on any
-load, describe, instance or render error, on a missing output, and on NaN pixels in an output,
+load, describe, instance or render error, and on a missing output (a crash is reported as "at
+exit" when hostDemo had written report.json and the outputs), and on NaN pixels in an output,
 except for the plug-ins of KNOWN_NAN. A few plug-ins are skipped (SKIP), are expected to fail with
 a given error (EXPECTED_FAIL), or have a longer timeout (TIMEOUT), with the reason; the test also
 fails when an expected failure renders (XPASS), when a plug-in of KNOWN_NAN renders without NaN
-(with --subset all; a warning otherwise), or when fewer than --min-rendered plug-ins rendered (default: 100 with --subset pr, 700 with
---subset all). It warns when a listed plug-in, or a filter that uses the FFT, is not in the list
-of plug-ins, except for COMMERCIAL builds (--stdlib is their standard library), which leave many
-out.
+(with --subset all; a warning otherwise), or when fewer than --min-rendered plug-ins rendered
+(default: 100 with --subset pr, 700 with --subset all). It warns when a listed plug-in, or a
+filter that uses the FFT, is not in the list of plug-ins, except for COMMERCIAL builds (--stdlib
+is their standard library), which leave many out.
 
 usage: render_plugins.py --host <hostDemo, or the CMake build directory> [--config <config>]
                          --plugins <dir with GMIC.ofx.bundle>
@@ -117,6 +118,9 @@ TIMEOUT = {
     'eu.gmic.NonscapeWoods': 900,
 }
 
+# the warning of a render whose result doesn't fit the region of definition that the plug-in
+# declared (#175: a size that depends on the pixels); listed, not a failure
+GEOMETRY_MISMATCH = "doesn't match the output"
 ERROR_LINE = re.compile(r'\*\*\* Error|\bOfxMessageError\b|\bError\b|\berror:')
 COMMERCIAL_MARKER = ' #  openfx-gmic : COMMERCIAL standard library'
 FFT_COMMANDS = re.compile(r'(?<![A-Za-z0-9_])(fft|ifft|deconvolve|deconvolve_fft|convolve_fft|bandpass|watermark_fourier)(?![A-Za-z0-9_])')
@@ -129,7 +133,10 @@ EVERY = 30
 ID_PREFIX = 'eu.gmic.'
 
 
-def write_input(path, w=160, h=120):
+INPUT_WIDTH, INPUT_HEIGHT = 160, 120  # the size of the input image (write_input)
+
+
+def write_input(path, w=INPUT_WIDTH, h=INPUT_HEIGHT):
     """Float RGB PFM, bottom row first: gradients, stripes and a red rectangle (edges)."""
     rows = []
     for y in range(h - 1, -1, -1):
@@ -251,7 +258,19 @@ def work_dir(work, pid):
     return os.path.join(work, pid[len(ID_PREFIX):])
 
 
-def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
+def _outputs_written(d):
+    """True if d has report.json and every output file it lists."""
+    try:
+        with open(os.path.join(d, 'report.json')) as f:
+            report = json.load(f)
+    except (OSError, ValueError):
+        return False
+    files = [f for r in report.get('renders', []) for f in ((r.get('output') or {}).get('files') or [])]
+    return bool(files) and all(os.path.exists(os.path.join(d, f)) for f in files)
+
+
+def render(host, host_args, plugins, work, timeout, plugin, host_threads=False, frame='0', extra_env=None,
+           expected_log=()):
     """Renders a plug-in at frame 0 with hostDemo, in its own directory, and checks the render.
 
     Args:
@@ -264,6 +283,11 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
         plugin: (id, context, input clips), as in the plug-in list.
         host_threads: if True, render without OMP_NUM_THREADS (the plug-in sets G'MIC's thread
             count); else OMP_NUM_THREADS is 2 unless it is set.
+        frame: the frame to render (hostDemo's --frames).
+        extra_env: environment variables to set, or to remove (None), for this render only (after
+            the ones that render() removes).
+        expected_log: texts of log lines that the caller expects (e.g. a test of a status
+            mismatch): those lines are no problem.
 
     Returns:
         A RenderResult.
@@ -274,7 +298,7 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
     os.makedirs(d)
     cmd = [host] + host_args + ['--no-std-paths', '--no-cache', '--quiet', '--allow-unwritten', '--format', 'pfm',
            '-d', 'float', '-p', pid, '-c', 'general' if 'General' in context else 'filter',
-           '--frames', '0', '-o', 'out',
+           '--frames', frame, '-o', 'out',
            '--report', 'report.json']
     for c in clips:
         cmd += ['-i', c + '=file:../input.pfm']
@@ -286,6 +310,12 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
     env = dict(os.environ, OFX_PLUGIN_PATH=plugins, HOME=home, USERPROFILE=home)
     for var in ('GMIC_PATH', 'XDG_CONFIG_HOME'):
         env.pop(var, None)
+    # extra_env: variables to set, or to remove (None), for this render only
+    for name, value in (extra_env or {}).items():
+        if value is None:
+            env.pop(name, None)
+        else:
+            env[name] = value
     if host_threads:
         env.pop('OMP_NUM_THREADS', None)
     else:
@@ -303,7 +333,10 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
     if timed_out:
         problem = 'timeout after %ds' % timeout
     elif rc < 0:
-        problem = 'crash (signal %d)' % -rc
+        # hostDemo writes report.json after the renders and before it unloads the plug-in: a
+        # crash after it and all the output files were written is a crash at exit (#213)
+        when = 'at exit' if _outputs_written(d) else 'during the render'
+        problem = 'crash %s (signal %d)' % (when, -rc)
     elif rc > 0:
         problem = 'exit status %d' % rc
     else:
@@ -324,11 +357,13 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
                 problem = _progress_problem(report)
         except (OSError, ValueError) as e:
             problem = 'no report: %s' % e
-    if problem is None and PREVIEW_FIRST_FAILED in log:
+    # the log lines that the caller expects (e.g. a test of a status mismatch) are no problem
+    checked = '\n'.join(l for l in log.splitlines() if not any(e in l for e in expected_log))
+    if problem is None and PREVIEW_FIRST_FAILED in checked:
         problem = 'the preview command, run before the main command, failed'
-    if problem is None and STATUS_MISMATCH in log:
+    if problem is None and STATUS_MISMATCH in checked:
         problem = "the preview's status doesn't have one value per parameter"
-    errors = [line for line in log.splitlines()
+    errors = [line for line in checked.splitlines()
               if ERROR_LINE.search(line) or PREVIEW_FIRST_FAILED in line or STATUS_MISMATCH in line][:3]
     return RenderResult(pid, rc, problem, nan, seconds, errors, log, updates, timed_out, report)
 
@@ -413,7 +448,7 @@ def main():
     sys.stdout.flush()
 
     start = time.time()
-    fails, xfails, xpasses, nans, stale_nans, times = [], [], [], [], [], []
+    fails, xfails, xpasses, nans, stale_nans, times, mismatches = [], [], [], [], [], [], []
     rendered = 0
     progressed = 0  # plug-ins that updated the host's progress
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as ex:
@@ -450,6 +485,8 @@ def main():
                 nans.append((pid, result.nan))
             elif pid in KNOWN_NAN:
                 stale_nans.append(pid)
+            if GEOMETRY_MISMATCH in result.log:
+                mismatches.append(pid)
     print('%d plug-ins in %.0fs: %d rendered, %d failed, %d expected failures, %d skipped' % (
         len(todo), time.time() - start, rendered, len(fails), len(xfails), skipped))
     print('%d reported progress' % progressed)
@@ -460,6 +497,9 @@ def main():
             print('WARNING: %s: %d NaN values in its output (KNOWN_NAN: %s)' % (pid, nan, KNOWN_NAN[pid]))
         else:
             print('FAIL %s: %d NaN values in its output' % (pid, nan))
+    if mismatches:
+        print('WARNING: %d plug-ins whose result does not match their region of definition (#175, '
+              'cropped or padded): %s' % (len(mismatches), ' '.join(sorted(mismatches))))
     status = 0
     if fails:
         print('FAIL: %d plug-ins failed to render: %s (logs and images in %s)' % (len(fails), ' '.join(fails), work))

@@ -575,6 +575,8 @@ add_ofx_plugin(GMIC
     gmic_plugin_call.cpp
     gmic_plugin_call.h
     Helpers/gmic_parser.cpp
+    Helpers/gmic_parser.h
+    Helpers/gmic_visibility.h
     Helpers/gmic_log.cpp
     Helpers/gmic_log.h
     Helpers/gmic_parameter.h
