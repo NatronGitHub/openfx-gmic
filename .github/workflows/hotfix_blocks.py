@@ -6,7 +6,8 @@ the same fixes as the plug-in. The selection mirrors gmicGetHotfixes() in gmic_p
 them in sync), for the built-in library alone (no user file): a block is applied if the built-in
 definition of its command is its <original> checksum ('-': no definition) and its callees exist
 with their checksums; it is skipped if the definition is its <fixed> checksum or one of the
-<other> ones; anything else is an error here (the plug-in warns, and the describe test fails).
+<other> ones; anything else is left out with a warning, as the plug-in does (where the describe
+test fails on it).
 The definitions and checksums are those of gmicGetDefinitions() and gmicChecksum().
 
 usage: hotfix_blocks.py <gmic_stdlib_community.h> <gmic_hotfixes.gmic> <output .gmic>
@@ -69,8 +70,8 @@ def applied_blocks(stdlib, hotfixes):
     """Returns the text of the blocks of hotfixes that apply to the library stdlib.
 
     Raises:
-        ValueError: a block whose definition doesn't match its <fixed> checksum, or that is
-            neither applied nor skipped (the plug-in would warn).
+        ValueError: a block whose definition doesn't match its <fixed> checksum (an error in
+            gmic_hotfixes.gmic itself).
     """
     blocks = re.split(r'(?m)^(?=#@hotfix )', hotfixes)[1:]
     heads = [block.split('\n', 1)[0].split()[1:] for block in blocks]
@@ -89,8 +90,10 @@ def applied_blocks(stdlib, hotfixes):
         for callee in callees:
             name, _, expected = callee.partition(':')
             ok = ok and bool(builtin[name]) and (not expected or checksum(builtin[name]) == expected)
-        if not ok:
-            raise ValueError('%s: neither applied nor skipped (built-in checksum %s)' % (command, current))
+        if not ok:  # (the plug-in warns too, and leaves the block out)
+            print('Warning: hot fix for %s left out: the built-in definition (checksum %s) is neither the one '
+                  'it fixes nor one it leaves alone' % (command, current), file=sys.stderr)
+            continue
         out.append(block)
     return ''.join(out)
 

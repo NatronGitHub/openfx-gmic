@@ -524,11 +524,12 @@ to. "RGB CLUT",2,0,13,1,0.75
 a {`$w>$h?_'x':_'y'`}
 fi
 
-#@hotfix fx_mix_pca 9c06daa05f25b1f7 70abdb1cdaa75325,8a328cca39b6d205,c2460922d2ef8afb
+#@hotfix fx_mix_pca 9c06daa05f25b1f7 70abdb1cdaa75325,8a328cca39b6d205,c2460922d2ef8afb,ad1ca4824b9a2aaa
 # Mixer [PCA]'s status has '${13}' instead of '{$13}': one value without braces, so the plug-in
 # doesn't read it, and the covariance cache is never kept.
 # https://github.com/NatronGitHub/openfx-gmic/issues/242. The definitions of 4.0.8 and develop
-# differ: one block each, which leaves the other one alone. This one: G'MIC 4.0.8.
+# differ: one block each, which leaves the other one alone. G'MIC develop's rewrite (gmic
+# 9937aad, ad1ca4824b9a2aaa) has a well-formed status: both leave it alone. This one: G'MIC 4.0.8.
 fx_mix_pca :
 foreach { split_opacity l[0] {
 to_rgb
@@ -582,7 +583,7 @@ avg_shift + T*nI"
 c 0,255
 } a c } u $__status
 
-#@hotfix fx_mix_pca 8a328cca39b6d205 c2460922d2ef8afb,9c06daa05f25b1f7,70abdb1cdaa75325
+#@hotfix fx_mix_pca 8a328cca39b6d205 c2460922d2ef8afb,9c06daa05f25b1f7,70abdb1cdaa75325,ad1ca4824b9a2aaa
 # See the block above. This one: G'MIC develop.
 fx_mix_pca :
 foreach { split_opacity l[0] {

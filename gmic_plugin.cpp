@@ -375,6 +375,16 @@ static string gmicChecksum(const string& def)
 	return s;
 }
 
+// A block of gmic_hotfixes.gmic (see gmicGetHotfixes)
+struct HotfixBlock
+{
+	// (command, checksum of its original definition), then (callee, checksum or empty) for each callee
+	vector<std::pair<string, string> > checks;
+	string fixedChecksum; // the checksum of the fixed definition
+	vector<string> otherChecksums; // the checksums of the definitions that the block leaves alone
+	string text; // the block's lines
+};
+
 // The hot fixes that apply to the commands that G'MIC runs: those of the standard library stdlib,
 // replaced by those that userCommands defines again (the user's filter file userFile, passed as
 // custom commands, see PluginGlobalData::userCommands; empty with the built-in filters). Each
@@ -386,19 +396,9 @@ static string gmicChecksum(const string& def)
 // version that doesn't have the bug, or whose bug another block fixes). A block is applied if the
 // command is the original one (or, for "-", is not defined) and the callees are unchanged, and
 // skipped silently if the command already is the fixed one (fixed upstream) or one of the others.
-// Otherwise it is skipped: with a note if the user's file defines the
-// command or a callee another way (its definition is kept: a copy of the built-in definition
-// still gets the fix), else with a warning for the developers.
-// A block of gmic_hotfixes.gmic (see gmicGetHotfixes)
-struct HotfixBlock
-{
-	// (command, checksum of its original definition), then (callee, checksum or empty) for each callee
-	vector<std::pair<string, string> > checks;
-	string fixedChecksum; // the checksum of the fixed definition
-	vector<string> otherChecksums; // the checksums of the definitions that the block leaves alone
-	string text; // the block's lines
-};
-
+// Otherwise it is skipped: with a note if the user's file defines the command or a callee another
+// way (its definition is kept: a copy of the built-in definition still gets the fix), else with a
+// warning for the developers.
 static string gmicGetHotfixes(const string& stdlib, const string& userCommands, const string& userFile)
 {
 	static const string marker = "#@hotfix ";
