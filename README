@@ -414,6 +414,23 @@ gets 1 for the button. Buttons were checkboxes before: Natron doesn't load such 
 (another parameter type), and the other saved values are unchanged; a script can't set them
 either (a push button has no value).
 
+Many filters change their own parameters as you use them (e.g. Transfer Colors [Multi] shows Source
+Color 1 to 8 only when Color Correspondences is above 0): after each preview, G'MIC-Qt applies the
+status that the filter's preview command sets, which gives parameter values, and shows, hides or
+disables parameters. Here, for the filters whose preview command sets a status, the plug-in runs
+that command after each edit of the filter's parameters (once per change that the host reports),
+and when Source is connected, the same way as a press (512 pixels, 16 seconds, Cancel), and sets
+the values that the status gives (not an undo step of its own: undoing the edit runs the status
+again). On Natron only, it also shows, hides and disables the parameters as the status says, and
+they start as in G'MIC-Qt; Natron saves this state in projects. In a project saved with an older
+version of the plug-in, which showed every parameter of these filters, the parameters left at their
+default value start in G'MIC-Qt's initial state (some hidden or disabled), the others shown: edit
+any parameter of the node to update them. The visibilities follow the values at the time of the
+edit: moving to another frame of an animation doesn't update them. Other hosts show and enable
+every parameter of these filters. Points and their checkboxes always stay visible, since a host draws no
+handle for a hidden or disabled parameter. The run makes the host wait after each edit, more so with
+a large input or a slow filter.
+
 Environment
 -----------
 

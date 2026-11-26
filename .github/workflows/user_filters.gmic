@@ -79,9 +79,10 @@ fx_userfile_vars :
 #   past a separator); the render's green is the button, always 0. Without a press, the preview
 #   sets no status, and the values stay (red 0.25, blue 0.1).
 # - User File Status Visibility: the status hides Hidden Level ("_0") and sets it to 0.6 (red).
-#   The visibility is not applied yet (#173): Hidden Level stays visible, as in every filter that
-#   sets visibilities at run time (#170). It also removes the removable point Target ("nan,nan":
-#   its checkbox goes off, and the render gets nan,nan for it: blue 1).
+#   The plug-in hides it on Natron only (#173), and with OFX_GMIC_TEST_STATUS_VISIBILITY=1: other
+#   hosts show every parameter of a filter that sets visibilities at run time (#170). It also
+#   removes the removable point Target ("nan,nan": its checkbox goes off, and the render gets
+#   nan,nan for it: blue 1).
 #@gui User File Button : fx_userfile_button, fx_userfile_button_preview
 #@gui : Level = float(0.25,0,1)
 #@gui : Press = button()
@@ -109,6 +110,79 @@ fx_userfile_visibility :
 fx_userfile_visibility_preview :
   if $2 u "{0.6}_0{0}{nan,nan}" fi
   fill_color 255,0,255
+
+# the status after an edit (#173): the plug-in runs the preview command after each user edit of
+# the filter's parameters (hostDemo's -s name=value), as G'MIC-Qt's preview, and applies its
+# status: the values, and on Natron (or with OFX_GMIC_TEST_STATUS_VISIBILITY=1) the visibilities.
+# Amount starts hidden ("_0", also the note before it: "-" propagates up) and Echo disabled
+# ("_1"). Mode On: the status shows both ("_2"), gives Echo Amount's value and sets Tail to 7.
+# Mode Off: no visibility, so every parameter goes back to its initial state, and the values
+# stay. The render's red, green and blue are Amount, Echo and Tail / 10.
+#@gui User File Status Edit : fx_userfile_status, fx_userfile_status_preview
+#@gui : Mode = choice("Off","On")
+#@gui : note = note("Amount and Echo: with Mode On")
+#@gui : Amount = float(0.2,0,1)_0-
+#@gui : Echo = float(0,0,1)_1
+#@gui : Tail = int(3,0,10)
+fx_userfile_status :
+  fill_color {$2*255},{$3*255},{$4*25.5}
+
+fx_userfile_status_preview :
+  if $1 u "{"$1"}{"$2"}_2{"$2"}_2{7}" else u "{"$1"}{"$2"}{"$3"}{"$4"}" fi
+  fill_color 255,0,255
+
+# - User File Status Down: Level gives its visibility to the note after it ("+"). Mode On: the
+#   status hides Level (and so the note) and disables Other. Mode Off: the status has 2 values for
+#   3 parameters, which is ignored (logged): the states stay. The render's red is Level.
+#@gui User File Status Down : fx_userfile_status_down, fx_userfile_status_down_preview
+#@gui : Mode = choice("Off","On")
+#@gui : Level = float(0.5,0,1)_2+
+#@gui : note = note("After Level")
+#@gui : Other = int(1,0,10)
+fx_userfile_status_down :
+  fill_color {$2*255},0,{$3*25.5}
+
+fx_userfile_status_down_preview :
+  if $1 u "{"$1"}{"$2"}_0{"$3"}_1" else u "{"$1"}{"$2"}_0" fi
+  fill_color 255,0,255
+
+# - User File Status Variable: the status list is held in a variable (status=\{...}, u $status,
+#   as Mandelbrot's): an edit of A sets B to 7. The render's red and blue are A and B / 10.
+#@gui User File Status Variable : fx_userfile_status_var, fx_userfile_status_var_preview
+#@gui : A = float(0.1,0,1)
+#@gui : B = int(0,0,10)
+fx_userfile_status_var :
+  fill_color {$1*255},0,{$2*25.5}
+
+fx_userfile_status_var_preview :
+  status=\{$1\}\{7\} u $status
+  fill_color 255,0,255
+
+# - User File Status Expression: "u {expr}" is a math substitution, a number, not a status list:
+#   the plug-in runs no status after an edit (no progress with the status's id)
+#@gui User File Status Expression : fx_userfile_status_expr, fx_userfile_status_expr_preview
+#@gui : A = float(0.1,0,1)
+fx_userfile_status_expr :
+  fill_color {$1*255},0,0
+
+fx_userfile_status_expr_preview :
+  u {$1*2}
+  fill_color 255,0,255
+
+# - User File Status Main Only: the visibility markers are in the main command only, which the
+#   runs after an edit don't run: every parameter is shown and enabled (B too), as #170. Its
+#   preview sets a status without markers, which would put B back to its initial "_1" if the
+#   plug-in followed the main command's visibilities.
+#@gui User File Status Main Only : fx_userfile_status_main, fx_userfile_status_main_preview
+#@gui : A = float(0.1,0,1)
+#@gui : B = int(0,0,10)_1
+fx_userfile_status_main :
+  u "{"$1"}{"$2"}_2"
+  fill_color {$1*255},0,{$2*25.5}
+
+fx_userfile_status_main_preview :
+  u "{"$1"}{"$2"}"
+  fill_color {$1*255},0,{$2*25.5}
 
 # - User File Press Size: the status gives the size of the image that the press's run got (at most
 #   512 pixels, G'MIC-Qt's preview image, also with Resize Mode "Downsample 1/2", which downsamples

@@ -157,6 +157,10 @@ struct Parameter
 	// used by the filter's preview command only (G'MIC's split preview, see pluginSetup): the OFX
 	// glue enables it only when Preview/Draft Mode is on
 	bool draftModeOnly = false;
+	// a parameter of the filter whose visibility follows its status (issue #173, see
+	// GmicStatusRun::visibility): displayStatus is then G'MIC-Qt's initial state, which the OFX
+	// glue declares and changes on Natron only (other hosts show the parameter)
+	bool followsStatus = false;
 };
 
 // the values of one render: the parameters at the render time, and the images
@@ -182,6 +186,12 @@ struct GlobalData
 	int nofInputs = 0; // the ParamType::Layer parameters, i.e. the input clips
 	PluginInfo pluginInfo;
 	int pluginIndex = 0;
+	// the filter's own parameters are param[1] to param[nofFilterParams] (one per EffectData
+	// parameter, in order; param[0] is Source)
+	int nofFilterParams = 0;
+	// run the filter's preview command after each user edit of its parameters, for its status
+	// (EffectData::statusOnEdit, issue #173)
+	bool statusOnEdit = false;
 
 	GlobalData() {
 		param[0] = Parameter("input", "Input", ParamType::Layer);

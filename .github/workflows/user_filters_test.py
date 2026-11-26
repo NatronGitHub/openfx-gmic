@@ -16,6 +16,9 @@ Channels returns 5 channels, which must fail the render (#206). User File Button
 Status Visibility have push buttons (#174): renders get 0 for them, and a press (hostDemo's -s
 <button>, an instance changed action) runs the preview command once with 1, whose status sets
 parameter values, which the report's params then show, also as a key of an animated parameter.
+User File Status Edit sets a status after each edit (hostDemo's -s name=value, #173): the plug-in
+runs the preview command at the end of the edit, and sets the values and, with
+OFX_GMIC_TEST_STATUS_VISIBILITY=1 (as on Natron), the secret and enabled flags that it gives.
 The file also defines a command that the plug-in hot-fixes, which must be kept, with a note. Its
 User File Cpus filter fills its output with G'MIC's $_cpus, rendered without OMP_NUM_THREADS so
 that the plug-in sets it (#188): the value, printed, must be the number of CPUs (hostDemo runs one
@@ -91,6 +94,12 @@ EXPECTED = {
     # without a press: the parameters' defaults, and 0 for the push button (green; #174)
     'eu.gmic.UserFileButton': (0.25, 0.0, 0.1),
     'eu.gmic.UserFileStatusVisibility': (0.2, 0.0, 0.0),
+    # without an edit, no status run: the defaults (#173)
+    'eu.gmic.UserFileStatusEdit': (0.2, 0.0, 0.3),
+    'eu.gmic.UserFileStatusDown': (0.5, 0.0, 0.1),
+    'eu.gmic.UserFileStatusVariable': (0.1, 0.0, 0.0),
+    'eu.gmic.UserFileStatusExpression': (0.1, 0.0, 0.0),
+    'eu.gmic.UserFileStatusMainOnly': (0.1, 0.0, 0.0),
     'eu.gmic.UserFilePressSize': (0.0, 0.0, 1.0),
 }
 TOLERANCE = 1e-4
@@ -175,6 +184,10 @@ CHANNELS_PLUGIN = 'eu.gmic.UserFileFiveChannels'
 CHANNELS_ERROR = 'has 5 channels (should be at most 4)'
 USER_SOURCE = '.gmic'  # (install_user_file): the user source, ~/.gmic
 PUSH_BUTTON = 'OfxParamTypePushButton'
+# (the plug-in): follow the status's visibilities on any host, not only on Natron (#173)
+STATUS_VISIBILITY_VAR = 'OFX_GMIC_TEST_STATUS_VISIBILITY'
+STATUS_PROGRESS_ID = 'eu.gmic.status'  # (the plug-in) the progress of a run for the status
+VISIBILITY_MISMATCH = 'visibilities, for'  # (the plug-in's log) a status's visibility count
 
 
 class ButtonCase(collections.namedtuple(
@@ -196,6 +209,26 @@ class ButtonCase(collections.namedtuple(
     """
 
 
+class StatusCase(collections.namedtuple(
+        'StatusCase', 'pid args visibility output values secret enabled runs expected_log',
+        defaults=((),))):
+    """A render after user edits of a filter that sets a status (#173), and what it must give.
+
+    Attributes:
+        pid: the plug-in id.
+        args: hostDemo's arguments: the edits (-s name=value...), or none.
+        visibility: run with STATUS_VISIBILITY_VAR=1, so that the plug-in applies the status's
+            visibilities as on Natron.
+        output: the RGB value of every output pixel.
+        values: the values of parameters after the edits.
+        secret: the secret flag of parameters after the edits.
+        enabled: the enabled flag of parameters after the edits.
+        runs: the number of runs for the status (progresses with STATUS_PROGRESS_ID).
+        expected_log: the texts of log lines that the case must give (e.g. a status mismatch),
+            which are then no problem; empty for none.
+    """
+
+
 SPOT = 'spot'  # User File Button's point: at 60%, 40% of the 160x120 input (y down in G'MIC)
 BUTTON_CASES = (
     # a value of each type, past a separator; the render gets 0 for the button (green)
@@ -212,8 +245,9 @@ BUTTON_CASES = (
                {'Level': [[0.0, 0.25], [5.0, 0.75], [10.0, 0.5]],
                 'Steps': [[0.0, 3], [10.0, 5]]},
                {}),
-    # "_0" hides the parameter in G'MIC-Qt: its value is set, its visibility not yet (#173); the
-    # status removes the removable point Target (its checkbox goes off, the render gets nan,nan)
+    # "_0" hides the parameter in G'MIC-Qt: its value is set, and it stays shown on hosts other
+    # than Natron (see STATUS_CASES for Natron's, #173); the status removes the removable point
+    # Target (its checkbox goes off, the render gets nan,nan)
     ButtonCase('eu.gmic.UserFileStatusVisibility', 'Hide', [], (0.6, 0.0, 1.0),
                {'Hidden Level': 0.6, 'Target Enabled': False}, {}, {'Hidden Level': False}),
     # the press's image on a 1800x1080-pixel Source: scaled down so that it fits in 512 pixels
@@ -225,6 +259,49 @@ BUTTON_CASES = (
                {'Width': 512, 'Height': 307}, {}, {}, True),
 )
 USER_FILE = 'gmic_ofx.gmic'  # (install_user_file): the user filter file
+
+STATUS_EDIT = 'eu.gmic.UserFileStatusEdit'
+STATUS_DOWN = 'eu.gmic.UserFileStatusDown'
+STATUS_CASES = (
+    # the initial states: Amount and the note before it hidden, Echo disabled; other hosts show
+    # and enable every parameter of such a filter
+    StatusCase(STATUS_EDIT, [], True, (0.2, 0.0, 0.3), {},
+               {'Amount': True, 'note': True, 'Echo': False, 'Tail': False}, {'Echo': False}, 0),
+    StatusCase(STATUS_EDIT, [], False, (0.2, 0.0, 0.3), {},
+               {'Amount': False, 'note': False, 'Echo': False}, {'Echo': True}, 0),
+    # Mode On: the status shows Amount (and its note) and enables Echo, gives Echo Amount's value
+    # and Tail 7
+    StatusCase(STATUS_EDIT, ['-s', 'Mode=1'], True, (0.2, 0.2, 0.7),
+               {'Echo': 0.2, 'Tail': 7},
+               {'Amount': False, 'note': False, 'Echo': False, 'Tail': False}, {'Echo': True}, 1),
+    # the values without the visibilities on other hosts
+    StatusCase(STATUS_EDIT, ['-s', 'Mode=1'], False, (0.2, 0.2, 0.7),
+               {'Echo': 0.2, 'Tail': 7}, {'Amount': False, 'note': False}, {'Echo': True}, 1),
+    # Mode Off again: a status without visibilities gives every parameter its initial state; the
+    # values stay
+    StatusCase(STATUS_EDIT, ['-s', 'Mode=1', '-s', 'Mode=0'], True, (0.2, 0.2, 0.7),
+               {'Echo': 0.2, 'Tail': 7},
+               {'Amount': True, 'note': True, 'Echo': False}, {'Echo': False}, 2),
+    # "+": Level gives its visibility to the note after it; "_1" disables Other
+    StatusCase(STATUS_DOWN, ['-s', 'Mode=1'], True, (0.5, 0.0, 0.1), {},
+               {'Level': True, 'note': True, 'Other': False}, {'Other': False}, 1),
+    # then 2 values and visibilities for 3 parameters: ignored (both logged), the states stay
+    StatusCase(STATUS_DOWN, ['-s', 'Mode=1', '-s', 'Mode=0'], True, (0.5, 0.0, 0.1), {},
+               {'Level': True, 'note': True, 'Other': False}, {'Other': False}, 2,
+               (render_plugins.STATUS_MISMATCH, VISIBILITY_MISMATCH)),
+    # visibility markers in the main command only: every parameter shown, as #170
+    StatusCase('eu.gmic.UserFileStatusMainOnly', ['-s', 'A=0.3'], True, (0.3, 0.0, 0.0), {},
+               {'A': False, 'B': False}, {'B': True}, 1),
+    # a status list held in a variable (status=\{...}, u $status)
+    StatusCase('eu.gmic.UserFileStatusVariable', ['-s', 'A=0.3'], False, (0.3, 0.0, 0.7),
+               {'B': 7}, {}, {}, 1),
+    # "u {expr}" is no status list: an edit runs nothing
+    StatusCase('eu.gmic.UserFileStatusExpression', ['-s', 'A=0.3'], True, (0.3, 0.0, 0.0),
+               {}, {}, {}, 0),
+    # a press's status hides Hidden Level ("_0")
+    StatusCase('eu.gmic.UserFileStatusVisibility', ['-s', 'Hide'], True, (0.6, 0.0, 1.0),
+               {'Hidden Level': 0.6}, {'Hidden Level': True}, {}, 1),
+)
 
 
 def update_file_name():
@@ -697,6 +774,36 @@ def same_value(value, expected):
     return value == expected
 
 
+def render_report(host, plugins, work, pid, host_args, output, extra_env=None, expected_log=(),
+                  clips=('Source',)):
+    """Renders a plug-in of the user file, and checks that its output is uniform.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+        pid: the plug-in id.
+        host_args: hostDemo's arguments before the render (-s name=value...).
+        output: the RGB value of every output pixel.
+        extra_env: environment variables of the render, if any.
+        expected_log: texts of log lines that are no problem (see render_plugins.render()).
+        clips: the input clips that get the 160x120 input (none: hostDemo makes them).
+
+    Returns:
+        (problems, report, log): a list of problems, empty if the render gave the output, the
+        parsed report.json (None if the render failed), and hostDemo's log.
+    """
+    result = render_plugins.render(host, host_args, plugins, work, TIMEOUT,
+                                   (pid, CONTEXT, list(clips)), extra_env=extra_env,
+                                   expected_log=expected_log)
+    problem, errors, log = result[2], result[5], result[6]
+    if problem:
+        return ['%s %s' % (problem, ' '.join(errors))], None, log
+    with open(os.path.join(work, pid[len('eu.gmic.'):], 'report.json'), encoding='utf-8') as f:
+        report = json.load(f)
+    return check_output(report, output), report, log
+
+
 def check_buttons(host, plugins, work):
     """Renders each of BUTTON_CASES after the press of its button, and checks the result.
 
@@ -714,19 +821,15 @@ def check_buttons(host, plugins, work):
         button = case.button.split('@')[0]
         if case.large:
             name += ' on the large Source'
-            source_args = ['-i', 'Source=rod:0,0,%d,%d' % LARGE_SOURCE]
+            source_args, clips = ['-i', 'Source=rod:0,0,%d,%d' % LARGE_SOURCE], []
         else:
-            source_args = []
-        _, _, problem, _, _, errors, _, _ = render_plugins.render(
-            host, source_args + case.args + ['-s', case.button], plugins, work, TIMEOUT,
-            (case.pid, CONTEXT, [] if case.large else ['Source']))
-        if problem:
-            problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
+            source_args, clips = [], ['Source']
+        found, report, _ = render_report(host, plugins, work, case.pid,
+                                         source_args + case.args + ['-s', case.button],
+                                         case.output, clips=clips)
+        problems += ['%s: %s' % (name, p) for p in found]
+        if report is None:
             continue
-        report_path = os.path.join(work, case.pid[len('eu.gmic.'):], 'report.json')
-        with open(report_path, encoding='utf-8') as f:
-            report = json.load(f)
-        problems += ['%s: %s' % (name, p) for p in check_output(report, case.output)]
         params = report.get('params') or {}
         if (params.get(button) or {}).get('type') != PUSH_BUTTON:
             problems.append('%s: %s is not a push button (%s)'
@@ -754,6 +857,45 @@ def check_buttons(host, plugins, work):
             if secret is not expected:
                 problems.append('%s: %s has secret %r, expected %r'
                                 % (name, param, secret, expected))
+    return problems
+
+
+def check_status(host, plugins, work):
+    """Renders each of STATUS_CASES after its edits, and checks the result.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems, empty if the edits gave the expected parameters and output.
+    """
+    problems = []
+    for case in STATUS_CASES:
+        name = '%s, %s%s' % (case.pid, ' '.join(case.args) or 'no edit',
+                             ', %s=1' % STATUS_VISIBILITY_VAR if case.visibility else '')
+        extra_env = {STATUS_VISIBILITY_VAR: '1'} if case.visibility else None
+        found, report, log = render_report(host, plugins, work, case.pid, case.args,
+                                           case.output, extra_env, case.expected_log)
+        problems += ['%s: no log line with %r' % (name, e) for e in case.expected_log
+                     if e not in log]
+        problems += ['%s: %s' % (name, p) for p in found]
+        if report is None:
+            continue
+        runs = sum(1 for p in report.get('progress') or [] if p.get('id') == STATUS_PROGRESS_ID)
+        if runs != case.runs:
+            problems.append('%s: %d runs for the status, expected %d' % (name, runs, case.runs))
+        params = report.get('params') or {}
+        for flag, expectations in (('value', case.values), ('secret', case.secret),
+                                   ('enabled', case.enabled)):
+            for param, expected in expectations.items():
+                value = (params.get(param) or {}).get(flag)
+                if not same_value(value, expected):
+                    problems.append('%s: %s has %s %r, expected %r'
+                                    % (name, param, flag, value, expected))
+    if not problems:
+        print('status after edits (#173): %d cases checked' % len(STATUS_CASES))
     return problems
 
 
@@ -902,6 +1044,7 @@ def run_test(host, plugins, stdlib, runs, work, name):
     problems += check_cpus(host, plugins, work)
     problems += check_channels(host, plugins, work)
     problems += check_buttons(host, plugins, work)
+    problems += check_status(host, plugins, work)
     if not any(KEPT_NOTE in log for log in logs):
         problems.append("no note that the file's own definition of 'star_tone' is kept")
     if name == USER_FILE:
@@ -956,7 +1099,7 @@ def main():
         parser.error('--update-file and --user-source are exclusive')
     # G'MIC's folder (gmic::path_rc(), where the plug-in looks for the update file) is the HOME's
     # .config/gmic only without GMIC_PATH and XDG_CONFIG_HOME; the renders inherit this environment
-    for var in ('GMIC_PATH', 'XDG_CONFIG_HOME', 'OFX_GMIC_UPDATE_FILE'):
+    for var in ('GMIC_PATH', 'XDG_CONFIG_HOME', 'OFX_GMIC_UPDATE_FILE', STATUS_VISIBILITY_VAR):
         os.environ.pop(var, None)
     name = USER_FILE
     if args.update_file:

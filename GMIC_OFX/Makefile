@@ -87,10 +87,11 @@ ifeq ($(FFT),pocketfft)
 GMIC_HEADERS += $(SRCDIR)/pocketfft_hdronly.h
 endif
 $(OBJECTPATH)/gmic.o: $(GMIC_HEADERS) $(SRCDIR)/gmic_stdlib_community.h
-$(OBJECTPATH)/gmic_plugin_call.o: $(GMIC_HEADERS) $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h $(SRCDIR)/Helpers/gmic_log.h
-$(OBJECTPATH)/gmic_plugin.o: $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h $(SRCDIR)/gmic_plugin.h $(SRCDIR)/Helpers/gmic_log.h
-$(OBJECTPATH)/gmic_ofx.o: $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin.h $(SRCDIR)/Helpers/gmic_log.h
+$(OBJECTPATH)/gmic_plugin_call.o: $(GMIC_HEADERS) $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h $(SRCDIR)/Helpers/gmic_log.h $(SRCDIR)/Helpers/gmic_visibility.h
+$(OBJECTPATH)/gmic_plugin.o: $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin_call.h $(SRCDIR)/gmic_plugin.h $(SRCDIR)/Helpers/gmic_log.h $(SRCDIR)/Helpers/gmic_parser.h $(SRCDIR)/Helpers/gmic_visibility.h
+$(OBJECTPATH)/gmic_ofx.o: $(SRCDIR)/gmic_libc.h $(SRCDIR)/gmic_plugin.h $(SRCDIR)/Helpers/gmic_log.h $(SRCDIR)/Helpers/gmic_parser.h $(SRCDIR)/Helpers/gmic_visibility.h
 $(OBJECTPATH)/gmic_parser.o $(OBJECTPATH)/gmic_log.o: $(SRCDIR)/Helpers/gmic_log.h
+$(OBJECTPATH)/gmic_parser.o: $(SRCDIR)/Helpers/gmic_parser.h $(SRCDIR)/Helpers/gmic_visibility.h
 
 # The OpenFX extensions of openfx's CMake defaults (openfx/CMakeLists.txt's OFX_DEFINITIONS), as
 # CMake builds get them through openfx::Api and openfx::Support: both builds ship the same Support

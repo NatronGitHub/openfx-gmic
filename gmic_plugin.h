@@ -18,6 +18,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "gmic_parameter.h"
@@ -114,7 +115,15 @@ struct GmicStatusRun
 	// (for a removable point: the point if its coordinates changed, its checkbox if it was
 	// removed or put back), in order; never a push button
 	std::vector<int> changed;
+	// the new display status of each parameter whose visibility follows the status
+	// (Parameter::followsStatus), as (index in GlobalData::param, status), in order, after a
+	// successful run (issue #173): G'MIC-Qt's FilterParametersWidget::setVisibilityStates(). Its
+	// initial state for a value that the status gives without a visibility, or for every value if
+	// the status gives none; empty (no change) if the filter's visibility never changes, or if the
+	// status has visibilities for another number of values than the parameters (logged).
+	std::vector<std::pair<int, gmic_ofx::DisplayStatus>> visibility;
 	std::string error; // G'MIC's message, if the run failed
+	bool cancelled = false; // the user cancelled the run (the host's Cancel)
 	// why the run changed nothing, for the user: no preview command, or a status with another
 	// number of values than the parameters
 	std::string warning;
@@ -129,9 +138,10 @@ struct GmicStatusRun
 // before the main command of a preview-first filter (see pluginProcess), on its input images
 // scaled down to G'MIC-Qt's preview size (at most 512 pixels), with G'MIC-Qt's _preview_timeout,
 // and sets in sequenceData the values that its status gives (FilterParametersWidget::setValues()
-// in G'MIC-Qt). Its own results are discarded. For the press of a push button (issue #174),
-// called from the instance changed action with the button at 1: the host's progress starts at
-// once, and the user's Cancel stops the run. Uses its own G'MIC options, so that a render of the
+// in G'MIC-Qt), and gives the visibilities (GmicStatusRun::visibility). Its own results are
+// discarded. Called from the instance changed action, for the press of a push button (issue
+// #174, with the button at 1) and after a user edit of a statusOnEdit filter's parameters (issue
+// #173): the host's progress starts at once, and the user's Cancel stops the run. Uses its own G'MIC options, so that a render of the
 // same instance may run at the same time. Nothing changes if the filter has no preview ("_none_"),
 // if there is no Source image, if the run is cancelled, if the status is empty or has another
 // number of values than the parameters (logged), or if G'MIC fails.
