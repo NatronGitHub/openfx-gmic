@@ -56,7 +56,9 @@ endif
 # bundled files: when they change, rebuild the objects and the bundle (whose Contents/Libraries
 # and Resources would keep stale files).
 # OFX_DEFINES (below) changes the Support library's class layouts: rebuild its objects too.
-BUILD_KEY = LICENSE=$(LICENSE) FFT=$(FFT) OPENMP=$(OPENMP) GMIC_STATIC_DEPS=$(GMIC_STATIC_DEPS) OFX_DEFINES=$(OFX_DEFINES)
+# DEPFILES=1: the objects have their .d files (-MMD -MP), so that a build tree from before them
+# rebuilds every object once and gets all of them.
+BUILD_KEY = LICENSE=$(LICENSE) FFT=$(FFT) OPENMP=$(OPENMP) GMIC_STATIC_DEPS=$(GMIC_STATIC_DEPS) OFX_DEFINES=$(OFX_DEFINES) DEPFILES=1
 $(OBJECTPATH)/build.license: gmic_sources
 	@mkdir -p $(OBJECTPATH)
 	@echo '$(BUILD_KEY)' | cmp -s - $@ || { echo '$(BUILD_KEY)' > $@; rm -rf $(OBJECTPATH)/$(PLUGINNAME).ofx.bundle; }

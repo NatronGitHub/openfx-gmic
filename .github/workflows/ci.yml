@@ -152,9 +152,11 @@ jobs:
           sudo apt-get install -y cmake ninja-build pkg-config zlib1g-dev libpng-dev libexpat1-dev \
             libgl-dev
       # the parser alone (no G'MIC sources): the rules on the command definitions, on cases that
-      # the stdlib doesn't have (comments, continued lines, arguments that look like commands)
+      # the stdlib doesn't have (comments, continued lines, arguments that look like commands),
+      # and value() in a locale with a decimal comma (fr_FR.UTF-8, generated here)
       - name: Parser test (command definitions)
         run: |
+          sudo locale-gen fr_FR.UTF-8
           c++ -std=c++17 -O1 -Wall -Wextra -IHelpers .github/workflows/parser_test.cpp Helpers/gmic_parser.cpp \
             Helpers/gmic_string.cpp Helpers/gmic_log.cpp -o parser_test
           ./parser_test

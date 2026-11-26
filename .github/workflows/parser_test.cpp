@@ -1,9 +1,9 @@
 // Parser test (CI, Linux job): the rules of gmic_parser.cpp that read the command definitions
 // (previewFirst, the hidden filters), on cases that the G'MIC stdlib doesn't have, so that a
-// change to these rules can't go unnoticed. Exits 1 if a case fails.
-//
-//   c++ -std=c++17 -IHelpers .github/workflows/parser_test.cpp Helpers/gmic_parser.cpp \
-//     Helpers/gmic_string.cpp Helpers/gmic_log.cpp -o parser_test && ./parser_test
+// change to these rules can't go unnoticed; and the value() placeholder rule in a locale with a
+// decimal comma (fr_FR or de_DE, "skipped" if the system has none). Exits 1 if a case fails.
+// Built and run by ci.yml with gmic_parser.cpp, gmic_string.cpp and gmic_log.cpp (see there).
+#include <clocale>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -28,6 +28,10 @@ const char* const kFilters =
 	"#@gui : F = float(1,0,2)\n"
 	"#@gui Test Joined : fx_tg, fx_tg\n"
 	"#@gui : G = float(1,0,2)\n"
+	"#@gui Test Dynamic Arg : fx_th, fx_th\n"
+	"#@gui : H = float(1,0,2)\n"
+	"#@gui Test Dynamic Minus : fx_ti, fx_ti\n"
+	"#@gui : I = float(1,0,2)\n"
 	// a comment that ends with '\' doesn't continue the line (G'MIC drops the comment first)
 	"fx_ta :\n"
 	"  skip $* # see C:\\\n"
@@ -52,7 +56,27 @@ const char* const kFilters =
 	"  skip $* \\\n"
 	"\n"
 	"fx_tg :\n"
-	"  _persistent=1\n";
+	"  _persistent=1\n"
+	// the status rules (markStatusFilters): _th_helper sets a status with a visibility, so a filter
+	// whose preview command calls it has a dynamic visibility; "_th_helper$1" is not a call,
+	// "-_th_helper" is
+	"_th_helper :\n"
+	"  u \"{$1}_1\"\n"
+	"fx_th :\n"
+	"  _th_helper$1\n"
+	"fx_ti :\n"
+	"  -_th_helper\n";
+
+// value(0.5) is a number, not a placeholder that the preview's status fills: no previewFirst,
+// whatever the locale's decimal point
+const char* const kValueFilter =
+	"#@gui Test Value : fx_tv, fx_tv_preview\n"
+	"#@gui : V = value(0.5)\n"
+	"#@gui : A = float(1,0,2)\n"
+	"fx_tv :\n"
+	"  blur $2\n"
+	"fx_tv_preview :\n"
+	"  fx_tv $*\n";
 
 const gmic_ofx::EffectData* find(const std::vector<gmic_ofx::Filter>& filters, const std::string& id)
 {
@@ -83,6 +107,37 @@ int main()
 		{ "eu.gmic.TestJoined", true, false },
 	};
 	int failed = 0;
+	// the calls of a command that sets a status with a visibility
+	const struct { const char* id; bool dynamicVisibility; } dynamics[] = {
+		{ "eu.gmic.TestDynamicArg", false },
+		{ "eu.gmic.TestDynamicMinus", true },
+	};
+	for (const auto& c : dynamics) {
+		const gmic_ofx::EffectData* const d = find(filters, c.id);
+		const bool ok = d && d->dynamicVisibility == c.dynamicVisibility && d->statusOnEdit == c.dynamicVisibility;
+		if (!ok) ++failed;
+		std::printf("%s %s: %s (expected %s)\n", ok ? "ok" : "FAIL", c.id,
+			!d ? "hidden" : d->dynamicVisibility ? "dynamic visibility" : "static", c.dynamicVisibility ? "dynamic visibility" : "static");
+	}
+	// the locale: the first one with a decimal comma that the system has
+	const char* locale = nullptr;
+	for (const char* l : { "fr_FR.UTF-8", "fr_FR.utf8", "de_DE.UTF-8", "de_DE.utf8" }) {
+		if (std::setlocale(LC_NUMERIC, l)) {
+			locale = l;
+			break;
+		}
+	}
+	if (locale) {
+		const std::vector<gmic_ofx::Filter> valueFilters = gmic_ofx::gmic_parse_multi(kValueFilter);
+		const gmic_ofx::EffectData* const d = find(valueFilters, "eu.gmic.TestValue");
+		const bool ok = d && !d->previewFirst;
+		if (!ok) ++failed;
+		std::printf("%s eu.gmic.TestValue in %s: %s (expected no previewFirst)\n", ok ? "ok" : "FAIL", locale,
+			!d ? "hidden" : d->previewFirst ? "previewFirst" : "no previewFirst");
+		std::setlocale(LC_NUMERIC, "C");
+	} else {
+		std::printf("skipped eu.gmic.TestValue: no fr_FR or de_DE locale\n");
+	}
 	for (const Case& c : cases) {
 		const gmic_ofx::EffectData* const d = find(filters, c.id);
 		const bool ok = (d != nullptr) == c.shown && (!d || d->previewFirst == c.previewFirst);
@@ -90,6 +145,6 @@ int main()
 		std::printf("%s %s: %s (expected %s%s)\n", ok ? "ok" : "FAIL", c.id, d ? (d->previewFirst ? "shown, previewFirst" : "shown") : "hidden",
 			c.shown ? "shown" : "hidden", c.previewFirst ? ", previewFirst" : "");
 	}
-	std::printf("%d of %zu cases failed\n", failed, sizeof(cases) / sizeof(cases[0]));
+	std::printf("%d failed\n", failed);
 	return failed ? 1 : 0;
 }
