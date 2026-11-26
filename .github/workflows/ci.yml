@@ -195,7 +195,8 @@ jobs:
           .github/workflows/check_fft.sh install/OFX/Plugins/GMIC.ofx.bundle pocketfft
           openfx/Support/include/linuxCheckBundle.sh install/OFX/Plugins
           .github/workflows/check_linux_deps.sh install/OFX/Plugins/GMIC.ofx.bundle
-      # the tests run on the installed bundle, the one that is shipped (see "Upload bundle")
+      # the tests run on the installed bundle, the one that is shipped (see "Upload bundle");
+      # gmic_develop_tests.sh (the gmic-develop job) runs the same tests: keep them in sync
       - name: Describe all plug-ins
         run: DESCRIBE_USER_LIST=1 DESCRIBE_UPDATE_FILE=1 PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
       # the default FFT (pocketfft) on a non-power-of-two image, with an interpreter built from the
@@ -1018,7 +1019,8 @@ jobs:
   # GreycLab/CImg develop and GreycLab/gmic-community master (in develop/, made by
   # gmic_develop_sources.sh: a G'MIC bump in that checkout only, with the local patches that still
   # apply), runs the describe, full render, FFT and user-file tests on both
-  # (gmic_develop_tests.sh), and compares them (gmic_develop_report.py): the job summary, and the
+  # (gmic_develop_tests.sh: the tests of the linux job, keep them in sync), and compares them
+  # (gmic_develop_report.py), the outputs of the renders included: the job summary, and the
   # results artifact (logs, summary.md, summary.json, the develop standard library). Test failures
   # are findings, not job failures: the job fails only if a build or the comparison fails. Shared
   # zlib and libpng (GMIC_STATIC_DEPS=OFF): the bundles are not shipped.
@@ -1027,7 +1029,7 @@ jobs:
     runs-on: ubuntu-24.04
     needs: changes
     if: needs.changes.outputs.develop == 'true'
-    timeout-minutes: 120
+    timeout-minutes: 150
     defaults:
       run:
         shell: bash -eo pipefail {0}
@@ -1060,23 +1062,49 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build pkg-config zlib1g-dev libpng-dev libexpat1-dev \
             libgl-dev
-      - name: G'MIC develop sources
+      # each step has its own timeout, and the comparison and the upload run whatever happened
+      # before them (a build failure, a hang, a timeout): the summary then says what didn't run
+      - name: Test the pinned G'MIC release
+        timeout-minutes: 40
         run: |
           mkdir -p results
+          release/.github/workflows/gmic_develop_tests.sh release results/release $GMIC_PLUGIN_COUNT
+      - name: G'MIC develop sources
+        timeout-minutes: 15
+        run: |
           develop/.github/workflows/gmic_develop_sources.sh upstream/gmic upstream/CImg upstream/gmic-community \
             develop results/sources.md
           cp develop/update*.gmic results/
-      - name: Test the pinned G'MIC release
-        run: release/.github/workflows/gmic_develop_tests.sh release results/release $GMIC_PLUGIN_COUNT
       - name: Test G'MIC develop
+        timeout-minutes: 45
         run: develop/.github/workflows/gmic_develop_tests.sh develop results/develop $GMIC_PLUGIN_COUNT
-      - name: Compare
+      # the plug-ins whose outputs differ, rendered again with the release: those whose output
+      # changes from one release render to the next are not reproducible, and listed apart
+      - name: Render again with the release the plug-ins whose outputs differ
+        if: always()
+        timeout-minutes: 25
         run: |
+          python3 develop/.github/workflows/gmic_develop_report.py --release results/release --develop results/develop \
+            --release-renders release/render-all --develop-renders develop/render-all --write-differing results/differing.txt
+          echo "$(tr ',' '\n' < results/differing.txt | grep -c .) plug-ins whose outputs differ"
+          if [ -s results/differing.txt ]; then
+            (cd release && OFX_GMIC_MULTIRES=1 python3 .github/workflows/render_plugins.py --host build \
+              --plugins install/OFX/Plugins --list ../results/release/plugins.txt --only "$(cat ../results/differing.txt)" \
+              --jobs 2 --work render-again) > results/release/render-again.log 2>&1 || true
+            tail -n 5 results/release/render-again.log
+          fi
+      - name: Compare
+        if: always()
+        timeout-minutes: 10
+        run: |
+          baseline=()
+          if [ -d release/render-again ]; then baseline=(--baseline release/render-again); fi
           python3 develop/.github/workflows/gmic_develop_report.py --release results/release \
-            --develop results/develop --sources results/sources.md --json results/summary.json > results/summary.md
+            --develop results/develop --release-renders release/render-all --develop-renders develop/render-all \
+            "${baseline[@]}" --sources results/sources.md --json results/summary.json > results/summary.md
           cat results/summary.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload the results
-        if: ${{ !cancelled() }}
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: gmic-develop-results
