@@ -92,6 +92,11 @@ enum class ParamType
 	TopicEnd,
 	Text,
 	Separator,
+	// a G'MIC button() (issue #174): an OFX push button, which has no value; G'MIC gets 0 for it,
+	// except in the run of the preview command that a press makes (see pluginRunStatus). A status
+	// may give it 1 (G'MIC-Qt's next run would get it): that is ignored, since G'MIC-Qt clears
+	// the buttons before Apply (see setStatusValues)
+	Button,
 };
 
 enum class DisplayStatus

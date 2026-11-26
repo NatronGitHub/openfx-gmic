@@ -1,7 +1,7 @@
 # Filters for user_filters_test.py: a user filter file (~/.config/gmic/gmic_ofx.gmic) whose
 # filters call commands that the file defines (#168), a built-in command, and a built-in command
-# that the file replaces, and two that need the state of their preview command (#206); it also
-# defines a command that the plug-in hot-fixes.
+# that the file replaces, two that need the state of their preview command (#206), and two with
+# push buttons (#174); it also defines a command that the plug-in hot-fixes.
 #@gui User File Test
 #@gui User File Own Command : fx_userfile_own, fx_userfile_own
 #@gui : Value = float(0.25,0,1)
@@ -71,6 +71,60 @@ fx_userfile_persistent_store_preview :
 fx_userfile_vars :
   nm=${-gui_layer_name}
   fill_color {same('$_host','ofx')*255},{10*0$_input_layers+0$_output_mode},{same('$nm','Source')*255}
+
+# buttons (#174): push buttons, which renders get 0 for, as G'MIC-Qt's Apply (it follows the
+# preview that the click made, after which the button is 0 again). Pressing one runs the preview
+# command once with 1 for it, and the parameters get the values that the run's status gives.
+# - User File Button: the status sets a value of each type (Level: red 0.75, Steps: blue 0.4,
+#   past a separator); the render's green is the button, always 0. Without a press, the preview
+#   sets no status, and the values stay (red 0.25, blue 0.1).
+# - User File Status Visibility: the status hides Hidden Level ("_0") and sets it to 0.6 (red).
+#   The visibility is not applied yet (#173): Hidden Level stays visible, as in every filter that
+#   sets visibilities at run time (#170). It also removes the removable point Target ("nan,nan":
+#   its checkbox goes off, and the render gets nan,nan for it: blue 1).
+#@gui User File Button : fx_userfile_button, fx_userfile_button_preview
+#@gui : Level = float(0.25,0,1)
+#@gui : Press = button()
+#@gui : sep = separator()
+#@gui : Steps = int(1,0,10)
+#@gui : Mode = choice("A","B","C")
+#@gui : Flag = bool(0)
+#@gui : Tint = color(10,20,30)
+#@gui : Spot = point(25,75)
+#@gui : Label = text("before")
+fx_userfile_button :
+  fill_color {$1*255},{$2*255},{$3*25.5}
+
+fx_userfile_button_preview :
+  if $2 u "{0.75}{0}{4}{2}{1}{40,50,60}{60,40}{after}" fi
+  fill_color 255,0,255
+
+#@gui User File Status Visibility : fx_userfile_visibility, fx_userfile_visibility_preview
+#@gui : Hidden Level = float(0.2,0,1)
+#@gui : Hide = button()
+#@gui : Target = point(30,30,1)
+fx_userfile_visibility :
+  fill_color {$1*255},{$2*255},{isnan($3)*255}
+
+fx_userfile_visibility_preview :
+  if $2 u "{0.6}_0{0}{nan,nan}" fi
+  fill_color 255,0,255
+
+# - User File Press Size: the status gives the size of the image that the press's run got (at most
+#   512 pixels, G'MIC-Qt's preview image, also with Resize Mode "Downsample 1/2", which downsamples
+#   it again), and 0.3 for Exact, which must stay 0.3 (not the float 0.30000001...)
+#@gui User File Press Size : fx_userfile_press_size, fx_userfile_press_size_preview
+#@gui : Width = int(0,0,10000)
+#@gui : Height = int(0,0,10000)
+#@gui : Exact = float(0,0,1)
+#@gui : Size = button()
+fx_userfile_press_size :
+  skip $*
+  fill_color 0,0,255
+
+fx_userfile_press_size_preview :
+  if $4 u "{"{w}"}{"{h}"}{0.3}{0}" fi
+  fill_color 255,0,255
 
 # a result with 5 channels, which fails the render as in G'MIC-Qt (#206)
 #@gui User File Five Channels : fx_userfile_five_channels, fx_userfile_five_channels

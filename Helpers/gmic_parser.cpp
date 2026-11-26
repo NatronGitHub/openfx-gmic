@@ -311,8 +311,9 @@ void processParam(const string& s, EffectParameter& cp)
 		cp.maxValue = "1";
 	} else if (cp.paramType == "button") {
 		// 'button(_alignment)'
-		// Add a boolean parameter (0 or 1) (as a button).
-		cp.paramType = "bool";
+		// Add a boolean parameter (0 or 1) (as a button). Kept as "button" (issue #174): an OFX
+		// push button, which gives 1 only to the run made when it is pressed, as G'MIC-Qt's
+		// ButtonParameter (1 for one run, then cleared)
 		cp.minValue = "0";
 		cp.maxValue = "1";
 		cp.defaultValue = "0";

@@ -7,7 +7,8 @@
 # Uses $CXX (default c++) and $HOST_LDFLAGS (extra link flags, e.g. -L/opt/local/lib).
 # PLUGIN_LIST=<file>: also write the plug-ins' ids, contexts and input clips there (for render_plugins.py),
 # and the plug-ins that run their preview command first. PREVIEW_FIRST_COUNT=<n>: fail unless n
-# plug-ins run their preview command first.
+# plug-ins run their preview command first. PUSH_BUTTON_COUNT=<n>: fail unless the plug-ins have n
+# push buttons in all.
 # The bundle's list of the plug-ins (gmic_ofx_plugins.txt), if any, must be the described plug-ins;
 # DESCRIBE_USER_LIST=1 (once per CI job: it describes them all again) requires the list, and also
 # checks that a user's list that disables two plug-ins leaves them out, also with a log file and in
@@ -295,6 +296,17 @@ preview_first=$(($(wc -l < preview_first.txt)))
 echo "$preview_first plug-ins run their preview command first:" $(cat preview_first.txt)
 if [ -n "${PREVIEW_FIRST_COUNT:-}" ] && [ "$preview_first" != "$PREVIEW_FIRST_COUNT" ]; then
     echo "FAIL: $preview_first plug-ins run their preview command first, expected PREVIEW_FIRST_COUNT=$PREVIEW_FIRST_COUNT (update it in ci.yml if the change is right)"
+    status=1
+fi
+# the push buttons (#174: G'MIC's button() parameters, which were checkboxes): listed by
+# describe_plugins (one "PUSHBUTTON <id><tab><parameter>" line each), counted, and checked against
+# $PUSH_BUTTON_COUNT if set (ci.yml: a G'MIC bump changes it)
+tr -d '\r' < describe.log | sed -n -e 's/^PUSHBUTTON //p' > push_buttons.txt
+push_buttons=$(($(wc -l < push_buttons.txt)))
+echo "$push_buttons push buttons, in $(($(cut -f 1 push_buttons.txt | LC_ALL=C sort -u | wc -l))) plug-ins"
+if [ -n "${PUSH_BUTTON_COUNT:-}" ] && [ "$push_buttons" != "$PUSH_BUTTON_COUNT" ]; then
+    cat push_buttons.txt
+    echo "FAIL: $push_buttons push buttons, expected PUSH_BUTTON_COUNT=$PUSH_BUTTON_COUNT (update it in ci.yml if the change is right)"
     status=1
 fi
 # PLUGIN_LIST=<file>: the plug-ins, their context and input clips, for render_plugins.py, then a
