@@ -83,15 +83,13 @@ void print(const char* what, const gmic_ofx::PointHandle& h)
 
 int main()
 {
-	std::vector<gmic_ofx::EffectData> filters;
-	std::vector<std::string> lines;
-	gmic_ofx::gmic_parse_multi(kFilters, &filters, &lines);
+	const std::vector<gmic_ofx::Filter> filters = gmic_ofx::gmic_parse_multi(kFilters);
 	int failures = 0;
 	for (const Expected& e : kExpected) {
 		const gmic_ofx::EffectParameter* found = nullptr;
-		for (const gmic_ofx::EffectData& f : filters) {
-			if (f.name.find(e.filter) == std::string::npos) continue;
-			for (const gmic_ofx::EffectParameter& p : f.param) {
+		for (const gmic_ofx::Filter& f : filters) {
+			if (f.data.name.find(e.filter) == std::string::npos) continue;
+			for (const gmic_ofx::EffectParameter& p : f.data.param) {
 				if (p.paramType == "point" && p.name == e.name) found = &p;
 			}
 		}

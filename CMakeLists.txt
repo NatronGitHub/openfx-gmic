@@ -289,11 +289,7 @@ endif()
 # "sh patches/<script> <file>" on the fresh copy, and fails if the source doesn't contain the
 # expected code (e.g. after a GMICVER bump).
 # The patches need a POSIX sh (Linux, macOS, MSYS2; with MSVC, e.g. Git for Windows' sh.exe in the
-# PATH, or -DGMIC_PATCH_SH=<path>). Without one, only the patches that don't change this platform's
-# code are skipped (with a warning): those listed in _gmic_patch_platform (<script>:<CMake
-# condition variable>, none at the moment); any other patch (e.g. a CImg.h fix) makes sh required
-# everywhere.
-set(_gmic_patch_platform "")
+# PATH, or -DGMIC_PATCH_SH=<path>).
 gmic_makefile_var(CIMG_PATCHES _mk_cimg_patches)
 if(NOT _mk_cimg_patches)
   message(FATAL_ERROR "Could not read CIMG_PATCHES from ${GMIC_MAKEFILE}")
@@ -356,21 +352,8 @@ if(NOT _old_key STREQUAL _gmic_patch_key)
     list(GET _patch 0 _script)
     list(GET _patch 1 _file)
     if(NOT GMIC_PATCH_SH)
-      get_filename_component(_name "${_script}" NAME)
-      set(_where "ALL")
-      foreach(_p IN LISTS _gmic_patch_platform)
-        if(_p MATCHES "^${_name}:(.*)$")
-          set(_where "${CMAKE_MATCH_1}")
-        endif()
-      endforeach()
-      if(_where STREQUAL "ALL" OR ${_where})
-        message(FATAL_ERROR "sh not found: it is needed to apply ${_script} to ${_file}, which "
-          "changes the code compiled on this platform: put a POSIX sh in the PATH, or configure with "
-          "-DGMIC_PATCH_SH=<path to sh>")
-      endif()
-      message(WARNING "sh not found: ${_script} is not applied to ${_file} (it only changes "
-        "${_where} code)")
-      continue()
+      message(FATAL_ERROR "sh not found: it is needed to apply ${_script} to ${_file}: put a POSIX sh "
+        "in the PATH, or configure with -DGMIC_PATCH_SH=<path to sh>")
     endif()
     execute_process(COMMAND "${GMIC_PATCH_SH}" "${PROJECT_SOURCE_DIR}/${_script}" "${_file}"
       WORKING_DIRECTORY "${_gmic_extracted}" RESULT_VARIABLE _r)
@@ -525,10 +508,8 @@ endforeach()
 # source directory by a Makefile build is not used). They were last reviewed for one G'MIC
 # version: warn if gmic.h is another one (not an error: the plug-in checks each fix against the
 # built-in definitions at load, see the top of gmic_hotfixes.gmic).
-# COMMERCIAL builds only keep the fixes of the commands of their standard library, as the
-# Makefile does: a "#@hotfix <command> <original> <fixed> [callee:checksum...]" block is left out
-# when its command (unless <original> is "-": G'MIC no longer defines it) or a callee is not in
-# GMIC_STDLIB_COMMANDS.
+# COMMERCIAL builds only keep the fixes of the commands of their standard library
+# (GMIC_STDLIB_COMMANDS), with the Makefile's gmic_hotfixes_commercial.awk.
 set(GMIC_HOTFIXES "${PROJECT_SOURCE_DIR}/gmic_hotfixes.gmic")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${GMIC_HOTFIXES}")
 file(STRINGS "${GMIC_SRC_DIR}/gmic.h" _line REGEX "^#define gmic_version [0-9]+")
@@ -549,12 +530,9 @@ if(OFX_LICENSE STREQUAL "COMMERCIAL")
   endif()
   set(_hotfixes "${GMIC_GENERATED_DIR}/gmic_hotfixes.commercial.gmic")
   file(MAKE_DIRECTORY "${GMIC_GENERATED_DIR}")
-  execute_process(COMMAND "${GMIC_AWK}" -v "cmds=${GMIC_STDLIB_COMMANDS}" [=[
-    BEGIN { while ((getline c < cmds) > 0) def[c] = 1; keep = 1 }
-    { sub(/\r$/, "") }
-    /^#@hotfix / { keep = 1; for (i = 2; i <= NF; i++) if ((i == 2 && $3 != "-") || i > 4) { c = $i; sub(/:.*/, "", c); if (!(c in def)) keep = 0 }
-      if (!keep) print "gmic_hotfixes.h: leaving out the fix of " $2 " (not in the COMMERCIAL standard library)" > "/dev/stderr" }
-    keep { print }]=] "${GMIC_HOTFIXES}"
+  set(_hotfixes_awk "${PROJECT_SOURCE_DIR}/gmic_hotfixes_commercial.awk")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_hotfixes_awk}")
+  execute_process(COMMAND "${GMIC_AWK}" -v "cmds=${GMIC_STDLIB_COMMANDS}" -f "${_hotfixes_awk}" "${GMIC_HOTFIXES}"
     OUTPUT_FILE "${_hotfixes}" ERROR_VARIABLE _err RESULT_VARIABLE _r)
   if(NOT _r EQUAL 0)
     message(FATAL_ERROR "Could not select the hot fixes: ${_err}")
@@ -764,54 +742,54 @@ if(MSVC AND NOT GMIC_FFT STREQUAL "fftw3")
   find_package(PNG REQUIRED)
   target_link_libraries(GMIC PRIVATE PNG::PNG ZLIB::ZLIB)
 else()
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(GMIC_DEPS REQUIRED IMPORTED_TARGET libpng zlib ${_fft_module})
-if(GMIC_FFT STREQUAL "fftw3")
-  set(_fftw3_threads fftw3_threads)
-else()
-  set(_fftw3_threads "")
-endif()
-if(GMIC_STATIC_DEPS)
-  target_include_directories(GMIC PRIVATE ${GMIC_DEPS_STATIC_INCLUDE_DIRS})
-  target_compile_options(GMIC PRIVATE ${GMIC_DEPS_STATIC_CFLAGS_OTHER})
-  # the libdirs of libpng and zlib first, then FFTW's, then the -L directories: the archives of
-  # build_static_deps.sh come before those of FFTW's libdir (e.g. /usr/lib/<arch>, which may also
-  # have non-PIC libpng and zlib archives)
-  set(_dirs "")
-  foreach(_module libpng zlib ${_fft_module})
-    string(REGEX REPLACE "[<>=].*" "" _module "${_module}")
-    pkg_get_variable(_libdir ${_module} libdir)
-    list(APPEND _dirs ${_libdir})
-  endforeach()
-  list(APPEND _dirs ${GMIC_DEPS_STATIC_LIBRARY_DIRS})
-  foreach(_lib ${_fftw3_threads} ${GMIC_DEPS_STATIC_LIBRARIES})
-    if(_lib MATCHES "^(m|dl|pthread|rt|c)$") # system libraries
-      target_link_libraries(GMIC PRIVATE ${_lib})
-      continue()
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(GMIC_DEPS REQUIRED IMPORTED_TARGET libpng zlib ${_fft_module})
+  if(GMIC_FFT STREQUAL "fftw3")
+    set(_fftw3_threads fftw3_threads)
+  else()
+    set(_fftw3_threads "")
+  endif()
+  if(GMIC_STATIC_DEPS)
+    target_include_directories(GMIC PRIVATE ${GMIC_DEPS_STATIC_INCLUDE_DIRS})
+    target_compile_options(GMIC PRIVATE ${GMIC_DEPS_STATIC_CFLAGS_OTHER})
+    # the libdirs of libpng and zlib first, then FFTW's, then the -L directories: the archives of
+    # build_static_deps.sh come before those of FFTW's libdir (e.g. /usr/lib/<arch>, which may also
+    # have non-PIC libpng and zlib archives)
+    set(_dirs "")
+    foreach(_module libpng zlib ${_fft_module})
+      string(REGEX REPLACE "[<>=].*" "" _module "${_module}")
+      pkg_get_variable(_libdir ${_module} libdir)
+      list(APPEND _dirs ${_libdir})
+    endforeach()
+    list(APPEND _dirs ${GMIC_DEPS_STATIC_LIBRARY_DIRS})
+    foreach(_lib ${_fftw3_threads} ${GMIC_DEPS_STATIC_LIBRARIES})
+      if(_lib MATCHES "^(m|dl|pthread|rt|c)$") # system libraries
+        target_link_libraries(GMIC PRIVATE ${_lib})
+        continue()
+      endif()
+      # cached (so that -DGMIC_STATIC_<lib>=<archive> can choose another one): after changing
+      # PKG_CONFIG_PATH or the archives' location, configure a new build directory, or with
+      # -U 'GMIC_STATIC_*'
+      find_library(GMIC_STATIC_${_lib} NAMES lib${_lib}.a HINTS ${_dirs})
+      if(NOT GMIC_STATIC_${_lib})
+        message(FATAL_ERROR "GMIC_STATIC_DEPS: lib${_lib}.a not found (in ${_dirs} or the default paths): "
+          "build them with -fPIC (.github/workflows/build_static_deps.sh <prefix>, then "
+          "PKG_CONFIG_PATH=<prefix>/lib/pkgconfig), or configure with -DGMIC_STATIC_DEPS=OFF")
+      endif()
+      target_link_libraries(GMIC PRIVATE ${GMIC_STATIC_${_lib}})
+    endforeach()
+  else()
+    target_link_libraries(GMIC PRIVATE PkgConfig::GMIC_DEPS)
+    if(_fftw3_threads)
+      pkg_get_variable(_fftw3_libdir fftw3 libdir)
+      find_library(FFTW3_THREADS_LIBRARY fftw3_threads HINTS ${_fftw3_libdir} ${GMIC_DEPS_LIBRARY_DIRS})
+      if(NOT FFTW3_THREADS_LIBRARY)
+        message(FATAL_ERROR "fftw3_threads not found (in ${_fftw3_libdir})")
+      endif()
+      target_link_libraries(GMIC PRIVATE ${FFTW3_THREADS_LIBRARY})
     endif()
-    # cached (so that -DGMIC_STATIC_<lib>=<archive> can choose another one): after changing
-    # PKG_CONFIG_PATH or the archives' location, configure a new build directory, or with
-    # -U 'GMIC_STATIC_*'
-    find_library(GMIC_STATIC_${_lib} NAMES lib${_lib}.a HINTS ${_dirs})
-    if(NOT GMIC_STATIC_${_lib})
-      message(FATAL_ERROR "GMIC_STATIC_DEPS: lib${_lib}.a not found (in ${_dirs} or the default paths): "
-        "build them with -fPIC (.github/workflows/build_static_deps.sh <prefix>, then "
-        "PKG_CONFIG_PATH=<prefix>/lib/pkgconfig), or configure with -DGMIC_STATIC_DEPS=OFF")
-    endif()
-    target_link_libraries(GMIC PRIVATE ${GMIC_STATIC_${_lib}})
-  endforeach()
-else()
-  target_link_libraries(GMIC PRIVATE PkgConfig::GMIC_DEPS)
-  if(_fftw3_threads)
-    pkg_get_variable(_fftw3_libdir fftw3 libdir)
-    find_library(FFTW3_THREADS_LIBRARY fftw3_threads HINTS ${_fftw3_libdir} ${GMIC_DEPS_LIBRARY_DIRS})
-    if(NOT FFTW3_THREADS_LIBRARY)
-      message(FATAL_ERROR "fftw3_threads not found (in ${_fftw3_libdir})")
-    endif()
-    target_link_libraries(GMIC PRIVATE ${FFTW3_THREADS_LIBRARY})
   endif()
 endif()
-endif() # MSVC
 
 # OpenMP (OFX_USE_OPENMP). MSVC: /openmp (OpenMP 2.0, which CImg supports: it drops collapse()
 # with MSVC), whose runtime, vcomp140.dll, is copied next to GMIC.ofx (below). (CMake's FindOpenMP

@@ -34,7 +34,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -143,34 +142,27 @@ static DisplayStatus describedDisplayStatus(const Parameter& param)
 
 // Check the effect descriptor for potentially bad XML in the OFX Plugin cache.
 //
-// The function that wrote string properties to the OFX plugin cache used to
-// escape only que quote (") character. As a result, if one of the string
-// properties in the Image Effect descriptor contains special characters,
-// the host may be unable to read the plugin cache, giving an "xml error 4"
-// (error 4 is XML_ERROR_INVALID_TOKEN).
-//
-// The plugin label and grouping may not contain any of these bad characters.
-// The plugin description may contain characters that do not corrupt the XML,
-// because kOfxActionDescribe is usually called at plugin loading.
+// The HostSupport library's function that wrote string properties to the OFX plug-in cache used
+// to escape only the double quote ("): a host built with it may be unable to read its plug-in
+// cache when a string property of an effect descriptor has other special characters ("xml error
+// 4", XML_ERROR_INVALID_TOKEN). The label and grouping are read from the cache to build the menus
+// before the plug-in is loaded; the description, written by kOfxActionDescribe, may hold
+// characters that don't corrupt the XML.
 //
 // Version with the bug:
 // https://github.com/ofxa/openfx/blob/34ff595a2918e9e4065603d7fc4d500ae9efc421/HostSupport/include/ofxhXml.h
 // Version without the bug:
 // https://github.com/ofxa/openfx/blob/64ba52fff61894759fbf3942b92659b02b2b17cd/HostSupport/include/ofxhXml.h
 //
-// With the old version:
-// - All characters within U+0001..U+001F and U+007F..U+009F, except \t \b \r (0x09 0x0A 0X0D) are forbidden
-//   in label and grouping, because these may be used to build the GUI before loading the plugin.
-//   They may appear in the description, although it is not recommended.
-// - The '<' and '&' characters generate bad XML in all cases
-// - The '>' and '\'' characters are tolerated by the expat parser, although the XML is not valid
-// The Support library only checks these strings (in debug builds): this removes the characters.
+// With the old version, '<' and '&' always make bad XML, and the control characters U+0001..U+001F
+// and U+007F..U+009F make labels and groupings unreadable; '>' and '\'' are tolerated by the expat
+// parser, although the XML is not valid. The Support library only checks these strings in debug
+// builds: this removes all of them, and also tab, LF, CR and '"' (the XML special characters,
+// https://www.w3.org/TR/xml/#syntax, and the controls).
 std::string validateXMLString(const std::string& s)
 {
 	std::string r;
 	for (size_t i = 0; i < s.size(); i++) {
-		// The are exactly five characters which must be escaped
-		// http://www.w3.org/TR/xml/#syntax
 		switch (s[i]) {
 		case '\t':
 		case '\n':
@@ -470,16 +462,11 @@ std::string pointValueToString(double v)
 	return ss.str();
 }
 
-// a number written by pointValueToString (other text, e.g. in a hand-edited project, would read
-// as 0), refused if it overflows (strtod gives an infinity and sets errno: no std::isfinite, which
-// -ffinite-math-only folds to true)
+// a number written by pointValueToString; nothing for other text (e.g. in a hand-edited project)
+// or an overflow (see parseDecimal)
 std::optional<double> pointValueParse(const std::string& s)
 {
-	if (s.empty() || s.find_first_not_of("0123456789+-.eE") != std::string::npos) return std::nullopt;
-	errno = 0;
-	const double v = gmic_ofx::stringToDouble(s);
-	if (errno == ERANGE && std::fabs(v) > 1.) return std::nullopt;
-	return v;
+	return gmic_ofx::parseDecimal(s, gmic_ofx::DecimalSyntax::SignedDecimal);
 }
 
 // Layer times (issue #63): the plug-in may define, for its layer inputs (all but the first one,
@@ -2101,7 +2088,7 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 				textType = 1;
 			}
 			if (textType == 4) {
-				txt = gmic_ofx::strTrim(gmic_ofx::strRemoveXmlTags(txt, true), " \t\r\n'\"");
+				txt = gmic_ofx::strTrim(gmic_ofx::strXmlToText(txt), " \t\r\n'\"");
 			}
 			OFX::StringParamDescriptor* p = desc.defineStringParam(name);
 			if (textType >= 0 && textType <= 4) {

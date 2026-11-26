@@ -51,8 +51,11 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cerrno>
 #include <charconv>
 #include <cmath>
+#include <cstring>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -79,10 +82,10 @@ string strLowercase(string_view str)
 
 string strTrim(string_view str, string_view whitespace)
 {
-    const size_t strBegin = str.find_first_not_of(whitespace);
-    if (strBegin == string_view::npos) return string(); // no content
-    const size_t strEnd = str.find_last_not_of(whitespace);
-    return string(str.substr(strBegin, strEnd - strBegin + 1));
+	const size_t strBegin = str.find_first_not_of(whitespace);
+	if (strBegin == string_view::npos) return string(); // no content
+	const size_t strEnd = str.find_last_not_of(whitespace);
+	return string(str.substr(strBegin, strEnd - strBegin + 1));
 }
 
 void strReplace(string& str, string_view search, string_view replace)
@@ -115,16 +118,16 @@ vector<string> strSplit(string_view s, char separator)
 
 string floatToString(float f)
 {
-    // NaN: "nan", whatever its sign and payload, as G'MIC-Qt passes a removed point. std::to_chars
-    // would give "-nan(ind)" or "nan(snan)" (libc++ and MSVC), and the stream it replaces gave
-    // "nan" on macOS but "-nan" for a negative NaN with glibc (G'MIC reads them all as NaN).
-    if (std::isnan(f)) return "nan";
-    // Otherwise, std::to_chars with a precision: printf's "%.8g" in the "C" locale, the text of the
-    // stream with setprecision(8) and the classic locale that it replaces ("inf", "-inf" too)
-    array<char, 32> buf{}; // "-1.1754944e-38": 14 characters
-    const to_chars_result r = to_chars(buf.data(), buf.data() + buf.size(), f, chars_format::general, 8);
-    assert(r.ec == errc());
-    return string(buf.data(), r.ptr);
+	// NaN: "nan", whatever its sign and payload, as G'MIC-Qt passes a removed point. std::to_chars
+	// would give "-nan(ind)" or "nan(snan)" (libc++ and MSVC), and the stream it replaces gave
+	// "nan" on macOS but "-nan" for a negative NaN with glibc (G'MIC reads them all as NaN).
+	if (std::isnan(f)) return "nan";
+	// Otherwise, std::to_chars with a precision: printf's "%.8g" in the "C" locale, the text of the
+	// stream with setprecision(8) and the classic locale that it replaces ("inf", "-inf" too)
+	array<char, 32> buf{}; // "-1.1754944e-38": 14 characters
+	const to_chars_result r = to_chars(buf.data(), buf.data() + buf.size(), f, chars_format::general, 8);
+	assert(r.ec == errc());
+	return string(buf.data(), r.ptr);
 }
 
 // strtod in the "C" locale, whatever the current one: strtod_l where available (an istringstream
@@ -133,45 +136,77 @@ string floatToString(float f)
 // MSVC, and MinGW-w64 with UCRT or a recent msvcrt (the condition of mingw-w64's locale.h)
 #  if defined(_MSC_VER) || defined(_UCRT) || (defined(__MSVCRT_VERSION__) && (__MSVCRT_VERSION__ >= 0x0800 || (__MSVCRT_VERSION__ == 0x0600 && defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0600)))
 #    define GMIC_HAS_STRTOD_C 1
-static double strtodC(const char* str)
+static double strtodC(const char* str, char** end)
 {
-    static const _locale_t loc = _create_locale(LC_NUMERIC, "C"); // never freed
-    return _strtod_l(str, nullptr, loc);
+	static const _locale_t loc = _create_locale(LC_NUMERIC, "C"); // never freed
+	return _strtod_l(str, end, loc);
 }
 #  endif
 #elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__GLIBC__)
 #  define GMIC_HAS_STRTOD_C 1
-static double strtodC(const char* str)
+static double strtodC(const char* str, char** end)
 {
-    static const locale_t loc = newlocale(LC_NUMERIC_MASK, "C", (locale_t)0); // never freed
-    return strtod_l(str, nullptr, loc);
+	static const locale_t loc = newlocale(LC_NUMERIC_MASK, "C", (locale_t)0); // never freed
+	return strtod_l(str, end, loc);
 }
 #endif
 
-double stringToDouble(const string& s)
+double stringToDouble(const string& s, size_t* length)
 {
-    // same result as atof in the "C" locale: leading whitespace skipped, trailing characters
-    // ignored, 0 if there is no number; hexadecimal, inf and nan accepted
+	// same result as atof in the "C" locale: leading whitespace skipped, trailing characters
+	// ignored, 0 if there is no number; hexadecimal, inf and nan accepted
+	char* end = nullptr;
 #ifdef GMIC_HAS_STRTOD_C
-    return strtodC(s.c_str());
+	const double v = strtodC(s.c_str(), &end);
+	if (length) *length = static_cast<size_t>(end - s.c_str());
 #else
-    // other platforms: use the decimal point of the current C locale instead of '.'
-    string t = s;
-    const char* dp = localeconv()->decimal_point;
-    if (dp && dp[0] && string(dp) != ".") {
-        size_t pos = t.find('.');
-        if (pos != string::npos) t.replace(pos, 1, dp);
-    }
-    return strtod(t.c_str(), NULL);
+	// other platforms: use the decimal point of the current C locale instead of '.'
+	string t = s;
+	const char* dp = localeconv()->decimal_point;
+	size_t pos = string::npos;
+	if (dp && dp[0] && string(dp) != ".") {
+		pos = t.find('.');
+		if (pos != string::npos) t.replace(pos, 1, dp);
+	}
+	const double v = strtod(t.c_str(), &end);
+	if (length) {
+		*length = static_cast<size_t>(end - t.c_str());
+		if (pos != string::npos && *length > pos) *length -= strlen(dp) - 1; // (back to s's '.')
+	}
 #endif
+	return v;
 }
 
-// Append the UTF-8 encoding of the code point cp: U+FFFD if it is not a valid one, or a control
-// character other than tab, LF and CR (e.g. from "&#1;").
-static void appendUtf8(string& out, unsigned long cp)
+optional<double> parseDecimal(string_view text, DecimalSyntax syntax)
 {
-	const bool control = (cp < 0x20 && cp != '\t' && cp != '\n' && cp != '\r') || cp == 0x7F;
-	if (control || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) cp = 0xFFFD;
+	const size_t b = text.find_first_not_of(" \t\r\n");
+	if (b == string_view::npos) return nullopt;
+	const string s(text.substr(b, text.find_last_not_of(" \t\r\n") - b + 1));
+	const auto isDigit = [&s](size_t i) { return i < s.size() && s[i] >= '0' && s[i] <= '9'; };
+	size_t i = 0, digits = 0;
+	if (syntax != DecimalSyntax::UnsignedDecimal && (s[i] == '+' || s[i] == '-')) ++i;
+	for (; isDigit(i); ++i) ++digits;
+	if (syntax != DecimalSyntax::SignedInteger) {
+		if (i < s.size() && s[i] == '.') ++i;
+		for (; isDigit(i); ++i) ++digits;
+	}
+	if (digits == 0) return nullopt;
+	if (syntax != DecimalSyntax::SignedInteger && i < s.size() && (s[i] == 'e' || s[i] == 'E')) {
+		++i;
+		if (i < s.size() && (s[i] == '+' || s[i] == '-')) ++i;
+		const size_t first = i;
+		while (isDigit(i)) ++i;
+		if (i == first) return nullopt;
+	}
+	if (i != s.size()) return nullopt;
+	errno = 0;
+	const double v = stringToDouble(s);
+	if (errno == ERANGE && std::fabs(v) > 1.) return nullopt; // overflow (an underflow gives 0)
+	return v;
+}
+
+void appendUtf8(string& out, unsigned long cp)
+{
 	if (cp < 0x80) {
 		out += static_cast<char>(cp);
 	} else if (cp < 0x800) {
@@ -187,6 +222,14 @@ static void appendUtf8(string& out, unsigned long cp)
 		out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
 		out += static_cast<char>(0x80 | (cp & 0x3F));
 	}
+}
+
+// Append the UTF-8 encoding of the code point cp of an entity: U+FFFD if it is not a valid one,
+// or a control character other than tab, LF and CR (e.g. from "&#1;").
+static void appendEntityUtf8(string& out, unsigned long cp)
+{
+	const bool control = (cp < 0x20 && cp != '\t' && cp != '\n' && cp != '\r') || cp == 0x7F;
+	appendUtf8(out, (control || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) ? 0xFFFD : cp);
 }
 
 // The code point of the entity name e (the text between '&' and ';': "amp", "#233", "#xE9"), or
@@ -222,13 +265,13 @@ static string utf8Entities(const string& s)
 	while (i < s.size()) {
 		size_t next = i + 1;
 		if (s.compare(i, 4, "\\251") == 0) { // the octal escape of the copyright sign
-			appendUtf8(r, 0xA9);
+			appendEntityUtf8(r, 0xA9);
 			next = i + 4;
 		} else if (s[i] == '&') {
 			const size_t semi = s.substr(i + 1, maxEntity + 1).find(';');
 			const long cp = (semi == string::npos) ? -1 : entityCodePoint(s.substr(i + 1, semi));
 			if (cp >= 0) {
-				appendUtf8(r, static_cast<unsigned long>(cp));
+				appendEntityUtf8(r, static_cast<unsigned long>(cp));
 				next = i + semi + 2;
 			} else {
 				r += s[i];
@@ -241,7 +284,7 @@ static string utf8Entities(const string& s)
 	return r;
 }
 
-string strRemoveXmlTags(string_view s, bool replaceEntities)
+string strRemoveXmlTags(string_view s)
 {
 	// a tag is '<' followed by a letter, '/' or '!' (as "<b>", "</i>", "<!-- -->"), up to the next
 	// '>'; any other '<' or '>' is text ("a < b", "Anisotropy>0")
@@ -260,10 +303,12 @@ string strRemoveXmlTags(string_view s, bool replaceEntities)
 			r += c;
 		}
 	}
-	if (replaceEntities) {
-		r = utf8Entities(r);
-	}
 	return r;
+}
+
+string strXmlToText(string_view s)
+{
+	return utf8Entities(strRemoveXmlTags(s));
 }
 
 } // namespace gmic_ofx
