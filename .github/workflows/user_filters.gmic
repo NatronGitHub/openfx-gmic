@@ -228,7 +228,8 @@ star_tone :
 # (the default), the output has the result's size and position, which the region of definition
 # declares: larger (200% x 150%), smaller (50% x 25%), at Source's bottom-left corner (they keep
 # Source's name: no position of their own, #238), and moved by the pos(10,20) of its name (10
-# pixels right and 20 down from Source's top-left corner, as G'MIC-Qt's hosts place a layer)
+# pixels right and 20 down from Source's top-left corner, as G'MIC-Qt's hosts place a layer: a
+# non-zero pos makes the run's results a layout)
 #@gui User File Larger : fx_userfile_larger, fx_userfile_larger
 fx_userfile_larger :
   r 200%,150%,1,100%,0 fill_color 255,0,0,255
@@ -242,6 +243,16 @@ fx_userfile_smaller :
 #@gui User File Taller : fx_userfile_taller, fx_userfile_taller
 fx_userfile_taller :
   r 100%,200%,1,100%,0 f "y<h/2?[255,0,0,255]:[0,255,0,255]"
+
+# no position of their own either (#238): twice Source's size, named by gui_set_layer_name, which
+# writes G'MIC's default pos(0,0), and a "+" copy, 200% x 150%, which G'MIC names Source's name _c1
+#@gui User File Layer Name : fx_userfile_layer_name, fx_userfile_layer_name
+fx_userfile_layer_name :
+  r 200%,200%,1,100%,0 fill_color 255,255,0,255 gui_set_layer_name "[Layer Name]"
+
+#@gui User File Copy : fx_userfile_copy, fx_userfile_copy
+fx_userfile_copy :
+  +r 200%,150%,1,100%,0 rm[0] fill_color 0,255,255,255
 
 #@gui User File Shifted : fx_userfile_shifted, fx_userfile_shifted
 fx_userfile_shifted :

@@ -926,9 +926,9 @@ double canonicalEdge(int p, double par, double scale, bool high)
 // Natron, every filter elsewhere): the inputs' pixels and the point percentages at that scale,
 // as the render gets them, so the probes' command lines and cache keys are the render's at that
 // scale. (Natron's other filters refuse a render scale here, before any probe.) The pixel
-// rectangle is the result's, its top-left corner at Source's moved by the result's pos(x,y), or
-// its bottom-left corner at Source's if it has no position of its own (ResultGeometry), in
-// canonical coordinates (see canonicalEdge).
+// rectangle is the result's, its top-left corner at Source's moved by the result's pos(x,y) in a
+// layout, or its bottom-left corner at Source's otherwise (ResultGeometry), in canonical
+// coordinates (see canonicalEdge).
 std::optional<OfxRectD> GMICEffect::resultRoD(const OfxRectD& sourceRod, double time, const OfxPointD& renderScale) const
 {
 	// the values of the render at this time (see render), the inputs without images

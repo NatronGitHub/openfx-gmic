@@ -31,11 +31,12 @@ support. With OFX_GMIC_MULTIRES=0 (a test aid of the plug-in: it then acts as on
 it), User File Larger (Resize Mode Dynamic) and User File Smaller (Fixed) must be resized to
 Source's size, as before #175, with no warning. The other checks render on hostDemo as it is,
 where the plug-in predicts the result's size, as on Natron. With Resize Mode Dynamic, the default,
-User File Larger, User File Smaller, User File Taller and User File Shifted must output the
-result's size, and the region of definition its size and position: Shifted's pos(10,20) from
-Source's top-left corner, the others (no position of their own) at Source's bottom-left corner
-(#238; Taller, twice Source's height, must have its top half red at the top); with Fixed
-(Inplace), Source's size and region of definition, cropped or padded. No render may warn that
+User File Larger, User File Smaller, User File Taller, User File Layer Name, User File Copy and
+User File Shifted must output the result's size, and the region of definition its size and
+position: Shifted's pos(10,20) from Source's top-left corner, the others (no layout: no pos,
+G'MIC's default pos(0,0), or a "+" copy's name) at Source's bottom-left corner (#238; Taller,
+twice Source's height, must have its top half red at the top); with Fixed (Inplace), Source's
+size and region of definition, with the same placement cropped or padded (Taller: green). No render may warn that
 the result doesn't match the output, except User File Content Size, whose size depends on the
 pixels. User File Larger and User File Shifted are also rendered at render scale 0.5: the output
 is half the scale-1 output; Larger's canonical region of definition is the scale-1 one, and
@@ -113,15 +114,16 @@ TOLERANCE = 1e-4
 DEFINED_BY = ' is defined by '  # the note of a kept definition of a hot-fixed command
 # (#175) the cases of check_geometry(): plug-in id, hostDemo arguments (a Source input that
 # doesn't start at 0,0: OFFSET_SOURCE), the expected output size relative to Source's and its
-# position: a pos(x,y) of its own (pixels from Source's top-left corner, y down), or
-# AT_SOURCE_BOTTOM, Source's bottom-left corner, for a result without one (#238), the RGBA value of
-# every output pixel (PADDED: the result in its top-left part, transparent black elsewhere, both
-# checked through the minimum and maximum; SPLIT: the top half of the output red, the bottom half
-# green, checked in the output file), and whether the render must warn that the result doesn't
-# match the output
+# position: the pos(x,y) of a result of a layout run (some result with a non-zero pos: pixels
+# from Source's top-left corner, y down), or AT_SOURCE_BOTTOM, Source's bottom-left corner, for
+# the results of other runs (#238), the RGBA value of every output pixel (Padded(color): the
+# result's color in part of the output, transparent black elsewhere, both checked through the
+# minimum and maximum; SPLIT: the top half of the output red, the bottom half green, checked in
+# the output file), and whether the render must warn that the result doesn't match the output.
+# With Resize Mode Fixed, the output is Source's rectangle, with Dynamic's placement (#238).
 OFFSET_SOURCE = ['-i', 'Source=file:../input.pfm@20,10']
 AT_SOURCE_BOTTOM = 'at Source bottom'
-PADDED = 'padded'
+Padded = collections.namedtuple('Padded', ['color'])
 SPLIT = 'split'
 # (each case: plug-in id, hostDemo arguments, the output's size and pos as above, its color, whether
 # the render warns, how the size is found: EXACT, with no note (exact fractions; the test's small
@@ -137,19 +139,27 @@ GEOMETRY_CASES = [
     # taller than Source, its top half red: the output's top half (#238)
     ('eu.gmic.UserFileTaller', [], (1.0, 2.0, AT_SOURCE_BOTTOM), SPLIT, False, EXACT, '0'),
     ('eu.gmic.UserFileTaller', OFFSET_SOURCE, (1.0, 2.0, AT_SOURCE_BOTTOM), SPLIT, False, EXACT, '0'),
-    # Fixed (Inplace): Source's rectangle, cropped, padded, pos() ignored
+    # G'MIC's default pos(0,0) (gui_set_layer_name), and a "+" copy (named Source_c1): no layout
+    ('eu.gmic.UserFileLayerName', [], (2.0, 2.0, AT_SOURCE_BOTTOM), (1.0, 1.0, 0.0, 1.0), False, EXACT, '0'),
+    ('eu.gmic.UserFileCopy', [], (2.0, 1.5, AT_SOURCE_BOTTOM), (0.0, 1.0, 1.0, 1.0), False, EXACT, '0'),
+    # Fixed (Inplace): Source's rectangle, Dynamic's placement cropped or padded: Taller's bottom
+    # half (green), Shifted moved by its pos
     ('eu.gmic.UserFileLarger', ['-s', 'Resize Mode=0'], (1.0, 1.0, (0, 0)), (1.0, 0.0, 0.0, 1.0), False, NO_PROBE, '0'),
-    ('eu.gmic.UserFileSmaller', ['-s', 'Resize Mode=0'], (1.0, 1.0, (0, 0)), PADDED, False, NO_PROBE, '0'),
-    ('eu.gmic.UserFileShifted', ['-s', 'Resize Mode=0'], (1.0, 1.0, (0, 0)), (0.0, 0.0, 1.0, 1.0), False, NO_PROBE, '0'),
+    ('eu.gmic.UserFileSmaller', ['-s', 'Resize Mode=0'], (1.0, 1.0, (0, 0)), Padded((0.0, 1.0, 0.0, 1.0)), False,
+     NO_PROBE, '0'),
+    ('eu.gmic.UserFileShifted', ['-s', 'Resize Mode=0'], (1.0, 1.0, (0, 0)), Padded((0.0, 0.0, 1.0, 1.0)), False,
+     NO_PROBE, '0'),
+    ('eu.gmic.UserFileTaller', ['-s', 'Resize Mode=0'], (1.0, 1.0, (0, 0)), (0.0, 1.0, 0.0, 1.0), False, NO_PROBE, '0'),
     # Downsample 1/2: resized to Source's size
     ('eu.gmic.UserFileLarger', ['-s', 'Resize Mode=2'], (1.0, 1.0, (0, 0)), (1.0, 0.0, 0.0, 1.0), False, NO_PROBE, '0'),
     # the probes' size (40x60), and the warning
     ('eu.gmic.UserFileContentSize', [], (0.25, 0.5, AT_SOURCE_BOTTOM), (1.0, 1.0, 0.0, 1.0), True, EXACT, '0'),
     # not affine, sqrt(W*H) = 139 wide: a small Source, probed at its own size
     ('eu.gmic.UserFileAreaSize', [], (139 / 160.0, 1.0, AT_SOURCE_BOTTOM), (0.0, 1.0, 1.0, 1.0), False, EXACT, '0'),
-    # Output Layer "Frame": result [0] at frame 0 (a pos of its own), [1] (Source's size) at frame 1
+    # Output Layer "Frame", a layout: result [0] at frame 0 (pos(5,6)), [1] (Source's size, no pos) at
+    # frame 1, at Source's top-left corner
     ('eu.gmic.UserFileFrames', ['-s', 'Output Layer=11'], (0.5, 0.5, (5, 6)), (1.0, 0.0, 1.0, 1.0), False, EXACT, '0'),
-    ('eu.gmic.UserFileFrames', ['-s', 'Output Layer=11'], (1.0, 1.0, AT_SOURCE_BOTTOM), (1.0, 0.0, 1.0, 1.0), False, EXACT, '1'),
+    ('eu.gmic.UserFileFrames', ['-s', 'Output Layer=11'], (1.0, 1.0, (0, 0)), (1.0, 0.0, 1.0, 1.0), False, EXACT, '1'),
 ]
 GEOMETRY_WARNING = "doesn't match the output"
 # the plug-in's override of the host's multi-resolution support: as on a host without it (see
@@ -367,9 +377,11 @@ def expected_rod(src, par, width, height, pos):
     Args:
         src: Source's region of definition [x1, y1, x2, y2].
         par: the pixel aspect ratio.
-        width, height: the result's size in pixels.
-        pos: the result's position, as in GEOMETRY_CASES: a pos(x,y) of its own, in pixels from
-            Source's top-left corner (y down), or AT_SOURCE_BOTTOM (Source's bottom-left corner).
+        width: the result's width in pixels.
+        height: the result's height in pixels.
+        pos: the result's position, as in GEOMETRY_CASES: the pos(x,y) of a layout's result, in
+            pixels from Source's top-left corner (y down), or AT_SOURCE_BOTTOM (Source's
+            bottom-left corner).
 
     Returns:
         [x1, y1, x2, y2].
@@ -438,21 +450,22 @@ def check_output(report, expected):
     return problems
 
 
-def check_padded(report):
-    """Checks an output whose top-left part is opaque green and the rest transparent black.
+def check_padded(report, color):
+    """Checks an output with a part of an opaque color and the rest transparent black.
 
     Args:
         report: the parsed report.json of the render.
+        color: the RGBA value of the result's pixels.
 
     Returns:
-        A list of problems, empty if green and alpha go from 0 to 1, and red and blue are 0.
+        A list of problems, empty if every channel goes from 0 to its value in color.
     """
     renders = report.get('renders') or []
     output = (renders[0].get('output') if renders else None) or {}
     lows, highs = output.get('min') or [], output.get('max') or []
     if len(lows) < 4 or len(highs) < 4 or None in lows[:4] or None in highs[:4]:
         return ['no RGBA output (%s, %s)' % (lows, highs)]
-    expected = [(0.0, 0.0), (0.0, 1.0), (0.0, 0.0), (0.0, 1.0)]
+    expected = [(0.0, v) for v in color]
     return ['channel %d is in [%g, %g], expected [%g, %g]' % (c, lows[c], highs[c], lo, hi)
             for c, (lo, hi) in enumerate(expected)
             if abs(lows[c] - lo) > TOLERANCE or abs(highs[c] - hi) > TOLERANCE]
@@ -781,8 +794,8 @@ def check_geometry(host, plugins, work):
         report_path = os.path.join(work, pid[len('eu.gmic.'):], 'report.json')
         with open(report_path, encoding='utf-8') as f:
             report = json.load(f)
-        if color == PADDED:
-            problems += ['%s: %s' % (name, p) for p in check_padded(report)]
+        if isinstance(color, Padded):
+            problems += ['%s: %s' % (name, p) for p in check_padded(report, color.color)]
         elif color == SPLIT:
             problems += ['%s: %s' % (name, p) for p in check_split(report, os.path.dirname(report_path))]
         else:

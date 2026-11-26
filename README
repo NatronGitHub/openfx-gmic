@@ -339,11 +339,14 @@ Rendering
 Results of another size (issue #175): as in G'MIC-Qt, a filter's result may be larger, smaller or
 moved (Rotate, frames, crops, Upscale [Scale2x]..., or a pos(x,y) in the result's name, from
 Source's top-left corner). The Resize Mode (in Advanced Options) chooses the output:
-- Dynamic, the default: the result's size and position. A result with a pos(x,y) of its own is
-  placed there, its top-left corner moved by x to the right and y down from Source's, as G'MIC-Qt
-  places a layer. A result without one (no pos, or Source's name kept: most filters, e.g.
-  Upscale [Scale2x], frames, rotations) keeps Source's bottom-left corner, the origin of OFX images:
-  a 2x upscale of a 1920x1080 Source at 0,0 is at 0,0-3840,2160 (issue #238). OpenFX needs the
+- Dynamic, the default: the result's size and position. If some result of the filter's run has a
+  non-zero pos(x,y) (a layout: tiles, speech bubbles, layers moved by the filter), each result is
+  placed as G'MIC-Qt places a layer, its top-left corner moved by x to the right and y down from
+  Source's. Otherwise (no pos, G'MIC's default pos(0,0), or an input's name kept: most filters,
+  e.g. Upscale [Scale2x], frames, rotations, montages, and also crops, downscales and tiles
+  without a pos, which G'MIC-Qt places at the top-left corner) the result keeps Source's
+  bottom-left corner, the origin of OFX images: a 2x upscale of a 1920x1080 Source at 0,0 is at
+  0,0-3840,2160, a 50% downscale at 0,0-960,540 (issue #238). OpenFX needs the
   size and position before the render: the plug-in runs the filter on opaque gradient images and
   predicts them:
   - three small probes with Source's long side at 64, 80 and 96 pixels (the inputs' proportions
@@ -369,8 +372,10 @@ Source's top-left corner). The Resize Mode (in Advanced Options) chooses the out
   next query. Sizes that depend on the image's content (automatic crops, crops of the
   transparent parts) can't be predicted. A result that doesn't fit the output is cropped or
   padded, with a warning on the node.
-- Fixed (Inplace): Source's size and position. A result of another size is cropped or padded,
-  from its top-left corner, never resized.
+- Fixed (Inplace): Source's size and position. A result of another size is placed as with
+  Dynamic, then cropped or padded to Source's rectangle, never resized: switching between Fixed
+  and Dynamic never moves the content (before #238, Fixed cropped from the top-left corner and
+  ignored pos).
 - Downsample 1/N: the filter runs on Source downsampled N times, and the result is resized to
   Source's size.
 Results of Source's size render as before in every mode. The inputs may have any size and
