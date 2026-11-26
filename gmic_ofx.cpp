@@ -38,6 +38,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <locale>
 #include <memory>
@@ -118,6 +120,28 @@ bool hostIsNatron()
 bool hostSupportsOverlays()
 {
 	return OFX::getImageEffectHostDescription()->supportsOverlays;
+}
+
+// Does the plug-in show, hide, enable and disable the parameters as the filter's status says
+// (issue #173)? On Natron only, which keeps these changes and saves them in projects: other
+// hosts may not follow them (OFX doesn't require a host to update its interface), and a parameter
+// that the status hid would then stay hidden. The environment variable
+// OFX_GMIC_TEST_STATUS_VISIBILITY=1 makes other hosts do it too, for the tests (hostDemo).
+static bool statusVisibilityOnHost()
+{
+	static const bool test = [] {
+		const char* const v = std::getenv("OFX_GMIC_TEST_STATUS_VISIBILITY");
+		return v && std::strcmp(v, "1") == 0;
+	}();
+	return test || hostIsNatron();
+}
+
+// The display status that a parameter is declared with: G'MIC-Qt's initial state, except for the
+// parameters whose visibility follows the status (Parameter::followsStatus) on the hosts where the
+// plug-in doesn't follow it (statusVisibilityOnHost), which are shown and enabled
+static DisplayStatus describedDisplayStatus(const Parameter& param)
+{
+	return (param.followsStatus && !statusVisibilityOnHost()) ? DisplayStatus::Normal : param.displayStatus;
 }
 
 // Check the effect descriptor for potentially bad XML in the OFX Plugin cache.
@@ -398,10 +422,10 @@ void premultiplyPlanar(float* data, int width, int height, float maxValue)
 // would be opaque everywhere, with hard bright edges where the input was transparent. Before the
 // premultiplication handling, G'MIC got the premultiplied colours, i.e. the input composited over
 // black, and the result looked composited over black too. To keep that look, the colours are
-// multiplied by the main input's alpha and the output alpha stays opaque. The result is resized to
-// the input's size at the end of the G'MIC command: only gray or RGB results that had the processed
-// input's size come here without alpha, the others get an opaque alpha before that resize, since
-// the input alpha wouldn't line up with them (see kOpaqueResizedCommand in gmic_plugin.cpp). out is the
+// multiplied by the main input's alpha and the output alpha stays opaque. Only gray or RGB results
+// that have the processed input's size come here without alpha: the others get an opaque alpha at
+// the end of the G'MIC command, since the input alpha wouldn't line up with them (see
+// kOpaqueResizedCommand in gmic_plugin.cpp). out is the
 // output buffer, in the main input's buffer, both in pixel coordinates with rows top-down.
 void multiplyByInputAlphaPlanar(const World& out, const World& in, float maxValue)
 {
@@ -479,7 +503,48 @@ struct LayerTimes
 // a parameter of the plug-in, of the type of its GlobalData entry (none for the layers, groups and
 // separators)
 using ParamPtr = std::variant<std::monostate, OFX::DoubleParam*, OFX::IntParam*, OFX::BooleanParam*, OFX::ChoiceParam*,
-	OFX::RGBParam*, OFX::RGBAParam*, OFX::Double2DParam*, OFX::StringParam*>;
+	OFX::RGBParam*, OFX::RGBAParam*, OFX::Double2DParam*, OFX::StringParam*, OFX::PushButtonParam*>;
+
+// The base class of a parameter of the plug-in (null for none)
+static OFX::Param* paramBase(const ParamPtr& param)
+{
+	return std::visit([](auto p) -> OFX::Param* {
+		if constexpr (std::is_same_v<decltype(p), std::monostate>) {
+			return nullptr;
+		} else {
+			return p;
+		}
+	}, param);
+}
+
+// The input images of a G'MIC run (see GMICEffect::fetchInputs): the host's, and their float
+// planar copies, which G'MIC gets (SequenceData::inWorld points to them)
+struct GmicInputs
+{
+	std::vector<std::unique_ptr<OFX::Image>> images;
+	std::vector<std::vector<float>> buffers;
+	// the rectangle and pixel aspect ratio of the first input (Source), the image G'MIC processes:
+	// point parameters are relative to it (fetchParamValues). The caller's values are kept if
+	// Source's rectangle is empty.
+	OfxRectI firstRect = { 0, 0, 0, 0 };
+	double firstPAR = 1.;
+	bool firstPremultiplied = false; // Source is premultiplied (unpremultiplied for G'MIC)
+};
+
+// why fetchInputs gave no inputs to G'MIC
+enum class InputsStatus
+{
+	kOk,
+	kNoSource, // no Source image (not connected, or the host gave none)
+	kNoLayer, // no image for a layer at another frame (layer times)
+};
+
+// what fetchInputs did (C++ Core Guidelines F.21)
+struct InputsResult
+{
+	InputsStatus status = InputsStatus::kOk;
+	std::string message; // why there are no inputs (not kOk)
+};
 
 // ---------------------------------------------------------------------------------------------
 // The effect instance
@@ -509,12 +574,14 @@ private:
 	void getClipPreferences(OFX::ClipPreferencesSetter& clipPreferences) override;
 	void changedParam(const OFX::InstanceChangedArgs& args, const std::string& paramName) override;
 	void changedClip(const OFX::InstanceChangedArgs& args, const std::string& clipName) override;
+	void endChanged(OFX::InstanceChangeReason reason) override;
 	void purgeCaches() override { pluginPurgeCaches(); }
 	// throws kOfxStatFailed for a render scale that the action must refuse
 	void refuseRenderScale(const OfxPointD& renderScale) const;
 
 	// the render fails (a missing image): unless the host aborted it, then the output is discarded
 	void failUnlessAborted() const;
+	InputsResult fetchInputs(double time, SequenceData& sd, GmicInputs& in) const;
 	void fetchParamValues(SequenceData& sd, const OfxRectI& rect, double par, double t, const OfxPointD& renderScale) const;
 	LayerTimes layerTimesAt(double t) const;
 	double inputTime(const LayerTimes& lt, int i, double t) const;
@@ -527,6 +594,7 @@ private:
 	std::optional<OfxRectD> sourceRoD(double time) const;
 	void pointChangedByUser(int i, double time, bool moveToSource = true);
 	bool pointIsDefault(const Parameter& param, double x, double y) const;
+	std::optional<OfxRectD> resultRoD(const OfxRectD& sourceRod, double time, const OfxPointD& renderScale) const;
 	void pointsFromSourceRead();
 	void pointsFromSourceWrite();
 	void pointsMoveToSource(double time, int onlyParam);
@@ -536,6 +604,11 @@ private:
 	void pointUpdateEnabled(int checkbox, bool draft);
 	void pointsUpdateEnabled(int onlyParam);
 	void draftModeUpdateEnabled();
+	void runStatus(double time, std::optional<int> button);
+	void statusDisplayFromHost();
+	void applyStatusVisibility(const std::vector<std::pair<int, DisplayStatus>>& visibility);
+	void setParamValue(int i, const SequenceData& sd, const GmicInputs& in, const OfxPointD& renderScale, double time,
+		std::optional<double> exact = std::nullopt);
 
 	const GlobalData& _gd;
 	OFX::Clip* _output;
@@ -545,6 +618,7 @@ private:
 	OFX::ChoiceParam* _outputLayer;
 	OFX::BooleanParam* _animateSeed;
 	OFX::BooleanParam* _draftMode;
+	OFX::ChoiceParam* _resizeMode;
 	// layer times (see layerTimesAt), NULL for plug-ins without them
 	OFX::IntParam* _layersFromSource = nullptr;
 	int _lastLayersFromSource = 0; // its value at the previous change (see changedParam)
@@ -553,6 +627,16 @@ private:
 	// pointsMoveToSource), also kept in the hidden parameter kPointsFromSourceParam
 	OFX::StringParam* _pointsFromSource = nullptr;
 	std::vector<std::optional<OfxPointD>> _pointFromSource; // per _gd.param
+	bool _statusRunning = false; // a run for the status is going on (see runStatus)
+	// a user edit of the filter's parameters, or of Source, asks for a run for the status at the
+	// end of its instance changed bracket (see endChanged), at the time of the edit
+	bool _statusPending = false;
+	double _statusTime = 0.;
+	// the presses made during a run (see runStatus): (push button, time), run after it, in order
+	std::vector<std::pair<int, double>> _pressesPending;
+	// per _gd.param: the display status that the last status gave, if any (see
+	// applyStatusVisibility); else the declared one (describedDisplayStatus)
+	std::vector<std::optional<DisplayStatus>> _statusDisplay;
 	GmicInstanceData _gmic;
 };
 
@@ -564,7 +648,9 @@ GMICEffect::GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData
 	, _outputLayer(fetchChoiceParam(kOutputLayerParam))
 	, _animateSeed(fetchBooleanParam(kAnimateSeedParam))
 	, _draftMode(fetchBooleanParam(kDraftModeParam))
+	, _resizeMode(fetchChoiceParam(kResizeModeParam))
 	, _pointFromSource((size_t)globalData.nofParams)
+	, _statusDisplay((size_t)globalData.nofParams)
 {
 	for (int i = 0; i < _gd.nofParams; i++) {
 		const Parameter& param = _gd.param[i];
@@ -599,6 +685,9 @@ GMICEffect::GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData
 		case ParamType::Text:
 			_params[i] = fetchStringParam(name);
 			break;
+		case ParamType::Button:
+			_params[i] = fetchPushButtonParam(name);
+			break;
 		default:
 			break;
 		}
@@ -613,8 +702,35 @@ GMICEffect::GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData
 			_timeOffset[l] = fetchIntParam(inputName((int)l) + kTimeOffsetParamSuffix);
 		}
 	}
+	statusDisplayFromHost();
 	pointsUpdateEnabled(-1);
 	draftModeUpdateEnabled();
+}
+
+// The display status that the last status gave the parameters (see applyStatusVisibility), from
+// their flags: Natron saves the secret and enabled flags that differ from the declared ones, and
+// restores them before it creates the instance (Engine/Knob.cpp hasModificationsForSerialization,
+// Node::loadKnob, KnobChoice::choiceRestoration), so that draftModeUpdateEnabled() doesn't enable
+// a parameter that the status disabled. The enabled flag of a parameter of the preview command
+// only (Parameter::draftModeOnly) tells nothing while Preview/Draft Mode is off: it keeps its
+// declared state then.
+void GMICEffect::statusDisplayFromHost()
+{
+	if (!statusVisibilityOnHost()) return;
+	const bool draft = draftModeValue().value_or(false);
+	for (int i = 1; i <= _gd.nofFilterParams; i++) {
+		if (!_gd.param[i].followsStatus) continue;
+		OFX::Param* const param = paramBase(_params[i]);
+		if (!param) continue;
+		const std::optional<bool> secret = hostQuery([param] { return param->getIsSecret(); });
+		const std::optional<bool> enabled = hostQuery([param] { return param->getIsEnable(); });
+		if (!secret || !enabled) continue;
+		if (*secret) {
+			_statusDisplay[i] = DisplayStatus::Hidden;
+		} else if (!_gd.param[i].draftModeOnly || draft) {
+			_statusDisplay[i] = *enabled ? DisplayStatus::Normal : DisplayStatus::Disabled;
+		}
+	}
 }
 
 void GMICEffect::failUnlessAborted() const
@@ -653,6 +769,22 @@ void GMICEffect::refuseRenderScale(const OfxPointD& renderScale) const
 	}
 }
 
+// A point parameter's canonical coordinates as G'MIC's: percent of the image rect (in pixels, of
+// pixel aspect ratio par) at renderScale, from its top-left corner (G'MIC's y goes down); an empty
+// rect (no input, empty output) counts as 1 pixel, so as not to divide by 0. pointFromPercent is
+// its inverse.
+static OfxPointD pointToPercent(const OfxPointD& p, const OfxRectI& rect, double par, const OfxPointD& renderScale)
+{
+	const int w = std::max(1, rect.x2 - rect.x1), h = std::max(1, rect.y2 - rect.y1);
+	return { (p.x * renderScale.x / par - rect.x1) * 100. / w, 100. - (p.y * renderScale.y - rect.y1) * 100. / h };
+}
+
+static OfxPointD pointFromPercent(const OfxPointD& percent, const OfxRectI& rect, double par, const OfxPointD& renderScale)
+{
+	const int w = std::max(1, rect.x2 - rect.x1), h = std::max(1, rect.y2 - rect.y1);
+	return { (percent.x * w / 100. + rect.x1) * par / renderScale.x, ((100. - percent.y) * h / 100. + rect.y1) / renderScale.y };
+}
+
 // dstRect is in pixels; point parameters are in canonical coordinates: pixel x = canonical x *
 // renderScale.x / par, pixel y = canonical y * renderScale.y (par: the pixel aspect ratio of the
 // image dstRect belongs to)
@@ -684,12 +816,9 @@ void GMICEffect::fetchParamValues(SequenceData& sd, const OfxRectI& dstRect, dou
 			}
 			break;
 		case ParamType::Point: {
-			// percent of the image, from its top-left corner (G'MIC's y goes down); an empty dstRect
-			// (no input, empty output) counts as 1 pixel, so as not to divide by 0
-			const OfxPointD p = std::get<OFX::Double2DParam*>(_params[i])->getValueAtTime(t);
-			const int w = std::max(1, dstRect.x2 - dstRect.x1), h = std::max(1, dstRect.y2 - dstRect.y1);
-			value[0] = static_cast<float>((p.x * renderScale.x / par - dstRect.x1) * 100. / w);
-			value[1] = 100.f - static_cast<float>((p.y * renderScale.y - dstRect.y1) * 100. / h);
+			const OfxPointD p = pointToPercent(std::get<OFX::Double2DParam*>(_params[i])->getValueAtTime(t), dstRect, par, renderScale);
+			value[0] = static_cast<float>(p.x);
+			value[1] = static_cast<float>(p.y);
 		} break;
 		case ParamType::Select:
 			value[0] = static_cast<float>(std::get<OFX::ChoiceParam*>(_params[i])->getValueAtTime(t));
@@ -699,6 +828,9 @@ void GMICEffect::fetchParamValues(SequenceData& sd, const OfxRectI& dstRect, dou
 			break;
 		case ParamType::Text:
 			std::get<OFX::StringParam*>(_params[i])->getValueAtTime(t, sd.textValue[i]);
+			break;
+		case ParamType::Button:
+			value[0] = 0.f; // pressed: only in the run that the press makes (runStatus)
 			break;
 		default:
 			break;
@@ -743,7 +875,7 @@ double GMICEffect::inputTime(const LayerTimes& lt, int i, double t) const
 }
 
 // tells the host what region we are capable of filling: Source's (the host's default if it can't
-// be read)
+// be read), or with Resize Mode Dynamic, the result's (see resultRoD)
 bool GMICEffect::getRegionOfDefinition(const OFX::RegionOfDefinitionArguments& args, OfxRectD& rod)
 {
 	refuseRenderScale(args.renderScale);
@@ -751,7 +883,99 @@ bool GMICEffect::getRegionOfDefinition(const OFX::RegionOfDefinitionArguments& a
 	const std::optional<OfxRectD> sourceRod = hostQuery([&] { return source->getRegionOfDefinition(args.time); });
 	if (!sourceRod) return false;
 	rod = *sourceRod;
+	// (a host without multi-resolution keeps the output at Source's size: no probe, see
+	// pluginKeepsResultSize)
+	if (pluginKeepsResultSize() && !pluginPassesSourceThrough(_gd) && source->isConnected() && !isEmpty(*sourceRod) &&
+		_resizeMode->getValueAtTime(args.time) == kResizeModeDynamic) {
+		try {
+			if (const std::optional<OfxRectD> result = resultRoD(*sourceRod, args.time, args.renderScale)) {
+				rod = *result;
+			}
+		} catch (const std::bad_alloc&) {
+			gmicLog("G'MIC: %s: not enough memory to measure the result's size: the output keeps Source's size\n",
+			        _gd.pluginInfo.name.c_str());
+		}
+	}
 	return true;
+}
+
+// the pixels of a canonical rectangle, as hosts compute the bounds of images (Natron's
+// RectD::toPixelEnclosing, hostDemo's canonicalToPixelEnclosing)
+OfxRectI toPixelEnclosing(const OfxRectD& r, const OfxPointD& renderScale, double par)
+{
+	return OfxRectI{ (int)std::floor(r.x1 * renderScale.x / par), (int)std::floor(r.y1 * renderScale.y),
+		(int)std::ceil(r.x2 * renderScale.x / par), (int)std::ceil(r.y2 * renderScale.y) };
+}
+
+// The canonical coordinate of a pixel edge p (x: par is the pixel aspect ratio and scale the
+// render scale x; y: par 1 and the render scale y), such that the host's rounding of the region of
+// definition to pixels (toPixelEnclosing: floor(c * scale / par) for the low edges, ceil for the
+// high ones, as Natron's RectD::toPixelEnclosing) gives p back. Exact when it does (e.g. an edge at
+// 0 stays 0, which Natron's connection test compares exactly); else moved inwards by 1e-6 pixel,
+// the same in both axes.
+double canonicalEdge(int p, double par, double scale, bool high)
+{
+	const double c = p * par / scale;
+	const double back = high ? std::ceil(c * scale / par) : std::floor(c * scale / par);
+	if (back == p) return c;
+	constexpr double kInwards = 1e-6; // pixel
+	return (high ? p - kInwards : p + kInwards) * par / scale;
+}
+
+// Resize Mode Dynamic (issue #175): the region of definition of the result, from its geometry
+// (pluginResultGeometry, which predicts it from small probes of the inputs' regions of
+// definition, at the render time, with the layer times). Empty if it is Source's (a result of
+// Source's size at its top-left corner: Source's region of definition, exactly as before), or if
+// it is unknown (G'MIC failed, or a size that isn't affine).
+// At the action's render scale (issue #179: the filters whose preview factor ends with "+" in
+// Natron, every filter elsewhere): the inputs' pixels and the point percentages at that scale,
+// as the render gets them, so the probes' command lines and cache keys are the render's at that
+// scale. (Natron's other filters refuse a render scale here, before any probe.) The pixel rectangle is the result's, its top-left corner at
+// Source's moved by the result's pos(x,y), in canonical coordinates (see canonicalEdge).
+std::optional<OfxRectD> GMICEffect::resultRoD(const OfxRectD& sourceRod, double time, const OfxPointD& renderScale) const
+{
+	// the values of the render at this time (see render), the inputs without images
+	SequenceData values;
+	SequenceData* const sd = &values;
+	for (int i = 0; i < _gd.nofParams; i++) {
+		sd->textValue[i] = _gd.param[i].text;
+		std::copy(_gd.param[i].defaultValue, _gd.param[i].defaultValue + 4, sd->floatValue[i]);
+	}
+	sd->time = time;
+	if (const std::optional<OfxRangeD> range = frameRangeOf(*_inputs[0]);
+		range && range->min <= range->max && std::fabs(range->min) < 1e9) {
+		sd->frameRangeStart = range->min;
+	}
+	double par = hostQuery([this] { return _inputs[0]->getPixelAspectRatio(); }).value_or(1.);
+	if (!(par > 0.)) par = 1.;
+	const OfxRectI sourcePixels = toPixelEnclosing(sourceRod, renderScale, par);
+	const LayerTimes lt = layerTimesAt(time);
+	for (int i = 0; i < lt.nofInputs; i++) {
+		const int c = lt.clipIndex(i);
+		OFX::Clip* clip = _inputs[c];
+		if (!clip->isConnected()) break;
+		const double t = inputTime(lt, i, time);
+		const std::optional<OfxRectD> inRod = i == 0 ? std::optional<OfxRectD>(sourceRod) : hostQuery([&] { return clip->getRegionOfDefinition(t); });
+		if (!inRod || isEmpty(*inRod)) break;
+		const OfxRectI r = toPixelEnclosing(*inRod, renderScale, par);
+		World& in = sd->inWorld[i];
+		in.name = inputName(c);
+		in.origin_x = r.x1;
+		in.origin_y = r.y1;
+		in.width = r.x2 - r.x1;
+		in.height = r.y2 - r.y1;
+		sd->inputConnected[i] = true;
+	}
+	fetchParamValues(values, sourcePixels, par, time, renderScale);
+	const std::optional<ResultGeometry> g = pluginResultGeometry(values, _gd);
+	const int sw = sourcePixels.x2 - sourcePixels.x1, sh = sourcePixels.y2 - sourcePixels.y1;
+	if (!g || (!g->hasMargin() && g->x == 0 && g->y == 0 && g->width == sw && g->height == sh)) return std::nullopt;
+	// pixels (y up): the result's top edge is Source's, moved down by pos y; then its margin
+	const int rx1 = sourcePixels.x1 + g->x, ry2 = sourcePixels.y2 - g->y;
+	const int x1 = rx1 - g->marginLeft, y2 = ry2 + g->marginTop;
+	const int x2 = rx1 + g->width + g->marginRight, y1 = ry2 - g->height - g->marginBottom;
+	return OfxRectD{ canonicalEdge(x1, par, renderScale.x, false), canonicalEdge(y1, 1., renderScale.y, false),
+		canonicalEdge(x2, par, renderScale.x, true), canonicalEdge(y2, 1., renderScale.y, true) };
 }
 
 // tells the host how much of the input we need to fill the given window
@@ -919,6 +1143,23 @@ void GMICEffect::changedParam(const OFX::InstanceChangedArgs& args, const std::s
 		break;
 	}
 
+	// a push button pressed (issue #174), by the user or a script (Natron reports both as user
+	// edits); another parameter of the filter edited by the user (also an undo or a redo, which
+	// Natron reports as user edits): a run for the status at the end of the bracket (issue #173,
+	// see endChanged). The plug-in's own changes (eChangePluginEdit) ask for none.
+	if (args.reason == OFX::eChangeUserEdit) {
+		for (int i = 1; i <= _gd.nofFilterParams; i++) {
+			if (_gd.param[i].paramName != paramName) continue;
+			if (_gd.param[i].paramType == ParamType::Button) {
+				runStatus(args.time, i); // (during a run: at the end of the bracket, see endChanged)
+			} else if (_gd.statusOnEdit) {
+				_statusPending = true;
+				_statusTime = args.time;
+			}
+			break;
+		}
+	}
+
 	// we are only interested in user edits below
 	if (args.reason != OFX::eChangeUserEdit) return;
 
@@ -961,11 +1202,39 @@ void GMICEffect::pointChangedByUser(int i, double time, bool moveToSource)
 	}
 }
 
-// Source connected or changed by the user: point defaults within it
+// Source connected or changed by the user: point defaults within it, then a run for the status
+// (see endChanged)
 void GMICEffect::changedClip(const OFX::InstanceChangedArgs& args, const std::string& clipName)
 {
 	if (args.reason == OFX::eChangeUserEdit && clipName == inputName(0)) {
 		pointsMoveToSource(args.time, -1);
+		if (_gd.statusOnEdit && _inputs[0]->isConnected()) { // (not when it is disconnected)
+			_statusPending = true;
+			_statusTime = args.time;
+		}
+	}
+}
+
+// The end of a bracket of instance changed actions (kOfxActionEndInstanceChanged; Natron makes one
+// per edit, also for the steps of a slider drag that it groups): if the bracket had a user edit
+// of the filter's parameters or of Source (see changedParam, changedClip), G'MIC-Qt's run of the
+// preview command after a change (issue #173, see runStatus), once. Not in render, where an
+// effect may not set its parameters. During a run, the host may process its events and so make
+// other brackets: an edit then runs again once the run is over.
+void GMICEffect::endChanged(OFX::InstanceChangeReason /*reason*/)
+{
+	if (_statusRunning) return; // (the run that is going on runs them once it is over)
+	while (!_pressesPending.empty() || _statusPending) {
+		if (!_pressesPending.empty()) {
+			// a press also runs with the values that an edit gave
+			const std::pair<int, double> press = _pressesPending.front();
+			_pressesPending.erase(_pressesPending.begin());
+			if (_pressesPending.empty()) _statusPending = false;
+			runStatus(press.second, press.first);
+		} else {
+			_statusPending = false;
+			runStatus(_statusTime, std::nullopt);
+		}
 	}
 }
 
@@ -1095,12 +1364,14 @@ bool GMICEffect::isPointCheckbox(int i) const
 }
 
 // whether a parameter may be enabled at all: not disabled in its descriptor
-// (DisplayStatus::Disabled), and, for the parameters of the preview command only
-// (Parameter::draftModeOnly), Preview/Draft Mode on (draft, its value)
+// (DisplayStatus::Disabled), or by the last status (see applyStatusVisibility), and, for the
+// parameters of the preview command only (Parameter::draftModeOnly), Preview/Draft Mode on
+// (draft, its value)
 bool GMICEffect::mayBeEnabled(int i, bool draft) const
 {
 	const Parameter& param = _gd.param[i];
-	return param.displayStatus != DisplayStatus::Disabled && (!param.draftModeOnly || draft);
+	const DisplayStatus status = _statusDisplay[i].value_or(describedDisplayStatus(param));
+	return status != DisplayStatus::Disabled && (!param.draftModeOnly || draft);
 }
 
 // Preview/Draft Mode, at the current time (none if the host fails)
@@ -1149,13 +1420,188 @@ void GMICEffect::draftModeUpdateEnabled()
 		}
 		const bool enabled = mayBeEnabled(i, *draft);
 		// (markSplitPreviewParams: a choice or a point)
-		if (OFX::ChoiceParam* const* choice = std::get_if<OFX::ChoiceParam*>(&_params[i])) {
-			OFX::ChoiceParam* const c = *choice;
-			hostTry([c, enabled] { c->setEnabled(enabled); });
-		} else if (OFX::Double2DParam* const* point = std::get_if<OFX::Double2DParam*>(&_params[i])) {
-			OFX::Double2DParam* const pt = *point;
-			hostTry([pt, enabled] { pt->setEnabled(enabled); });
+		if (OFX::Param* const param = paramBase(_params[i])) {
+			hostTry([param, enabled] { param->setEnabled(enabled); });
 		}
+	}
+}
+
+// A G'MIC button() (issue #174) is a push button, as in G'MIC-Qt, where it gives 1 to the next run
+// only (ButtonParameter.cpp: the value is cleared once a run has it, MainWindow.cpp). That run is
+// the preview that a click triggers: Apply follows it, so it gets 0, and what a button does
+// reaches the result through the values that the preview's status sets (Mandelbrot's zoom
+// buttons write new coordinates, Randomize Seed a new seed). Here, renders always give 0 for a
+// button; pressing it runs the filter's preview command once, with 1 for it and the other values
+// at the time of the press, on the input images at that time scaled down to G'MIC-Qt's preview
+// size, and sets the parameter values that the run's status gives, as G'MIC-Qt's preview does
+// (pluginRunStatus). These changes are one undo step (an edit block named after the button), set
+// at the time of the press on animated parameters; a parameter whose G'MIC argument stays the
+// same is not set. The run's image is discarded: a button whose filter sets no status does
+// nothing. From the instance changed action, the only place besides interacts where an effect may
+// set its parameters; the host's GUI waits for the run, which the user can cancel.
+// The same run follows each user edit of a statusOnEdit filter's parameters or of its Source
+// (no button, issue #173, see endChanged), as G'MIC-Qt's preview, or its "GUI dynamism" run when
+// the preview is off, after each change: it sets the values that the status gives, without an
+// undo step of their own (an undo of the user's edit is a user edit, which runs the status again),
+// and, on Natron, the visibilities (applyStatusVisibility). Its errors are logged only, as the
+// render reports them.
+void GMICEffect::runStatus(double time, std::optional<int> button)
+{
+	const bool press = button.has_value();
+	const std::string what = press ? _gd.param[*button].displayName : std::string("status after an edit");
+	// one run at a time: the host may process its events while the run goes on (Natron's progress
+	// panel does, so that its Cancel works), and so call the instance changed action again. A press
+	// or an edit then runs after this run (see endChanged), as G'MIC-Qt keeps a clicked button at 1
+	// until its next preview.
+	if (_statusRunning) {
+		if (press) _pressesPending.emplace_back(*button, time);
+		return;
+	}
+	struct StatusRunning {
+		bool& running;
+		explicit StatusRunning(bool& r) : running(r) { running = true; }
+		~StatusRunning() { running = false; }
+		StatusRunning(const StatusRunning&) = delete;
+		StatusRunning& operator=(const StatusRunning&) = delete;
+	} statusRunning(_statusRunning);
+	if (pluginPassesSourceThrough(_gd)) return;
+	if (!press && !_inputs[0]->isConnected()) return; // (nothing to log for every edit)
+	SequenceData sd;
+	GmicInputs inputs;
+	const InputsResult fetched = fetchInputs(time, sd, inputs);
+	if (fetched.status != InputsStatus::kOk) {
+		gmicLog("openfx-gmic: %s: %s: %s\n", _gd.pluginInfo.name.c_str(), what.c_str(), fetched.message.c_str());
+		// a press: a warning, so that the button doesn't just look broken (no Source, or no image
+		// from the host in the instance changed action)
+		if (press) sendMessage(OFX::Message::eMessageWarning, "", what + ": nothing done. " + fetched.message);
+		return;
+	}
+	// (the host's: 1 in Natron, which gives full-resolution images outside renders)
+	OfxPointD renderScale = { 1., 1. };
+	{
+		const OFX::PropertySet& props = inputs.images[0]->getPropertySet();
+		const std::optional<double> sx = hostQuery([&props] { return props.propGetDouble(kOfxImageEffectPropRenderScale, 0); });
+		const std::optional<double> sy = hostQuery([&props] { return props.propGetDouble(kOfxImageEffectPropRenderScale, 1); });
+		if (sx && sy && *sx > 0. && *sy > 0.) renderScale = { *sx, *sy };
+	}
+	fetchParamValues(sd, inputs.firstRect, inputs.firstPAR, time, renderScale);
+	const SequenceData atPress = sd; // the values when the run started
+	if (press) sd.floatValue[*button][0] = 1.f;
+	const GmicStatusRun run = pluginRunStatus(sd, _gd, *this);
+	if (run.cancelled) {
+		_pressesPending.clear(); // (the user's Cancel also drops the presses made during the run)
+		return;
+	}
+	if (!run.error.empty()) {
+		// (pluginRunStatus logs it)
+		if (press) sendMessage(OFX::Message::eMessageError, "", what + ": " + run.error);
+		return;
+	}
+	if (press && !run.warning.empty()) {
+		sendMessage(OFX::Message::eMessageWarning, "", what + ": " + run.warning);
+	}
+	// a press: one undo step, begun at the first change only; best-effort: without an undo block if
+	// the host refuses it. An edit: none (see above)
+	EditBlock editBlock(*this, what, press, EditBlock::eBeginOnChange, EditBlock::eHostErrorsIgnore);
+	// the values now: the user may have changed some during the run (the host processes its events
+	// while the run's progress shows), and these changes win over the status
+	SequenceData now;
+	if (!run.changed.empty()) {
+		now = atPress;
+		fetchParamValues(now, inputs.firstRect, inputs.firstPAR, time, renderScale);
+	}
+	for (const int i : run.changed) {
+		if (now.textValue[i] != atPress.textValue[i] ||
+			!std::equal(now.floatValue[i], now.floatValue[i] + 4, atPress.floatValue[i])) {
+			continue;
+		}
+		editBlock.open();
+		// a value that the host refuses doesn't keep the others from being set
+		const auto exact = run.exact.find(i);
+		const std::optional<double> exactValue = (exact != run.exact.end()) ? std::optional<double>(exact->second) : std::nullopt;
+		hostTry([&] { setParamValue(i, sd, inputs, renderScale, time, exactValue); });
+	}
+	applyStatusVisibility(run.visibility);
+}
+
+// Shows, hides, enables or disables the parameters as a status says (GmicStatusRun::visibility,
+// issue #173), as G'MIC-Qt's AbstractParameter::setVisibilityState(): hidden is secret, disabled
+// is shown and disabled, visible is shown and enabled (and, for the parameters of the preview
+// command only, Preview/Draft Mode on: see mayBeEnabled). Natron only (statusVisibilityOnHost), as
+// declared (describedDisplayStatus): other hosts keep every parameter shown. A flag is set only
+// if it changes. Natron saves both flags in projects, and restores them (Node::loadKnob).
+void GMICEffect::applyStatusVisibility(const std::vector<std::pair<int, DisplayStatus>>& visibility)
+{
+	if (visibility.empty() || !statusVisibilityOnHost()) return;
+	const bool draft = draftModeValue().value_or(true);
+	for (const auto& [i, status] : visibility) {
+		_statusDisplay[i] = status;
+		OFX::Param* const param = paramBase(_params[i]);
+		if (!param) continue;
+		const bool secret = status == DisplayStatus::Hidden;
+		if (hostQuery([param] { return param->getIsSecret(); }) != secret) {
+			hostTry([param, secret] { param->setIsSecret(secret); });
+		}
+		if (secret) continue; // (as G'MIC-Qt: a hidden parameter keeps its enabled state)
+		const bool enabled = mayBeEnabled(i, draft);
+		if (hostQuery([param] { return param->getIsEnable(); }) != enabled) {
+			hostTry([param, enabled] { param->setEnabled(enabled); });
+		}
+	}
+}
+
+// the value of a parameter that may be animated: at time if it has keys, else its only value
+template <class P, class... V>
+void setValueOrKey(P* param, double time, const V&... value)
+{
+	const std::optional<unsigned int> keys = hostQuery([param] { return param->getNumKeys(); });
+	if (keys && *keys > 0) {
+		param->setValueAtTime(time, value...);
+	} else {
+		param->setValue(value...);
+	}
+}
+
+// Sets parameter i to its value in sd, at time (see setValueOrKey): the inverse of
+// fetchParamValues, points relative to in.firstRect at renderScale. Push buttons have no value.
+void GMICEffect::setParamValue(int i, const SequenceData& sd, const GmicInputs& in, const OfxPointD& renderScale, double time,
+	std::optional<double> exact)
+{
+	const Parameter& param = _gd.param[i];
+	const float* const value = sd.floatValue[i];
+	switch (param.paramType) {
+	case ParamType::Float: // (exact: the status's number, which sd only has as a float)
+		setValueOrKey(std::get<OFX::DoubleParam*>(_params[i]), time, exact.value_or(static_cast<double>(value[0])));
+		break;
+	case ParamType::Int:
+		setValueOrKey(std::get<OFX::IntParam*>(_params[i]), time, static_cast<int>(value[0]));
+		break;
+	case ParamType::Select:
+		setValueOrKey(std::get<OFX::ChoiceParam*>(_params[i]), time, static_cast<int>(value[0]));
+		break;
+	case ParamType::Bool:
+		setValueOrKey(std::get<OFX::BooleanParam*>(_params[i]), time, value[0] != 0.f);
+		break;
+	case ParamType::Color:
+		if (colorHasAlpha(param)) {
+			setValueOrKey(std::get<OFX::RGBAParam*>(_params[i]), time, static_cast<double>(value[0]), static_cast<double>(value[1]),
+				static_cast<double>(value[2]), static_cast<double>(value[3]));
+		} else {
+			setValueOrKey(std::get<OFX::RGBParam*>(_params[i]), time, static_cast<double>(value[0]), static_cast<double>(value[1]),
+				static_cast<double>(value[2]));
+		}
+		break;
+	case ParamType::Point: {
+		// percent of Source to canonical coordinates (see fetchParamValues)
+		const OfxPointD p = pointFromPercent({ value[0], value[1] }, in.firstRect, in.firstPAR, renderScale);
+		setValueOrKey(std::get<OFX::Double2DParam*>(_params[i]), time, p.x, p.y);
+	} break;
+	case ParamType::Text: {
+		OFX::StringParam* const text = std::get<OFX::StringParam*>(_params[i]);
+		setValueOrKey(text, time, sd.textValue[i]);
+	} break;
+	default:
+		break;
 	}
 }
 
@@ -1166,6 +1612,99 @@ void checkImageFormat(const OFX::Image& image)
 		(image.getPixelDepth() != OFX::eBitDepthUByte && image.getPixelDepth() != OFX::eBitDepthFloat)) {
 		OFX::throwSuiteStatusException(kOfxStatErrImageFormat);
 	}
+}
+
+// The values of a G'MIC run at time (their defaults: fetchParamValues sets the parameters' own),
+// and its input images, as in render: the layer inputs up to the first one that is missing, at
+// their layer times, converted to float planar buffers (in.buffers, which sd.inWorld points to) and
+// unpremultiplied. kNoSource: no Source image; kNoLayer: no image for a layer at another frame
+// (unless the host aborted the render), which the render must not drop; with a message.
+InputsResult GMICEffect::fetchInputs(double time, SequenceData& sd, GmicInputs& in) const
+{
+	const float scale = kGmicValueScale;
+	for (int i = 0; i < _gd.nofParams; i++) {
+		sd.textValue[i] = _gd.param[i].text;
+		std::copy(_gd.param[i].defaultValue, _gd.param[i].defaultValue + 4, sd.floatValue[i]);
+	}
+	sd.time = time;
+	// Output Layer "Frame" counts frames from the start of Source (0 if none, or infinite)
+	{
+		const OFX::Clip* source = _inputs[0];
+		const std::optional<OfxRangeD> range = frameRangeOf(*source);
+		if (range && range->min <= range->max && std::fabs(range->min) < 1e9) {
+			sd.frameRangeStart = range->min;
+		}
+	}
+
+	const LayerTimes layerTimes = layerTimesAt(time);
+	const int nofInputs = std::min((int)_inputs.size(), kMaxLayers);
+	in.images.clear();
+	in.images.resize((size_t)nofInputs);
+	in.buffers.clear();
+	in.buffers.resize((size_t)nofInputs);
+	in.firstPremultiplied = false;
+	for (int i = 0; i < nofInputs; i++) {
+		// layer times: the input may be another frame, of its clip or of Source (see
+		// getFramesNeeded). Point parameters stay relative to Source at the render time.
+		const int c = layerTimes.clipIndex(i);
+		OFX::Clip* clip = _inputs[c];
+		const std::string& clipName = inputName(c);
+		const double inTime = inputTime(layerTimes, i, time);
+		sd.inputConnected[i] = false;
+		const bool connected = clip->isConnected();
+		if (connected) {
+			sd.inputConnected[i] = true;
+			in.images[i].reset(clip->fetchImage(inTime));
+		}
+		if (!in.images[i] && connected && layerTimes.offset[i] != 0 && !abort()) {
+			// No image for a layer at another frame (within the clip's frame range): fail rather
+			// than drop it and the following layers (as for an unconnected layer, the stack stops
+			// at the first missing one), or skip it and shift the next frames into its place:
+			// the filters that use frames depend on their order.
+			char msg[512];
+			snprintf(msg, sizeof(msg), "%s: no image from %s at frame %g", inputName(i).c_str(), clipName.c_str(), inTime);
+			return { InputsStatus::kNoLayer, msg };
+		}
+		if (!in.images[i]) {
+			sd.inputConnected[i] = false;
+			if (i == 0) {
+				char msg[512];
+				snprintf(msg, sizeof(msg), "No image from %s at frame %g", clipName.c_str(), inTime);
+				return { InputsStatus::kNoSource, msg };
+			}
+			sd.inWorld[i].data = nullptr;
+			break;
+		}
+		const OFX::Image& img = *in.images[i];
+		checkImageFormat(img);
+		const OfxRectI srcRect = img.getBounds();
+		if (i == 0 && srcRect.x2 > srcRect.x1 && srcRect.y2 > srcRect.y1) {
+			in.firstRect = srcRect; // not an empty rectangle (point conversion divides by its size)
+			in.firstPAR = img.getPixelAspectRatio();
+		}
+		World& w = sd.inWorld[i];
+		w.name = clipName;
+		w.origin_x = srcRect.x1;
+		w.origin_y = srcRect.y1;
+		w.width = srcRect.x2 - srcRect.x1;
+		w.height = srcRect.y2 - srcRect.y1;
+		std::vector<float>& buffer = in.buffers[i];
+		buffer.resize((size_t)w.width * (size_t)w.height * 4);
+		w.data = buffer.data();
+		if (img.getPixelDepth() == OFX::eBitDepthUByte) {
+			convertToPlanar<unsigned char>(img, buffer.data(), kInvMaxChan8 * scale);
+		} else {
+			convertToPlanar<float>(img, buffer.data(), scale);
+		}
+		// G'MIC works on straight colours: unpremultiply premultiplied inputs (the converted buffer
+		// is float planar for both 8-bit and float images, so this also covers 8-bit inputs)
+		if (img.getPreMultiplication() == OFX::eImagePreMultiplied) {
+			if (i == 0) in.firstPremultiplied = true;
+			unpremultiplyPlanar(buffer.data(), w.width, w.height, scale);
+		}
+	}
+	if (!(in.firstPAR > 0.)) in.firstPAR = 1.;
+	return {};
 }
 
 // the process code that the host sees
@@ -1196,102 +1735,31 @@ void GMICEffect::render(const OFX::RenderArguments& args)
 	const OfxRectI dstRect = outputImg->getBounds();
 	const float scale = kGmicValueScale;
 
-	// the values of this render, their defaults for the parameters without a value
+	// the values of this render (their defaults for the parameters without a value), and the input
+	// image(s); the parameters are fetched afterwards, since point parameters are relative to the
+	// first input's rectangle (the image G'MIC processes), not the output's (their defaults are
+	// moved within Source when it is connected, see pointsMoveToSource)
 	SequenceData sd;
-	for (int i = 0; i < _gd.nofParams; i++) {
-		sd.textValue[i] = _gd.param[i].text;
-		std::copy(_gd.param[i].defaultValue, _gd.param[i].defaultValue + 4, sd.floatValue[i]);
+	GmicInputs inputs;
+	inputs.firstRect = dstRect;
+	inputs.firstPAR = outputImg->getPixelAspectRatio();
+	const InputsResult fetched = fetchInputs(time, sd, inputs);
+	switch (fetched.status) {
+	case InputsStatus::kOk:
+		break;
+	case InputsStatus::kNoLayer:
+		showRenderError(*this, fetched.message);
+		OFX::throwSuiteStatusException(kOfxStatFailed);
+		break;
+	case InputsStatus::kNoSource:
+		// the render fails: say why, unless the host aborted it
+		if (!abort()) {
+			showRenderError(*this, fetched.message);
+		}
+		failUnlessAborted();
+		return;
 	}
-	sd.time = time;
-	// Output Layer "Frame" counts frames from the start of Source (0 if none, or infinite)
-	{
-		const OFX::Clip* source = _inputs[0];
-		const std::optional<OfxRangeD> range = frameRangeOf(*source);
-		if (range && range->min <= range->max && std::fabs(range->min) < 1e9) {
-			sd.frameRangeStart = range->min;
-		}
-	}
-
-	// get the input image(s); the parameters are fetched afterwards, since point parameters are
-	// relative to the first input's rectangle (the image G'MIC processes), not the output's (their
-	// defaults are moved within Source when it is connected, see pointsMoveToSource)
-	OfxRectI firstSrcRect = dstRect;
-	double firstSrcPAR = outputImg->getPixelAspectRatio();
-	bool firstSrcPremultiplied = false;
-	const LayerTimes layerTimes = layerTimesAt(time);
-	const int nofInputs = std::min((int)_inputs.size(), kMaxLayers);
-	// the host images and their float planar copies, given to G'MIC (released on return)
-	std::vector<std::unique_ptr<OFX::Image>> sourceImg((size_t)nofInputs);
-	std::vector<std::vector<float>> sourceBuffer((size_t)nofInputs);
-	for (int i = 0; i < nofInputs; i++) {
-		// layer times: the input may be another frame, of its clip or of Source (see
-		// getFramesNeeded). Point parameters stay relative to Source at the render time.
-		const int c = layerTimes.clipIndex(i);
-		OFX::Clip* clip = _inputs[c];
-		const std::string& clipName = inputName(c);
-		const double inTime = inputTime(layerTimes, i, time);
-		sd.inputConnected[i] = false;
-		const bool connected = clip->isConnected();
-		if (connected) {
-			sd.inputConnected[i] = true;
-			sourceImg[i].reset(clip->fetchImage(inTime));
-		}
-		if (!sourceImg[i] && connected && layerTimes.offset[i] != 0 && !abort()) {
-			// No image for a layer at another frame (within the clip's frame range): fail rather
-			// than drop it and the following layers (as for an unconnected layer, the stack stops
-			// at the first missing one), or skip it and shift the next frames into its place:
-			// the filters that use frames depend on their order.
-			char msg[512];
-			snprintf(msg, sizeof(msg), "%s: no image from %s at frame %g", inputName(i).c_str(), clipName.c_str(), inTime);
-			showRenderError(*this, msg);
-			OFX::throwSuiteStatusException(kOfxStatFailed);
-		}
-		if (!sourceImg[i]) {
-			sd.inputConnected[i] = false;
-			if (i == 0) {
-				// the render fails: say why, unless the host aborted it
-				if (!abort()) {
-					char msg[512];
-					snprintf(msg, sizeof(msg), "No image from %s at frame %g", clipName.c_str(), inTime);
-					showRenderError(*this, msg);
-				}
-				failUnlessAborted();
-				return;
-			}
-			sd.inWorld[i].data = nullptr;
-			break;
-		}
-		const OFX::Image& img = *sourceImg[i];
-		checkImageFormat(img);
-		const OfxRectI srcRect = img.getBounds();
-		if (i == 0 && srcRect.x2 > srcRect.x1 && srcRect.y2 > srcRect.y1) {
-			firstSrcRect = srcRect; // not an empty rectangle (point conversion divides by its size)
-			firstSrcPAR = img.getPixelAspectRatio();
-		}
-		World& in = sd.inWorld[i];
-		in.name = clipName;
-		in.origin_x = srcRect.x1;
-		in.origin_y = srcRect.y1;
-		in.width = srcRect.x2 - srcRect.x1;
-		in.height = srcRect.y2 - srcRect.y1;
-		std::vector<float>& buffer = sourceBuffer[i];
-		buffer.resize((size_t)in.width * (size_t)in.height * 4);
-		in.data = buffer.data();
-		if (img.getPixelDepth() == OFX::eBitDepthUByte) {
-			convertToPlanar<unsigned char>(img, buffer.data(), kInvMaxChan8 * scale);
-		} else {
-			convertToPlanar<float>(img, buffer.data(), scale);
-		}
-		// G'MIC works on straight colours: unpremultiply premultiplied inputs (the converted buffer
-		// is float planar for both 8-bit and float images, so this also covers 8-bit inputs)
-		if (img.getPreMultiplication() == OFX::eImagePreMultiplied) {
-			if (i == 0) firstSrcPremultiplied = true;
-			unpremultiplyPlanar(buffer.data(), in.width, in.height, scale);
-		}
-	}
-
-	if (!(firstSrcPAR > 0.)) firstSrcPAR = 1.;
-	fetchParamValues(sd, firstSrcRect, firstSrcPAR, time, args.renderScale);
+	fetchParamValues(sd, inputs.firstRect, inputs.firstPAR, time, args.renderScale);
 
 	World& out = sd.outWorld;
 	out.origin_x = dstRect.x1;
@@ -1308,7 +1776,7 @@ void GMICEffect::render(const OFX::RenderArguments& args)
 	}
 
 	// the G'MIC result has straight colours, converted here before the conversion to the output depth
-	if (firstSrcPremultiplied && !sd.resultHasAlpha) {
+	if (inputs.firstPremultiplied && !sd.resultHasAlpha) {
 		// no alpha in the result: keep the look of the input composited over black (see
 		// multiplyByInputAlphaPlanar)
 		multiplyByInputAlphaPlanar(out, sd.inWorld[0], scale);
@@ -1660,7 +2128,10 @@ void GMICPluginFactory::describe(OFX::ImageEffectDescriptor& desc)
 	desc.setRenderThreadSafety(OFX::eRenderInstanceSafe);
 	desc.setSupportsTiles(false);
 	desc.setHostFrameThreading(false);
-	desc.setSupportsMultiResolution(false);
+	// (issue #175) inputs of any size and position, and an output with the result's own (Resize
+	// Mode Dynamic): Natron refuses to connect inputs whose regions of definition differ, or don't
+	// start at 0,0, to an effect without multi-resolution (checkCanConnectNoMultiRes)
+	desc.setSupportsMultiResolution(true);
 
 	// the parameters the clip preferences depend on, by name (they are defined in describeInContext).
 	// Not with addClipPreferencesSlaveParam in describeInContext: hosts copy this descriptor's
@@ -1815,6 +2286,11 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			p->setUseHostNativeOverlayHandle(!hostSupportsOverlays());
 			paramDesc = p;
 		} break;
+		case ParamType::Button: {
+			// (see GMICEffect::runStatus)
+			OFX::PushButtonParamDescriptor* p = desc.definePushButtonParam(name);
+			paramDesc = p;
+		} break;
 		case ParamType::Bool: {
 			OFX::BooleanParamDescriptor* p = desc.defineBooleanParam(name);
 			p->setDefault((int)param.defaultValue[0] != 0);
@@ -1866,9 +2342,10 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			continue;
 		}
 
-		if (param.displayStatus == DisplayStatus::Disabled) {
+		const DisplayStatus displayStatus = describedDisplayStatus(param);
+		if (displayStatus == DisplayStatus::Disabled) {
 			paramDesc->setEnabled(false);
-		} else if (param.displayStatus == DisplayStatus::Hidden) {
+		} else if (displayStatus == DisplayStatus::Hidden) {
 			paramDesc->setIsSecret(true);
 		}
 		paramDesc->setScriptName(name);

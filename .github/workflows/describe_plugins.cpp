@@ -8,6 +8,7 @@
 // fails if any appear (see ci.yml).
 #include <cstdio>
 #include <cstdlib>
+#include <list>
 #include <set>
 #include <string>
 
@@ -75,6 +76,14 @@ int main(int argc, char** argv)
                 clips += "\t" + byOrder[c]->getName();
             }
             fprintf(stderr, "RENDERINFO %s\t%s%s\n", id.c_str(), context.c_str(), clips.c_str());
+            // for describe_plugins.sh (PUSH_BUTTON_COUNT): the push buttons, i.e. G'MIC's button()
+            // parameters (issue #174)
+            const std::list<Param::Descriptor*>& params = d->getParamList();
+            for (std::list<Param::Descriptor*>::const_iterator p = params.begin(); p != params.end(); ++p) {
+                if ((*p)->getType() == kOfxParamTypePushButton) {
+                    fprintf(stderr, "PUSHBUTTON %s\t%s\n", id.c_str(), (*p)->getName().c_str());
+                }
+            }
         } else {
             ++failed;
             printf("DESCRIBE_FAILED %s (context: %s)\n", id.c_str(), context.empty() ? "no Filter or General context" : context.c_str());

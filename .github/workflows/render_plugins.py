@@ -4,7 +4,8 @@
 Each plug-in is rendered at frame 0 with its default parameters, on a small fixed test input
 (160x120 float RGB with gradients, stripes and a rectangle: every input clip, the extra layers
 included, gets the same image), in its own directory, with a timeout. The test fails on any
-load, describe, instance or render error, and on a missing output; NaN pixels in an output are
+load, describe, instance or render error, and on a missing output (a crash is reported as "at
+exit" when hostDemo had written report.json and the outputs); NaN pixels in an output are
 reported as warnings. A few plug-ins are skipped (SKIP), are expected to fail with a given error
 (EXPECTED_FAIL), or have a longer timeout (TIMEOUT), with the reason; the test also fails when an
 expected failure renders (XPASS), or when fewer than --min-rendered plug-ins rendered (default:
@@ -101,6 +102,9 @@ TIMEOUT = {
     'eu.gmic.NonscapeWoods': 900,
 }
 
+# the warning of a render whose result doesn't fit the region of definition that the plug-in
+# declared (#175: a size that depends on the pixels); listed, not a failure
+GEOMETRY_MISMATCH = "doesn't match the output"
 ERROR_LINE = re.compile(r'\*\*\* Error|\bOfxMessageError\b|\bError\b|\berror:')
 COMMERCIAL_MARKER = ' #  openfx-gmic : COMMERCIAL standard library'
 FFT_COMMANDS = re.compile(r'(?<![A-Za-z0-9_])(fft|ifft|deconvolve|deconvolve_fft|convolve_fft|bandpass|watermark_fourier)(?![A-Za-z0-9_])')
@@ -112,7 +116,10 @@ STATUS_MISMATCH = "the preview's status has"
 EVERY = 30
 
 
-def write_input(path, w=160, h=120):
+INPUT_WIDTH, INPUT_HEIGHT = 160, 120  # the size of the input image (write_input)
+
+
+def write_input(path, w=INPUT_WIDTH, h=INPUT_HEIGHT):
     """Float RGB PFM, bottom row first: gradients, stripes and a red rectangle (edges)."""
     rows = []
     for y in range(h - 1, -1, -1):
@@ -200,14 +207,26 @@ def _progress_problem(report):
     return None
 
 
-def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
+def _outputs_written(d):
+    """True if d has report.json and every output file it lists."""
+    try:
+        with open(os.path.join(d, 'report.json')) as f:
+            report = json.load(f)
+    except (OSError, ValueError):
+        return False
+    files = [f for r in report.get('renders', []) for f in ((r.get('output') or {}).get('files') or [])]
+    return bool(files) and all(os.path.exists(os.path.join(d, f)) for f in files)
+
+
+def render(host, host_args, plugins, work, timeout, plugin, host_threads=False, frame='0', extra_env=None,
+           expected_log=()):
     pid, context, clips = plugin
     d = os.path.join(work, pid[len('eu.gmic.'):])
     shutil.rmtree(d, ignore_errors=True)
     os.makedirs(d)
     cmd = [host] + host_args + ['--no-std-paths', '--no-cache', '--quiet', '--allow-unwritten', '--format', 'pfm',
            '-d', 'float', '-p', pid, '-c', 'general' if 'General' in context else 'filter',
-           '--frames', '0', '-o', 'out',
+           '--frames', frame, '-o', 'out',
            '--report', 'report.json']
     for c in clips:
         cmd += ['-i', c + '=file:../input.pfm']
@@ -215,6 +234,12 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
     # their files (e.g. Valeur Moyenne LCH), is in the work directory
     home = os.path.join(work, 'home')
     env = dict(os.environ, OFX_PLUGIN_PATH=plugins, HOME=home, USERPROFILE=home)
+    # extra_env: variables to set, or to remove (None), for this render only
+    for name, value in (extra_env or {}).items():
+        if value is None:
+            env.pop(name, None)
+        else:
+            env[name] = value
     if host_threads:
         env.pop('OMP_NUM_THREADS', None)
     else:
@@ -232,7 +257,10 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
         if rc == 'timeout':
             problem = 'timeout after %ds' % timeout
         elif rc < 0:
-            problem = 'crash (signal %d)' % -rc
+            # hostDemo writes report.json after the renders and before it unloads the plug-in: a
+            # crash after it and all the output files were written is a crash at exit (#213)
+            when = 'at exit' if _outputs_written(d) else 'during the render'
+            problem = 'crash %s (signal %d)' % (when, -rc)
         else:
             problem = 'exit status %s' % rc
     else:
@@ -253,11 +281,13 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False):
                 problem = _progress_problem(report)
         except (OSError, ValueError) as e:
             problem = 'no report: %s' % e
-    if problem is None and PREVIEW_FIRST_FAILED in log:
+    # the log lines that the caller expects (e.g. a test of a status mismatch) are no problem
+    checked = '\n'.join(l for l in log.splitlines() if not any(e in l for e in expected_log))
+    if problem is None and PREVIEW_FIRST_FAILED in checked:
         problem = 'the preview command, run before the main command, failed'
-    if problem is None and STATUS_MISMATCH in log:
+    if problem is None and STATUS_MISMATCH in checked:
         problem = "the preview's status doesn't have one value per parameter"
-    errors = [l for l in log.splitlines()
+    errors = [l for l in checked.splitlines()
               if ERROR_LINE.search(l) or PREVIEW_FIRST_FAILED in l or STATUS_MISMATCH in l][:3]
     return pid, rc, problem, nan, t, errors, log, updates
 
@@ -331,7 +361,7 @@ def main():
     sys.stdout.flush()
 
     start = time.time()
-    fails, xfails, xpasses, nans, times = [], [], [], [], []
+    fails, xfails, xpasses, nans, times, mismatches = [], [], [], [], [], []
     rendered = 0
     progressed = 0  # plug-ins that updated the host's progress
     with concurrent.futures.ThreadPoolExecutor(a.jobs) as ex:
@@ -365,12 +395,17 @@ def main():
                 print('XPASS %s: rendered, remove it from EXPECTED_FAIL (%s)' % (pid, EXPECTED_FAIL[pid][1]))
             if nan:
                 nans.append((pid, nan))
+            if GEOMETRY_MISMATCH in log:
+                mismatches.append(pid)
     print('%d rendered in %.0fs: %d failed, %d expected failures, %d skipped' % (
         len(todo), time.time() - start, len(fails), len(xfails), len(sel) - len(todo)))
     print('%d reported progress' % progressed)
     print('slowest: ' + ', '.join('%s %.0fs' % (p[len('eu.gmic.'):], t) for t, p in sorted(times)[-5:]))
     for pid, nan in nans:
         print('WARNING: %s: %d NaN values in its output' % (pid, nan))
+    if mismatches:
+        print('WARNING: %d plug-ins whose result does not match their region of definition (#175, '
+              'cropped or padded): %s' % (len(mismatches), ' '.join(sorted(mismatches))))
     status = 0
     if fails:
         print('FAIL: %d plug-ins failed to render: %s (logs and images in %s)' % (len(fails), ' '.join(fails), work))

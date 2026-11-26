@@ -1,7 +1,7 @@
 # Filters for user_filters_test.py: a user filter file (~/.config/gmic/gmic_ofx.gmic) whose
 # filters call commands that the file defines (#168), a built-in command, and a built-in command
-# that the file replaces, and two that need the state of their preview command (#206); it also
-# defines a command that the plug-in hot-fixes.
+# that the file replaces, two that need the state of their preview command (#206), and two with
+# push buttons (#174); it also defines a command that the plug-in hot-fixes.
 #@gui User File Test
 #@gui User File Own Command : fx_userfile_own, fx_userfile_own
 #@gui : Value = float(0.25,0,1)
@@ -72,6 +72,134 @@ fx_userfile_vars :
   nm=${-gui_layer_name}
   fill_color {same('$_host','ofx')*255},{10*0$_input_layers+0$_output_mode},{same('$nm','Source')*255}
 
+# buttons (#174): push buttons, which renders get 0 for, as G'MIC-Qt's Apply (it follows the
+# preview that the click made, after which the button is 0 again). Pressing one runs the preview
+# command once with 1 for it, and the parameters get the values that the run's status gives.
+# - User File Button: the status sets a value of each type (Level: red 0.75, Steps: blue 0.4,
+#   past a separator); the render's green is the button, always 0. Without a press, the preview
+#   sets no status, and the values stay (red 0.25, blue 0.1).
+# - User File Status Visibility: the status hides Hidden Level ("_0") and sets it to 0.6 (red).
+#   The plug-in hides it on Natron only (#173), and with OFX_GMIC_TEST_STATUS_VISIBILITY=1: other
+#   hosts show every parameter of a filter that sets visibilities at run time (#170). It also
+#   removes the removable point Target ("nan,nan": its checkbox goes off, and the render gets
+#   nan,nan for it: blue 1).
+#@gui User File Button : fx_userfile_button, fx_userfile_button_preview
+#@gui : Level = float(0.25,0,1)
+#@gui : Press = button()
+#@gui : sep = separator()
+#@gui : Steps = int(1,0,10)
+#@gui : Mode = choice("A","B","C")
+#@gui : Flag = bool(0)
+#@gui : Tint = color(10,20,30)
+#@gui : Spot = point(25,75)
+#@gui : Label = text("before")
+fx_userfile_button :
+  fill_color {$1*255},{$2*255},{$3*25.5}
+
+fx_userfile_button_preview :
+  if $2 u "{0.75}{0}{4}{2}{1}{40,50,60}{60,40}{after}" fi
+  fill_color 255,0,255
+
+#@gui User File Status Visibility : fx_userfile_visibility, fx_userfile_visibility_preview
+#@gui : Hidden Level = float(0.2,0,1)
+#@gui : Hide = button()
+#@gui : Target = point(30,30,1)
+fx_userfile_visibility :
+  fill_color {$1*255},{$2*255},{isnan($3)*255}
+
+fx_userfile_visibility_preview :
+  if $2 u "{0.6}_0{0}{nan,nan}" fi
+  fill_color 255,0,255
+
+# the status after an edit (#173): the plug-in runs the preview command after each user edit of
+# the filter's parameters (hostDemo's -s name=value), as G'MIC-Qt's preview, and applies its
+# status: the values, and on Natron (or with OFX_GMIC_TEST_STATUS_VISIBILITY=1) the visibilities.
+# Amount starts hidden ("_0", also the note before it: "-" propagates up) and Echo disabled
+# ("_1"). Mode On: the status shows both ("_2"), gives Echo Amount's value and sets Tail to 7.
+# Mode Off: no visibility, so every parameter goes back to its initial state, and the values
+# stay. The render's red, green and blue are Amount, Echo and Tail / 10.
+#@gui User File Status Edit : fx_userfile_status, fx_userfile_status_preview
+#@gui : Mode = choice("Off","On")
+#@gui : note = note("Amount and Echo: with Mode On")
+#@gui : Amount = float(0.2,0,1)_0-
+#@gui : Echo = float(0,0,1)_1
+#@gui : Tail = int(3,0,10)
+fx_userfile_status :
+  fill_color {$2*255},{$3*255},{$4*25.5}
+
+fx_userfile_status_preview :
+  if $1 u "{"$1"}{"$2"}_2{"$2"}_2{7}" else u "{"$1"}{"$2"}{"$3"}{"$4"}" fi
+  fill_color 255,0,255
+
+# - User File Status Down: Level gives its visibility to the note after it ("+"). Mode On: the
+#   status hides Level (and so the note) and disables Other. Mode Off: the status has 2 values for
+#   3 parameters, which is ignored (logged): the states stay. The render's red is Level.
+#@gui User File Status Down : fx_userfile_status_down, fx_userfile_status_down_preview
+#@gui : Mode = choice("Off","On")
+#@gui : Level = float(0.5,0,1)_2+
+#@gui : note = note("After Level")
+#@gui : Other = int(1,0,10)
+fx_userfile_status_down :
+  fill_color {$2*255},0,{$3*25.5}
+
+fx_userfile_status_down_preview :
+  if $1 u "{"$1"}{"$2"}_0{"$3"}_1" else u "{"$1"}{"$2"}_0" fi
+  fill_color 255,0,255
+
+# - User File Status Variable: the status list is held in a variable (status=\{...}, u $status,
+#   as Mandelbrot's): an edit of A sets B to 7. The render's red and blue are A and B / 10.
+#@gui User File Status Variable : fx_userfile_status_var, fx_userfile_status_var_preview
+#@gui : A = float(0.1,0,1)
+#@gui : B = int(0,0,10)
+fx_userfile_status_var :
+  fill_color {$1*255},0,{$2*25.5}
+
+fx_userfile_status_var_preview :
+  status=\{$1\}\{7\} u $status
+  fill_color 255,0,255
+
+# - User File Status Expression: "u {expr}" is a math substitution, a number, not a status list:
+#   the plug-in runs no status after an edit (no progress with the status's id)
+#@gui User File Status Expression : fx_userfile_status_expr, fx_userfile_status_expr_preview
+#@gui : A = float(0.1,0,1)
+fx_userfile_status_expr :
+  fill_color {$1*255},0,0
+
+fx_userfile_status_expr_preview :
+  u {$1*2}
+  fill_color 255,0,255
+
+# - User File Status Main Only: the visibility markers are in the main command only, which the
+#   runs after an edit don't run: every parameter is shown and enabled (B too), as #170. Its
+#   preview sets a status without markers, which would put B back to its initial "_1" if the
+#   plug-in followed the main command's visibilities.
+#@gui User File Status Main Only : fx_userfile_status_main, fx_userfile_status_main_preview
+#@gui : A = float(0.1,0,1)
+#@gui : B = int(0,0,10)_1
+fx_userfile_status_main :
+  u "{"$1"}{"$2"}_2"
+  fill_color {$1*255},0,{$2*25.5}
+
+fx_userfile_status_main_preview :
+  u "{"$1"}{"$2"}"
+  fill_color {$1*255},0,{$2*25.5}
+
+# - User File Press Size: the status gives the size of the image that the press's run got (at most
+#   512 pixels, G'MIC-Qt's preview image, also with Resize Mode "Downsample 1/2", which downsamples
+#   it again), and 0.3 for Exact, which must stay 0.3 (not the float 0.30000001...)
+#@gui User File Press Size : fx_userfile_press_size, fx_userfile_press_size_preview
+#@gui : Width = int(0,0,10000)
+#@gui : Height = int(0,0,10000)
+#@gui : Exact = float(0,0,1)
+#@gui : Size = button()
+fx_userfile_press_size :
+  skip $*
+  fill_color 0,0,255
+
+fx_userfile_press_size_preview :
+  if $4 u "{"{w}"}{"{h}"}{0.3}{0}" fi
+  fill_color 255,0,255
+
 # a result with 5 channels, which fails the render as in G'MIC-Qt (#206)
 #@gui User File Five Channels : fx_userfile_five_channels, fx_userfile_five_channels
 fx_userfile_five_channels :
@@ -95,3 +223,76 @@ fc :
 # kept, with a note (no filter here calls it)
 star_tone :
   f 0
+
+# results of another size and position (#175), uniform opaque colours: with Resize Mode Dynamic
+# (the default), the output has the result's size and position, which the region of definition
+# declares: larger (200% x 150%), smaller (50% x 25%), and moved by the pos(10,20) of its name (10
+# pixels right and 20 down, as G'MIC-Qt's hosts place a layer)
+#@gui User File Larger : fx_userfile_larger, fx_userfile_larger
+fx_userfile_larger :
+  r 200%,150%,1,100%,0 fill_color 255,0,0,255
+
+#@gui User File Smaller : fx_userfile_smaller, fx_userfile_smaller
+fx_userfile_smaller :
+  r 50%,25%,1,100%,0 fill_color 0,255,0,255
+
+#@gui User File Shifted : fx_userfile_shifted, fx_userfile_shifted
+fx_userfile_shifted :
+  fill_color 0,0,255,255 nm "pos(10,20),name(Source)"
+
+# a size that depends on the pixels: 80 pixels wide if the pixel at (80,60) is red (in the red
+# rectangle of the test's input), else 40 (the plug-in's small probe images, gradients, which are
+# never red there), 60 high. The region of definition gets the probes' size, so the render warns
+# and crops.
+#@gui User File Content Size : fx_userfile_content_size, fx_userfile_content_size
+fx_userfile_content_size :
+  w2={i(80,60,0,0)>200&&i(80,60,0,1)<100?80:40} r $w2,60,1,100%,0 fill_color 255,255,0,255
+
+# a size that is not an affine function of the input's: sqrt(W*H) wide. The fits fail, and the
+# plug-in confirms the size with one probe at full size (rendered on the test's small Source, which
+# is probed at its own size anyway, and on a 1920x1080 Source)
+#@gui User File Area Size : fx_userfile_area_size, fx_userfile_area_size
+fx_userfile_area_size :
+  r {round(sqrt(w*h))},100%,1,100%,0 fill_color 0,255,255,255
+
+# two results, for Output Layer "Frame": frame 0 is [0], half of Source's size at pos(5,6), frame
+# 1 is [1], Source's size
+#@gui User File Frames : fx_userfile_frames, fx_userfile_frames
+fx_userfile_frames :
+  fill_color 255,0,255,255 +r[0] 50%,50%,1,100%,0 rv nm[0] "pos(5,6),name(Small)"
+
+# a rotation: its size, round(1 + |cos|*(W-1) + |sin|*(H-1)) wide (CImg's get_rotate), is affine
+# but irrational, which the small probes can't predict at a large size: the plug-in refines it
+# with two thin probes, within a pixel, and adds a 1-pixel margin (rendered on a 1920x1080 Source)
+#@gui User File Rotate : fx_userfile_rotate, fx_userfile_rotate
+#@gui : Angle = float(30,0,90)
+fx_userfile_rotate :
+  rotate $1,1,0 fill_color 255,128,0,255
+
+# a frame in percent of max(w,h), rounded, as Frame [Regular] (10% of the long side, and a
+# 1-pixel outline): affine only over probes of Source's proportions, so the refinement fails and
+# the plug-in confirms the size with one probe at full size (rendered on a 1920x1080 Source)
+#@gui User File Frame Max : fx_userfile_frame_max, fx_userfile_frame_max
+fx_userfile_frame_max :
+  fs={round(0.1*max(w+2,h+2))} r {w+2+2*$fs},{h+2+2*$fs},1,100%,0 fill_color 0,128,255,255
+
+# a size in percent that is no exact fraction (10%, 70%): refined with thin probes, with a margin
+# (rendered on a 1920x1080 Source)
+#@gui User File Percent : fx_userfile_percent, fx_userfile_percent
+#@gui : Percent = float(10,1,200)
+fx_userfile_percent :
+  r $1%,$1%,1,100%,0 fill_color 128,0,255,255
+
+# a weak product: W*H/1024 wide. The small and thin probes fit it within a pixel (they never have
+# both a large width and a large height), the check probe doesn't: confirmed at full size
+# (rendered on a 1920x1080 Source)
+#@gui User File Product : fx_userfile_product, fx_userfile_product
+fx_userfile_product :
+  r {round(w*h/1024)},100%,1,100%,0 fill_color 255,255,255,255
+
+# a filter slower than the plug-in's 10 s prediction budget: the prediction times out, the output
+# keeps Source's size, and the next query within 30 s doesn't try again (rendered at frames 0 and
+# 1). The waits are short, so that G'MIC stops at the deadline.
+#@gui User File Slow : fx_userfile_slow, fx_userfile_slow
+fx_userfile_slow :
+  repeat 110 { wait 100 } fill_color 64,64,64,255

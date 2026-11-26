@@ -12,12 +12,40 @@ string, or an image from 'store') and the status that their preview command sets
 outputs show that the plug-in ran the preview command first, and gave both to the main
 command. User File Run Variables fills it with what the plug-in gives G'MIC on every run, as
 G'MIC-Qt ($_host, $_input_layers, $_output_mode, the input's layer name), and User File Five
-Channels returns 5 channels, which must fail the render (#206). The file also defines a command
-that the plug-in hot-fixes, which must be kept, with a note. Its User File Cpus filter fills its
-output with G'MIC's $_cpus, rendered without OMP_NUM_THREADS so that the plug-in sets it (#188):
-the value, printed, must be the number of CPUs (hostDemo runs one render, whose fair share is all
-the hardware threads). This shows that the count reaches G'MIC, not that the plug-in's prefix is
-applied: the value is also G'MIC's own default.
+Channels returns 5 channels, which must fail the render (#206). User File Button and User File
+Status Visibility have push buttons (#174): renders get 0 for them, and a press (hostDemo's -s
+<button>, an instance changed action) runs the preview command once with 1, whose status sets
+parameter values, which the report's params then show, also as a key of an animated parameter.
+User File Status Edit sets a status after each edit (hostDemo's -s name=value, #173): the plug-in
+runs the preview command at the end of the edit, and sets the values and, with
+OFX_GMIC_TEST_STATUS_VISIBILITY=1 (as on Natron), the secret and enabled flags that it gives.
+The file also defines a command that the plug-in hot-fixes, which must be kept, with a note. Its
+User File Cpus filter fills its output with G'MIC's $_cpus, rendered without OMP_NUM_THREADS so
+that the plug-in sets it (#188): the value, printed, must be the number of CPUs (hostDemo runs one
+render, whose fair share is all the hardware threads). This shows that the count reaches G'MIC,
+not that the plug-in's prefix is applied: the value is also G'MIC's own default.
+
+The result-size checks (#175) run only with the user filter file (not with --update-file or
+--user-source: they don't depend on where the file comes from). hostDemo renders any region of
+definition but reports no multi-resolution support. As it is, without OFX_GMIC_MULTIRES, User
+File Larger (Resize Mode Dynamic) and User File Smaller (Fixed) must be resized to Source's size,
+as before #175, with no warning. The other result-size checks render with OFX_GMIC_MULTIRES=1 (a
+test aid of the plug-in), which makes it predict the result's size, as on Natron; the
+render-scale, CPU and channel checks render without it. With Resize Mode Dynamic, the default,
+User File Larger, User File Smaller and User File Shifted must output the result's size, and the
+region of definition its size and position, from Source's top-left corner; with Fixed
+(Inplace), Source's size and region of definition, cropped or padded. No render may warn that
+the result doesn't match the output, except User File Content Size, whose size depends on the
+pixels. User File Larger and User File Shifted are also rendered at render scale 0.5: the output
+is half the scale-1 output; Larger's canonical region of definition is the scale-1 one, and
+Shifted's pos(10,20), in pixels of the image G'MIC gets, moves it twice as far in canonical
+coordinates. On a 1800x1080-pixel Source: rotations (User File Rotate) and sizes in percent that
+are no exact fractions (User File Percent) must be predicted within the plug-in's 1-pixel
+margin; Larger, Smaller and Shifted must be exact, with no margin; and User File Frame Max
+(percent of max(w,h)), User File Area Size (sqrt(W*H)) and User File Product (W*H/1024) must be
+confirmed at full size, exactly, all without a warning. User File Slow is slower than the
+plug-in's 10 s prediction budget: rendered at frames 0 and 1, its prediction must time out
+once, the second query must not try again, and both outputs have Source's size (about 35 s).
 
 With --stdlib, the same filters are then rendered with a copy of the whole built-in standard
 library before them in the file, as in a user's copied gmic_stdlib.gmic: the outputs must be the
@@ -38,7 +66,9 @@ usage: user_filters_test.py --host <hostDemo, or the CMake build directory> [--c
                             [--update-file | --user-source]
 """
 import argparse
+import collections
 import json
+import math
 import os
 import re
 import shutil
@@ -61,9 +91,83 @@ EXPECTED = {
     'eu.gmic.UserFilePersistent': (0.75, 0.5, 0.3),
     'eu.gmic.UserFilePersistentStore': (0.25, 0.5, 0.75),
     'eu.gmic.UserFileRunVariables': (1.0, 10 / 255.0, 1.0),
+    # without a press: the parameters' defaults, and 0 for the push button (green; #174)
+    'eu.gmic.UserFileButton': (0.25, 0.0, 0.1),
+    'eu.gmic.UserFileStatusVisibility': (0.2, 0.0, 0.0),
+    # without an edit, no status run: the defaults (#173)
+    'eu.gmic.UserFileStatusEdit': (0.2, 0.0, 0.3),
+    'eu.gmic.UserFileStatusDown': (0.5, 0.0, 0.1),
+    'eu.gmic.UserFileStatusVariable': (0.1, 0.0, 0.0),
+    'eu.gmic.UserFileStatusExpression': (0.1, 0.0, 0.0),
+    'eu.gmic.UserFileStatusMainOnly': (0.1, 0.0, 0.0),
+    'eu.gmic.UserFilePressSize': (0.0, 0.0, 1.0),
 }
 TOLERANCE = 1e-4
 DEFINED_BY = ' is defined by '  # the note of a kept definition of a hot-fixed command
+# (#175) the cases of check_geometry(): plug-in id, hostDemo arguments (a Source input that
+# doesn't start at 0,0: OFFSET_SOURCE), the expected output size relative to Source's and its
+# pos(x,y) (pixels, y down), the RGBA value of every output pixel (PADDED: the result in its
+# top-left part, transparent black elsewhere, both checked through the minimum and maximum), and
+# whether the render must warn that the result doesn't match the output
+OFFSET_SOURCE = ['-i', 'Source=file:../input.pfm@20,10']
+PADDED = 'padded'
+# (each case: plug-in id, hostDemo arguments, the output's size and pos as above, its color, whether
+# the render warns, how the size is found: EXACT, with no note (exact fractions; the test's small
+# Source is probed at its own size), CONFIRMED by a probe at full size after a failed fit, or
+# NO_PROBE (Fixed, Downsample), and the frame)
+EXACT, CONFIRMED, NO_PROBE = 'exact', 'confirmed', 'no probe'
+GEOMETRY_CASES = [
+    ('eu.gmic.UserFileLarger', [], (2.0, 1.5, 0, 0), (1.0, 0.0, 0.0, 1.0), False, EXACT, '0'),
+    ('eu.gmic.UserFileSmaller', [], (0.5, 0.25, 0, 0), (0.0, 1.0, 0.0, 1.0), False, EXACT, '0'),
+    ('eu.gmic.UserFileShifted', [], (1.0, 1.0, 10, 20), (0.0, 0.0, 1.0, 1.0), False, EXACT, '0'),
+    ('eu.gmic.UserFileLarger', OFFSET_SOURCE, (2.0, 1.5, 0, 0), (1.0, 0.0, 0.0, 1.0), False, EXACT, '0'),
+    ('eu.gmic.UserFileShifted', OFFSET_SOURCE, (1.0, 1.0, 10, 20), (0.0, 0.0, 1.0, 1.0), False, EXACT, '0'),
+    # Fixed (Inplace): Source's rectangle, cropped, padded, pos() ignored
+    ('eu.gmic.UserFileLarger', ['-s', 'Resize Mode=0'], (1.0, 1.0, 0, 0), (1.0, 0.0, 0.0, 1.0), False, NO_PROBE, '0'),
+    ('eu.gmic.UserFileSmaller', ['-s', 'Resize Mode=0'], (1.0, 1.0, 0, 0), PADDED, False, NO_PROBE, '0'),
+    ('eu.gmic.UserFileShifted', ['-s', 'Resize Mode=0'], (1.0, 1.0, 0, 0), (0.0, 0.0, 1.0, 1.0), False, NO_PROBE, '0'),
+    # Downsample 1/2: resized to Source's size
+    ('eu.gmic.UserFileLarger', ['-s', 'Resize Mode=2'], (1.0, 1.0, 0, 0), (1.0, 0.0, 0.0, 1.0), False, NO_PROBE, '0'),
+    # the probes' size (40x60), and the warning
+    ('eu.gmic.UserFileContentSize', [], (0.25, 0.5, 0, 0), (1.0, 1.0, 0.0, 1.0), True, EXACT, '0'),
+    # not affine, sqrt(W*H) = 139 wide: a small Source, probed at its own size
+    ('eu.gmic.UserFileAreaSize', [], (139 / 160.0, 1.0, 0, 0), (0.0, 1.0, 1.0, 1.0), False, EXACT, '0'),
+    # Output Layer "Frame": result [0] at frame 0, [1] (Source's size) at frame 1
+    ('eu.gmic.UserFileFrames', ['-s', 'Output Layer=11'], (0.5, 0.5, 5, 6), (1.0, 0.0, 1.0, 1.0), False, EXACT, '0'),
+    ('eu.gmic.UserFileFrames', ['-s', 'Output Layer=11'], (1.0, 1.0, 0, 0), (1.0, 0.0, 1.0, 1.0), False, EXACT, '1'),
+]
+GEOMETRY_WARNING = "doesn't match the output"
+# the plug-in's override of the host's multi-resolution support (see run_test)
+MULTIRES_ENV = 'OFX_GMIC_MULTIRES'
+MULTIRES_ON = {MULTIRES_ENV: '1'}  # (render_plugins.render()'s extra_env)
+MULTIRES_UNSET = {MULTIRES_ENV: None}
+# the plug-in's notes when it refines a prediction with thin probes, or confirms it with a probe at
+# full size (see resultGeometry)
+REFINED_NOTE = 'refined with thin probes'
+CONFIRMED_NOTE = 'confirmed at full size'
+# rendered on a large Source made by hostDemo: 1920x1080 canonical, 1800x1080 pixels (hostDemo's
+# pixel aspect ratio is 16/15); the tests take the pixels from the report
+LARGE_SOURCE = (1920, 1080)
+ROTATE_PLUGIN = 'eu.gmic.UserFileRotate'
+# refined with a 1-pixel margin: exact or 1 pixel off (45 in the plug-in's model), never a warning
+ROTATE_ANGLES = (10.0, 20.0, 30.0, 45.0, 60.0, 70.0, 89.5)
+AREA_PLUGIN = 'eu.gmic.UserFileAreaSize'
+PRODUCT_PLUGIN = 'eu.gmic.UserFileProduct'
+# on the large Source: exact fractions, predicted exactly, with neither note and no margin (plug-in
+# id, size relative to Source's, pos, color)
+LARGE_EXACT_CASES = [
+    ('eu.gmic.UserFileLarger', (2.0, 1.5), (0, 0), (1.0, 0.0, 0.0, 1.0)),
+    ('eu.gmic.UserFileSmaller', (0.5, 0.25), (0, 0), (0.0, 1.0, 0.0, 1.0)),
+    ('eu.gmic.UserFileShifted', (1.0, 1.0), (10, 20), (0.0, 0.0, 1.0, 1.0)),
+]
+SLOW_PLUGIN = 'eu.gmic.UserFileSlow'
+TIMEOUT_NOTE = 'took more than'
+RECENT_TIMEOUT_NOTE = 'timed out less than'
+PERCENT_PLUGIN = 'eu.gmic.UserFilePercent'
+# not exact fractions of the input's size: refined with a margin, never a warning
+PERCENTS = (10.0, 70.0)
+FRAME_MAX_PLUGIN = 'eu.gmic.UserFileFrameMax'
+ROD_TOLERANCE = 1e-3
 KEPT_NOTE = "'star_tone'" + DEFINED_BY
 HOTFIX_WARNING = 'Warning: hot fix'
 TIMEOUT = 120
@@ -79,6 +183,125 @@ CPUS_PLUGIN = 'eu.gmic.UserFileCpus'  # its output is G'MIC's $_cpus (divided by
 CHANNELS_PLUGIN = 'eu.gmic.UserFileFiveChannels'
 CHANNELS_ERROR = 'has 5 channels (should be at most 4)'
 USER_SOURCE = '.gmic'  # (install_user_file): the user source, ~/.gmic
+PUSH_BUTTON = 'OfxParamTypePushButton'
+# (the plug-in): follow the status's visibilities on any host, not only on Natron (#173)
+STATUS_VISIBILITY_VAR = 'OFX_GMIC_TEST_STATUS_VISIBILITY'
+STATUS_PROGRESS_ID = 'eu.gmic.status'  # (the plug-in) the progress of a run for the status
+VISIBILITY_MISMATCH = 'visibilities, for'  # (the plug-in's log) a status's visibility count
+
+
+class ButtonCase(collections.namedtuple(
+        'ButtonCase', 'pid button args output values keys secret large exact',
+        defaults=(False, {}))):
+    """A render after the press of a push button (#174), and what it must give.
+
+    Attributes:
+        pid: the plug-in id.
+        button: the push button that is pressed, with an optional time (name[@time]).
+        args: hostDemo's arguments before the press (-s name=value...).
+        output: the RGB value of every output pixel.
+        values: the values of parameters after the press (in the report: canonical coordinates for
+            a point, 0..1 for a color), SPOT for the point that the status moves.
+        keys: the keys of parameters after the press ([[time, value]...]).
+        secret: the secret flag of parameters after the press.
+        large: on a LARGE_SOURCE Source made by hostDemo, not the 160x120 input.
+        exact: values of parameters after the press, compared exactly (no TOLERANCE).
+    """
+
+
+class StatusCase(collections.namedtuple(
+        'StatusCase', 'pid args visibility output values secret enabled runs expected_log',
+        defaults=((),))):
+    """A render after user edits of a filter that sets a status (#173), and what it must give.
+
+    Attributes:
+        pid: the plug-in id.
+        args: hostDemo's arguments: the edits (-s name=value...), or none.
+        visibility: run with STATUS_VISIBILITY_VAR=1, so that the plug-in applies the status's
+            visibilities as on Natron.
+        output: the RGB value of every output pixel.
+        values: the values of parameters after the edits.
+        secret: the secret flag of parameters after the edits.
+        enabled: the enabled flag of parameters after the edits.
+        runs: the number of runs for the status (progresses with STATUS_PROGRESS_ID).
+        expected_log: the texts of log lines that the case must give (e.g. a status mismatch),
+            which are then no problem; empty for none.
+    """
+
+
+SPOT = 'spot'  # User File Button's point: at 60%, 40% of the 160x120 input (y down in G'MIC)
+BUTTON_CASES = (
+    # a value of each type, past a separator; the render gets 0 for the button (green)
+    ButtonCase('eu.gmic.UserFileButton', 'Press', [], (0.75, 0.0, 0.4),
+               {'Level': 0.75, 'Steps': 4, 'Mode': 2, 'Flag': True,
+                'Tint': [40 / 255.0, 50 / 255.0, 60 / 255.0], 'Spot': SPOT, 'Label': 'after'},
+               {}, {}),
+    # animated parameters, pressed at 5: Level gets a key there; Steps is 4 at 5 (between its keys
+    # 3 and 5), the value that the status gives, so it is unchanged and gets no key. The render, at
+    # 0, gets the keys' values there (Level 0.25, Steps 3)
+    ButtonCase('eu.gmic.UserFileButton', 'Press@5',
+               ['-s', 'Level@0=0.25', '-s', 'Level@10=0.5', '-s', 'Steps@0=3', '-s', 'Steps@10=5'],
+               (0.25, 0.0, 0.3), {'Level': 0.25, 'Steps': 3},
+               {'Level': [[0.0, 0.25], [5.0, 0.75], [10.0, 0.5]],
+                'Steps': [[0.0, 3], [10.0, 5]]},
+               {}),
+    # "_0" hides the parameter in G'MIC-Qt: its value is set, and it stays shown on hosts other
+    # than Natron (see STATUS_CASES for Natron's, #173); the status removes the removable point
+    # Target (its checkbox goes off, the render gets nan,nan)
+    ButtonCase('eu.gmic.UserFileStatusVisibility', 'Hide', [], (0.6, 0.0, 1.0),
+               {'Hidden Level': 0.6, 'Target Enabled': False}, {}, {'Hidden Level': False}),
+    # the press's image on a 1800x1080-pixel Source: scaled down so that it fits in 512 pixels
+    # (512x307), also with Downsample 1/2 (1024x614, which the filter gets downsampled to 512x307);
+    # a float status value is set as it is
+    ButtonCase('eu.gmic.UserFilePressSize', 'Size', [], (0.0, 0.0, 1.0),
+               {'Width': 512, 'Height': 307}, {}, {}, True, {'Exact': 0.3}),
+    ButtonCase('eu.gmic.UserFilePressSize', 'Size', ['-s', 'Resize Mode=2'], (0.0, 0.0, 1.0),
+               {'Width': 512, 'Height': 307}, {}, {}, True),
+)
+USER_FILE = 'gmic_ofx.gmic'  # (install_user_file): the user filter file
+
+STATUS_EDIT = 'eu.gmic.UserFileStatusEdit'
+STATUS_DOWN = 'eu.gmic.UserFileStatusDown'
+STATUS_CASES = (
+    # the initial states: Amount and the note before it hidden, Echo disabled; other hosts show
+    # and enable every parameter of such a filter
+    StatusCase(STATUS_EDIT, [], True, (0.2, 0.0, 0.3), {},
+               {'Amount': True, 'note': True, 'Echo': False, 'Tail': False}, {'Echo': False}, 0),
+    StatusCase(STATUS_EDIT, [], False, (0.2, 0.0, 0.3), {},
+               {'Amount': False, 'note': False, 'Echo': False}, {'Echo': True}, 0),
+    # Mode On: the status shows Amount (and its note) and enables Echo, gives Echo Amount's value
+    # and Tail 7
+    StatusCase(STATUS_EDIT, ['-s', 'Mode=1'], True, (0.2, 0.2, 0.7),
+               {'Echo': 0.2, 'Tail': 7},
+               {'Amount': False, 'note': False, 'Echo': False, 'Tail': False}, {'Echo': True}, 1),
+    # the values without the visibilities on other hosts
+    StatusCase(STATUS_EDIT, ['-s', 'Mode=1'], False, (0.2, 0.2, 0.7),
+               {'Echo': 0.2, 'Tail': 7}, {'Amount': False, 'note': False}, {'Echo': True}, 1),
+    # Mode Off again: a status without visibilities gives every parameter its initial state; the
+    # values stay
+    StatusCase(STATUS_EDIT, ['-s', 'Mode=1', '-s', 'Mode=0'], True, (0.2, 0.2, 0.7),
+               {'Echo': 0.2, 'Tail': 7},
+               {'Amount': True, 'note': True, 'Echo': False}, {'Echo': False}, 2),
+    # "+": Level gives its visibility to the note after it; "_1" disables Other
+    StatusCase(STATUS_DOWN, ['-s', 'Mode=1'], True, (0.5, 0.0, 0.1), {},
+               {'Level': True, 'note': True, 'Other': False}, {'Other': False}, 1),
+    # then 2 values and visibilities for 3 parameters: ignored (both logged), the states stay
+    StatusCase(STATUS_DOWN, ['-s', 'Mode=1', '-s', 'Mode=0'], True, (0.5, 0.0, 0.1), {},
+               {'Level': True, 'note': True, 'Other': False}, {'Other': False}, 2,
+               (render_plugins.STATUS_MISMATCH, VISIBILITY_MISMATCH)),
+    # visibility markers in the main command only: every parameter shown, as #170
+    StatusCase('eu.gmic.UserFileStatusMainOnly', ['-s', 'A=0.3'], True, (0.3, 0.0, 0.0), {},
+               {'A': False, 'B': False}, {'B': True}, 1),
+    # a status list held in a variable (status=\{...}, u $status)
+    StatusCase('eu.gmic.UserFileStatusVariable', ['-s', 'A=0.3'], False, (0.3, 0.0, 0.7),
+               {'B': 7}, {}, {}, 1),
+    # "u {expr}" is no status list: an edit runs nothing
+    StatusCase('eu.gmic.UserFileStatusExpression', ['-s', 'A=0.3'], True, (0.3, 0.0, 0.0),
+               {}, {}, {}, 0),
+    # a press's status hides Hidden Level ("_0")
+    StatusCase('eu.gmic.UserFileStatusVisibility', ['-s', 'Hide'], True, (0.6, 0.0, 1.0),
+               {'Hidden Level': 0.6}, {'Hidden Level': True}, {}, 1),
+)
 
 
 def update_file_name():
@@ -144,6 +367,370 @@ def check_output(report, expected):
     return problems
 
 
+def check_padded(report):
+    """Checks an output whose top-left part is opaque green and the rest transparent black.
+
+    Args:
+        report: the parsed report.json of the render.
+
+    Returns:
+        A list of problems, empty if green and alpha go from 0 to 1, and red and blue are 0.
+    """
+    renders = report.get('renders') or []
+    output = (renders[0].get('output') if renders else None) or {}
+    lows, highs = output.get('min') or [], output.get('max') or []
+    if len(lows) < 4 or len(highs) < 4 or None in lows[:4] or None in highs[:4]:
+        return ['no RGBA output (%s, %s)' % (lows, highs)]
+    expected = [(0.0, 0.0), (0.0, 1.0), (0.0, 0.0), (0.0, 1.0)]
+    return ['channel %d is in [%g, %g], expected [%g, %g]' % (c, lows[c], highs[c], lo, hi)
+            for c, (lo, hi) in enumerate(expected)
+            if abs(lows[c] - lo) > TOLERANCE or abs(highs[c] - hi) > TOLERANCE]
+
+
+def large_source_render(host, plugins, work, pid, args):
+    """Renders a plug-in on a LARGE_SOURCE Source made by hostDemo.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+        pid: the plug-in id.
+        args: more hostDemo arguments (-s name=value).
+
+    Returns:
+        (problem, log, first render of the report, Source's RoD, Source's size in pixels, PAR);
+        problem is None if it rendered.
+    """
+    sw, sh = LARGE_SOURCE
+    result = render_plugins.render(host, ['-i', 'Source=rod:0,0,%d,%d' % (sw, sh)] + args, plugins, work,
+                                   TIMEOUT, (pid, CONTEXT, []), extra_env=MULTIRES_ON)
+    _, _, problem, _, _, errors, log, _ = result
+    if problem:
+        return '%s %s' % (problem, ' '.join(errors)), log, {}, [], (0, 0), 1.0
+    with open(os.path.join(work, pid[len('eu.gmic.'):], 'report.json'), encoding='utf-8') as f:
+        report = json.load(f)
+    first = (report.get('renders') or [{}])[0]
+    src = ((first.get('inputs') or {}).get('Source') or {}).get('regionOfDefinition') or []
+    par = ((((report.get('clipPreferences') or {}).get('clips') or {}).get('Source') or {})
+           .get('pixelAspectRatio') or 1.0)
+    if len(src) != 4:
+        return 'no region of definition of Source', log, first, [], (0, 0), par
+    return None, log, first, src, (round((src[2] - src[0]) / par), round(src[3] - src[1])), par
+
+
+def check_max_color(first, color):
+    """Checks that the output's maximum is color (a result in a transparent margin).
+
+    Args:
+        first: the first render of the report.
+        color: the RGBA value of the result's pixels.
+
+    Returns:
+        A list of problems.
+    """
+    highs = (first.get('output') or {}).get('max') or []
+    if len(highs) < 4 or None in highs[:4]:
+        return ['no RGBA output']
+    return ['channel %d: maximum %g, expected %g' % (c, highs[c], v)
+            for c, v in enumerate(color) if abs(highs[c] - v) > TOLERANCE]
+
+
+def check_large_sources(host, plugins, work):
+    """Renders ROTATE_PLUGIN, PERCENT_PLUGIN and FRAME_MAX_PLUGIN on a LARGE_SOURCE Source.
+
+    The rotations (ROTATE_ANGLES) and percentages (PERCENTS) are refined with thin probes, within
+    a pixel, with a 1-pixel margin on the right and bottom sides: the output is the result's size
+    plus 0 to 2 pixels, at Source's top-left corner, with no warning. The frame in percent of
+    max(w,h) and the size in sqrt(W*H) (AREA_PLUGIN) are confirmed at full size: exact.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems, empty if every render is right.
+    """
+    problems = []
+    for angle in ROTATE_ANGLES:
+        name = '%s Angle=%g' % (ROTATE_PLUGIN, angle)
+        problem, log, first, src, (width, height), par = large_source_render(
+            host, plugins, work, ROTATE_PLUGIN, ['-s', 'Angle=%g' % angle])
+        if problem:
+            problems.append('%s: %s' % (name, problem))
+            continue
+        if GEOMETRY_WARNING in log:
+            problems.append('%s: the result does not match the output' % name)
+        if REFINED_NOTE not in log:
+            problems.append('%s: no refinement with thin probes' % name)
+        problems += ['%s: %s' % (name, p) for p in check_max_color(first, (1.0, 128 / 255.0, 0.0, 1.0))]
+        # CImg's get_rotate, on Source's pixels
+        c, s = abs(math.cos(math.radians(angle))), abs(math.sin(math.radians(angle)))
+        rw = round(1 + c * (width - 1) + s * (height - 1))
+        rh = round(1 + s * (width - 1) + c * (height - 1))
+        output = first.get('output') or {}
+        w, h = output.get('w') or 0, output.get('h') or 0
+        # (rw, rh in double precision: CImg's float may round 1 pixel the other way)
+        if not (rw - 1 <= w <= rw + 2 and rh - 1 <= h <= rh + 2):
+            problems.append('%s: the output is %sx%s, expected %dx%d plus at most 2 pixels'
+                            % (name, w, h, rw, rh))
+        rod = (first.get('regionOfDefinition') or {}).get('rod') or []
+        if len(rod) != 4 or abs(rod[0] - src[0]) > ROD_TOLERANCE or abs(rod[3] - src[3]) > ROD_TOLERANCE:
+            problems.append("%s: the region of definition %s doesn't start at Source's top-left corner %s"
+                            % (name, rod, src))
+    for percent in PERCENTS:
+        name = '%s Percent=%g' % (PERCENT_PLUGIN, percent)
+        problem, log, first, src, (width, height), par = large_source_render(
+            host, plugins, work, PERCENT_PLUGIN, ['-s', 'Percent=%g' % percent])
+        if problem:
+            problems.append('%s: %s' % (name, problem))
+            continue
+        if GEOMETRY_WARNING in log:
+            problems.append('%s: the result does not match the output' % name)
+        problems += ['%s: %s' % (name, p) for p in check_max_color(first, (128 / 255.0, 0.0, 1.0, 1.0))]
+        pw, ph = width * percent / 100, height * percent / 100
+        output = first.get('output') or {}
+        w, h = output.get('w') or 0, output.get('h') or 0
+        if not (math.floor(pw) <= w <= math.ceil(pw) + 2 and math.floor(ph) <= h <= math.ceil(ph) + 2):
+            problems.append('%s: the output is %sx%s, expected %gx%g plus at most 2 pixels' % (name, w, h, pw, ph))
+    for pid, (sx, sy), (dx, dy), color in LARGE_EXACT_CASES:
+        problem, log, first, src, (width, height), par = large_source_render(host, plugins, work, pid, [])
+        if problem:
+            problems.append('%s on the large Source: %s' % (pid, problem))
+            continue
+        ew, eh = round(width * sx), round(height * sy)
+        output = first.get('output') or {}
+        if (output.get('w'), output.get('h')) != (ew, eh):
+            problems.append('%s on the large Source: the output is %sx%s, expected %dx%d exactly (no margin)'
+                            % (pid, output.get('w'), output.get('h'), ew, eh))
+        rod = (first.get('regionOfDefinition') or {}).get('rod') or []
+        x1, y2 = src[0] + dx * par, src[3] - dy
+        expected = [x1, y2 - eh, x1 + ew * par, y2]
+        if len(rod) != 4 or any(abs(r - e) > ROD_TOLERANCE for r, e in zip(rod, expected)):
+            problems.append('%s on the large Source: the region of definition is %s, expected %s' % (pid, rod, expected))
+        if GEOMETRY_WARNING in log or REFINED_NOTE in log or CONFIRMED_NOTE in log:
+            problems.append('%s on the large Source: a warning, refined or confirmed (expected exact)' % pid)
+        problems += ['%s on the large Source: %s' % (pid, p) for p in check_output({'renders': [first]}, color)]
+    # not affine (sqrt(W*H)), and a weak product (W*H/1024): confirmed at full size, exact
+    for pid, size_of in ((AREA_PLUGIN, lambda w, h: round(math.sqrt(w * h))), (PRODUCT_PLUGIN, lambda w, h: round(w * h / 1024))):
+        problem, log, first, src, (width, height), par = large_source_render(host, plugins, work, pid, [])
+        if problem:
+            problems.append('%s: %s' % (pid, problem))
+            continue
+        aw = size_of(width, height)
+        output = first.get('output') or {}
+        if (output.get('w'), output.get('h')) != (aw, height):
+            problems.append('%s: the output is %sx%s, expected %dx%d' % (pid, output.get('w'), output.get('h'), aw, height))
+        if GEOMETRY_WARNING in log or CONFIRMED_NOTE not in log:
+            problems.append('%s: a warning, or not confirmed at full size' % pid)
+    problem, log, first, src, (width, height), par = large_source_render(host, plugins, work, FRAME_MAX_PLUGIN, [])
+    if problem:
+        return problems + ['%s: %s' % (FRAME_MAX_PLUGIN, problem)]
+    s = round(0.1 * max(width + 2, height + 2))
+    fw, fh = width + 2 + 2 * s, height + 2 + 2 * s
+    output = first.get('output') or {}
+    if (output.get('w'), output.get('h')) != (fw, fh):
+        problems.append('%s: the output is %sx%s, expected %dx%d'
+                        % (FRAME_MAX_PLUGIN, output.get('w'), output.get('h'), fw, fh))
+    if GEOMETRY_WARNING in log:
+        problems.append('%s: the result does not match the output' % FRAME_MAX_PLUGIN)
+    if CONFIRMED_NOTE not in log:
+        problems.append('%s: not confirmed at full size' % FRAME_MAX_PLUGIN)
+    report = {'renders': [first]}
+    problems += ['%s: %s' % (FRAME_MAX_PLUGIN, p) for p in check_output(report, (0.0, 128 / 255.0, 1.0, 1.0))]
+    return problems
+
+
+def check_timeout(host, plugins, work):
+    """Renders SLOW_PLUGIN at frames 0 and 1: the prediction times out once, then is skipped.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems, empty if both frames have Source's size, the first prediction timed
+        out, and the second query didn't try again (the timeout is remembered).
+    """
+    result = render_plugins.render(host, [], plugins, work, TIMEOUT, (SLOW_PLUGIN, CONTEXT, ['Source']), frame='0,1',
+                                   extra_env=MULTIRES_ON)
+    _, _, problem, _, _, errors, log, _ = result
+    if problem:
+        return ['%s: %s %s' % (SLOW_PLUGIN, problem, ' '.join(errors))]
+    problems = []
+    if TIMEOUT_NOTE not in log:
+        problems.append('the prediction did not time out')
+    if RECENT_TIMEOUT_NOTE not in log:
+        problems.append('the timeout was not remembered for the next query')
+    with open(os.path.join(work, SLOW_PLUGIN[len('eu.gmic.'):], 'report.json'), encoding='utf-8') as f:
+        report = json.load(f)
+    for r in report.get('renders') or []:
+        output = r.get('output') or {}
+        if (output.get('w'), output.get('h')) != (render_plugins.INPUT_WIDTH, render_plugins.INPUT_HEIGHT):
+            problems.append('at time %s, the output is %sx%s, not Source\'s size' % (r.get('time'), output.get('w'), output.get('h')))
+    return ['%s: %s' % (SLOW_PLUGIN, p) for p in problems]
+
+
+def check_no_multires(host, plugins, work):
+    """Renders results of another size on hostDemo as it is, without multi-resolution support.
+
+    User File Larger (Resize Mode Dynamic) and User File Smaller (Fixed) must then be resized to
+    Source's size, as before #175: Source's size and region of definition, a uniform output, and
+    no warning or note of a refined or confirmed prediction.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems.
+    """
+    problems = []
+    for pid, args, color in (('eu.gmic.UserFileLarger', [], (1.0, 0.0, 0.0, 1.0)),
+                             ('eu.gmic.UserFileSmaller', ['-s', 'Resize Mode=0'], (0.0, 1.0, 0.0, 1.0))):
+        name = '%s %s without multi-resolution' % (pid, ' '.join(args))
+        result = render_plugins.render(host, args, plugins, work, TIMEOUT, (pid, CONTEXT, ['Source']),
+                                       extra_env=MULTIRES_UNSET)
+        _, _, problem, _, _, errors, log, _ = result
+        if problem:
+            problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
+            continue
+        with open(os.path.join(work, pid[len('eu.gmic.'):], 'report.json'), encoding='utf-8') as f:
+            report = json.load(f)
+        problems += ['%s: %s' % (name, p) for p in check_output(report, color)]
+        first = (report.get('renders') or [{}])[0]
+        output = first.get('output') or {}
+        if (output.get('w'), output.get('h')) != (render_plugins.INPUT_WIDTH, render_plugins.INPUT_HEIGHT):
+            problems.append('%s: the output is %sx%s, not Source\'s size' % (name, output.get('w'), output.get('h')))
+        rod = (first.get('regionOfDefinition') or {}).get('rod')
+        src = ((first.get('inputs') or {}).get('Source') or {}).get('regionOfDefinition')
+        if rod != src:
+            problems.append("%s: the region of definition is %s, not Source's %s" % (name, rod, src))
+        if GEOMETRY_WARNING in log or REFINED_NOTE in log or CONFIRMED_NOTE in log:
+            problems.append('%s: a warning, or a note of a refined or confirmed prediction' % name)
+    return problems
+
+
+def check_scaled_geometry(host, plugins, work):
+    """Renders User File Larger and User File Shifted at render scales 1 and RENDER_SCALE.
+
+    With OFX_GMIC_MULTIRES=1, on a Source that hostDemo makes in canonical coordinates: at
+    RENDER_SCALE, the output must be the scale-1 output times RENDER_SCALE. Larger's canonical
+    region of definition must be the scale-1 one; Shifted's pos(10,20) is in pixels of the image
+    that G'MIC gets, so its offset from Source is twice the scale-1 one in canonical coordinates.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems.
+    """
+    problems = []
+    for pid in ('eu.gmic.UserFileLarger', 'eu.gmic.UserFileShifted'):
+        renders = {}
+        for scale in (1, RENDER_SCALE):
+            name = '%s at scale %s' % (pid, scale)
+            result = render_plugins.render(host, ['--scale', str(scale), '-i', 'Source=rod:0,0,160,120'], plugins,
+                                           work, TIMEOUT, (pid, CONTEXT, []), extra_env=MULTIRES_ON)
+            _, _, problem, _, _, errors, log, _ = result
+            if problem:
+                problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
+                continue
+            if GEOMETRY_WARNING in log:
+                problems.append('%s: the result does not match the output' % name)
+            with open(os.path.join(work, pid[len('eu.gmic.'):], 'report.json'), encoding='utf-8') as f:
+                renders[scale] = (json.load(f).get('renders') or [{}])[0]
+        if len(renders) != 2:
+            continue
+        full, scaled = renders[1], renders[RENDER_SCALE]
+        out1, out2 = full.get('output') or {}, scaled.get('output') or {}
+        expected = (round((out1.get('w') or 0) * RENDER_SCALE), round((out1.get('h') or 0) * RENDER_SCALE))
+        if (out2.get('w'), out2.get('h')) != expected:
+            problems.append('%s at scale %s: the output is %sx%s, expected %dx%d'
+                            % (pid, RENDER_SCALE, out2.get('w'), out2.get('h'), expected[0], expected[1]))
+        rod1 = (full.get('regionOfDefinition') or {}).get('rod') or []
+        rod2 = (scaled.get('regionOfDefinition') or {}).get('rod') or []
+        src = ((full.get('inputs') or {}).get('Source') or {}).get('regionOfDefinition') or []
+        if len(rod1) != 4 or len(rod2) != 4 or len(src) != 4:
+            problems.append('%s: no region of definition' % pid)
+            continue
+        # the same size in canonical coordinates; the offset from Source's top-left corner (the
+        # scale-1 pos, 0 for Larger: the same region of definition) divided by RENDER_SCALE: pos is
+        # in pixels of the image that G'MIC gets
+        dx1, dy1 = rod1[0] - src[0], src[3] - rod1[3]
+        x1, y2 = src[0] + dx1 / RENDER_SCALE, src[3] - dy1 / RENDER_SCALE
+        want = [x1, y2 - (rod1[3] - rod1[1]), x1 + (rod1[2] - rod1[0]), y2]
+        if any(abs(a - b) > ROD_TOLERANCE for a, b in zip(rod2, want)):
+            problems.append('%s at scale %s: the region of definition is %s, expected %s (%s at scale 1)'
+                            % (pid, RENDER_SCALE, rod2, want, rod1))
+    return problems
+
+
+def check_geometry(host, plugins, work):
+    """Renders each of GEOMETRY_CASES, and checks the output's size and region of definition.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems, empty if every output has the expected size, position and color.
+    """
+    problems = []
+    for pid, args, geometry, color, warns, path, frame in GEOMETRY_CASES:
+        name = '%s %s frame %s' % (pid, ' '.join(args), frame)
+        clips = [] if args is OFFSET_SOURCE else ['Source']
+        result = render_plugins.render(host, args, plugins, work, TIMEOUT, (pid, CONTEXT, clips), frame=frame,
+                                       extra_env=MULTIRES_ON)
+        _, _, problem, _, _, errors, log, _ = result
+        if problem:
+            problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
+            continue
+        if REFINED_NOTE in log:
+            problems.append('%s: refined with thin probes (expected %s)' % (name, path))
+        if (CONFIRMED_NOTE in log) != (path == CONFIRMED):
+            problems.append('%s: %s' % (name, 'not confirmed at full size' if path == CONFIRMED
+                                        else 'confirmed at full size (expected %s)' % path))
+        if (GEOMETRY_WARNING in log) != warns:
+            problems.append('%s: %s' % (name, 'no warning that the result does not match the output'
+                                        if warns else 'the result does not match the output'))
+        report_path = os.path.join(work, pid[len('eu.gmic.'):], 'report.json')
+        with open(report_path, encoding='utf-8') as f:
+            report = json.load(f)
+        problems += ['%s: %s' % (name, p) for p in
+                     (check_padded(report) if color == PADDED else check_output(report, color))]
+        renders = report.get('renders') or []
+        first = renders[0] if renders else {}
+        output = first.get('output') or {}
+        # ([x1, y1, x2, y2] in canonical coordinates)
+        rod = (first.get('regionOfDefinition') or {}).get('rod') or []
+        src = ((first.get('inputs') or {}).get('Source') or {}).get('regionOfDefinition') or []
+        if len(src) != 4:
+            problems.append('%s: no region of definition of Source' % name)
+            continue
+        # Source's pixels: the file's (render scale 1), so the pixel aspect ratio is its RoD width
+        # over its pixel width
+        src_w, src_h = render_plugins.INPUT_WIDTH, render_plugins.INPUT_HEIGHT
+        par = (src[2] - src[0]) / src_w
+        sx, sy, dx, dy = geometry
+        width, height = round(src_w * sx), round(src_h * sy)
+        x1 = src[0] + dx * par
+        y2 = src[3] - dy
+        expected = [x1, y2 - height, x1 + width * par, y2]
+        if (output.get('w'), output.get('h')) != (width, height):
+            problems.append('%s: the output is %sx%s, expected %dx%d'
+                            % (name, output.get('w'), output.get('h'), width, height))
+        if len(rod) != 4 or any(abs(r - e) > ROD_TOLERANCE for r, e in zip(rod, expected)):
+            problems.append('%s: the region of definition is %s, expected %s (Source: %s)'
+                            % (name, rod, expected, src))
+    return problems
+
+
 def render_all(host, plugins, work, runs):
     """Renders every plug-in of EXPECTED runs times, and checks their outputs.
 
@@ -175,6 +762,143 @@ def render_all(host, plugins, work, runs):
     return problems, logs, seconds
 
 
+def same_value(value, expected):
+    """Is a parameter value of the report the expected one (numbers within TOLERANCE)?"""
+    if isinstance(expected, bool) or isinstance(value, bool):
+        return value is expected
+    if isinstance(expected, (int, float)):
+        return isinstance(value, (int, float)) and abs(value - expected) <= TOLERANCE
+    if isinstance(expected, list):
+        return (isinstance(value, list) and len(value) == len(expected) and
+                all(same_value(v, e) for v, e in zip(value, expected)))
+    return value == expected
+
+
+def render_report(host, plugins, work, pid, host_args, output, extra_env=None, expected_log=(),
+                  clips=('Source',)):
+    """Renders a plug-in of the user file, and checks that its output is uniform.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+        pid: the plug-in id.
+        host_args: hostDemo's arguments before the render (-s name=value...).
+        output: the RGB value of every output pixel.
+        extra_env: environment variables of the render, if any.
+        expected_log: texts of log lines that are no problem (see render_plugins.render()).
+        clips: the input clips that get the 160x120 input (none: hostDemo makes them).
+
+    Returns:
+        (problems, report, log): a list of problems, empty if the render gave the output, the
+        parsed report.json (None if the render failed), and hostDemo's log.
+    """
+    result = render_plugins.render(host, host_args, plugins, work, TIMEOUT,
+                                   (pid, CONTEXT, list(clips)), extra_env=extra_env,
+                                   expected_log=expected_log)
+    problem, errors, log = result[2], result[5], result[6]
+    if problem:
+        return ['%s %s' % (problem, ' '.join(errors))], None, log
+    with open(os.path.join(work, pid[len('eu.gmic.'):], 'report.json'), encoding='utf-8') as f:
+        report = json.load(f)
+    return check_output(report, output), report, log
+
+
+def check_buttons(host, plugins, work):
+    """Renders each of BUTTON_CASES after the press of its button, and checks the result.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems, empty if every press gave the expected parameters and output.
+    """
+    problems = []
+    for case in BUTTON_CASES:
+        name = '%s, %s pressed' % (case.pid, case.button)
+        button = case.button.split('@')[0]
+        if case.large:
+            name += ' on the large Source'
+            source_args, clips = ['-i', 'Source=rod:0,0,%d,%d' % LARGE_SOURCE], []
+        else:
+            source_args, clips = [], ['Source']
+        found, report, _ = render_report(host, plugins, work, case.pid,
+                                         source_args + case.args + ['-s', case.button],
+                                         case.output, clips=clips)
+        problems += ['%s: %s' % (name, p) for p in found]
+        if report is None:
+            continue
+        params = report.get('params') or {}
+        if (params.get(button) or {}).get('type') != PUSH_BUTTON:
+            problems.append('%s: %s is not a push button (%s)'
+                            % (name, button, params.get(button)))
+        par = (((report.get('clipPreferences') or {}).get('clips') or {}).get('Source') or {}).get(
+            'pixelAspectRatio') or 1.0
+        for param, expected in case.values.items():
+            if expected == SPOT:
+                expected = [0.6 * 160 * par, (1 - 0.4) * 120]
+            value = (params.get(param) or {}).get('value')
+            if not same_value(value, expected):
+                problems.append('%s: %s is %r, expected %r' % (name, param, value, expected))
+        for param, expected in case.exact.items():
+            value = (params.get(param) or {}).get('value')
+            if value != expected:
+                problems.append('%s: %s is %r, expected exactly %r'
+                                % (name, param, value, expected))
+        for param, expected in case.keys.items():
+            keys = (params.get(param) or {}).get('keys')
+            if not same_value(keys, expected):
+                problems.append('%s: the keys of %s are %r, expected %r'
+                                % (name, param, keys, expected))
+        for param, expected in case.secret.items():
+            secret = (params.get(param) or {}).get('secret')
+            if secret is not expected:
+                problems.append('%s: %s has secret %r, expected %r'
+                                % (name, param, secret, expected))
+    return problems
+
+
+def check_status(host, plugins, work):
+    """Renders each of STATUS_CASES after its edits, and checks the result.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems, empty if the edits gave the expected parameters and output.
+    """
+    problems = []
+    for case in STATUS_CASES:
+        name = '%s, %s%s' % (case.pid, ' '.join(case.args) or 'no edit',
+                             ', %s=1' % STATUS_VISIBILITY_VAR if case.visibility else '')
+        extra_env = {STATUS_VISIBILITY_VAR: '1'} if case.visibility else None
+        found, report, log = render_report(host, plugins, work, case.pid, case.args,
+                                           case.output, extra_env, case.expected_log)
+        problems += ['%s: no log line with %r' % (name, e) for e in case.expected_log
+                     if e not in log]
+        problems += ['%s: %s' % (name, p) for p in found]
+        if report is None:
+            continue
+        runs = sum(1 for p in report.get('progress') or [] if p.get('id') == STATUS_PROGRESS_ID)
+        if runs != case.runs:
+            problems.append('%s: %d runs for the status, expected %d' % (name, runs, case.runs))
+        params = report.get('params') or {}
+        for flag, expectations in (('value', case.values), ('secret', case.secret),
+                                   ('enabled', case.enabled)):
+            for param, expected in expectations.items():
+                value = (params.get(param) or {}).get(flag)
+                if not same_value(value, expected):
+                    problems.append('%s: %s has %s %r, expected %r'
+                                    % (name, param, flag, value, expected))
+    if not problems:
+        print('status after edits (#173): %d cases checked' % len(STATUS_CASES))
+    return problems
+
+
 def check_cpus(host, plugins, work):
     """Renders CPUS_PLUGIN without OMP_NUM_THREADS, and prints and checks G'MIC's $_cpus.
 
@@ -191,7 +915,7 @@ def check_cpus(host, plugins, work):
     """
     result = render_plugins.render(
         host, [], plugins, work, TIMEOUT, (CPUS_PLUGIN, CONTEXT, ['Source']), host_threads=True)
-    problem, errors = result[2], result[5]  # (independent of the number of results)
+    _, _, problem, _, _, errors, _, _ = result
     if problem:
         return ['%s: %s %s' % (CPUS_PLUGIN, problem, ' '.join(errors))]
     report_path = os.path.join(work, CPUS_PLUGIN[len('eu.gmic.'):], 'report.json')
@@ -222,7 +946,7 @@ def check_channels(host, plugins, work):
     """
     result = render_plugins.render(
         host, [], plugins, work, TIMEOUT, (CHANNELS_PLUGIN, CONTEXT, ['Source']))
-    problem, log = result[2], result[6]
+    _, _, problem, _, _, _, log, _ = result
     if not problem:
         return ['%s: rendered, expected a failure (%s)' % (CHANNELS_PLUGIN, CHANNELS_ERROR)]
     if CHANNELS_ERROR not in log:
@@ -245,7 +969,7 @@ def render_scaled(host, plugins, work, scale):
     """
     result = render_plugins.render(host, ['--scale', str(scale)] + SCALE_ARGS, plugins, work,
                                    TIMEOUT, (SCALE_PLUGIN, CONTEXT, []))
-    problem, errors = result[2], result[5]
+    _, _, problem, _, _, errors, _, _ = result
     if problem:
         return '%s %s' % (problem, ' '.join(errors)), {}
     report_path = os.path.join(work, SCALE_PLUGIN[len('eu.gmic.'):], 'report.json')
@@ -319,8 +1043,17 @@ def run_test(host, plugins, stdlib, runs, work, name):
     problems += check_render_scale(host, plugins, work)
     problems += check_cpus(host, plugins, work)
     problems += check_channels(host, plugins, work)
+    problems += check_buttons(host, plugins, work)
+    problems += check_status(host, plugins, work)
     if not any(KEPT_NOTE in log for log in logs):
         problems.append("no note that the file's own definition of 'star_tone' is kept")
+    if name == USER_FILE:
+        # (the result-size checks: only with the user file, see the module docstring)
+        problems += check_no_multires(host, plugins, work)
+        problems += check_geometry(host, plugins, work)
+        problems += check_scaled_geometry(host, plugins, work)
+        problems += check_large_sources(host, plugins, work)
+        problems += check_timeout(host, plugins, work)
     for p in problems:
         print('FAIL (user file): ' + p)
     passed = not problems
@@ -366,9 +1099,9 @@ def main():
         parser.error('--update-file and --user-source are exclusive')
     # G'MIC's folder (gmic::path_rc(), where the plug-in looks for the update file) is the HOME's
     # .config/gmic only without GMIC_PATH and XDG_CONFIG_HOME; the renders inherit this environment
-    for var in ('GMIC_PATH', 'XDG_CONFIG_HOME', 'OFX_GMIC_UPDATE_FILE'):
+    for var in ('GMIC_PATH', 'XDG_CONFIG_HOME', 'OFX_GMIC_UPDATE_FILE', STATUS_VISIBILITY_VAR):
         os.environ.pop(var, None)
-    name = 'gmic_ofx.gmic'
+    name = USER_FILE
     if args.update_file:
         name = update_file_name()
         os.environ['OFX_GMIC_UPDATE_FILE'] = '1'
