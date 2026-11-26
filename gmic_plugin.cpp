@@ -449,6 +449,11 @@ static string gmicGetHotfixes(const string& stdlib, const string& userCommands, 
 			defs[d.first] = d.second; // (G'MIC loads the user's file after the built-in stdlib)
 		}
 	}
+	// OFX_GMIC_TEST_LOG_HOTFIXES=1 (a test aid): also log the fixes that are applied, and those
+	// that G'MIC no longer needs, for the CI (gmic_develop_report.py lists them); the others always
+	// get a note or a warning
+	const char* const logEnv = std::getenv("OFX_GMIC_TEST_LOG_HOTFIXES");
+	const bool logOutcomes = logEnv && std::strcmp(logEnv, "1") == 0;
 	string hotfixes;
 	for (size_t i = 0; i < checks.size(); ++i) {
 		const string& command = checks[i][0].first;
@@ -462,7 +467,11 @@ static string gmicGetHotfixes(const string& stdlib, const string& userCommands, 
 			continue;
 		}
 		if (!defs[command].empty() && gmicChecksum(defs[command]) == ownChecksum) {
-			continue; // already fixed in G'MIC (then the callees do not matter)
+			// already fixed in G'MIC (then the callees do not matter)
+			if (logOutcomes) {
+				gmicLog("openfx-gmic: hot fix for the G'MIC command '%s' not needed: G'MIC has the fixed definition\n", command.c_str());
+			}
+			continue;
 		}
 		bool ok = true;
 		for (size_t k = 0; k < checks[i].size(); ++k) {
@@ -489,6 +498,9 @@ static string gmicGetHotfixes(const string& stdlib, const string& userCommands, 
 			}
 		}
 		if (ok) {
+			if (logOutcomes) {
+				gmicLog("openfx-gmic: hot fix for the G'MIC command '%s' applied\n", command.c_str());
+			}
 			hotfixes += texts[i];
 		}
 	}
