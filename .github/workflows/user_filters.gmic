@@ -119,6 +119,7 @@ fx_userfile_visibility_preview :
 #@gui : Exact = float(0,0,1)
 #@gui : Size = button()
 fx_userfile_press_size :
+  skip $*
   fill_color 0,0,255
 
 fx_userfile_press_size_preview :
