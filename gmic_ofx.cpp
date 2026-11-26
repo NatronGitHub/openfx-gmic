@@ -52,6 +52,9 @@
 #include <vector>
 
 #include "ofxsImageEffect.h"
+#ifndef OFX_GMIC_COMMERCIAL
+#include "ofxsPositionInteract.h" // OFX::PointsInteract (SupportExt, GPL)
+#endif
 
 #include "gmic_plugin.h"
 #include "gmic_log.h"
@@ -68,6 +71,7 @@ using gmic_ofx::kTimeOffsetParamSuffix;
 using gmic_ofx::Parameter;
 using gmic_ofx::ParamType;
 using gmic_ofx::PluginInfo;
+using gmic_ofx::PointHandle;
 using gmic_ofx::SequenceData;
 using gmic_ofx::World;
 
@@ -542,12 +546,18 @@ struct InputsResult
 // ---------------------------------------------------------------------------------------------
 // The effect instance
 
+class GMICPointsInteract; // its point handles (below)
+
 class GMICEffect final : public OFX::ImageEffect
 {
 public:
 	GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData);
 
 private:
+	// the point handles: they use the point functions below (globalData, pointIsOn,
+	// pointIsOnParams, pointChangedByUser)
+	friend class GMICPointsInteract;
+
 	void render(const OFX::RenderArguments& args) override;
 	bool isIdentity(const OFX::IsIdentityArguments& args, OFX::Clip*& identityClip, double& identityTime
 #ifdef OFX_EXTENSIONS_NUKE
@@ -575,8 +585,14 @@ private:
 	// the layer input clips' parameter names, in order (the first one is Source)
 	const std::string& inputName(int i) const { return _gd.param[_inputParam[i]].paramName; }
 
-	bool pointIsDefault(const Parameter& param, double x, double y) const;
+	const GlobalData& globalData() const { return _gd; }
+	// parameter i if it is a point, else NULL
+	OFX::Double2DParam* pointParamAt(int i) const;
+	bool pointIsOn(int i, double time) const;
+	std::vector<OFX::Param*> pointIsOnParams() const;
 	std::optional<OfxRectD> sourceRoD(double time) const;
+	void pointChangedByUser(int i, double time, bool moveToSource = true);
+	bool pointIsDefault(const Parameter& param, double x, double y) const;
 	std::optional<OfxRectD> resultRoD(const OfxRectD& sourceRod, double time, const OfxPointD& renderScale) const;
 	void pointsFromSourceRead();
 	void pointsFromSourceWrite();
@@ -1146,25 +1162,42 @@ void GMICEffect::changedParam(const OFX::InstanceChangedArgs& args, const std::s
 	// we are only interested in user edits below
 	if (args.reason != OFX::eChangeUserEdit) return;
 
-	// a point reset to its default by the user: within Source too (pointsMoveToSource sets
-	// parameters: the instance changed actions this causes are plug-in edits, ignored here)
+	// a point changed by the user
 	for (int i = 0; i < _gd.nofParams; i++) {
 		const Parameter& param = _gd.param[i];
 		if (param.paramType != ParamType::Point || param.paramName != paramName) continue;
-		OFX::Double2DParam* point = std::get<OFX::Double2DParam*>(_params[i]);
-		const std::optional<OfxPointD> v = hostQuery([point] { return point->getValue(); });
-		if (!v) break;
-		if (pointIsDefault(param, v->x, v->y)) {
-			pointsMoveToSource(args.time, i);
-		} else {
-			// moved elsewhere by the user: forget the value the plug-in gave it
-			pointsFromSourceRead();
-			if (_pointFromSource[i] && !pointValueIs(*_pointFromSource[i], v->x, v->y)) {
-				_pointFromSource[i].reset();
-				pointsFromSourceWrite();
-			}
-		}
+		pointChangedByUser(i, args.time);
 		break;
+	}
+}
+
+OFX::Double2DParam* GMICEffect::pointParamAt(int i) const
+{
+	OFX::Double2DParam* const* point = (i >= 0 && i < _gd.nofParams) ? std::get_if<OFX::Double2DParam*>(&_params[i]) : nullptr;
+	return point ? *point : nullptr;
+}
+
+// Point i changed by the user, in the parameters or with its handle (GMICPointsInteract, whose changes
+// the host reports as plug-in edits), from the instance changed action or an interact action: reset
+// to its default (if moveToSource), it goes within Source too (pointsMoveToSource sets parameters:
+// the instance changed actions this causes are plug-in edits, ignored in changedParam; the handles
+// pass false: a drag is not a reset); moved elsewhere, the plug-in forgets the value it gave it.
+void GMICEffect::pointChangedByUser(int i, double time, bool moveToSource)
+{
+	OFX::Double2DParam* point = pointParamAt(i);
+	if (!point) return;
+	const std::optional<OfxPointD> v = hostQuery([point] { return point->getValue(); });
+	if (!v) return;
+	if (pointIsDefault(_gd.param[i], v->x, v->y)) {
+		if (!moveToSource) return;
+		pointsMoveToSource(time, i);
+	} else {
+		// moved elsewhere by the user: forget the value the plug-in gave it
+		pointsFromSourceRead();
+		if (_pointFromSource[i] && !pointValueIs(*_pointFromSource[i], v->x, v->y)) {
+			_pointFromSource[i].reset();
+			pointsFromSourceWrite();
+		}
 	}
 }
 
@@ -1211,7 +1244,8 @@ void GMICEffect::endChanged(OFX::InstanceChangeReason /*reason*/)
 // (instance changed action: parameters cannot be set in render, and should only be set in the
 // instance changed action or in interacts), each point parameter still at its default is moved to its G'MIC default within
 // Source's region of definition, as openfx-misc's Transform does with its center; so is a point that
-// the user resets to its default (or sets to it). Points don't follow Source when its size changes
+// the user resets to its default (or sets to it) in the parameters (a point dragged onto it with its
+// handle is not a reset: see GMICPointsInteract). Points don't follow Source when its size changes
 // otherwise (e.g. a Reformat upstream edited), as with openfx-misc. A point is at its default if it
 // is not animated and has the default converted with the project size and offset, with the size only
 // (Natron ignores the offset), or unconverted (hosts without a project size); or the value the
@@ -1354,6 +1388,27 @@ void GMICEffect::pointUpdateEnabled(int checkbox, bool draft)
 	OFX::Double2DParam* const point = std::get<OFX::Double2DParam*>(_params[checkbox - 1]);
 	const bool enabled = *on && mayBeEnabled(checkbox - 1, draft);
 	hostTry([point, enabled] { point->setEnabled(enabled); }); // (also called from createInstance)
+}
+
+// Whether point i is in use at time, as pointUpdateEnabled enables it: not disabled, its checkbox on
+// if it is removable, and Preview/Draft Mode on if only the preview uses it (true if the host fails)
+bool GMICEffect::pointIsOn(int i, double time) const
+{
+	const std::optional<bool> draft = hostQuery([this, time] { return _draftMode->getValueAtTime(time); });
+	if (!mayBeEnabled(i, draft.value_or(true))) return false;
+	if (!isPointCheckbox(i + 1)) return true;
+	OFX::BooleanParam* const box = std::get<OFX::BooleanParam*>(_params[i + 1]);
+	return hostQuery([box, time] { return box->getValueAtTime(time); }).value_or(true);
+}
+
+// the parameters that pointIsOn reads: each removable point's checkbox, and Preview/Draft Mode
+std::vector<OFX::Param*> GMICEffect::pointIsOnParams() const
+{
+	std::vector<OFX::Param*> params{ _draftMode };
+	for (int i = 1; i < _gd.nofParams; i++) {
+		if (isPointCheckbox(i)) params.push_back(std::get<OFX::BooleanParam*>(_params[i]));
+	}
+	return params;
 }
 
 // The removable points (see pointUpdateEnabled). onlyParam >= 0: only for that checkbox.
@@ -1759,6 +1814,103 @@ void GMICEffect::render(const OFX::RenderArguments& args)
 }
 
 // ---------------------------------------------------------------------------------------------
+// Point handles (issue #176)
+
+#ifndef OFX_GMIC_COMMERCIAL
+// The point handles: SupportExt's OFX::PointsInteract (GPL: COMMERCIAL builds keep the host's own
+// handles), one per point parameter, in the colour that point() gives it (pointHandleArgs in
+// gmic_parser.cpp). Burst points set their value at each pen motion, so the host renders while
+// they move; the others when they are released. A point is shown when its parameter is enabled
+// and visible (pointUpdateEnabled), and when it is in use (GMICEffect::pointIsOn), for the hosts
+// that don't follow the enabled state at run time.
+class GMICPointsInteract final : public OFX::PointsInteract
+{
+public:
+	// (the Support library only makes it for the effects of the factories that register it,
+	// GMICEffect: dynamic_cast throws std::bad_cast otherwise)
+	GMICPointsInteract(OfxInteractHandle handle, OFX::ImageEffect* effect)
+		: GMICPointsInteract(handle, dynamic_cast<GMICEffect&>(*effect))
+	{
+	}
+
+private:
+	GMICPointsInteract(OfxInteractHandle handle, GMICEffect& effect)
+		: OFX::PointsInteract(handle, &effect, points(effect.globalData()))
+		, _effect(effect)
+		, _param(pointIndices(effect.globalData()))
+	{
+		// redrawn when the checkboxes or Preview/Draft Mode change, which isPointShown reads (the base
+		// class slaves the points)
+		for (OFX::Param* p : effect.pointIsOnParams()) addParamToSlaveTo(p);
+	}
+
+	// the index in GlobalData::param of each point, in the order of points()
+	static std::vector<int> pointIndices(const GlobalData& gd);
+	static std::vector<OFX::PointsInteractPoint> points(const GlobalData& gd);
+	bool isPointShown(int i, double time) const override;
+	void setPointValue(int i, double time, const OfxPointD& p, bool firstChange, bool dragEnd) override;
+
+	GMICEffect& _effect;
+	const std::vector<int> _param;
+};
+
+std::vector<int> GMICPointsInteract::pointIndices(const GlobalData& gd)
+{
+	std::vector<int> indices;
+	for (int i = 0; i < gd.nofParams; i++) {
+		if (gd.param[i].paramType == ParamType::Point) indices.push_back(i);
+	}
+	return indices;
+}
+
+std::vector<OFX::PointsInteractPoint> GMICPointsInteract::points(const GlobalData& gd)
+{
+	std::vector<OFX::PointsInteractPoint> points;
+	for (const int i : pointIndices(gd)) {
+		const PointHandle& h = gd.param[i].pointHandle;
+		OFX::PointsInteractPoint p(gd.param[i].paramName);
+		p.colour = { h.color[0] / 255., h.color[1] / 255., h.color[2] / 255. };
+		p.updateWhileDragging = h.burst;
+		points.push_back(p);
+	}
+	return points;
+}
+
+bool GMICPointsInteract::isPointShown(int i, double time) const
+{
+	return _effect.pointIsOn(_param[i], time);
+}
+
+// An edit block for every change, opened and closed here, so that the plug-in's bookkeeping
+// (pointChangedByUser: the hidden kPointsFromSourceParam) is in the same undo step as the value: at
+// the first change of the drag, and at its end. A drag is never a reset: a point dropped on its
+// project default stays there (no move within Source).
+void GMICPointsInteract::setPointValue(int i, double time, const OfxPointD& p, bool firstChange, bool dragEnd)
+{
+	OFX::ParamSet::EditBlock block(_effect, "Move point", true, OFX::ParamSet::EditBlock::eBeginNow,
+		OFX::ParamSet::EditBlock::eHostErrorsIgnore);
+	OFX::Double2DParam* point = pointParam(i);
+	if (hostQuery([point] { return point->getNumKeys(); }).value_or(0) > 0) {
+		point->setValueAtTime(time, p.x, p.y); // animated: a key at time
+	} else {
+		point->setValue(p.x, p.y);
+	}
+	if (firstChange || dragEnd) _effect.pointChangedByUser(_param[i], time, false);
+}
+#endif // OFX_GMIC_COMMERCIAL
+
+// whether the plug-in draws the point handles (GMICPointsInteract): not in COMMERCIAL builds, nor
+// on hosts without overlays (ofxsSetOverlayInteractDescriptorV2 then registers nothing)
+bool pluginDrawsPoints()
+{
+#ifdef OFX_GMIC_COMMERCIAL
+	return false;
+#else
+	return OFX::getImageEffectHostDescription()->supportsOverlays;
+#endif
+}
+
+// ---------------------------------------------------------------------------------------------
 // The plug-ins
 
 class GMICPluginFactory final : public OFX::PluginFactory
@@ -1861,6 +2013,13 @@ void GMICPluginFactory::describe(OFX::ImageEffectDescriptor& desc)
 		// layer times: inputs at other frames (getFramesNeeded)
 		desc.setTemporalClipAccess(true);
 	}
+
+#ifndef OFX_GMIC_COMMERCIAL
+	if (hasPoints(gd)) {
+		// the point handles (see pluginDrawsPoints); desc owns the descriptor
+		OFX::ofxsSetOverlayInteractDescriptorV2(desc, new OFX::PointsOverlayDescriptorV2<GMICPointsInteract>);
+	}
+#endif
 }
 
 // describe the plugin in context
@@ -1992,7 +2151,10 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			p->setDefault(n.x, n.y);
 			p->setDoubleType(OFX::eDoubleTypeXYAbsolute);
 			p->setDefaultCoordinateSystem(OFX::eCoordinatesNormalised);
-			p->setUseHostNativeOverlayHandle(true);
+			// the host's handle where the plug-in draws none (pluginDrawsPoints), or where the host
+			// has one for the point (PointsInteract then doesn't draw it). Natron draws its own handle
+			// for a point of an effect with an overlay only if this is set.
+			p->setUseHostNativeOverlayHandle(!pluginDrawsPoints() || p->getHostHasNativeOverlayHandle());
 			paramDesc = p;
 		} break;
 		case ParamType::Button: {

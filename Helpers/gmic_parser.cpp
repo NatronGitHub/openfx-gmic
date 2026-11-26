@@ -52,10 +52,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
+#include <cstdint>
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -257,6 +260,79 @@ static string textUnescaped(const string& s)
 	return d;
 }
 
+// an integer argument of point(), as QString::toInt: base 10, an optional sign, the whole string
+static std::optional<int> pointIntArg(const string& s)
+{
+	const char* first = s.data();
+	const char* const last = s.data() + s.size();
+	if (first != last && *first == '+' && last - first > 1 && first[1] != '-') ++first; // (from_chars takes no '+')
+	int v = 0;
+	const std::from_chars_result r = std::from_chars(first, last, v);
+	if (r.ec != std::errc() || r.ptr != last) return std::nullopt;
+	return v;
+}
+
+// The handle of a point(X,Y,_removable,_burst,_R,_G,_B,...) (its arguments, without the empty
+// ones), as G'MIC-Qt reads its keypoint (PointParameter::initFromText): _burst is any non-zero
+// integer; _R alone is a gray, _R,_G has blue 0. The other arguments (the opacity and radius of
+// G'MIC-Qt's keypoint) are not used. G'MIC-Qt rejects a filter with a malformed argument: here only
+// that argument is ignored. Without _R, the colour is the next one of G'MIC-Qt's colormap (see
+// pointColormap).
+static void pointHandleArgs(const vector<string>& a, EffectParameter& cp)
+{
+	PointHandle& h = cp.pointHandle;
+	if (a.size() >= 4) {
+		if (const std::optional<int> burst = pointIntArg(a[3])) h.burst = (*burst != 0);
+	}
+	if (a.size() >= 5) {
+		if (const std::optional<int> r = pointIntArg(a[4])) {
+			cp.colorGiven = true;
+			h.color[0] = h.color[1] = h.color[2] = *r;
+		}
+	}
+	if (a.size() >= 6) {
+		if (const std::optional<int> g = pointIntArg(a[5])) {
+			h.color[1] = *g;
+			h.color[2] = 0;
+		}
+	}
+	if (a.size() >= 7) {
+		if (const std::optional<int> b = pointIntArg(a[6])) h.color[2] = *b;
+	}
+	for (int& c : h.color) c = std::clamp(c, 0, 255); // (QColor's range)
+}
+
+// The colours of the points without _R: G'MIC-Qt's default colormap
+// (PointParameter::pickColorFromDefaultColormap), restarted for each filter: white, red, green,
+// (64,64,255), cyan, magenta, yellow, then pseudo-random colours from PointParameter::randomChannel
+// (with a 64-bit unsigned long, as on Linux and macOS, and red, green then blue: G'MIC-Qt's order of
+// evaluation is unspecified).
+static void pointColormap(vector<EffectParameter>& params)
+{
+	static const int kColormap[][3] = { { 255, 255, 255 }, { 255, 0, 0 }, { 0, 255, 0 }, { 64, 64, 255 },
+		{ 0, 255, 255 }, { 255, 0, 255 }, { 255, 255, 0 } };
+	constexpr int kColormapSize = (int)(sizeof(kColormap) / sizeof(kColormap[0]));
+	std::uint64_t seed = 12345;
+	const auto randomChannel = [&seed] {
+		const int v = (int)((seed / 65536) % 256);
+		seed = seed * 1103515245 + 12345;
+		return v;
+	};
+	int next = 0;
+	for (EffectParameter& p : params) {
+		if (p.paramType != "point" || p.colorGiven) continue;
+		int* const color = p.pointHandle.color;
+		if (next < kColormapSize) {
+			std::copy(kColormap[next], kColormap[next] + 3, color);
+		} else {
+			color[0] = randomChannel();
+			color[1] = randomChannel();
+			color[2] = randomChannel();
+		}
+		++next;
+	}
+}
+
 static
 void processParam(const string& s, EffectParameter& cp)
 {
@@ -373,6 +449,7 @@ void processParam(const string& s, EffectParameter& cp)
 			cp.defaultValue = pval;
 		}
 		strReplace(cp.defaultValue, ",", "|");
+		pointHandleArgs(strSplit(pval, ','), cp);
 	} else if (cp.paramType == "value") {
 		// 'value(value)'
 		// Add a pre-defined value parameter (not displayed). It is passed as a quoted string, so
@@ -698,6 +775,7 @@ string gmic_parse_single(const string& content, EffectData& cd)
 		processParam(cd.param[i].name, cd.param[i]);
 		realNames.insert(cd.param[i].name);
 	}
+	pointColormap(cd.param);
 	// a parameter without a name ("=float(1,0,2)"): G'MIC-Qt shows it without a label, but a host
 	// parameter needs a name. Name it by its position, so that it keeps its argument, and never with
 	// the name of another parameter of the filter.

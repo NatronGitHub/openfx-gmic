@@ -607,6 +607,27 @@ add_ofx_plugin(GMIC
 # The OpenFX C++ Support library (gmic_ofx.cpp): the plug-ins are the G'MIC filters, registered
 # lazily, at the first OfxGetNumberOfPlugins (OFX::PluginFactories in gmic_ofx.cpp)
 target_link_libraries(GMIC PRIVATE openfx::Support)
+# The point handles (issue #176): openfx-supportext's PointsInteract (ofxsPositionInteract.h,
+# GPLv2+), with its text renderer, linked with OpenGL. COMMERCIAL builds (CeCILL-C) leave it out
+# and keep the host's handles (OFX_GMIC_COMMERCIAL in gmic_ofx.cpp), as GMIC_OFX/Makefile does.
+if(NOT OFX_LICENSE STREQUAL "COMMERCIAL")
+  if(NOT EXISTS "${PROJECT_SOURCE_DIR}/SupportExt/cmake/SupportExt.cmake")
+    message(FATAL_ERROR
+      "\n the SupportExt submodule is missing, please update your repository:\n"
+      "  > git submodule update -i\n")
+  endif()
+  # Linux: libGL.so.1, not GLVND's libOpenGL.so.0 and libGLX.so.0, which not every system has
+  # (linuxCheckBundle.sh: libglvnd-opengl on EL9)
+  set(OpenGL_GL_PREFERENCE LEGACY)
+  # macOS: the OpenGL framework weak-linked, as Makefile.master does, so that the plug-in loads
+  # without it (SupportExt then finds this OpenGL::GL instead of FindOpenGL's)
+  if(APPLE AND NOT TARGET OpenGL::GL)
+    add_library(OpenGL::GL INTERFACE IMPORTED GLOBAL)
+    set_target_properties(OpenGL::GL PROPERTIES INTERFACE_LINK_OPTIONS "LINKER:-weak_framework,OpenGL")
+  endif()
+  include(SupportExt/cmake/SupportExt.cmake)
+  supportext_add_sources(GMIC COMPONENTS POSITION_INTERACT)
+endif()
 # The resources of GMIC_OFX/Makefile, before ofx_deploy_bundle (below): the icon, the licences of
 # the plug-in and G'MIC (COPYING: dual CeCILL-C / CeCILL v2; COMMERCIAL builds use CeCILL-C);
 # COMMERCIAL: the CeCILL-B licence of the community files without a licence in their header;

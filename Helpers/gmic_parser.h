@@ -53,6 +53,7 @@
 #include <string>
 #include <vector>
 
+#include "gmic_parameter.h"
 #include "gmic_visibility.h"
 
 namespace gmic_ofx {
@@ -86,6 +87,9 @@ struct EffectParameter {
 	// Horizontal"... and its point), which only the filter's preview command uses (see
 	// markSplitPreviewParams, issue #184)
 	bool splitPreview;
+	// point(): its handle, from the rest of its arguments (see PointHandle)
+	PointHandle pointHandle;
+	bool colorGiven = false; // point(): _R given; otherwise the colour comes from G'MIC-Qt's colormap
 	EffectParameter() : removable(0), splitPreview(false) {}
 };
 

@@ -128,6 +128,15 @@ struct PluginInfo
 	int minor_version = 0;
 };
 
+// the handle of a point parameter (ParamType::Point) on the host's viewer (issue #176): from the
+// _burst and _R,_G,_B arguments of point(X,Y,_removable,_burst,_R,_G,_B,...), read by the parser
+// (pointHandleArgs, pointColormap in gmic_parser.cpp); drawn by GMICPointsInteract (gmic_ofx.cpp)
+struct PointHandle
+{
+	int color[3] = { 255, 255, 255 }; // RGB, 0..255
+	bool burst = false; // set at each pen motion while dragged (so rendered), else at pen-up only
+};
+
 struct Parameter
 {
 	Parameter() = default;
@@ -157,6 +166,7 @@ struct Parameter
 	// used by the filter's preview command only (G'MIC's split preview, see pluginSetup): the OFX
 	// glue enables it only when Preview/Draft Mode is on
 	bool draftModeOnly = false;
+	PointHandle pointHandle; // ParamType::Point only
 	// a parameter of the filter whose visibility follows its status (issue #173, see
 	// GmicStatusRun::visibility): displayStatus is then G'MIC-Qt's initial state, which the OFX
 	// glue declares and changes on Natron only (other hosts show the parameter)
