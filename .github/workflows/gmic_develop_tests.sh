@@ -3,12 +3,14 @@
 # outcome instead of stopping at the first failure: for the G'MIC develop job (#226), which runs it
 # on a checkout with the pinned G'MIC release and on one with the develop sources
 # (gmic_develop_sources.sh), and compares the results (gmic_develop_report.py).
+# The tests are those of ci.yml's linux job (keep them in sync), with the same options.
 # Usage: gmic_develop_tests.sh <openfx-gmic checkout> <results dir> <expected number of plug-ins>
 # The results dir gets one <test>.log per test, status.tsv (<test><tab><exit status>), the
 # describe host's log (describe-host.log: PLUGIN, GROUPING, RENDERINFO lines), the plug-in list
 # (plugins.txt), the host's output of each failed render (render-logs/<id>.log) and the standard
-# library of the build (gmic_stdlib_community.h). The script fails only when the build fails; the
-# tests after the describe test are skipped without its plug-in list.
+# library of the build (gmic_stdlib_community.h); the renders stay in <checkout>/render-all, for
+# gmic_develop_report.py's comparison of the outputs. The script fails only when the build fails;
+# the tests after the describe test are skipped without its plug-in list.
 set -uo pipefail
 
 TREE=$(cd "$1" && pwd)

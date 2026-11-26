@@ -162,6 +162,11 @@ def host_demo_path(host, config):
     return None
 
 
+def plugin_id(filter_name):
+    """The plug-in id of a G'MIC filter, from its name in its '#@gui <name> :' line."""
+    return 'eu.gmic.' + re.sub(r'[^A-Za-z0-9]', '', filter_name)
+
+
 def fft_plugins(stdlib_header):
     """Ids of the filters whose command (or its _<command> helpers) uses the FFT."""
     text = stdlib_text(stdlib_header)
@@ -182,7 +187,7 @@ def fft_plugins(stdlib_header):
         cmd = g.group(2)
         b = bodies.get(cmd, '') + ''.join(v for k, v in bodies.items() if k.startswith('_' + cmd))
         if FFT_COMMANDS.search(b):
-            ids.add('eu.gmic.' + re.sub(r'[^A-Za-z0-9]', '', g.group(1)))
+            ids.add(plugin_id(g.group(1)))
     return ids
 
 
