@@ -526,9 +526,9 @@ endforeach()
 # version: warn if gmic.h is another one (not an error: the plug-in checks each fix against the
 # built-in definitions at load, see the top of gmic_hotfixes.gmic).
 # COMMERCIAL builds only keep the fixes of the commands of their standard library, as the
-# Makefile does: a "#@hotfix <command> <original> <fixed> [callee:checksum...]" block is left out
-# when its command (unless <original> is "-": G'MIC no longer defines it) or a callee is not in
-# GMIC_STDLIB_COMMANDS.
+# Makefile does: a "#@hotfix <command> <original> <fixed>[,<other>...] [callee:checksum...]" block
+# is left out when its command (unless <original> is "-": G'MIC no longer defines it) or a callee
+# is not in GMIC_STDLIB_COMMANDS.
 set(GMIC_HOTFIXES "${PROJECT_SOURCE_DIR}/gmic_hotfixes.gmic")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${GMIC_HOTFIXES}")
 file(STRINGS "${GMIC_SRC_DIR}/gmic.h" _line REGEX "^#define gmic_version [0-9]+")

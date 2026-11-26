@@ -58,9 +58,9 @@ def definitions(content, names):
 
 
 def checksum(definition):
-    """The FNV-1a 64-bit hash of a definition, as 16 hexadecimal digits (gmicChecksum())."""
+    """The FNV-1a 64-bit hash of a definition's bytes, as 16 hexadecimal digits (gmicChecksum())."""
     value = 14695981039346656037
-    for byte in definition.encode('utf-8'):
+    for byte in definition.encode('latin-1'):  # (the text is decoded byte for byte)
         value = ((value ^ byte) * 1099511628211) & 0xffffffffffffffff
     return '%016x' % value
 
@@ -96,10 +96,12 @@ def applied_blocks(stdlib, hotfixes):
 
 
 def main():
-    stdlib = render_plugins.stdlib_text(sys.argv[1]).encode('latin-1').decode('utf-8', 'replace')
-    with open(sys.argv[2], encoding='utf-8') as stream:
+    # Latin-1 throughout: one character per byte, so that the checksums are those of the bytes,
+    # as the plug-in computes them
+    stdlib = render_plugins.stdlib_text(sys.argv[1])
+    with open(sys.argv[2], encoding='latin-1') as stream:
         hotfixes = stream.read().replace('\r', '')
-    with open(sys.argv[3], 'w', encoding='utf-8') as stream:
+    with open(sys.argv[3], 'w', encoding='latin-1') as stream:
         stream.write(applied_blocks(stdlib, hotfixes))
 
 

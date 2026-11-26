@@ -10,8 +10,9 @@
 #                definition replaces the built-in one, also when the command is called by
 #                another one (e.g. rep_ncee from fx_ncee).
 #
-#  Format      : '#@hotfix <command> <original> <fixed>[,<other>...] [<callee>:<checksum>...]'
-#                starts a block, which ends at the next '#@hotfix' line. The checksums are FNV-1a
+#  Format      : '#@hotfix <command> <original> <fixed>[,<other>...]
+#                [<callee>:<checksum>...]' starts a block, which ends at the next '#@hotfix'
+#                line. The checksums are FNV-1a
 #                64-bit hashes of command definitions as G'MIC reads them (comments and
 #                blank lines removed, lines trimmed, each followed by a newline): <original>
 #                is the one of the built-in definition the fix was made from, and <fixed>
@@ -60,7 +61,8 @@
 # include/sylvie_alexandre.gmic (gmic-community) still call with their "Perspective - Param A"
 # shape: Degrades HSL TSL (samj_Degrades_HSL_TSL), Formes Couleurs Variees Dans Image
 # (samj_Formes_Couleurs_Variees_Dans_Image) and Motifs Degrades CIE (samj_Degrades_XYZ_CIE)
-# fail with "Unknown command 'fx_warp_perspective'". Upstream: https://github.com/GreycLab/gmic-community/issues/312.
+# fail with "Unknown command 'fx_warp_perspective'". Upstream:
+# https://github.com/GreycLab/gmic-community/issues/312.
 # From src/gmic_stdlib.gmic of G'MIC 4.0.7, unchanged. It calls warp_perspective, which G'MIC
 # 4.0.8 only defines in include/prawnsushi.gmic: a callee without a checksum, which only has to
 # exist. COMMERCIAL builds leave prawnsushi.gmic out, so they leave this block out too (their
@@ -237,10 +239,10 @@ mul 255
 # transfer_colors from include/david_tschumperle.gmic, but 9 filters of other community files
 # still call them, and fail with "Unknown command": Zone System, Metallic Look, Simple Noise
 # Canvas, Make Old Squiggly, Morphology Painting, Night HDR Image Black Noise Correction
-# (fx_apply_curve), CeKoaSa 010 (transfer_colors), Test Dither Color and Chalk It Up with
-# Invert Colors on (negative). https://github.com/NatronGitHub/openfx-gmic/issues/229. The four blocks restore them, as
-# G'MIC 4.0.8's built-in standard library defines them: with 4.0.8, each is that definition
-# (the block is skipped silently).
+# (fx_apply_curve), CeKoaSa 010 (transfer_colors), Test Dither Color and Chalk It Up with Invert
+# Colors on (negative). https://github.com/NatronGitHub/openfx-gmic/issues/229. The four blocks
+# restore them, as G'MIC 4.0.8's built-in standard library defines them: with 4.0.8, each is
+# that definition (the block is skipped silently).
 fx_apply_curve :
 ac "_fx_apply_curve ${1-13}",$14,$15
 
@@ -275,8 +277,9 @@ v +
 # Hair Locks (gtutor_hairlock) draws its hues with '360.0*(...)%1', meant as 360 times the
 # fractional part: that is what CImg 4.0.8 computes, where '%' binds tighter than '*', but CImg
 # develop (8364cdc) gives '%' the precedence of '*' (left to right, as in C), and the hues
-# collapse to under 1 degree. https://github.com/NatronGitHub/openfx-gmic/issues/234. From include/garry_osgood.gmic
-# (gmic-community; the same in 4.0.8 and develop); fix: '360.0*((...)%1)', right with both rules.
+# collapse to under 1 degree. https://github.com/NatronGitHub/openfx-gmic/issues/234. From
+# include/garry_osgood.gmic (gmic-community; the same in 4.0.8 and develop); fix:
+# '360.0*((...)%1)', right with both rules.
 _hcolor : skip ${1=40},${2=0.5},${3=0.5},${4=0},${5=0.5},${6=1},${7=1}
 repeat $!
 l[$>]
@@ -305,8 +308,8 @@ done
 # JPEG Encoder's status ends with '#####################': the last line of fx_jpeg_preview
 # (include/joan_rake.gmic) ends with '\', which joins the next line, a comment, to it in the
 # built-in standard library; the plug-in then doesn't read the status as a list of values.
-# https://github.com/NatronGitHub/openfx-gmic/issues/239. From the built-in standard library (the same in 4.0.8 and
-# develop); fix: the status without the comment.
+# https://github.com/NatronGitHub/openfx-gmic/issues/239. From the built-in standard library
+# (the same in 4.0.8 and develop); fix: the status without the comment.
 fx_jpeg_preview:
 if $9
 o0,o1,o2,o3,o4,o5=${10-15}
@@ -319,10 +322,11 @@ fx_jpeg ${1-8},$o0,$o1,$o2,$o3,$o4,$o5
 u "{$1}""{$2}""{$3}""{$4}""{$5}""{$6}""{$7}""{$8}""{$9}""{"$o0"}_"{$9?2:0}"{"$o1"}_"{$9?2:0}"{"$o2"}_"{$9?2:0}"{"$o3"}_"{$9?2:0}"{"$o4"}_"{$9?2:0}"{"$o5"}_"{$9?2:0}
 
 #@hotfix fx_tk_animateobject 8d8d4e9cb0d660a6 58981509f29ddeb0 zoom
-# Object Animation fails with "Unknown command 'fx_zoom'": include/tom_keil.gmic calls the
-# old Zoom filter, which G'MIC 3.3.6 replaced (fx_zoom_v2). https://github.com/NatronGitHub/openfx-gmic/issues/240.
-# From the built-in standard library (the same in 4.0.8 and develop); fix: the 'zoom' command,
-# whose centre is a fraction in [0,1], as the filter's Camera X/Y are.
+# Object Animation fails with "Unknown command 'fx_zoom'": include/tom_keil.gmic calls the old
+# Zoom filter, which G'MIC 3.3.6 replaced (fx_zoom_v2).
+# https://github.com/NatronGitHub/openfx-gmic/issues/240. From the built-in standard library
+# (the same in 4.0.8 and develop); fix: the 'zoom' command, whose centre is a fraction in [0,1],
+# as the filter's Camera X/Y are.
 fx_tk_animateobject :
 if $!<=1 return fi
 if $15==0
@@ -405,9 +409,9 @@ if $16!=1 rm. fi fi
 
 #@hotfix iain_pixel_denoise_p 77d72228e28cc0e7 abd26f9bd90dfe3c iain_hybrid_median
 # Pixel Denoise fails with Method "Hybrid Median" and Parallel Processing "Off": it calls
-# iain_hybrid_median_p, which nothing defines. https://github.com/NatronGitHub/openfx-gmic/issues/240. From
-# include/iain_fergusson.gmic (the same in 4.0.8 and develop); fix: iain_hybrid_median, as the
-# parallel branch calls it.
+# iain_hybrid_median_p, which nothing defines.
+# https://github.com/NatronGitHub/openfx-gmic/issues/240. From include/iain_fergusson.gmic (the
+# same in 4.0.8 and develop); fix: iain_hybrid_median, as the parallel branch calls it.
 iain_pixel_denoise_p:
 if $5
 if $1==0
@@ -469,10 +473,11 @@ fi
 time=$|
 
 #@hotfix fx_customize_clut_preview 1f22af540c3a76e1 d4c079452f738dd3,4edb0ced838f661c
-# Customize CLUT's "3D CLUT (Precise)" preview uses the Fast resolution in G'MIC develop,
-# whose 535cb97 renumbered Preview Type but not the resolution test. https://github.com/NatronGitHub/openfx-gmic/issues/241.
-# From the develop standard library; fix: '_N:=$11>=3?64:32'. G'MIC 4.0.8's definition, right
-# with its own numbering, is left alone (the second checksum).
+# Customize CLUT's "3D CLUT (Precise)" preview uses the Fast resolution in G'MIC develop, whose
+# 535cb97 renumbered Preview Type but not the resolution test.
+# https://github.com/NatronGitHub/openfx-gmic/issues/241. From the develop standard library;
+# fix: '_N:=$11>=3?64:32'. G'MIC 4.0.8's definition, right with its own numbering, is left alone
+# (the second checksum).
 fx_customize_clut_preview :
 if !$11 fx_customize_clut ${1-9},0,0,${12--1}
 elif $11==1
@@ -521,9 +526,9 @@ fi
 
 #@hotfix fx_mix_pca 9c06daa05f25b1f7 70abdb1cdaa75325,8a328cca39b6d205,c2460922d2ef8afb
 # Mixer [PCA]'s status has '${13}' instead of '{$13}': one value without braces, so the plug-in
-# doesn't read it, and the covariance cache is never kept. https://github.com/NatronGitHub/openfx-gmic/issues/242.
-# The definitions of 4.0.8 and develop differ: one block each, which leaves the other one alone.
-# This one: G'MIC 4.0.8.
+# doesn't read it, and the covariance cache is never kept.
+# https://github.com/NatronGitHub/openfx-gmic/issues/242. The definitions of 4.0.8 and develop
+# differ: one block each, which leaves the other one alone. This one: G'MIC 4.0.8.
 fx_mix_pca :
 foreach { split_opacity l[0] {
 to_rgb
@@ -635,9 +640,10 @@ c 0,255
 #@hotfix gcd_boxfilter_local 6ab102d30e97dfb5 82ccd27dc95a7024
 # gcd_boxfilter_local and gcd_boxfilter_local_hp (include/andy_kelday.gmic) read the window size
 # with 'i#1' at the current channel: with a reference image of fewer channels, the size is 0 on
-# the others, and the output there NaN or -inf. https://github.com/NatronGitHub/openfx-gmic/issues/247. From the
-# built-in standard library (the same in 4.0.8 and develop); fix: the reference's last channel
-# for the channels it lacks, 'R=i(#1,x,y,z,min(c,s#1-1))'.
+# the others, and the output there NaN or -inf.
+# https://github.com/NatronGitHub/openfx-gmic/issues/247. From the built-in standard library
+# (the same in 4.0.8 and develop); fix: the reference's last channel for the channels it lacks,
+# 'R=i(#1,x,y,z,min(c,s#1-1))'.
 gcd_boxfilter_local : check ${"is_image_arg $1"}
 pass$1 0 max. 1
 repeat $!-1 l[$>,-1]

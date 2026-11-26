@@ -9,9 +9,11 @@
 # (hotfix_blocks.py). <command file> (optional) is loaded first, e.g. G'MIC develop's update file
 # with an interpreter whose built-in library is another one. Fails if any check fails.
 set -uo pipefail
-GMIC=$1
+# (absolute: the checks run in the work directory)
+abspath() { case $1 in /*) printf '%s\n' "$1";; *) printf '%s\n' "$PWD/$1";; esac; }
+GMIC=$(abspath "$1")
 STDLIB=$2
-EXTRA=${3:-}
+EXTRA=${3:+$(abspath "$3")}
 HERE=$(cd "$(dirname "$0")" && pwd)
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
