@@ -5,12 +5,14 @@ Each plug-in is rendered at frame 0 with its default parameters, on a small fixe
 (160x120 float RGB with gradients, stripes and a rectangle: every input clip, the extra layers
 included, gets the same image), in its own directory, which keeps the host's output (hostDemo.log),
 with a timeout. The test fails on any load, describe, instance or render error, and on a missing
-output (a crash is reported as "at exit" when hostDemo had written report.json and the outputs);
-NaN pixels in an output are reported as warnings. A few plug-ins are skipped (SKIP), are expected to fail with a given error
-(EXPECTED_FAIL), or have a longer timeout (TIMEOUT), with the reason; the test also fails when an
-expected failure renders (XPASS), or when fewer than --min-rendered plug-ins rendered (default:
-100 with --subset pr, 700 with --subset all). It warns when a listed plug-in is not in the list of
-plug-ins, except for COMMERCIAL builds (--stdlib is their standard library), which leave many out.
+output (a crash is reported as "at exit" when hostDemo had written report.json and the outputs),
+and on NaN pixels in an output, except for the plug-ins of KNOWN_NAN. A few plug-ins are skipped
+(SKIP), are expected to fail with a given error (EXPECTED_FAIL), or have a longer timeout
+(TIMEOUT), with the reason; the test also fails when an expected failure renders (XPASS), when a
+plug-in of KNOWN_NAN renders without NaN (with --subset all; a warning otherwise), or when fewer
+than --min-rendered plug-ins rendered (default: 100 with --subset pr, 700 with --subset all). It
+warns when a listed plug-in, or a filter that uses the FFT, is not in the list of plug-ins, except
+for COMMERCIAL builds (--stdlib is their standard library), which leave many out.
 
 usage: render_plugins.py --host <hostDemo, or the CMake build directory> [--config <config>]
                          --plugins <dir with GMIC.ofx.bundle>
@@ -45,6 +47,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import typing
 import zlib
 
 # Plug-ins that can't render in a headless host, or that fail by design outside G'MIC-Qt
@@ -59,8 +62,6 @@ SKIP = {
     'eu.gmic.PinkOperatorBinary': "runs Pink's external executables (pink)",
     'eu.gmic.CImgNLMeans': "runs the external executable 'use_nlmeans'",
     'eu.gmic.CImgSkeleton': "runs the external executable 'use_skeleton'",
-    'eu.gmic.Intarsia': 'writes an HTML page and PNG images into its Output Directory on every render '
-                        '(empty by default: the home folder)',
     # they download data at render time (G'MIC's input_cached, from gmic.eu, or another site),
     # which CI runners may not reach (UpscaleCNN2x failed on Windows)
     'eu.gmic.GmickyRoddy': 'downloads its mascot images (sp gmicky...: img/sample_*.png)',
@@ -72,7 +73,6 @@ SKIP = {
     'eu.gmic.SampleImage': 'downloads its sample images (img/sample_*.png)',
     'eu.gmic.ColorPresets': 'downloads CLUTs (clut: gmic_cluts.gmz)',
     'eu.gmic.SimulateFilm': 'downloads CLUTs (clut: gmic_cluts.gmz)',
-    'eu.gmic.ImportData': "imports a file chosen by the user (none by default: Unknown filename)",
     'eu.gmic.SaveNoisePrint': 'two passes on 2 input images, the first one saves a noise print file',
     'eu.gmic.ReverseEngineerGradientMap': "export-only (G'MIC-Qt's Export button): fails on purpose with "
                                           "'This filter does nothing on host!'",
@@ -85,17 +85,33 @@ SKIP = {
 # missing output or another error is a failure. A listed plug-in that renders is a failure too
 # (XPASS), so that the list never goes stale: remove it from the list.
 EXPECTED_FAIL = {
-    # point defaults outside the input: hostDemo connects Source at createInstance, and the
-    # defaults stay relative to the project (720x576), not to the 160x120 Source (#78)
+    # point defaults outside the input: the plug-in moves them into Source only when the user
+    # connects or changes it (#78); a host that connects Source when it creates the instance, as
+    # hostDemo does, keeps them relative to the project (720x576), not to the 160x120 Source
     'eu.gmic.KaleidoscopeReptorianPolar': ("Invalid Number - Variable 3",
-                                           "plug-in: point default outside the input"),
+                                           "plug-in (hosts that connect Source at creation): point default "
+                                           "outside the input"),
     'eu.gmic.SolveMaze': ("Command 'minimal_path': Invalid argument '22.5%,-356%,0,427.5%,76%,0'",
-                          "plug-in: point defaults outside the input"),
+                          "plug-in (hosts that connect Source at creation): point defaults outside the input"),
+    # no file by default: its Filename (filein()) is empty
+    'eu.gmic.ImportData': ("Unknown filename", "imports a file chosen by the user, none by default"),
     # filters for 1 or 2 layers, which get the 4 extra layers that this test connects
     'eu.gmic.Softlight': ("softlight: Select 1-2 images",
                           "test: afre_softlight takes 1 or 2 images, and gets the 5 connected layers"),
     'eu.gmic.DOFManipulation': ("This option is available for single layer only",
                                 "test: its default input mode needs a single layer, and gets the 5 connected layers"),
+}
+# Plug-ins whose output has NaN values with their default parameters, as seen with G'MIC 4.0.8 in
+# the full Linux run (--subset all): what is known. The counts are the same in every run (6 runs
+# checked), so they are not from a race; their cause in the filters is not found yet. Any other plug-in with NaN values fails. A listed plug-in that
+# renders without them fails with --subset all, so that the list never goes stale, and only gets
+# a warning in the pr subsets, which run on other platforms and FFT libraries.
+KNOWN_NAN = {
+    'eu.gmic.MSPatchNR': '288 NaN values in G\'MIC\'s result, in every full Linux run',
+    'eu.gmic.PosterizeRelief': '2 NaN values in G\'MIC\'s result, in every full Linux run',
+    'eu.gmic.ShadedSegmentation': '38400 NaN values in G\'MIC\'s result (2 channels of every pixel), in every full '
+                                  'Linux run',
+    'eu.gmic.TargetColorSpot': '4 NaN values in G\'MIC\'s result, in every full Linux run',
 }
 # Slow plug-ins (minutes on a CI runner): their own timeout (seconds); not in the pr subset
 TIMEOUT = {
@@ -114,6 +130,7 @@ FFT_COMMANDS = re.compile(r'(?<![A-Za-z0-9_])(fft|ifft|deconvolve|deconvolve_fft
 PREVIEW_FIRST_FAILED = 'run before the main command, failed'
 STATUS_MISMATCH = "the preview's status has"
 EVERY = 30
+ID_PREFIX = 'eu.gmic.'
 
 
 INPUT_WIDTH, INPUT_HEIGHT = 160, 120  # the size of the input image (write_input)
@@ -163,8 +180,12 @@ def host_demo_path(host, config):
 
 
 def plugin_id(filter_name):
-    """The plug-in id of a G'MIC filter, from its name in its '#@gui <name> :' line."""
-    return 'eu.gmic.' + re.sub(r'[^A-Za-z0-9]', '', filter_name)
+    """The plug-in id of a G'MIC filter, from its name in its '#@gui <name> :' line.
+
+    The plug-in's rule (getUniqueId, Helpers/gmic_parser.cpp) on a plain name: main() warns about
+    the FFT filters whose id is not a plug-in.
+    """
+    return ID_PREFIX + re.sub(r'[^A-Za-z0-9]', '', filter_name)
 
 
 def fft_plugins(stdlib_header):
@@ -181,13 +202,13 @@ def fft_plugins(stdlib_header):
     bodies = {k: '\n'.join(v) for k, v in defs.items()}
     ids = set()
     for line in text.split('\n'):
-        g = re.match(r'#@gui ([^:_][^:]*?)\s*:\s*([A-Za-z_][A-Za-z0-9_]*)', line)
-        if not g or g.group(2) == '_none_':
+        gui = re.match(r'#@gui ([^:_][^:]*?)\s*:\s*([A-Za-z_][A-Za-z0-9_]*)', line)
+        if not gui or gui.group(2) == '_none_':
             continue
-        cmd = g.group(2)
-        b = bodies.get(cmd, '') + ''.join(v for k, v in bodies.items() if k.startswith('_' + cmd))
-        if FFT_COMMANDS.search(b):
-            ids.add(plugin_id(g.group(1)))
+        cmd = gui.group(2)
+        body = bodies.get(cmd, '') + ''.join(v for k, v in bodies.items() if k.startswith('_' + cmd))
+        if FFT_COMMANDS.search(body):
+            ids.add(plugin_id(gui.group(1)))
     return ids
 
 
@@ -212,6 +233,38 @@ def _progress_problem(report):
     return None
 
 
+class RenderResult(typing.NamedTuple):
+    """The result of render(), in this order (callers may also index it).
+
+    Attributes:
+        pid: the plug-in id.
+        rc: hostDemo's exit status (negative: a signal), None if it timed out.
+        problem: why the render failed, None if it rendered.
+        nan: the number of NaN values in the outputs.
+        seconds: the render time.
+        errors: the first error lines of the log.
+        log: hostDemo's output, with the plug-in's log.
+        updates: the number of progress updates that the host got.
+        timed_out: whether the render timed out.
+        report: the parsed report.json (hostDemo --report), None if there is none.
+    """
+    pid: str
+    rc: typing.Optional[int]
+    problem: typing.Optional[str]
+    nan: int
+    seconds: float
+    errors: typing.List[str]
+    log: str
+    updates: int
+    timed_out: bool
+    report: typing.Optional[dict]
+
+
+def work_dir(work, pid):
+    """The directory of the renders of plug-in pid, in the work directory work."""
+    return os.path.join(work, pid[len(ID_PREFIX):])
+
+
 def _outputs_written(d):
     """True if d has report.json and every output file it lists."""
     try:
@@ -225,8 +278,29 @@ def _outputs_written(d):
 
 def render(host, host_args, plugins, work, timeout, plugin, host_threads=False, frame='0', extra_env=None,
            expected_log=()):
+    """Renders a plug-in at frame 0 with hostDemo, in its own directory, and checks the render.
+
+    Args:
+        host: the path of hostDemo.
+        host_args: more hostDemo arguments.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with input.pfm (the input of every clip) and home (HOME and
+            USERPROFILE of the render).
+        timeout: the timeout of the render, in seconds.
+        plugin: (id, context, input clips), as in the plug-in list.
+        host_threads: if True, render without OMP_NUM_THREADS (the plug-in sets G'MIC's thread
+            count); else OMP_NUM_THREADS is 2 unless it is set.
+        frame: the frame to render (hostDemo's --frames).
+        extra_env: environment variables to set, or to remove (None), for this render only (after
+            the ones that render() removes).
+        expected_log: texts of log lines that the caller expects (e.g. a test of a status
+            mismatch): those lines are no problem.
+
+    Returns:
+        A RenderResult.
+    """
     pid, context, clips = plugin
-    d = os.path.join(work, pid[len('eu.gmic.'):])
+    d = work_dir(work, pid)
     shutil.rmtree(d, ignore_errors=True)
     os.makedirs(d)
     cmd = [host] + host_args + ['--no-std-paths', '--no-cache', '--quiet', '--allow-unwritten', '--format', 'pfm',
@@ -236,9 +310,13 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False, 
     for c in clips:
         cmd += ['-i', c + '=file:../input.pfm']
     # the home folder (Windows: USERPROFILE), where filters with an empty folder parameter write
-    # their files (e.g. Valeur Moyenne LCH), is in the work directory
+    # their files (e.g. Valeur Moyenne LCH), is in the work directory; so is G'MIC's folder
+    # (gmic::path_rc(): HOME's .config/gmic, without GMIC_PATH and XDG_CONFIG_HOME), except on
+    # Windows, where it is the runner's %APPDATA%/gmic (APPDATA is not changed)
     home = os.path.join(work, 'home')
     env = dict(os.environ, OFX_PLUGIN_PATH=plugins, HOME=home, USERPROFILE=home)
+    for var in ('GMIC_PATH', 'XDG_CONFIG_HOME'):
+        env.pop(var, None)
     # extra_env: variables to set, or to remove (None), for this render only
     for name, value in (extra_env or {}).items():
         if value is None:
@@ -250,39 +328,39 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False, 
     else:
         env['OMP_NUM_THREADS'] = os.environ.get('OMP_NUM_THREADS', '2')
     start = time.time()
+    timed_out = False
     try:
         p = subprocess.run(cmd, cwd=d, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                            timeout=timeout)
         rc, log = p.returncode, p.stdout.decode('utf-8', 'replace')
     except subprocess.TimeoutExpired as e:
-        rc, log = 'timeout', (e.stdout or b'').decode('utf-8', 'replace')
-    t = time.time() - start
+        rc, log, timed_out = None, (e.stdout or b'').decode('utf-8', 'replace'), True
+    seconds = time.time() - start
     # the host's output (with the plug-in's log), kept for the failures' triage
     with open(os.path.join(d, 'hostDemo.log'), 'w', encoding='utf-8') as f:
         f.write(log)
-    problem, nan, updates = None, 0, 0
-    if rc != 0:
-        if rc == 'timeout':
-            problem = 'timeout after %ds' % timeout
-        elif rc < 0:
-            # hostDemo writes report.json after the renders and before it unloads the plug-in: a
-            # crash after it and all the output files were written is a crash at exit (#213)
-            when = 'at exit' if _outputs_written(d) else 'during the render'
-            problem = 'crash %s (signal %d)' % (when, -rc)
-        else:
-            problem = 'exit status %s' % rc
+    problem, nan, updates, report = None, 0, 0, None
+    if timed_out:
+        problem = 'timeout after %ds' % timeout
+    elif rc < 0:
+        # hostDemo writes report.json after the renders and before it unloads the plug-in: a
+        # crash after it and all the output files were written is a crash at exit (#213)
+        when = 'at exit' if _outputs_written(d) else 'during the render'
+        problem = 'crash %s (signal %d)' % (when, -rc)
+    elif rc > 0:
+        problem = 'exit status %d' % rc
     else:
         try:
-            with open(os.path.join(d, 'report.json')) as f:
+            with open(os.path.join(d, 'report.json'), encoding='utf-8') as f:
                 report = json.load(f)
             outputs = [r.get('output') for r in report.get('renders', [])]
             if not outputs or any(not o or not o.get('files') for o in outputs):
                 problem = 'no output image'
             else:
                 for o in outputs:
-                    for f in o['files']:
-                        if not os.path.exists(os.path.join(d, f)):
-                            problem = 'missing output file ' + f
+                    for name in o['files']:
+                        if not os.path.exists(os.path.join(d, name)):
+                            problem = 'missing output file ' + name
                     nan += sum(o.get('nan') or 0) if isinstance(o.get('nan'), list) else (o.get('nan') or 0)
             updates = sum(pr.get('updates') or 0 for pr in report.get('progress', []))
             if problem is None:
@@ -295,122 +373,140 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False, 
         problem = 'the preview command, run before the main command, failed'
     if problem is None and STATUS_MISMATCH in checked:
         problem = "the preview's status doesn't have one value per parameter"
-    errors = [l for l in checked.splitlines()
-              if ERROR_LINE.search(l) or PREVIEW_FIRST_FAILED in l or STATUS_MISMATCH in l][:3]
-    return pid, rc, problem, nan, t, errors, log, updates
+    errors = [line for line in checked.splitlines()
+              if ERROR_LINE.search(line) or PREVIEW_FIRST_FAILED in line or STATUS_MISMATCH in line][:3]
+    return RenderResult(pid, rc, problem, nan, seconds, errors, log, updates, timed_out, report)
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--host', required=True)
-    ap.add_argument('--config', default='Release')
-    ap.add_argument('--plugins', required=True)
-    ap.add_argument('--list', required=True)
-    ap.add_argument('--subset', choices=('pr', 'all'), default='pr')
-    ap.add_argument('--stdlib')
-    ap.add_argument('--jobs', type=int, default=2)
-    ap.add_argument('--timeout', type=int, default=300)
-    ap.add_argument('--min-rendered', type=int)
-    ap.add_argument('--work')
-    ap.add_argument('--only')
-    ap.add_argument('--host-arg', action='append', default=[])
-    ap.add_argument('--host-threads', action='store_true')
-    a = ap.parse_args()
+    """Runs the test (see the module docstring).
 
-    host = host_demo_path(a.host, a.config)
+    Returns:
+        The exit status: 0 if the test passed.
+    """
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--host', required=True)
+    parser.add_argument('--config', default='Release')
+    parser.add_argument('--plugins', required=True)
+    parser.add_argument('--list', required=True)
+    parser.add_argument('--subset', choices=('pr', 'all'), default='pr')
+    parser.add_argument('--stdlib')
+    parser.add_argument('--jobs', type=int, default=2)
+    parser.add_argument('--timeout', type=int, default=300)
+    parser.add_argument('--min-rendered', type=int)
+    parser.add_argument('--work')
+    parser.add_argument('--only')
+    parser.add_argument('--host-arg', action='append', default=[])
+    parser.add_argument('--host-threads', action='store_true')
+    args = parser.parse_args()
+
+    host = host_demo_path(args.host, args.config)
     if host is None:
-        ap.error('no hostDemo-path.txt or hostDemo-path-%s.txt in %s (configure with GMIC_BUILD_TESTS=ON)'
-                 % (a.config, os.path.abspath(a.host)))
-    min_rendered = a.min_rendered if a.min_rendered is not None else (700 if a.subset == 'all' else 100)
+        parser.error('no hostDemo-path.txt or hostDemo-path-%s.txt in %s (configure with GMIC_BUILD_TESTS=ON)'
+                     % (args.config, os.path.abspath(args.host)))
+    min_rendered = args.min_rendered if args.min_rendered is not None else (700 if args.subset == 'all' else 100)
     commercial = False
-    if a.stdlib:
-        with open(a.stdlib, encoding='latin-1') as f:
-            commercial = any(l.startswith(COMMERCIAL_MARKER) for l in f.readlines()[:20])
-    plugins_dir = os.path.abspath(a.plugins)
-    work = os.path.abspath(a.work) if a.work else tempfile.mkdtemp(prefix='render_plugins.')
+    if args.stdlib:
+        with open(args.stdlib, encoding='latin-1') as f:
+            commercial = any(line.startswith(COMMERCIAL_MARKER) for line in f.readlines()[:20])
+    plugins_dir = os.path.abspath(args.plugins)
+    work = os.path.abspath(args.work) if args.work else tempfile.mkdtemp(prefix='render_plugins.')
     os.makedirs(os.path.join(work, 'home'), exist_ok=True)
     write_input(os.path.join(work, 'input.pfm'))
 
-    allp = {}
+    listed = {}  # id: (id, context, input clips)
     preview_first = set()  # the plug-ins that run their preview command first
-    with open(a.list, encoding='utf-8') as lst:
+    with open(args.list, encoding='utf-8') as lst:
         for line in lst:
-            f = line.rstrip('\r\n').split('\t')
-            if f[0] == '#previewFirst' and len(f) > 1:
-                preview_first.add(f[1])
-            elif f and f[0] and not f[0].startswith('#'):
-                allp[f[0]] = (f[0], f[1] if len(f) > 1 else 'filter', f[2:])
-    ids = sorted(allp)
-    for pid in sorted(set(SKIP) | set(EXPECTED_FAIL) | set(TIMEOUT)):
-        if pid not in allp and not commercial:
-            print('WARNING: %s is in the skip or expected-failure list, but is not a plug-in' % pid)
-    if a.only:
-        sel = sorted(set(a.only.split(',')))
-        missing = [p for p in sel if p not in allp]
+            fields = line.rstrip('\r\n').split('\t')
+            if fields[0] == '#previewFirst' and len(fields) > 1:
+                preview_first.add(fields[1])
+            elif fields[0] and not fields[0].startswith('#'):
+                listed[fields[0]] = (fields[0], fields[1] if len(fields) > 1 else 'filter', fields[2:])
+    ids = sorted(listed)
+    for pid in sorted(set(SKIP) | set(EXPECTED_FAIL) | set(TIMEOUT) | set(KNOWN_NAN)):
+        if pid not in listed and not commercial:
+            print('WARNING: %s is in the skip, expected-failure, timeout or NaN list, but is not a plug-in' % pid)
+    if args.only:
+        selected = sorted(set(args.only.split(',')))
+        missing = [p for p in selected if p not in listed]
         if missing:
-            ap.error('--only: not in the plug-in list: ' + ' '.join(missing))
-        min_rendered = len(sel)
-    elif a.subset == 'all':
-        sel = ids
+            parser.error('--only: not in the plug-in list: ' + ' '.join(missing))
+        min_rendered = len(selected)
+    elif args.subset == 'all':
+        selected = ids
     else:
-        if not a.stdlib:
-            ap.error('--subset pr needs --stdlib')
-        fft = fft_plugins(a.stdlib)
-        multi = {p for p in ids if any(c.startswith('Layer ') for c in allp[p][2])}
+        if not args.stdlib:
+            parser.error('--subset pr needs --stdlib')
+        fft = fft_plugins(args.stdlib)
+        for pid in sorted(fft - set(listed)):
+            if not commercial:
+                print('WARNING: %s uses the FFT, but is not a plug-in (a hidden filter, or another id '
+                      'rule than the plug-in\'s?)' % pid)
+        fft &= set(ids)
+        multi = {p for p in ids if any(c.startswith('Layer ') for c in listed[p][2])}
         every = set(ids[::EVERY])
         first = preview_first & set(ids)
         # (the slow ones: --subset all only)
-        sel = sorted(((fft & set(ids)) | first | multi | every) - set(TIMEOUT))
+        selected = sorted((fft | first | multi | every) - set(TIMEOUT))
         print('subset: %d plug-ins (%d using the FFT, %d running their preview command first, '
               '%d multi-layer, every %dth of %d)'
-              % (len(sel), len(fft & set(ids)), len(first), len(multi), EVERY, len(ids)))
-    todo = [allp[p] for p in sel if a.only or p not in SKIP]
-    print('rendering %d plug-ins (%d skipped), %d at a time, in %s' % (len(todo), len(sel) - len(todo), a.jobs, work))
+              % (len(selected), len(fft), len(first), len(multi), EVERY, len(ids)))
+    todo = [listed[p] for p in selected if args.only or p not in SKIP]
+    skipped = len(selected) - len(todo)
+    print('rendering %d plug-ins (%d skipped), %d at a time, in %s' % (len(todo), skipped, args.jobs, work))
     sys.stdout.flush()
 
     start = time.time()
-    fails, xfails, xpasses, nans, times, mismatches = [], [], [], [], [], []
+    fails, xfails, xpasses, nans, stale_nans, times, mismatches = [], [], [], [], [], [], []
     rendered = 0
     progressed = 0  # plug-ins that updated the host's progress
-    with concurrent.futures.ThreadPoolExecutor(a.jobs) as ex:
-        def run(p):
-            return render(host, a.host_arg, plugins_dir, work, TIMEOUT.get(p[0], a.timeout), p,
-                          host_threads=a.host_threads)
+    with concurrent.futures.ThreadPoolExecutor(args.jobs) as ex:
+        def run(plugin):
+            return render(host, args.host_arg, plugins_dir, work, TIMEOUT.get(plugin[0], args.timeout), plugin,
+                          host_threads=args.host_threads)
 
-        for pid, rc, problem, nan, t, errors, log, updates in ex.map(run, todo):
-            times.append((t, pid))
+        for result in ex.map(run, todo):
+            pid, problem = result.pid, result.problem
+            times.append((result.seconds, pid))
             if len(times) % 25 == 0:
                 print('... %d/%d (%.0fs)' % (len(times), len(todo), time.time() - start))
                 sys.stdout.flush()
             if problem and pid in EXPECTED_FAIL:
                 expected, reason = EXPECTED_FAIL[pid]
                 # only an error exit with the documented G'MIC error: not a crash or a timeout
-                if isinstance(rc, int) and rc > 0 and expected in log:
+                if result.rc is not None and result.rc > 0 and expected in result.log:
                     xfails.append(pid)
                     continue
                 problem = 'expected to fail with "%s" (%s), but: %s' % (expected, reason, problem)
             if problem:
                 fails.append(pid)
                 print('FAIL %s: %s' % (pid, problem))
-                for e in errors:
+                for e in result.errors:
                     print('    ' + e)
                 continue
             rendered += 1
-            if updates:
+            if result.updates:
                 progressed += 1
             if pid in EXPECTED_FAIL:
                 xpasses.append(pid)
                 print('XPASS %s: rendered, remove it from EXPECTED_FAIL (%s)' % (pid, EXPECTED_FAIL[pid][1]))
-            if nan:
-                nans.append((pid, nan))
-            if GEOMETRY_MISMATCH in log:
+            if result.nan:
+                nans.append((pid, result.nan))
+            elif pid in KNOWN_NAN:
+                stale_nans.append(pid)
+            if GEOMETRY_MISMATCH in result.log:
                 mismatches.append(pid)
-    print('%d rendered in %.0fs: %d failed, %d expected failures, %d skipped' % (
-        len(todo), time.time() - start, len(fails), len(xfails), len(sel) - len(todo)))
+    print('%d plug-ins in %.0fs: %d rendered, %d failed, %d expected failures, %d skipped' % (
+        len(todo), time.time() - start, rendered, len(fails), len(xfails), skipped))
     print('%d reported progress' % progressed)
-    print('slowest: ' + ', '.join('%s %.0fs' % (p[len('eu.gmic.'):], t) for t, p in sorted(times)[-5:]))
+    print('slowest: ' + ', '.join('%s %.0fs' % (p[len(ID_PREFIX):], t) for t, p in sorted(times)[-5:]))
+    new_nans = [pid for pid, _ in nans if pid not in KNOWN_NAN]
     for pid, nan in nans:
-        print('WARNING: %s: %d NaN values in its output' % (pid, nan))
+        if pid in KNOWN_NAN:
+            print('WARNING: %s: %d NaN values in its output (KNOWN_NAN: %s)' % (pid, nan, KNOWN_NAN[pid]))
+        else:
+            print('FAIL %s: %d NaN values in its output' % (pid, nan))
     if mismatches:
         print('WARNING: %d plug-ins whose result does not match their region of definition (#175, '
               'cropped or padded): %s' % (len(mismatches), ' '.join(sorted(mismatches))))
@@ -422,6 +518,17 @@ def main():
         print('FAIL: %d expected failures rendered (XPASS), remove them from EXPECTED_FAIL: %s' % (
             len(xpasses), ' '.join(xpasses)))
         status = 1
+    if new_nans:
+        print('FAIL: %d plug-ins have NaN values in their output, fix them or add them to KNOWN_NAN: %s' % (
+            len(new_nans), ' '.join(new_nans)))
+        status = 1
+    if stale_nans and args.subset == 'all':
+        print('FAIL: %d plug-ins of KNOWN_NAN rendered without NaN values, remove them from KNOWN_NAN: %s' % (
+            len(stale_nans), ' '.join(stale_nans)))
+        status = 1
+    elif stale_nans:
+        print('WARNING: %d plug-ins of KNOWN_NAN rendered without NaN values here (the list is checked with '
+              '--subset all): %s' % (len(stale_nans), ' '.join(stale_nans)))
     if rendered < min_rendered:
         print('FAIL: only %d plug-ins rendered, fewer than %d (--min-rendered)' % (rendered, min_rendered))
         status = 1

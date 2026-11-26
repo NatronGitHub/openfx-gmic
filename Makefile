@@ -17,28 +17,13 @@ all: subdirs
 
 .PHONY: sources subdirs clean install uninstall $(SUBDIRS)
 
-nomulti:
-	$(MAKE) SUBDIRS="$(SUBDIRS_NOMULTI)"
-
 subdirs: $(SUBDIRS)
 
 $(SUBDIRS): sources
 	(cd $@ && $(MAKE))
 
-clean:
-	@for i in $(SUBDIRS) $(SUBDIRS_NOMULTI); do \
-	  echo "(cd $$i && $(MAKE) $@)"; \
-	  (cd $$i && $(MAKE) $@); \
-	done
-
-install:
-	@for i in $(SUBDIRS) ; do \
-	  echo "(cd $$i && $(MAKE) $@)"; \
-	  (cd $$i && $(MAKE) $@); \
-	done
-
-uninstall:
-	@for i in $(SUBDIRS) ; do \
+clean install uninstall:
+	@for i in $(SUBDIRS); do \
 	  echo "(cd $$i && $(MAKE) $@)"; \
 	  (cd $$i && $(MAKE) $@); \
 	done
@@ -70,21 +55,14 @@ gmic_hotfixes.version: gmic_hotfixes_force
 .PHONY: gmic_hotfixes_force
 gmic_hotfixes_force:
 
-# COMMERCIAL builds only keep the fixes of commands of their standard library (the others fix
-# code under a licence that these builds leave out, see gmic_stdlib_commercial.txt): a block is
-# left out when its command, or one of its callees, is not in gmic_stdlib_community.h.commands
-# (in "#@hotfix <command> <original> <fixed>[,<other>...] [callee:checksum...]", fields 2 and 5
-# onwards; not the command when <original> is '-', a command that G'MIC no longer defines).
+# COMMERCIAL builds only keep the fixes of the commands of their standard library (see
+# gmic_hotfixes_commercial.awk, which CMakeLists.txt uses too).
 ifeq ($(LICENSE),COMMERCIAL)
-HOTFIXES_FILTER = awk -v cmds=gmic_stdlib_community.h.commands ' \
-  BEGIN { while ((getline c < cmds) > 0) def[c] = 1; keep = 1 } \
-  /^\#@hotfix / { keep = 1; for (i = 2; i <= NF; i++) if ((i == 2 && $$3 != "-") || i > 4) { c = $$i; sub(/:.*/, "", c); if (!(c in def)) keep = 0 } \
-    if (!keep) print "gmic_hotfixes.h: leaving out the fix of " $$2 " (not in the COMMERCIAL standard library)" > "/dev/stderr" } \
-  keep { print }'
+HOTFIXES_FILTER = awk -v cmds=gmic_stdlib_community.h.commands -f gmic_hotfixes_commercial.awk
 else
 HOTFIXES_FILTER = cat
 endif
-gmic_hotfixes.h: gmic_hotfixes.gmic gmic_hotfixes.version gmic_sources.request $(if $(filter COMMERCIAL,$(LICENSE)),gmic_stdlib_community.h)
+gmic_hotfixes.h: gmic_hotfixes.gmic gmic_hotfixes.version gmic_sources.request $(if $(filter COMMERCIAL,$(LICENSE)),gmic_stdlib_community.h gmic_hotfixes_commercial.awk)
 	@if ! tr -d '\r' < $< | grep -qxF '#@openfx_gmic_hotfixes $(GMICVER)'; then \
 	  echo "Warning: $< was reviewed for another G'MIC version than $(GMICVER) (no '#@openfx_gmic_hotfixes $(GMICVER)' line): drop the fixes that G'MIC $(GMICVER) has, and run the describe test, see the top of $<"; \
 	fi
@@ -95,7 +73,6 @@ gmic_hotfixes.h: gmic_hotfixes.gmic gmic_hotfixes.version gmic_sources.request $
 
 # gmic.eu may refuse downloads (HTTP 403 seen in 2026): try each mirror in turn, use curl -f so
 # that an HTTP error page is never saved as the tarball, and verify the checksum.
-GMICSRC_SHA256_2.8.4=b2a279bdf981595b30d8d7828fabf9a620cde06eae8db345a8cddf2160c25379
 GMICSRC_SHA256_4.0.8=de30b742c2c69526732ace3a413d4e81fc08d9cf770c3a7b197298b6ab830b0f
 GMICSRC_SHA256=$(GMICSRC_SHA256_$(GMICVER))
 # GreycLab/gmic on GitHub is the main G'MIC repository, and its releases (3.3.1 and later) attach

@@ -28,9 +28,10 @@ std::FILE* gmicLogStream();
 // (see gmic_log.cpp). Called once, when the plug-in loads the filters, before any render.
 void gmicSetLogFile(std::FILE* file);
 
-// Writes a printf-style message (with its own '\n') to gmicLogStream(), and flushes it, so that the
-// message is in the file at once (also before a crash) and the lines of concurrent threads are not
-// mixed up. A C-style variadic function, against C++ Core Guidelines ES.34
+// Writes a printf-style message to gmicLogStream() (the format ends the line with its own '\n'),
+// in one vfprintf call, whose stream lock keeps the lines of concurrent threads apart, then
+// flushes it, so that the message is in the file at once (also before a crash). A C-style
+// variadic function, against C++ Core Guidelines ES.34
 // (https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#res-ellipses): it replaces the
 // fprintf(stderr, ...) calls with their format strings unchanged, and compilers check its
 // arguments as printf's (GMIC_LOG_PRINTF_FORMAT).

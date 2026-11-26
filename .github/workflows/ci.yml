@@ -1,12 +1,13 @@
 name: Continuous Integration
 
 # Natron CI policy: per PR/push, exactly three full builds plus tests (macOS 15 arm64 with the
-# system clang and MacPorts libraries, Ubuntu 24.04, Windows x64 with MSVC). Extra variants (debug
-# builds, a C++20 build, an MSYS2 UCRT64 Windows build, Windows on Arm: MSVC ARM64 and Arm64X on
-# windows-11-arm) run weekly or on demand; the per-PR builds use C++17 (Natron RB-2.6 policy: Qt5
-# builds C++17, Qt6 builds C++20); build artifacts are uploaded only on demand or for pre-release
-# tags, and the Windows bundle (x64 + Arm, merged) also weekly. On demand, "only: windows-arm" runs just
-# the Windows on Arm job (gh workflow run ci.yml -f only=windows-arm).
+# system clang and MacPorts libraries, Ubuntu 24.04, Windows x64 with MSVC). Extra variants run
+# weekly or on demand: debug and C++20 builds, FFT=fftw3, GMIC_STATIC_DEPS=OFF, the Makefile build,
+# Rocky Linux 9 (GCC 11), an MSYS2 UCRT64 Windows build, and Windows on Arm (MSVC ARM64 and Arm64X
+# on windows-11-arm). The per-PR builds use C++17 (Natron RB-2.6 policy: Qt5 builds C++17, Qt6
+# builds C++20). Build artifacts are uploaded only on demand or for pre-release tags, and the
+# Windows bundle (x64 + Arm, merged) also weekly. On demand, "only: windows-arm" runs just the
+# Windows on Arm job (gh workflow run ci.yml -f only=windows-arm).
 # "gmic: develop" runs just the job that tests G'MIC's develop sources against the pinned release
 # (gh workflow run ci.yml -f gmic=develop, see the gmic-develop job).
 #
@@ -33,17 +34,16 @@ name: Continuous Integration
 # libgomp): no libcurl, static zlib and libpng (see GMIC_OFX/Makefile). Each Linux build checks it
 # with openfx's linuxCheckBundle.sh on the installed bundle (Ubuntu builds: with Ubuntu 24.04's
 # glibc and libstdc++ versions as the limits; GMIC_STATIC_DEPS=OFF: shared zlib and libpng
-# allowed) and with
-# check_linux_deps.sh (what linuxCheckBundle.sh doesn't check); the weekly and on-demand runs also
-# build with CMake on Rocky Linux 9 (GCC 11, glibc 2.34), Natron 2.6's Linux baseline, checked
-# with linuxCheckBundle.sh's defaults (EL9).
+# allowed) and with check_linux_deps.sh (what linuxCheckBundle.sh doesn't check); the weekly and
+# on-demand runs also build with CMake on Rocky Linux 9 (GCC 11, glibc 2.34), Natron 2.6's Linux
+# baseline, checked with linuxCheckBundle.sh's defaults (EL9).
 #
 # Downloads: no libcurl on any system (macOS checks it with check_no_libcurl.sh, Windows with the
-# list of DLLs that GMIC.ofx may import): G'MIC
-# downloads filter data with the system's curl command (macOS /usr/bin/curl, Windows System32's
-# curl.exe, Linux curl or wget from PATH; see gmic_plugin_call.cpp). The weekly and on-demand runs
-# render Add Grain on the three systems, which downloads its grain images that way (gmic.eu may
-# refuse downloads).
+# list of DLLs that GMIC.ofx may import, check_win_imports.sh): G'MIC downloads filter data with
+# the system's curl command (macOS /usr/bin/curl, Windows System32's curl.exe, Linux curl or wget
+# from PATH; see gmic_plugin_call.cpp). The weekly and on-demand runs render Add Grain on the three
+# systems, which downloads its grain images that way (check_download.sh; gmic.eu may refuse
+# downloads).
 #
 # Frugal CI (the NatronGitHub runners are shared by all repos): one run per change. Pushes run CI
 # only on master and tags; feature branches run through their pull request. Draft pull requests
@@ -76,7 +76,7 @@ on:
         description: "gmic: develop: the GreycLab/gmic-community branch, tag or commit"
         default: master
   schedule:
-    - cron: '17 3 * * 6' # weekly, Saturday 03:17 UTC: also builds the variants (debug, C++20)
+    - cron: '17 3 * * 6' # weekly, Saturday 03:17 UTC: also builds the variants (see above)
   # pushes to master (and tags) only: pull requests are built by the pull_request trigger,
   # so that each PR push is not built twice
   push:
@@ -166,7 +166,7 @@ jobs:
       OFX_ABI_GLIBCXX: '3.4.33'
       OFX_ABI_CXXABI: '1.3.15'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - name: Install packages
@@ -174,16 +174,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build pkg-config zlib1g-dev libpng-dev libexpat1-dev \
             libgl-dev
-      # the tarball and pocketfft_hdronly.h, downloaded into the source directory (GMIC_DOWNLOAD_DIR,
-      # GMIC_POCKETFFT), where the CMake build finds them; the key hashes the Makefile, which pins
-      # both (GMICVER, POCKETFFTCOMMIT, read by CMakeLists.txt)
-      - name: Cache G'MIC sources
-        uses: actions/cache@v4
-        with:
-          path: |
-            gmic_*.tar.gz
-            pocketfft_hdronly.h
-          key: gmic-src-${{ hashFiles('Makefile') }}
+      # the parser alone (no G'MIC sources): the rules on the command definitions, on cases that
+      # the stdlib doesn't have (comments, continued lines, arguments that look like commands),
+      # and value() in a locale with a decimal comma (fr_FR.UTF-8, generated here)
+      - name: Parser test (command definitions)
+        run: |
+          sudo locale-gen fr_FR.UTF-8
+          c++ -std=c++17 -O1 -Wall -Wextra -IHelpers .github/workflows/parser_test.cpp Helpers/gmic_parser.cpp \
+            Helpers/gmic_string.cpp Helpers/gmic_log.cpp -o parser_test
+          ./parser_test
+      - uses: ./.github/actions/gmic-sources
       # the parser alone, before the build: the point() arguments that give the point handles
       # (#176), which no other test sees (hostDemo has no overlays)
       - name: Parser test (point arguments)
@@ -288,19 +288,11 @@ jobs:
         run: |
           python3 .github/workflows/user_filters_test.py --host build --plugins install/OFX/Plugins \
             --user-source --runs 1 --work render-user-source
-      # no libcurl: G'MIC downloads with the curl command (cimg::load_network). Add Grain
-      # downloads its grain images (gmic_grain.gmz, from gmic.eu) into G'MIC's cache, here an empty
-      # GMIC_CACHE_PATH (Color Presets downloads only for a preset other than the default).
-      # OFX_GMIC_TEST_CURL_ONLY (gmic_plugin_call.cpp): no wget or PowerShell fallback, so the
-      # download succeeds only through the curl command
+      # no libcurl: G'MIC downloads with the curl command, here without any fallback (see
+      # check_download.sh)
       - name: Download filter data with the curl command (Add Grain)
         if: env.BUILD_VARIANTS == 'true'
-        run: |
-          mkdir -p "$RUNNER_TEMP/gmic-cache"
-          OFX_GMIC_TEST_CURL_ONLY=1 GMIC_CACHE_PATH="$RUNNER_TEMP/gmic-cache/" python3 .github/workflows/render_plugins.py --host build \
-            --plugins install/OFX/Plugins --list plugins.txt --only eu.gmic.AddGrain --work render-download
-          find "$RUNNER_TEMP/gmic-cache" -name 'gmic_grain*' -size +0 -exec ls -l {} + | grep . ||
-            { echo "FAIL: gmic_grain.gmz was not downloaded"; exit 1; }
+        run: .github/workflows/check_download.sh build install/OFX/Plugins plugins.txt
       # FFTW (opt-in, GPL builds only), rendered with the hostDemo of the default build; before the
       # Makefile build, whose (pocketfft) G'MIC headers in the checkout would stop CMake's FFT=fftw3
       # configure (CMakeLists.txt refuses headers that are not the build's own)
@@ -308,13 +300,9 @@ jobs:
         if: env.BUILD_VARIANTS == 'true'
         run: |
           sudo apt-get install -y libfftw3-dev
-          cmake -S . -B build-fftw3 -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
-            -DFFT=fftw3
-          cmake --build build-fftw3 -j4
-          cmake --install build-fftw3 --prefix install-fftw3
+          .github/workflows/linux_variant.sh fftw3 -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DFFT=fftw3
           .github/workflows/check_fft.sh install-fftw3/OFX/Plugins/GMIC.ofx.bundle fftw3
           openfx/Support/include/linuxCheckBundle.sh install-fftw3/OFX/Plugins
-          .github/workflows/check_linux_deps.sh install-fftw3/OFX/Plugins/GMIC.ofx.bundle
           PLUGIN_LIST=plugins-fftw3.txt .github/workflows/describe_plugins.sh install-fftw3/OFX/Plugins $GMIC_PLUGIN_COUNT
           python3 .github/workflows/render_plugins.py --host build \
             --plugins install-fftw3/OFX/Plugins --list plugins-fftw3.txt --stdlib build-fftw3/gmic/gmic_stdlib_community.h \
@@ -326,15 +314,12 @@ jobs:
       - name: Build and describe (release, GMIC_STATIC_DEPS=OFF)
         if: env.BUILD_VARIANTS == 'true'
         run: |
-          env -u PKG_CONFIG_PATH cmake -S . -B build-shared -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 \
-            -DGMIC_DOWNLOAD_DIR="$PWD" -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h" -DGMIC_STATIC_DEPS=OFF
-          cmake --build build-shared -j4
-          cmake --install build-shared --prefix install-shared
+          SHARED_DEPS=1 env -u PKG_CONFIG_PATH .github/workflows/linux_variant.sh shared -DCMAKE_BUILD_TYPE=Release \
+            -DOFX_CXX_STANDARD=17 -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h" -DGMIC_STATIC_DEPS=OFF
           .github/workflows/check_fft.sh install-shared/OFX/Plugins/GMIC.ofx.bundle pocketfft
           # the shared zlib and libpng may come from the system (or Natron's installer bundles them);
           # any other non-system library must be bundled
           OFX_ABI_OPTIONAL_LIBS="libz.so.1 libpng16.so.16" openfx/Support/include/linuxCheckBundle.sh install-shared/OFX/Plugins
-          SHARED_DEPS=1 .github/workflows/check_linux_deps.sh install-shared/OFX/Plugins/GMIC.ofx.bundle
           readelf -d install-shared/OFX/Plugins/GMIC.ofx.bundle/Contents/Linux-x86-64/GMIC.ofx | grep -q 'NEEDED.*libpng16\.so' ||
             { echo "FAIL: GMIC_STATIC_DEPS=OFF does not link the shared libpng"; exit 1; }
           .github/workflows/describe_plugins.sh install-shared/OFX/Plugins $GMIC_PLUGIN_COUNT
@@ -342,11 +327,8 @@ jobs:
       - name: Build and describe (debug)
         if: env.BUILD_VARIANTS == 'true'
         run: |
-          cmake -S . -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
+          .github/workflows/linux_variant.sh debug -DCMAKE_BUILD_TYPE=Debug -DOFX_CXX_STANDARD=17 \
             -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h"
-          cmake --build build-debug -j4
-          cmake --install build-debug --prefix install-debug
-          .github/workflows/check_linux_deps.sh install-debug/OFX/Plugins/GMIC.ofx.bundle
           .github/workflows/describe_plugins.sh install-debug/OFX/Plugins $GMIC_PLUGIN_COUNT
       # The installed Linux bundle is uploaded as is, the one that linuxCheckBundle.sh and
       # check_linux_deps.sh checked: it needs only system libraries, but the glibc and libstdc++ of
@@ -362,10 +344,7 @@ jobs:
       - name: Build and describe (release, C++20)
         if: env.BUILD_VARIANTS == 'true'
         run: |
-          cmake -S . -B build-cxx20 -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=20 -DGMIC_DOWNLOAD_DIR="$PWD"
-          cmake --build build-cxx20 -j4
-          cmake --install build-cxx20 --prefix install-cxx20
-          .github/workflows/check_linux_deps.sh install-cxx20/OFX/Plugins/GMIC.ofx.bundle
+          .github/workflows/linux_variant.sh cxx20 -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=20
           .github/workflows/describe_plugins.sh install-cxx20/OFX/Plugins $GMIC_PLUGIN_COUNT
       # the Makefile fallback of Natron's build-plugins.sh (PLUGINS_BUILD_SYSTEM=make), release, as
       # its fallback builds it; its bundle and G'MIC sources are compared with the CMake release
@@ -405,16 +384,10 @@ jobs:
           dnf install -y git gcc-c++ make cmake pkgconf-pkg-config expat-devel perl binutils diffutils \
             findutils which xz tar gzip python3 mesa-libGL-devel
           gcc --version | sed -n 1p; ldd --version | sed -n 1p; cmake --version | sed -n 1p
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
-      - name: Cache G'MIC sources
-        uses: actions/cache@v4
-        with:
-          path: |
-            gmic_*.tar.gz
-            pocketfft_hdronly.h
-          key: gmic-src-${{ hashFiles('Makefile') }}
+      - uses: ./.github/actions/gmic-sources
       # static zlib and libpng built with -fPIC, linked into GMIC.ofx (GMIC_STATIC_DEPS)
       - uses: ./.github/actions/static-deps
       - name: Build (release, OpenMP, C++17)
@@ -442,7 +415,7 @@ jobs:
     # passed. Merging only requires Linux and Windows; macOS also builds weekly.
     needs: [changes, linux, windows]
     # on the weekly and on-demand runs (which also build the variants), macOS builds even if a
-    # Linux/Windows variant (debug, C++20) failed. !cancelled(), not always(): a cancelled run
+    # Linux/Windows variant (e.g. debug, C++20) failed. !cancelled(), not always(): a cancelled run
     # (superseded by a newer push) must also stop a running macOS job. On drafts, changes is
     # skipped: its run output is empty.
     if: >-
@@ -459,7 +432,7 @@ jobs:
       # MacPorts' cmake and ninja. MacPorts LLVM/clang is not used to build on macOS.
       CMAKE_ARGS: -G Ninja -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DGMIC_DOWNLOAD_DIR=${{ github.workspace }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       # the only dependency cache on macOS: setup-macports caches the MacPorts installation
@@ -475,12 +448,12 @@ jobs:
       # target 14.0, CMakeLists.txt's default, checked by the configure below.
       - name: Deployment target
         run: echo "MACOSX_DEPLOYMENT_TARGET=$(sw_vers -productVersion | cut -d. -f1).0" >> "$GITHUB_ENV"
+      # (setup-macports puts /opt/local/bin and /opt/local/sbin first in PATH, for every step)
       # OFX_DEPLOY_BUNDLES: the install step copies the MacPorts libraries into the bundle
-      # (osxDeploy.sh) and signs it; the describe test runs on
-      # the installed bundle, so that the deployment is tested on each PR
+      # (osxDeploy.sh) and signs it; the describe test runs on the installed bundle, so that the
+      # deployment is tested on each PR
       - name: Build and install (release, OpenMP)
         run: |
-          export PATH=/opt/local/bin:/opt/local/sbin:$PATH
           cmake -S . -B build $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DOFX_DEPLOY_BUNDLES=ON \
             -DGMIC_BUILD_TESTS=ON
           cmake --build build -j4
@@ -494,7 +467,6 @@ jobs:
           grep -q '^CMAKE_OSX_DEPLOYMENT_TARGET:STRING=14.0$' build-target14/CMakeCache.txt
       - name: Describe all plug-ins
         run: |
-          export PATH=/opt/local/bin:/opt/local/sbin:$PATH
           CXX="/usr/bin/clang++ -I/opt/local/include" \
             HOST_LDFLAGS=-L/opt/local/lib DESCRIBE_USER_LIST=1 DESCRIBE_UPDATE_FILE=1 PLUGIN_LIST=plugins.txt \
             .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
@@ -503,19 +475,13 @@ jobs:
           python3 .github/workflows/render_plugins.py --host build \
             --plugins install/OFX/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
             --subset pr --jobs 2
-      # with /usr/bin/curl (see the Linux job)
+      # with /usr/bin/curl (see check_download.sh)
       - name: Download filter data with the curl command (Add Grain)
         if: env.BUILD_VARIANTS == 'true'
-        run: |
-          mkdir -p "$RUNNER_TEMP/gmic-cache"
-          OFX_GMIC_TEST_CURL_ONLY=1 GMIC_CACHE_PATH="$RUNNER_TEMP/gmic-cache/" python3 .github/workflows/render_plugins.py --host build \
-            --plugins install/OFX/Plugins --list plugins.txt --only eu.gmic.AddGrain --work render-download
-          find "$RUNNER_TEMP/gmic-cache" -name 'gmic_grain*' -size +0 -exec ls -l {} + | grep . ||
-            { echo "FAIL: gmic_grain.gmz was not downloaded"; exit 1; }
+        run: .github/workflows/check_download.sh build install/OFX/Plugins plugins.txt
       - name: Build (debug)
         if: env.BUILD_VARIANTS == 'true'
         run: |
-          export PATH=/opt/local/bin:/opt/local/sbin:$PATH
           cmake -S . -B build-debug $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Debug -DOFX_CXX_STANDARD=17
           cmake --build build-debug -j4
       # FFTW (opt-in, GPL builds only; MacPorts' fftw-3, installed here only), rendered with the
@@ -523,7 +489,6 @@ jobs:
       - name: Build, describe and render (release, FFT=fftw3)
         if: env.BUILD_VARIANTS == 'true'
         run: |
-          export PATH=/opt/local/bin:/opt/local/sbin:$PATH
           sudo port -N install fftw-3 -gfortran
           cmake -S . -B build-fftw3 $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DFFT=fftw3
           cmake --build build-fftw3 -j4
@@ -545,7 +510,6 @@ jobs:
       - name: Bundle libraries
         if: env.UPLOAD_ARTIFACTS == 'true'
         run: |
-          export PATH=/opt/local/bin:/opt/local/sbin:$PATH
           rm -rf Bundle && mkdir Bundle
           cp -R install/OFX/Plugins/GMIC.ofx.bundle Bundle/
           .github/workflows/bundle_libs.sh Bundle/GMIC.ofx.bundle
@@ -562,7 +526,6 @@ jobs:
       - name: Build and describe (release, C++20)
         if: env.BUILD_VARIANTS == 'true'
         run: |
-          export PATH=/opt/local/bin:/opt/local/sbin:$PATH
           cmake -S . -B build-cxx20 $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=20
           cmake --build build-cxx20 -j4
           CXX="/usr/bin/clang++ -I/opt/local/include" \
@@ -587,51 +550,23 @@ jobs:
     env:
       VCPKG_TRIPLET: x64-windows-static
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - name: Set up MSVC (x64)
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-      # the runner image and MSVC version are part of the key (vcpkg's ABI hashes include the
-      # compiler, so an older cache from the prefix is still safe to restore)
-      - name: Toolchain id
-        id: toolchain
-        run: echo "id=$ImageOS-$ImageVersion-msvc$VCToolsVersion" >> "$GITHUB_OUTPUT"
-      - name: Cache vcpkg packages
-        uses: actions/cache@v4
+      - uses: ./.github/actions/gmic-sources
+      # (sets CMAKE_ARGS: Ninja, cl, the vcpkg toolchain, the G'MIC sources)
+      - uses: ./.github/actions/vcpkg
         with:
-          path: ${{ runner.temp }}/vcpkg-cache
-          key: vcpkg-${{ env.VCPKG_TRIPLET }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: |
-            vcpkg-${{ env.VCPKG_TRIPLET }}-${{ steps.toolchain.outputs.id }}-
-            vcpkg-${{ env.VCPKG_TRIPLET }}-
-      - name: Cache G'MIC sources
-        uses: actions/cache@v4
-        with:
-          path: |
-            gmic_*.tar.gz
-            pocketfft_hdronly.h
-          key: gmic-src-${{ hashFiles('Makefile') }}
-      # the runner's vcpkg (VCPKG_INSTALLATION_ROOT) must have vcpkg.json's baseline commit
-      - name: vcpkg
-        run: |
-          baseline=$(python -c "import json; print(json.load(open('vcpkg.json'))['builtin-baseline'])")
-          if ! git -C "$VCPKG_INSTALLATION_ROOT" cat-file -e "$baseline^{commit}" 2>/dev/null; then
-            git -C "$VCPKG_INSTALLATION_ROOT" fetch --quiet origin
-          fi
-          git -C "$VCPKG_INSTALLATION_ROOT" log -1 --format='vcpkg baseline: %h %cs %s' "$baseline"
-          mkdir -p "$RUNNER_TEMP/vcpkg-cache"
-          echo "VCPKG_BINARY_SOURCES=clear;files,$(cygpath -w "$RUNNER_TEMP/vcpkg-cache"),readwrite" >> "$GITHUB_ENV"
-          echo "VCPKG_TOOLCHAIN=$(cygpath -m "$VCPKG_INSTALLATION_ROOT")/scripts/buildsystems/vcpkg.cmake" >> "$GITHUB_ENV"
+          key-prefix: vcpkg-${{ env.VCPKG_TRIPLET }}
+          key-hash: ${{ hashFiles('vcpkg.json') }}
       - name: Build (release, OpenMP)
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 \
-            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
-            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=$VCPKG_TRIPLET \
-            -DGMIC_DOWNLOAD_DIR="$(cygpath -m "$PWD")" -DGMIC_POCKETFFT="$(cygpath -m "$PWD")/pocketfft_hdronly.h" \
-            -DGMIC_BUILD_TESTS=ON
+          cmake -S . -B build $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 \
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DVCPKG_TARGET_TRIPLET=$VCPKG_TRIPLET -DGMIC_BUILD_TESTS=ON
           cmake --build build -j4
           cmake --install build --prefix install
           find install -type f | sort
@@ -642,11 +577,7 @@ jobs:
         run: |
           dir=install/OFX/Plugins/GMIC.ofx.bundle/Contents/Win64
           ofx=$dir/GMIC.ofx
-          deps=$(MSYS2_ARG_CONV_EXCL='*' dumpbin -nologo -dependents "$(cygpath -w "$ofx")" |
-                 sed -n '/has the following dependencies/,/Summary/p' | grep -iE '^ +[^ ]+\.dll$' | tr -d ' \r' | tr 'a-z' 'A-Z' | sort | tr '\n' ' ')
-          echo "GMIC.ofx imports: $deps"
-          [ "$deps" = "KERNEL32.DLL OPENGL32.DLL SHELL32.DLL VCOMP140.DLL " ] ||
-            { echo "FAIL: GMIC.ofx must import only KERNEL32, OPENGL32 (the point handles), SHELL32 and VCOMP140"; exit 1; }
+          .github/workflows/check_win_imports.sh "$ofx"
           ls -l "$dir"
           [ "$(ls "$dir" | tr '\n' ' ')" = "GMIC.ofx vcomp140.dll " ] ||
             { echo "FAIL: Contents/Win64 must have GMIC.ofx and vcomp140.dll only"; exit 1; }
@@ -658,13 +589,8 @@ jobs:
       - name: Check that vcomp140.dll is loaded from the bundle
         shell: pwsh
         run: |
-          $dir = (Resolve-Path install/OFX/Plugins/GMIC.ofx.bundle/Contents/Win64).Path
-          (Get-Item "$dir\vcomp140.dll").VersionInfo | Format-List FileDescription,FileVersion,ProductVersion
-          Add-Type -Namespace W -Name K -MemberDefinition '[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern System.IntPtr LoadLibraryW(string f);'
-          if ([W.K]::LoadLibraryW("$dir\GMIC.ofx") -eq [System.IntPtr]::Zero) { throw "LoadLibrary failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())" }
-          $vcomp = (Get-Process -Id $PID).Modules | Where-Object ModuleName -ieq 'vcomp140.dll'
-          Write-Host "vcomp140.dll loaded from: $($vcomp.FileName)"
-          if ($vcomp.FileName -ine "$dir\vcomp140.dll") { throw "vcomp140.dll is not the bundle's" }
+          pwsh -NoProfile -File .github/workflows/check_vcomp140_loaded.ps1 install/OFX/Plugins/GMIC.ofx.bundle/Contents/Win64
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Describe all plug-ins
         run: |
           export DESCRIBE_MSVC_EXPAT_LIB=$(ls build/vcpkg_installed/$VCPKG_TRIPLET/lib/libexpat*MT.lib | head -1)
@@ -691,37 +617,23 @@ jobs:
             echo "curl.exe ${opt:-(no --compressed)}: exit status $rc, $(wc -c < curl-test.gmz 2>/dev/null || echo 0) bytes"
           done
           rm -f curl-test.gmz
-      # with System32's curl.exe (see the Linux job)
+      # with System32's curl.exe (see check_download.sh)
       - name: Download filter data with the curl command (Add Grain)
         if: env.BUILD_VARIANTS == 'true'
-        run: |
-          cache="$(cygpath -u "$RUNNER_TEMP")/gmic-cache"
-          mkdir -p "$cache"
-          OFX_GMIC_TEST_CURL_ONLY=1 GMIC_CACHE_PATH="$(cygpath -m "$cache")/" python .github/workflows/render_plugins.py --host build \
-            --plugins install/OFX/Plugins --list plugins.txt --only eu.gmic.AddGrain --work render-download
-          find "$cache" -name 'gmic_grain*' -size +0 -exec ls -l {} + | grep . ||
-            { echo "FAIL: gmic_grain.gmz was not downloaded"; exit 1; }
+        run: PYTHON=python .github/workflows/check_download.sh build install/OFX/Plugins plugins.txt
       - name: Build (debug)
         if: env.BUILD_VARIANTS == 'true'
         run: |
-          cmake -S . -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DOFX_CXX_STANDARD=17 \
-            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>' \
-            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=$VCPKG_TRIPLET \
-            -DGMIC_DOWNLOAD_DIR="$(cygpath -m "$PWD")" -DGMIC_POCKETFFT="$(cygpath -m "$PWD")/pocketfft_hdronly.h"
+          cmake -S . -B build-debug $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Debug -DOFX_CXX_STANDARD=17 \
+            '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>' -DVCPKG_TARGET_TRIPLET=$VCPKG_TRIPLET
           cmake --build build-debug -j4
           # Debug builds link the release OpenMP runtime (vcomp140.dll, bundled), not vcomp140d.dll
-          deps=$(MSYS2_ARG_CONV_EXCL='*' dumpbin -nologo -dependents "$(cygpath -w build-debug/Plugins/GMIC.ofx.bundle/Contents/Win64/GMIC.ofx)" |
-                 sed -n '/has the following dependencies/,/Summary/p' | grep -iE '^ +[^ ]+\.dll$' | tr -d ' \r' | tr 'a-z' 'A-Z' | sort | tr '\n' ' ')
-          echo "GMIC.ofx (debug) imports: $deps"
-          [ "$deps" = "KERNEL32.DLL OPENGL32.DLL SHELL32.DLL VCOMP140.DLL " ] ||
-            { echo "FAIL: the debug GMIC.ofx must import only KERNEL32, OPENGL32 (the point handles), SHELL32 and VCOMP140"; exit 1; }
+          .github/workflows/check_win_imports.sh build-debug/Plugins/GMIC.ofx.bundle/Contents/Win64/GMIC.ofx
       - name: Build and describe (release, C++20)
         if: env.BUILD_VARIANTS == 'true'
         run: |
-          cmake -S . -B build-cxx20 -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=20 \
-            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
-            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=$VCPKG_TRIPLET \
-            -DGMIC_DOWNLOAD_DIR="$(cygpath -m "$PWD")" -DGMIC_POCKETFFT="$(cygpath -m "$PWD")/pocketfft_hdronly.h"
+          cmake -S . -B build-cxx20 $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=20 \
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DVCPKG_TARGET_TRIPLET=$VCPKG_TRIPLET
           cmake --build build-cxx20 -j4
           export DESCRIBE_MSVC_EXPAT_LIB=$(ls build/vcpkg_installed/$VCPKG_TRIPLET/lib/libexpat*MT.lib | head -1)
           export DESCRIBE_MSVC_CFLAGS="-I$(cygpath -m "$PWD/build/vcpkg_installed/$VCPKG_TRIPLET/include")"
@@ -742,9 +654,9 @@ jobs:
 
   # Weekly and on demand only: MSYS2 UCRT64 (MinGW-w64 GCC, libgomp, pkg-config, CMake), the other
   # way to build on Windows. Built, described and rendered (pr subset); bundle_libs.sh then makes
-  # the bundle self-contained, and the describe test runs a
-  # statically linked host with a PATH without /ucrt64/bin, so that the plug-in loads only if it
-  # finds its DLLs in the bundle (see bundle_libs.sh for its limits). No artifact.
+  # the bundle self-contained, and the describe test runs a statically linked host with a PATH
+  # without /ucrt64/bin, so that the plug-in loads only if it finds its DLLs in the bundle (see
+  # bundle_libs.sh for its limits). No artifact.
   windows-ucrt64:
     name: Windows (MSYS2 UCRT64, weekly)
     runs-on: windows-2025
@@ -757,7 +669,7 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - name: Set up MSYS2
@@ -771,13 +683,7 @@ jobs:
             mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-zlib
             mingw-w64-ucrt-x86_64-libpng mingw-w64-ucrt-x86_64-expat mingw-w64-ucrt-x86_64-python
-      - name: Cache G'MIC sources
-        uses: actions/cache@v4
-        with:
-          path: |
-            gmic_*.tar.gz
-            pocketfft_hdronly.h
-          key: gmic-src-${{ hashFiles('Makefile') }}
+      - uses: ./.github/actions/gmic-sources
       - name: Build (release, OpenMP)
         run: |
           set -eo pipefail
@@ -830,58 +736,31 @@ jobs:
       run:
         shell: bash -eo pipefail {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - name: Set up MSVC (ARM64)
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: arm64
-      - name: Toolchain id
-        id: toolchain
-        run: echo "id=$ImageOS-$ImageVersion-msvc$VCToolsVersion" >> "$GITHUB_OUTPUT"
-      - name: Cache vcpkg packages
-        uses: actions/cache@v4
+      - uses: ./.github/actions/gmic-sources
+      - uses: ./.github/actions/vcpkg
         with:
-          path: ${{ runner.temp }}/vcpkg-cache
-          key: vcpkg-arm-${{ steps.toolchain.outputs.id }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-triplets/*') }}
-          restore-keys: |
-            vcpkg-arm-${{ steps.toolchain.outputs.id }}-
-            vcpkg-arm-
-      - name: Cache G'MIC sources
-        uses: actions/cache@v4
-        with:
-          path: |
-            gmic_*.tar.gz
-            pocketfft_hdronly.h
-          key: gmic-src-${{ hashFiles('Makefile') }}
-      - name: vcpkg
-        run: |
-          baseline=$(python -c "import json; print(json.load(open('vcpkg.json'))['builtin-baseline'])")
-          if ! git -C "$VCPKG_INSTALLATION_ROOT" cat-file -e "$baseline^{commit}" 2>/dev/null; then
-            git -C "$VCPKG_INSTALLATION_ROOT" fetch --quiet origin
-          fi
-          git -C "$VCPKG_INSTALLATION_ROOT" log -1 --format='vcpkg baseline: %h %cs %s' "$baseline"
-          mkdir -p "$RUNNER_TEMP/vcpkg-cache"
-          echo "VCPKG_BINARY_SOURCES=clear;files,$(cygpath -w "$RUNNER_TEMP/vcpkg-cache"),readwrite" >> "$GITHUB_ENV"
-          echo "VCPKG_TOOLCHAIN=$(cygpath -m "$VCPKG_INSTALLATION_ROOT")/scripts/buildsystems/vcpkg.cmake" >> "$GITHUB_ENV"
+          key-prefix: vcpkg-arm
+          key-hash: ${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-triplets/*') }}
       - name: Build ARM64 (and the Arm64X linker inputs)
         run: |
           mkdir -p arm64x
-          cmake -S . -B build-arm64 -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 \
-            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
-            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=arm64-windows-static \
-            -DGMIC_DOWNLOAD_DIR="$(cygpath -m "$PWD")" -DGMIC_POCKETFFT="$(cygpath -m "$PWD")/pocketfft_hdronly.h" \
+          cmake -S . -B build-arm64 $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 \
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DVCPKG_TARGET_TRIPLET=arm64-windows-static \
             -DGMIC_BUILD_TESTS=ON -DGMIC_ARM64X=ARM64 -DGMIC_ARM64X_RSP="$(cygpath -m "$PWD")/arm64x/GMIC.rsp"
           cmake --build build-arm64 -j4
           cmake --install build-arm64 --prefix install-arm64
       # CFLAGS/CXXFLAGS: added to CMake's default flags, which -DCMAKE_CXX_FLAGS would replace
       - name: Build Arm64X (Arm64EC, linked with the ARM64 build's objects)
         run: |
-          CFLAGS=-arm64EC CXXFLAGS=-arm64EC cmake -S . -B build-arm64x -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 \
-            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
-            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=arm64ec-windows-static \
-            -DGMIC_DOWNLOAD_DIR="$(cygpath -m "$PWD")" -DGMIC_POCKETFFT="$(cygpath -m "$PWD")/pocketfft_hdronly.h" \
+          CFLAGS=-arm64EC CXXFLAGS=-arm64EC cmake -S . -B build-arm64x $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 \
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DVCPKG_TARGET_TRIPLET=arm64ec-windows-static \
             -DGMIC_BUILD_TESTS=ON -DGMIC_ARM64X=ARM64EC -DGMIC_ARM64X_RSP="$(cygpath -m "$PWD")/arm64x/GMIC.rsp"
           cmake --build build-arm64x -j4
           cmake --install build-arm64x --prefix install-arm64x
@@ -896,11 +775,9 @@ jobs:
             dir=bundle-arm/GMIC.ofx.bundle/Contents/${a%%:*} want=${a##*:}
             [ "$(ls "$dir" | tr '\n' ' ')" = "GMIC.ofx vcomp140.dll " ] || { echo "FAIL: $dir must have GMIC.ofx and vcomp140.dll only"; exit 1; }
             w=$(cygpath -w "$dir/GMIC.ofx")
-            deps=$(MSYS2_ARG_CONV_EXCL='*' dumpbin -nologo -dependents "$w" | sed -n '/has the following dependencies/,/Summary/p' |
-                   grep -iE '^ +[^ ]+\.dll$' | tr -d ' \r' | tr 'a-z' 'A-Z' | sort | tr '\n' ' ')
+            .github/workflows/check_win_imports.sh "$dir/GMIC.ofx"
             machine=$(MSYS2_ARG_CONV_EXCL='*' dumpbin -nologo -headers "$w" | grep -m1 ' machine ' | tr -d '\r' | sed 's/^ *//; s/ *$//')
-            echo "$dir/GMIC.ofx: $machine; imports $deps"
-            [ "$deps" = "KERNEL32.DLL OPENGL32.DLL SHELL32.DLL VCOMP140.DLL " ] || { echo "FAIL: GMIC.ofx must import only KERNEL32, OPENGL32 (the point handles), SHELL32 and VCOMP140"; exit 1; }
+            echo "$dir/GMIC.ofx: $machine"
             case $want in
               ARM64X) echo "$machine" | grep -q 'AA64 machine (ARM64) (ARM64X)' ;;
               ARM64) echo "$machine" | grep -q 'AA64 machine (ARM64)$' ;;
@@ -917,15 +794,7 @@ jobs:
         shell: pwsh
         run: |
           foreach ($a in @('Win-arm64', 'Win-arm64ec')) {
-            $dir = (Resolve-Path "bundle-arm/GMIC.ofx.bundle/Contents/$a").Path
-            pwsh -NoProfile -Command {
-              param($dir)
-              Add-Type -Namespace W -Name K -MemberDefinition '[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern System.IntPtr LoadLibraryW(string f);'
-              if ([W.K]::LoadLibraryW("$dir\GMIC.ofx") -eq [System.IntPtr]::Zero) { throw "LoadLibrary failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())" }
-              $v = (Get-Process -Id $PID).Modules | Where-Object ModuleName -ieq 'vcomp140.dll'
-              Write-Host "$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture) process, $dir\GMIC.ofx: vcomp140.dll from $($v.FileName)"
-              if ($v.FileName -ine "$dir\vcomp140.dll") { throw "vcomp140.dll is not the bundle's" }
-            } -args $dir
+            pwsh -NoProfile -File .github/workflows/check_vcomp140_loaded.ps1 "bundle-arm/GMIC.ofx.bundle/Contents/$a"
             if ($LASTEXITCODE -ne 0) { exit 1 }
           }
       - name: Crash dumps of hostDemo.exe (WER LocalDumps)
@@ -1046,25 +915,25 @@ jobs:
       run:
         shell: bash -eo pipefail {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: release
           submodules: recursive
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: develop
           submodules: recursive
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: GreycLab/gmic
           ref: ${{ inputs.gmic-ref }}
           path: upstream/gmic
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: GreycLab/CImg
           ref: ${{ inputs.cimg-ref }}
           path: upstream/CImg
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: GreycLab/gmic-community
           ref: ${{ inputs.community-ref }}

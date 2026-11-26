@@ -1,0 +1,44 @@
+name: vcpkg (MSVC)
+description: >-
+  After ilammy/msvc-dev-cmd: restore (or save at the end of the job) vcpkg's binary cache, fetch
+  vcpkg.json's builtin-baseline into the runner's vcpkg (VCPKG_INSTALLATION_ROOT) if it lacks it,
+  and set VCPKG_BINARY_SOURCES and CMAKE_ARGS, the CMake arguments common to the MSVC builds (Ninja,
+  cl, the vcpkg toolchain, the G'MIC sources from the gmic-sources cache). The runner image and MSVC
+  version are part of the cache key (vcpkg's ABI hashes include the compiler, so an older cache from
+  the prefix is still safe to restore).
+inputs:
+  key-prefix:
+    description: the cache key's prefix, before the toolchain id
+    required: true
+  key-hash:
+    description: the cache key's suffix, e.g. hashFiles('vcpkg.json')
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Toolchain id
+      id: toolchain
+      shell: bash
+      run: echo "id=$ImageOS-$ImageVersion-msvc$VCToolsVersion" >> "$GITHUB_OUTPUT"
+    - name: Cache vcpkg packages
+      uses: actions/cache@v5
+      with:
+        path: ${{ runner.temp }}/vcpkg-cache
+        key: ${{ inputs.key-prefix }}-${{ steps.toolchain.outputs.id }}-${{ inputs.key-hash }}
+        restore-keys: |
+          ${{ inputs.key-prefix }}-${{ steps.toolchain.outputs.id }}-
+          ${{ inputs.key-prefix }}-
+    - name: vcpkg
+      shell: bash
+      run: |
+        baseline=$(python -c "import json; print(json.load(open('vcpkg.json'))['builtin-baseline'])")
+        if ! git -C "$VCPKG_INSTALLATION_ROOT" cat-file -e "$baseline^{commit}" 2>/dev/null; then
+          git -C "$VCPKG_INSTALLATION_ROOT" fetch --quiet origin
+        fi
+        git -C "$VCPKG_INSTALLATION_ROOT" log -1 --format='vcpkg baseline: %h %cs %s' "$baseline"
+        mkdir -p "$RUNNER_TEMP/vcpkg-cache"
+        toolchain="$(cygpath -m "$VCPKG_INSTALLATION_ROOT")/scripts/buildsystems/vcpkg.cmake"
+        src=$(cygpath -m "$PWD")
+        echo "VCPKG_BINARY_SOURCES=clear;files,$(cygpath -w "$RUNNER_TEMP/vcpkg-cache"),readwrite" >> "$GITHUB_ENV"
+        # (expanded unquoted: the workspace and vcpkg paths have no spaces on the runners)
+        echo "CMAKE_ARGS=-G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_TOOLCHAIN_FILE=$toolchain -DGMIC_DOWNLOAD_DIR=$src -DGMIC_POCKETFFT=$src/pocketfft_hdronly.h" >> "$GITHUB_ENV"

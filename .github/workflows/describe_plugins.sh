@@ -32,6 +32,7 @@ fi
 MIN_PLUGINS=$2
 SRC=$(cd "$(dirname "$0")/../.." && pwd)
 WORK=$(mktemp -d)
+trap 'cd / && rm -rf "$WORK"' EXIT
 CXX=${CXX:-c++}
 
 cp -R "$SRC/openfx/HostSupport/include" "$SRC/openfx/HostSupport/src" "$WORK/"
@@ -68,19 +69,37 @@ else
         ${HOST_LDFLAGS:-} -lexpat ${HOST_LIBS:-} -o "$WORK/describe_plugins"
 fi
 
-# run with an empty HOME (and APPDATA and USERPROFILE, on Windows), so that no user G'MIC
-# configuration (~/.config/gmic, %APPDATA%/gmic) or user source (~/.gmic, %USERPROFILE%/user.gmic)
-# is picked up
 native_path() { if command -v cygpath > /dev/null; then cygpath -m "$1"; else echo "$1"; fi; }
-mkdir -p "$WORK/home"
+# run_host <home> <expected number of plug-ins> <name> [<VAR>=<value>...]: runs the host with
+# <home> as HOME, APPDATA and USERPROFILE (G'MIC's folder: ~/.config/gmic, %APPDATA%/gmic; the
+# user source: ~/.gmic, %USERPROFILE%/user.gmic), without XDG_CONFIG_HOME and GMIC_PATH (which
+# would move G'MIC's folder) and OFX_GMIC_UPDATE_FILE, unless given in <VAR>=<value>; stdout goes
+# to <name>.out, stderr (the PLUGIN lines and the plug-in's log) to <name>.log. Returns the host's
+# exit status.
+run_host() {
+    local home=$1 expected=$2 name=$3
+    shift 3
+    env -u XDG_CONFIG_HOME -u GMIC_PATH -u OFX_GMIC_UPDATE_FILE \
+        HOME="$home" APPDATA="$(native_path "$home")" USERPROFILE="$(native_path "$home")" \
+        OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" ${1+"$@"} \
+        ./describe_plugins "$expected" > "$name.out" 2> "$name.log"
+}
+# all_described <name> <n>: did the run <name> describe exactly <n> plug-ins, with no failure?
+# (through a file: with pipefail, "tr | grep -q" can fail when grep stops at a match, see below)
+all_described() {
+    tr -d '\r' < "$1.out" > "$1.out.txt"
+    grep -qx "plugins=$2 described=$2 failed=0" "$1.out.txt"
+}
+# the last line of the output of the run <name>
+last_line() { tr -d '\r' < "$1.out" | tail -n 1; }
 cd "$WORK"
 status=0
 if [ -n "${DESCRIBE_MSVC_EXPAT_LIB:-}" ]; then BUNDLE_DIR=$(cygpath -m "$BUNDLE_DIR"); fi
-# without XDG_CONFIG_HOME, GMIC_PATH and OFX_GMIC_UPDATE_FILE (as update_case), so that only the
+# with an empty home, so that no user G'MIC configuration or user source is picked up, and only the
 # built-in stdlib gives the plug-ins, whose number must be exact
-env -u XDG_CONFIG_HOME -u GMIC_PATH -u OFX_GMIC_UPDATE_FILE HOME="$WORK/home" APPDATA="$(native_path "$WORK/home")" USERPROFILE="$(native_path "$WORK/home")" \
-    OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
-    ./describe_plugins "$MIN_PLUGINS" 2> describe.log || status=$?
+mkdir -p "$WORK/home"
+run_host "$WORK/home" "$MIN_PLUGINS" describe || status=$?
+cat describe.out
 # $DESCRIBE_LOG (an absolute path): keep a copy of the log (PLUGIN <id> lines, ...)
 if [ -n "${DESCRIBE_LOG:-}" ]; then cp describe.log "$DESCRIBE_LOG"; fi
 described=$(tr -d '\r' < describe.log | grep -c '^PLUGIN ' || true)
@@ -136,11 +155,9 @@ if [ -f "$SHIPPED_LIST" ] && [ "${DESCRIBE_USER_LIST:-}" = 1 ]; then
     expected=$(($(wc -l < listed.txt) - 2))
     # (no "tr ... | grep -q" below: with pipefail, tr fails with SIGPIPE when grep -q stops at a
     # match, which would hide that match)
-    HOME="$WORK/home2" APPDATA="$(native_path "$WORK/home2")" USERPROFILE="$(native_path "$WORK/home2")" OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
-        ./describe_plugins "$expected" > describe2.out 2> describe2.log || true
-    tr -d '\r' < describe2.out > describe2.txt
-    cat describe2.txt
-    if ! grep -qx "plugins=$expected described=$expected failed=0" describe2.txt ||
+    run_host "$WORK/home2" "$expected" describe2 || true
+    tr -d '\r' < describe2.out
+    if ! all_described describe2 "$expected" ||
         tr -d '\r' < describe2.log | grep -xF -e "PLUGIN $first" -e "PLUGIN $last" > /dev/null; then
         echo "FAIL: a user's list that disables $first and $last: expected the $expected other plug-ins"
         status=1
@@ -157,11 +174,10 @@ if [ -f "$SHIPPED_LIST" ] && [ "${DESCRIBE_USER_LIST:-}" = 1 ]; then
     cp "$WORK/home2/.config/gmic/gmic_ofx_plugins.txt" "$WORK/home3/gmic/"
     : > "$WORK/home3/.config/gmic/gmic_ofx_log"
     : > "$WORK/home3/gmic/gmic_ofx_log"
-    HOME="$WORK/home3" APPDATA="$(native_path "$WORK/home3")" USERPROFILE="$(native_path "$WORK/home3")" OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
-        ./describe_plugins "$expected" > describe3.out 2> describe3.log || true
+    run_host "$WORK/home3" "$expected" describe3 || true
     cat "$WORK/home3/.config/gmic/gmic_ofx_log" "$WORK/home3/gmic/gmic_ofx_log" | tr -d '\r' > describe3.gmiclog
     summary="openfx-gmic: .*gmic_ofx_plugins.txt: 2 plug-ins disabled; unknown identifiers: eu.gmic.NoSuchPlugin"
-    if ! tr -d '\r' < describe3.out | grep -qx "plugins=$expected described=$expected failed=0"; then
+    if ! all_described describe3 "$expected"; then
         echo "FAIL: with a log file: expected the $expected plug-ins of the user's list"
         status=1
     fi
@@ -182,11 +198,10 @@ if [ -f "$SHIPPED_LIST" ] && [ "${DESCRIBE_USER_LIST:-}" = 1 ]; then
     cp "$WORK/home2/.config/gmic/gmic_ofx_plugins.txt" "$home4/gmic/"
     : > "$home4/.config/gmic/gmic_ofx_log"
     : > "$home4/gmic/gmic_ofx_log"
-    HOME="$home4" APPDATA="$(native_path "$home4")" OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
-        ./describe_plugins "$expected" > describe4.out 2> describe4.log || true
+    run_host "$home4" "$expected" describe4 || true
     cat "$home4/.config/gmic/gmic_ofx_log" "$home4/gmic/gmic_ofx_log" | tr -d '\r' > describe4.gmiclog
-    if ! tr -d '\r' < describe4.out | grep -qx "plugins=$expected described=$expected failed=0"; then
-        echo "FAIL: non-ASCII profile folder: expected the $expected plug-ins of the user's list, got: $(tr -d '\r' < describe4.out | tail -n 1)"
+    if ! all_described describe4 "$expected"; then
+        echo "FAIL: non-ASCII profile folder: expected the $expected plug-ins of the user's list, got: $(last_line describe4)"
         status=1
     fi
     if ! grep -x "$summary" describe4.gmiclog > /dev/null; then
@@ -196,22 +211,18 @@ if [ -f "$SHIPPED_LIST" ] && [ "${DESCRIBE_USER_LIST:-}" = 1 ]; then
     fi
 fi
 if [ "${DESCRIBE_UPDATE_FILE:-}" = 1 ]; then
-    builtin_count=$(tr -d '\r' < describe.log | grep -c '^PLUGIN ' || true)
-    update_name="update$(sed -n -e 's/^GMICVER *= *//p' "$SRC/Makefile" | tr -d '.\r ').gmic"
+    update_name="update$(sh "$SRC/.github/workflows/gmic_version.sh" "$SRC/Makefile" | tr -d .).gmic"
     # update_case <name> <OFX_GMIC_UPDATE_FILE> <expected number of plug-ins> [<text the log must
     #   have>] < <update file contents>
-    # G'MIC's folder (gmic::path_rc()): $HOME/.config/gmic, %APPDATA%/gmic on Windows; without
-    # XDG_CONFIG_HOME and GMIC_PATH, which would move it
+    # (in G'MIC's folder, see run_host)
     update_case() {
         local home="$WORK/home-update-$1"
         mkdir -p "$home/.config/gmic" "$home/gmic"
         cat > "$home/.config/gmic/$update_name"
         cp "$home/.config/gmic/$update_name" "$home/gmic/"
-        env -u XDG_CONFIG_HOME -u GMIC_PATH OFX_GMIC_UPDATE_FILE="$2" HOME="$home" APPDATA="$(native_path "$home")" USERPROFILE="$(native_path "$home")" \
-            OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
-            ./describe_plugins "$3" > "update-$1.out" 2> "update-$1.log" || true
-        if ! tr -d '\r' < "update-$1.out" | grep -qx "plugins=$3 described=$3 failed=0"; then
-            echo "FAIL: update file, $1: expected $3 plug-ins, got: $(tr -d '\r' < "update-$1.out" | tail -n 1)"
+        run_host "$home" "$3" "update-$1" OFX_GMIC_UPDATE_FILE="$2" || true
+        if ! all_described "update-$1" "$3"; then
+            echo "FAIL: update file, $1: expected $3 plug-ins, got: $(last_line "update-$1")"
             status=1
         elif grep "openfx-gmic: Warning: hot fix" "update-$1.log"; then
             echo "FAIL: update file, $1: hot fix warnings (see above)"
@@ -227,11 +238,11 @@ if [ "${DESCRIBE_UPDATE_FILE:-}" = 1 ]; then
 fx_update_file_test :
   f 128
 '
-    update_case empty 1 "$builtin_count" < /dev/null
-    printf 'fx_update_file_test :\n  f 128\n' | update_case no-gui 1 "$builtin_count"
-    printf '%s' "$one_filter" | update_case opt-in-off 0 "$builtin_count" "OFX_GMIC_UPDATE_FILE"
+    update_case empty 1 "$described" < /dev/null
+    printf 'fx_update_file_test :\n  f 128\n' | update_case no-gui 1 "$described"
+    printf '%s' "$one_filter" | update_case opt-in-off 0 "$described" "OFX_GMIC_UPDATE_FILE"
     # a serialized CImg (still compressed): ignored, with a warning
-    printf '1 uint8 little_endian\n%s' "$one_filter" | update_case compressed 1 "$builtin_count" "is compressed"
+    printf '1 uint8 little_endian\n%s' "$one_filter" | update_case compressed 1 "$described" "is compressed"
     printf '%s' "$one_filter" | update_case used 1 1
     # in a profile folder with non-ASCII characters (issue #201)
     printf '%s' "$one_filter" | update_case used-Frédéric-日本 1 1
@@ -248,7 +259,6 @@ fi
 # filter or a folder (here a built-in one), blanks may come before "#@gui", a "!" before a filter
 # name is not part of it, and the preview factor may be a float
 if [ "${DESCRIBE_UPDATE_FILE:-}" = 1 ]; then
-    builtin_count=$(tr -d '\r' < describe.log | grep -c '^PLUGIN ' || true)
     home="$WORK/home-user-source"
     mkdir -p "$home"
     cat > "$home/.gmic" <<'EOF2'
@@ -263,14 +273,12 @@ fx_user_source_test :
   f 128
 EOF2
     cp "$home/.gmic" "$home/user.gmic"
-    expected=$((builtin_count + 1)) # 2 filters more, Sepia hidden
-    env -u XDG_CONFIG_HOME -u GMIC_PATH -u OFX_GMIC_UPDATE_FILE HOME="$home" APPDATA="$(native_path "$home")" USERPROFILE="$(native_path "$home")" \
-        OFX_PLUGIN_PATH="$BUNDLE_DIR" PATH="${HOST_RUN_PATH:-$PATH}" \
-        ./describe_plugins "$expected" > user-source.out 2> user-source.log || true
+    expected=$((described + 1)) # 2 filters more, Sepia hidden
+    run_host "$home" "$expected" user-source || true
     tr -d '\r' < user-source.log > user-source.txt
     tab=$(printf '\t')
-    if ! tr -d '\r' < user-source.out | grep -qx "plugins=$expected described=$expected failed=0"; then
-        echo "FAIL: user source: expected $expected plug-ins, got: $(tr -d '\r' < user-source.out | tail -n 1)"
+    if ! all_described user-source "$expected"; then
+        echo "FAIL: user source: expected $expected plug-ins, got: $(last_line user-source)"
         status=1
     elif grep -qx "PLUGIN eu.gmic.Sepia" user-source.txt; then
         echo "FAIL: user source: hide(Colors/Sepia) did not hide Sepia"

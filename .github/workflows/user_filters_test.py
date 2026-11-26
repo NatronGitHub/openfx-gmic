@@ -72,6 +72,7 @@ import math
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -305,18 +306,20 @@ STATUS_CASES = (
 
 
 def update_file_name():
-    """Returns the name of G'MIC's update file for the Makefile's GMICVER.
+    """Returns the name of G'MIC's update file for the Makefile's GMICVER (gmic_version.sh).
 
     Returns:
         update<major><minor><patch>.gmic, e.g. update408.gmic for G'MIC 4.0.8.
 
     Raises:
-        ValueError: the Makefile has no GMICVER=<major>.<minor>.<patch> line.
+        subprocess.CalledProcessError: gmic_version.sh found no GMICVER in the Makefile.
+        ValueError: GMICVER is not <major>.<minor>.<patch>.
     """
-    with open(os.path.join(HERE, '..', '..', 'Makefile'), encoding='utf-8') as f:
-        match = re.search(r'^GMICVER\s*=\s*(\d+)\.(\d+)\.(\d+)\s*$', f.read(), re.MULTILINE)
+    version = subprocess.run(['sh', os.path.join(HERE, 'gmic_version.sh'), os.path.join(HERE, '..', '..', 'Makefile')],
+                             stdout=subprocess.PIPE, check=True, universal_newlines=True).stdout.strip()
+    match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)', version)
     if not match:
-        raise ValueError('no GMICVER=<major>.<minor>.<patch> in the Makefile')
+        raise ValueError('GMICVER is "%s", not <major>.<minor>.<patch>' % version)
     return 'update%s.gmic' % ''.join(match.groups())
 
 
@@ -339,6 +342,12 @@ def install_user_file(work, text, name):
         f.write(text)
 
 
+def first_render(report):
+    """The first render of a parsed report.json (hostDemo --report), an empty dict if none."""
+    renders = (report or {}).get('renders') or []
+    return renders[0] if renders else {}
+
+
 def check_output(report, expected):
     """Checks that the first output of a render has every pixel of the expected color.
 
@@ -349,8 +358,7 @@ def check_output(report, expected):
     Returns:
         A list of problems, empty if the output is right.
     """
-    renders = report.get('renders') or []
-    output = (renders[0].get('output') if renders else None) or {}
+    output = first_render(report).get('output') or {}
     if not output.get('files'):
         return ['no output file in the report']
     width, height = output.get('w') or 0, output.get('h') or 0
@@ -404,7 +412,7 @@ def large_source_render(host, plugins, work, pid, args):
     sw, sh = LARGE_SOURCE
     result = render_plugins.render(host, ['-i', 'Source=rod:0,0,%d,%d' % (sw, sh)] + args, plugins, work,
                                    TIMEOUT, (pid, CONTEXT, []), extra_env=MULTIRES_ON)
-    _, _, problem, _, _, errors, log, _ = result
+    problem, errors, log = result.problem, result.errors, result.log
     if problem:
         return '%s %s' % (problem, ' '.join(errors)), log, {}, [], (0, 0), 1.0
     with open(os.path.join(work, pid[len('eu.gmic.'):], 'report.json'), encoding='utf-8') as f:
@@ -555,7 +563,7 @@ def check_timeout(host, plugins, work):
     """
     result = render_plugins.render(host, [], plugins, work, TIMEOUT, (SLOW_PLUGIN, CONTEXT, ['Source']), frame='0,1',
                                    extra_env=MULTIRES_ON)
-    _, _, problem, _, _, errors, log, _ = result
+    problem, errors, log = result.problem, result.errors, result.log
     if problem:
         return ['%s: %s %s' % (SLOW_PLUGIN, problem, ' '.join(errors))]
     problems = []
@@ -593,7 +601,7 @@ def check_no_multires(host, plugins, work):
         name = '%s %s without multi-resolution' % (pid, ' '.join(args))
         result = render_plugins.render(host, args, plugins, work, TIMEOUT, (pid, CONTEXT, ['Source']),
                                        extra_env=MULTIRES_UNSET)
-        _, _, problem, _, _, errors, log, _ = result
+        problem, errors, log = result.problem, result.errors, result.log
         if problem:
             problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
             continue
@@ -636,7 +644,7 @@ def check_scaled_geometry(host, plugins, work):
             name = '%s at scale %s' % (pid, scale)
             result = render_plugins.render(host, ['--scale', str(scale), '-i', 'Source=rod:0,0,160,120'], plugins,
                                            work, TIMEOUT, (pid, CONTEXT, []), extra_env=MULTIRES_ON)
-            _, _, problem, _, _, errors, log, _ = result
+            problem, errors, log = result.problem, result.errors, result.log
             if problem:
                 problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
                 continue
@@ -687,7 +695,7 @@ def check_geometry(host, plugins, work):
         clips = [] if args is OFFSET_SOURCE else ['Source']
         result = render_plugins.render(host, args, plugins, work, TIMEOUT, (pid, CONTEXT, clips), frame=frame,
                                        extra_env=MULTIRES_ON)
-        _, _, problem, _, _, errors, log, _ = result
+        problem, errors, log = result.problem, result.errors, result.log
         if problem:
             problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
             continue
@@ -747,18 +755,14 @@ def render_all(host, plugins, work, runs):
     problems, logs, seconds = [], [], {}
     for pid in sorted(EXPECTED):
         for run in range(runs):
-            _, _, problem, _, t, errors, log, _ = render_plugins.render(
-                host, [], plugins, work, TIMEOUT, (pid, CONTEXT, ['Source']))
+            result = render_plugins.render(host, [], plugins, work, TIMEOUT, (pid, CONTEXT, ['Source']))
             if run == 0:
-                logs.append(log)
-            if problem:
-                problems.append('%s: %s %s' % (pid, problem, ' '.join(errors)))
+                logs.append(result.log)
+            if result.problem:
+                problems.append('%s: %s %s' % (pid, result.problem, ' '.join(result.errors)))
                 break
-            seconds[pid] = min(t, seconds.get(pid, t))
-            report_path = os.path.join(work, pid[len('eu.gmic.'):], 'report.json')
-            with open(report_path, encoding='utf-8') as f:
-                report = json.load(f)
-            problems += ['%s: %s' % (pid, p) for p in check_output(report, EXPECTED[pid])]
+            seconds[pid] = min(result.seconds, seconds.get(pid, result.seconds))
+            problems += ['%s: %s' % (pid, p) for p in check_output(result.report, EXPECTED[pid])]
     return problems, logs, seconds
 
 
@@ -915,14 +919,9 @@ def check_cpus(host, plugins, work):
     """
     result = render_plugins.render(
         host, [], plugins, work, TIMEOUT, (CPUS_PLUGIN, CONTEXT, ['Source']), host_threads=True)
-    _, _, problem, _, _, errors, _, _ = result
-    if problem:
-        return ['%s: %s %s' % (CPUS_PLUGIN, problem, ' '.join(errors))]
-    report_path = os.path.join(work, CPUS_PLUGIN[len('eu.gmic.'):], 'report.json')
-    with open(report_path, encoding='utf-8') as f:
-        report = json.load(f)
-    renders = report.get('renders') or []
-    output = (renders[0].get('output') if renders else None) or {}
+    if result.problem:
+        return ['%s: %s %s' % (CPUS_PLUGIN, result.problem, ' '.join(result.errors))]
+    output = first_render(result.report).get('output') or {}
     lows, highs = output.get('min') or [None], output.get('max') or [None]
     if lows[0] is None or highs[0] is None or abs(highs[0] - lows[0]) > TOLERANCE:
         return ['%s: not a uniform output (%s, %s)' % (CPUS_PLUGIN, lows, highs)]
@@ -946,11 +945,10 @@ def check_channels(host, plugins, work):
     """
     result = render_plugins.render(
         host, [], plugins, work, TIMEOUT, (CHANNELS_PLUGIN, CONTEXT, ['Source']))
-    _, _, problem, _, _, _, log, _ = result
-    if not problem:
+    if not result.problem:
         return ['%s: rendered, expected a failure (%s)' % (CHANNELS_PLUGIN, CHANNELS_ERROR)]
-    if CHANNELS_ERROR not in log:
-        return ['%s: %s, without the message %r' % (CHANNELS_PLUGIN, problem, CHANNELS_ERROR)]
+    if CHANNELS_ERROR not in result.log:
+        return ['%s: %s, without the message %r' % (CHANNELS_PLUGIN, result.problem, CHANNELS_ERROR)]
     return []
 
 
@@ -969,14 +967,9 @@ def render_scaled(host, plugins, work, scale):
     """
     result = render_plugins.render(host, ['--scale', str(scale)] + SCALE_ARGS, plugins, work,
                                    TIMEOUT, (SCALE_PLUGIN, CONTEXT, []))
-    _, _, problem, _, _, errors, _, _ = result
-    if problem:
-        return '%s %s' % (problem, ' '.join(errors)), {}
-    report_path = os.path.join(work, SCALE_PLUGIN[len('eu.gmic.'):], 'report.json')
-    with open(report_path, encoding='utf-8') as f:
-        report = json.load(f)
-    renders = report.get('renders') or []
-    return None, (renders[0] if renders else {})
+    if result.problem:
+        return '%s %s' % (result.problem, ' '.join(result.errors)), {}
+    return None, first_render(result.report)
 
 
 def check_render_scale(host, plugins, work):
@@ -1097,9 +1090,10 @@ def main():
     args = parser.parse_args()
     if args.update_file and args.user_source:
         parser.error('--update-file and --user-source are exclusive')
-    # G'MIC's folder (gmic::path_rc(), where the plug-in looks for the update file) is the HOME's
-    # .config/gmic only without GMIC_PATH and XDG_CONFIG_HOME; the renders inherit this environment
-    for var in ('GMIC_PATH', 'XDG_CONFIG_HOME', 'OFX_GMIC_UPDATE_FILE', STATUS_VISIBILITY_VAR):
+    # the renders inherit this environment (render_plugins.render() leaves out GMIC_PATH and
+    # XDG_CONFIG_HOME, so that G'MIC's folder, where the plug-in looks for the update file, is
+    # the HOME's .config/gmic): the update file only with --update-file
+    for var in ('OFX_GMIC_UPDATE_FILE', STATUS_VISIBILITY_VAR):
         os.environ.pop(var, None)
     name = USER_FILE
     if args.update_file:
