@@ -2,8 +2,10 @@
 # What openfx's Support/include/linuxCheckBundle.sh (run on the same bundles in ci.yml) doesn't
 # check in a Linux GMIC.ofx:
 # - it doesn't need libcurl (G'MIC downloads with the curl or wget command), FFTW (linked
-#   statically with FFT=fftw3) or OpenGL (libGL, libOpenGL..., which linuxCheckBundle.sh accepts as
-#   system libraries: GMIC_OFX/Makefile filters out -lGL), nor, unless SHARED_DEPS=1, the shared
+#   statically with FFT=fftw3) or EGL; OpenGL (libGL, or GLVND's libOpenGL and libGLX, which
+#   linuxCheckBundle.sh accepts as system libraries) only for the point handles of GPL builds
+#   (SupportExt's PointsInteract; COMMERCIAL=1: none, GMIC_OFX/Makefile filters out -lGL); nor,
+#   unless SHARED_DEPS=1, the shared
 #   zlib or libpng (GMIC_STATIC_DEPS links them statically; linuxCheckBundle.sh allows a system
 #   libz.so.1);
 # - it exports only OfxGetNumberOfPlugins and OfxGetPlugin (the version script keeps the symbols
@@ -14,7 +16,7 @@
 #   OFX_PLUGIN_BUILD_WITH_INSTALL_RPATH). Check the installed bundle: it is the one shipped.
 # SHARED_DEPS=1: a GMIC_STATIC_DEPS=OFF build (Natron's release builds, distribution packages),
 # which may need the shared zlib and libpng (libz.so.1, libpng16.so.16).
-# Usage: [SHARED_DEPS=1] check_linux_deps.sh <GMIC.ofx.bundle>
+# Usage: [SHARED_DEPS=1] [COMMERCIAL=1] check_linux_deps.sh <GMIC.ofx.bundle>
 set -euo pipefail
 
 if [ $# != 1 ]; then
@@ -28,7 +30,10 @@ needed=$(readelf -d "$bin" | sed -n -e 's/.*(NEEDED).*\[\(.*\)\]/\1/p')
 echo "NEEDED: $(echo $needed)"
 for lib in $needed; do
     case "$lib" in
-        libcurl*|libfftw3*|libGL*|libOpenGL*|libEGL*) echo "FAIL: $bin needs $lib"; status=1 ;;
+        libcurl*|libfftw3*|libEGL*) echo "FAIL: $bin needs $lib"; status=1 ;;
+        libGL.so.1|libOpenGL.so.0|libGLX.so.0)
+            [ "${COMMERCIAL:-0}" != 1 ] || { echo "FAIL: $bin needs $lib (COMMERCIAL builds have no point handles)"; status=1; } ;;
+        libGL*|libOpenGL*) echo "FAIL: $bin needs $lib"; status=1 ;;
         libz.so.*|libpng*)
             [ "${SHARED_DEPS:-0}" = 1 ] ||
                 { echo "FAIL: $bin needs $lib, which GMIC_STATIC_DEPS links statically"; status=1; } ;;

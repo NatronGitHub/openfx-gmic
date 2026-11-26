@@ -375,7 +375,7 @@ jobs:
       - name: Install packages
         run: |
           dnf install -y git gcc-c++ make cmake pkgconf-pkg-config expat-devel perl binutils diffutils \
-            findutils which xz tar gzip python3
+            findutils which xz tar gzip python3 mesa-libGL-devel
           gcc --version | sed -n 1p; ldd --version | sed -n 1p; cmake --version | sed -n 1p
       - uses: actions/checkout@v4
         with:
