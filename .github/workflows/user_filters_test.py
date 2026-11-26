@@ -28,6 +28,13 @@ same, without another hot-fix note or a warning (a copy of the built-in commands
 hot fixes), and the render times with both files are printed (G'MIC parses the file on every
 render).
 
+User File Render Scale, whose preview factor ends with "+", is rendered at render scales 1 and 0.5
+(#179), on an input that hostDemo makes in canonical coordinates. At 0.5, the output must be half
+the size of the scale-1 output, with the same region of definition, and G'MIC must get the same
+percentages for a point (the plug-in converts it with the render scale) and a preview area of the
+image's size. This checks the scaled render, not the rule that picks the filters that accept a
+render scale: hostDemo is not Natron, and the plug-in accepts every render scale there.
+
 usage: user_filters_test.py --host <hostDemo, or the CMake build directory> [--config <config>]
                             --plugins <dir with GMIC.ofx.bundle>
                             [--stdlib <gmic_stdlib_community.h>] [--runs N] [--work <dir>]
@@ -67,6 +74,13 @@ DEFINED_BY = ' is defined by '  # the note of a kept definition of a hot-fixed c
 KEPT_NOTE = "'star_tone'" + DEFINED_BY
 HOTFIX_WARNING = 'Warning: hot fix'
 TIMEOUT = 120
+# rendered at render scales 1 and RENDER_SCALE (#179): its preview factor ends with "+"
+SCALE_PLUGIN = 'eu.gmic.UserFileRenderScale'
+RENDER_SCALE = 0.5
+# its input, made by hostDemo in canonical coordinates (a file input's pixels are pixels at the
+# render scale), and its point, in canonical coordinates: 25% from the left, 75% from the top
+SCALE_ARGS = ['-i', 'Source=rod:0,0,160,120', '-s', 'Spot=40,30']
+SCALE_EXPECTED = (0.25, 0.75, 1.0)
 CPUS_PLUGIN = 'eu.gmic.UserFileCpus'  # its output is G'MIC's $_cpus (divided by 255)
 # its result has 5 channels: the render must fail with this message
 CHANNELS_PLUGIN = 'eu.gmic.UserFileFiveChannels'
@@ -325,6 +339,72 @@ def check_channels(host, plugins, work):
     return []
 
 
+def render_scaled(host, plugins, work, scale):
+    """Renders SCALE_PLUGIN at a render scale, on its SCALE_ARGS input and point.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+        scale: the render scale.
+
+    Returns:
+        (problem, report): a problem (None if it rendered), and the first render of the parsed
+        report (an empty dict if there is none).
+    """
+    result = render_plugins.render(host, ['--scale', str(scale)] + SCALE_ARGS, plugins, work,
+                                   TIMEOUT, (SCALE_PLUGIN, CONTEXT, []))
+    problem, errors = result[2], result[5]
+    if problem:
+        return '%s %s' % (problem, ' '.join(errors)), {}
+    report_path = os.path.join(work, SCALE_PLUGIN[len('eu.gmic.'):], 'report.json')
+    with open(report_path, encoding='utf-8') as f:
+        report = json.load(f)
+    renders = report.get('renders') or []
+    return None, (renders[0] if renders else {})
+
+
+def check_render_scale(host, plugins, work):
+    """Renders SCALE_PLUGIN at scales 1 and RENDER_SCALE, and compares them (#179).
+
+    Both outputs must be SCALE_EXPECTED, i.e. the same point percentages and a preview area of
+    the image's size; at RENDER_SCALE, the output is the scale-1 size times RENDER_SCALE, with the
+    same region of definition (canonical coordinates).
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems, empty if both renders are right.
+    """
+    problems, renders = [], {}
+    for scale in (1, RENDER_SCALE):
+        problem, render = render_scaled(host, plugins, work, scale)
+        if problem:
+            problems.append('at scale %s: %s' % (scale, problem))
+            continue
+        renders[scale] = render
+        problems += ['at scale %s: %s' % (scale, p)
+                     for p in check_output({'renders': [render]}, SCALE_EXPECTED)]
+    if len(renders) == 2:
+        full, scaled = renders[1], renders[RENDER_SCALE]
+        out1, out2 = full.get('output') or {}, scaled.get('output') or {}
+        width = round((out1.get('w') or 0) * RENDER_SCALE)
+        height = round((out1.get('h') or 0) * RENDER_SCALE)
+        if (out2.get('w'), out2.get('h')) != (width, height):
+            problems.append('at scale %s: the output is %sx%s, expected %dx%d (%sx%s at scale 1)'
+                            % (RENDER_SCALE, out2.get('w'), out2.get('h'), width, height,
+                               out1.get('w'), out1.get('h')))
+        rod1 = (full.get('regionOfDefinition') or {}).get('rod')
+        rod2 = (scaled.get('regionOfDefinition') or {}).get('rod')
+        if rod1 is None or rod2 != rod1:
+            problems.append('at scale %s: the region of definition is %s, %s at scale 1'
+                            % (RENDER_SCALE, rod2, rod1))
+    return ['%s: %s' % (SCALE_PLUGIN, p) for p in problems]
+
+
 def run_test(host, plugins, stdlib, runs, work, name):
     """Runs both renders of the test (see the module docstring).
 
@@ -345,6 +425,7 @@ def run_test(host, plugins, stdlib, runs, work, name):
 
     install_user_file(work, user_file, name)
     problems, logs, small = render_all(host, plugins, work, runs)
+    problems += check_render_scale(host, plugins, work)
     problems += check_cpus(host, plugins, work)
     problems += check_channels(host, plugins, work)
     problems += check_buttons(host, plugins, work)
