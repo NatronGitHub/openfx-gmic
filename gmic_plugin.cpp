@@ -123,6 +123,8 @@ using namespace gmic_ofx;
 
 #include <sstream>
 #include <map>
+#include <list>
+#include <optional>
 #include <set>
 #include <limits>
 #include <memory>
@@ -260,6 +262,37 @@ string homeFolder()
 static const int kNofExtraParams = 1 + 4 + 1 + 2 + 7;
 static const int kNofLayerTimeParams = 2 + 1 + 4;
 
+// Does the host support multi-resolution (kOfxImageEffectPropSupportsMultiResolution)? Without
+// it, the output keeps Source's size whatever the region of definition says: Resize Mode Fixed and
+// Dynamic then resize the result to Source's size, as before issue #175, and there is no probe.
+// OFX_GMIC_MULTIRES=1 or 0 overrides the host's property, read once: a test aid, for test hosts
+// that render any region of definition but don't say so (openfx's hostDemo sets the property to
+// 0). On a host that really lacks multi-resolution, 1 gives wrong outputs. Another value is
+// ignored, with a note; an override that contradicts the host's property gets a note, once.
+static bool hostSupportsMultiResolution()
+{
+	static const std::optional<bool> forced = []() -> std::optional<bool> {
+		const char* const env = std::getenv("OFX_GMIC_MULTIRES");
+		if (!env) return std::nullopt;
+		if (strcmp(env, "1") == 0) return true;
+		if (strcmp(env, "0") == 0) return false;
+		gmicLog("openfx-gmic: OFX_GMIC_MULTIRES=\"%s\" is neither 1 nor 0: ignored\n", env);
+		return std::nullopt;
+	}();
+	const OFX::ImageEffectHostDescription* const host = OFX::getImageEffectHostDescription();
+	const bool hostProperty = host && host->supportsMultiResolution;
+	if (!forced) return hostProperty;
+	if (*forced != hostProperty) {
+		static std::once_flag noted;
+		std::call_once(noted, [hostProperty] {
+			gmicLog("openfx-gmic: OFX_GMIC_MULTIRES=%d overrides the host's multi-resolution support (%d), a test aid: "
+			        "on a host that doesn't render the plug-in's region of definition, outputs are wrong\n",
+			        hostProperty ? 0 : 1, hostProperty ? 1 : 0);
+		});
+	}
+	return *forced;
+}
+
 // Ignore Alpha (see fullCommand): _openfx_gmic_alpha_split stores the alpha channel of every image
 // (an empty image for images without alpha) in the global variable _openfx_gmic_alpha, and
 // _openfx_gmic_alpha_restore gives them back to the gray or RGB results of the same size (a result
@@ -295,10 +328,11 @@ static const char* const kIgnoreAlphaCommands =
 	"  if $!>$n rm[$n--1] fi\n";
 
 // _openfx_gmic_opaque_resized w,h: gives an opaque alpha channel to the gray or RGB images whose
-// size is not w,h (the size of the processed main input). Run just before the final resize to the
-// input size, which would hide the size change: a result without alpha from a premultiplied input
-// gets its colours multiplied by the input's alpha (see multiplyByInputAlphaPlanar in
-// gmic_ofx.cpp), which only lines up with a result of the input's size. A rotated, framed or
+// size is not w,h (the size of the processed main input), at the end of the render's command (before
+// the resize to the input size of Resize Mode Downsample 1/N, which would hide the size change): a
+// result without alpha from a premultiplied input gets its colours multiplied by the input's alpha
+// (see multiplyByInputAlphaPlanar in gmic_ofx.cpp), which only lines up with a result of the
+// input's size. A rotated, framed or
 // cropped result would otherwise be darkened by the misaligned input alpha (issue #66).
 static const char* const kOpaqueResizedCommand =
 	"\n_openfx_gmic_opaque_resized :\n"
@@ -1145,11 +1179,15 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		"own number of frames sets it. The node's frame range is Source's: for a still image, extend it "
 		"upstream to the number of results (e.g. with a FrameRange node).";
 	++p;
-	// "Fixed (Inplace)" (index 0) behaves like "Dynamic": the result is always resized to the input
-	// size. Its special path (a per-plug-in in-place flag, set from one instance by a parameter
-	// change callback that the OFX glue never called, and skipping the output copy) was removed.
-	// The entry is kept so that saved projects keep their option indices and labels.
-	globalDataP->param[p] = Parameter("Resize Mode", "", ParamType::Select, 0, 5, 1, 0, 0, 0, "Fixed (Inplace)|Dynamic|Downsample 1/2|Downsample 1/4|Downsample 1/8|Downsample 1/16");
+	// (issue #175) "Dynamic", the default, outputs the result at its own size and position, as
+	// G'MIC-Qt does (the region of definition, see pluginResultGeometry); "Fixed (Inplace)" keeps
+	// Source's rectangle, a result of another size cropped or padded (it was resized to Source's
+	// size in both modes before). The option indices and labels are kept for saved projects.
+	globalDataP->param[p] = Parameter(kResizeModeParam, "", ParamType::Select, 0, 5, kResizeModeDynamic, 0, 0, 0, "Fixed (Inplace)|Dynamic|Downsample 1/2|Downsample 1/4|Downsample 1/8|Downsample 1/16");
+	globalDataP->param[p].hint = "Dynamic: the output has the result's size and position, e.g. larger for a frame or a rotation, "
+		"smaller for a crop, as in G'MIC-Qt. Fixed (Inplace): the output keeps Source's size; a result of another size is "
+		"cropped or padded, from its top-left corner. Downsample 1/N: the filter runs on Source downsampled N times, faster, "
+		"and the result is resized to Source's size.";
 	++p;
 	globalDataP->param[p] = Parameter("Ignore Alpha", "", ParamType::Bool, 0, 1, 0, 0, 0, 0, "");
 	globalDataP->param[p].hint = "Run the filter on the RGB channels only, then give the inputs' alpha back to the results. "
@@ -1329,7 +1367,8 @@ static bool isRemovablePoint(const GlobalData* globalDataP, int i)
 // is not 3 or 4 values, is ignored; a bool is on for "1" only; a button is left as it is.
 // Visibilities are not applied. False if nothing was set (an empty status, or another number of
 // values).
-static bool setStatusValues(const std::vector<std::string>& status, const GlobalData* globalDataP, SequenceData* sequenceDataP)
+static bool setStatusValues(const std::vector<std::string>& status, const GlobalData* globalDataP, SequenceData* sequenceDataP,
+	std::map<int, double>* exact = nullptr)
 {
 	if (status.empty()) return false;
 	const vector<int> args = gmicArguments(globalDataP);
@@ -1367,7 +1406,9 @@ static bool setStatusValues(const std::vector<std::string>& status, const Global
 			break;
 		case ParamType::Float:
 			if (statusNumber(value, false, v)) {
-				fv[0] = (float)std::min(std::max(v, (double)par.minValue), (double)par.maxValue);
+				const double clamped = std::min(std::max(v, (double)par.minValue), (double)par.maxValue);
+				fv[0] = (float)clamped;
+				if (exact) (*exact)[i] = clamped;
 			}
 			break;
 		case ParamType::Text:
@@ -1642,6 +1683,8 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 	// - _preview_width/height and _preview_area_width/height only for a preview run: main
 	//   commands use them to detect a preview (Speech Bubble draws its guides). For a preview,
 	//   gui_preview_wh now returns the image size instead of 400x400 for small images.
+	// At a render scale (only for the filters that accept one, see pluginSupportsRenderScale), the
+	// inputs and so these sizes are at that scale, as in G'MIC-Qt's zoomed preview.
 	// _persistent is not in the command line: the filters that need it run their preview command
 	// first, which sets it for the main command (see pluginProcess).
 	int extentW = 0, extentH = 0;
@@ -1672,10 +1715,12 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 	cmd = env + cmd;
 
 	{
-		// Resize Mode: "Downsample 1/N" processes a downsampled input; the result is always resized
-		// to the input size ("Fixed (Inplace)" and "Dynamic" alike). Before that, the gray or RGB
-		// results whose size differs from the processed input get an opaque alpha (see
-		// kOpaqueResizedCommand).
+		// Resize Mode: "Downsample 1/N" processes a downsampled input, and resizes the result to the
+		// input size. "Fixed (Inplace)" and "Dynamic" keep the result's size (issue #175): the
+		// copy to the output crops or pads it (see pluginProcess); not on a host without
+		// multi-resolution, whose output keeps Source's size: the result is resized to it, as
+		// before. The gray or RGB results whose
+		// size differs from the processed input get an opaque alpha (see kOpaqueResizedCommand).
 		float ds = sequenceDataP->floatValue[PARAM_RESIZE][0];
 		string processedSize = std::to_string(sequenceDataP->inWorld[0].width) + "," + std::to_string(sequenceDataP->inWorld[0].height);
 		if (ds >= 2.f) {
@@ -1686,7 +1731,9 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 		}
 		if (render) {
 			cmd += " -_openfx_gmic_opaque_resized " + processedSize;
-			cmd += " -resize " + std::to_string(sequenceDataP->inWorld[0].width) + "," + std::to_string(sequenceDataP->inWorld[0].height);
+			if (ds >= 2.f || !hostSupportsMultiResolution()) {
+				cmd += " -resize " + std::to_string(sequenceDataP->inWorld[0].width) + "," + std::to_string(sequenceDataP->inWorld[0].height);
+			}
 		}
 	}
 	const int verbosity = gmicVerbosity(verbosityLevel(sequenceDataP->floatValue[PARAM_VERBOSITY][0]));
@@ -1906,6 +1953,47 @@ private:
 	double _size = 1.;
 };
 
+// The worker thread of a G'MIC run, with an 8 MiB stack (gmicCallAbortable, gmicCallTimed)
+struct GmicWorker
+{
+#ifndef _WIN32
+	pthread_t thread;
+#else
+	HANDLE thread = NULL;
+#endif
+	// starts the run of d on the thread; false if no thread could be started
+	bool start(GmicCallData& d)
+	{
+#ifndef _WIN32
+		// a large stack, like G'MIC's own threads (the default size of a secondary thread is 512
+		// KiB on macOS, and the interpreter recurses)
+		bool started = false;
+		pthread_attr_t attr;
+		if (pthread_attr_init(&attr) == 0) {
+			pthread_attr_setstacksize(&attr, (size_t)8 * 1024 * 1024);
+			started = (pthread_create(&thread, &attr, gmicCallThread, &d) == 0);
+			pthread_attr_destroy(&attr);
+		}
+		return started;
+#else
+		// the same 8 MiB, reserved (committed on demand): std::thread can't set the stack size,
+		// and its default is the host executable's reserve (1 MiB with MSVC's linker, 2 MiB with
+		// MinGW's)
+		thread = CreateThread(NULL, (SIZE_T)8 * 1024 * 1024, gmicCallThread, &d, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
+		return thread != NULL;
+#endif
+	}
+	void join()
+	{
+#ifndef _WIN32
+		pthread_join(thread, NULL);
+#else
+		WaitForSingleObject(thread, INFINITE);
+		CloseHandle(thread);
+#endif
+	}
+};
+
 // gmic_plugin_call(), aborted when the host aborts the render: then *aborted is set to true, and
 // the result must be discarded. G'MIC's progress goes to the host's progress bar, through
 // hostProgress (one for all the G'MIC runs of a render).
@@ -1938,25 +2026,8 @@ static int gmicCallAbortable(OFX::ImageEffect& effect, HostProgress& hostProgres
 	options->p_is_abort = &isAbort;
 	options->p_progress = &progress;
 
-	bool started = false;
-#ifndef _WIN32
-	// a large stack, like G'MIC's own threads (the default size of a secondary thread is 512 KiB
-	// on macOS, and the interpreter recurses)
-	pthread_t thread;
-	pthread_attr_t attr;
-	if (pthread_attr_init(&attr) == 0) {
-		pthread_attr_setstacksize(&attr, (size_t)8 * 1024 * 1024);
-		started = (pthread_create(&thread, &attr, gmicCallThread, &d) == 0);
-		pthread_attr_destroy(&attr);
-	}
-#else
-	// the same 8 MiB, reserved (committed on demand): std::thread can't set the stack size, and its
-	// default is the host executable's reserve (1 MiB with MSVC's linker, 2 MiB with MinGW's)
-	HANDLE thread = CreateThread(NULL, (SIZE_T)8 * 1024 * 1024, gmicCallThread, &d,
-	                             STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
-	started = (thread != NULL);
-#endif
-	if (!started) {
+	GmicWorker worker;
+	if (!worker.start(d)) {
 		// no thread: run G'MIC here, without abort or progress
 		options->p_is_abort = NULL;
 		options->p_progress = NULL;
@@ -1980,22 +2051,12 @@ static int gmicCallAbortable(OFX::ImageEffect& effect, HostProgress& hostProgres
 	} catch (...) {
 		// waiting failed (e.g. std::system_error from the mutex): stop G'MIC, wait for it, and fail
 		isAbort = true;
-#ifndef _WIN32
-		pthread_join(thread, NULL);
-#else
-		WaitForSingleObject(thread, INFINITE);
-		CloseHandle(thread);
-#endif
+		worker.join();
 		options->p_is_abort = NULL;
 		options->p_progress = NULL;
 		throw;
 	}
-#ifndef _WIN32
-	pthread_join(thread, NULL);
-#else
-	WaitForSingleObject(thread, INFINITE);
-	CloseHandle(thread);
-#endif
+	worker.join();
 	options->p_is_abort = NULL;
 	options->p_progress = NULL;
 	if (!*aborted && effect.abort()) {
@@ -2027,8 +2088,9 @@ static int gmicCallAbortable(OFX::ImageEffect& effect, HostProgress& hostProgres
 // Resize Mode, the verbosity and the image size, plus the size and a hash (four independent
 // 64-bit lanes) of the pixels of every input image given to G'MIC (after the conversion to float
 // and the unpremultiplication: whatever G'MIC sees, which covers the layer inputs, the frames of
-// Source given by the layer times, and upstream changes). The render scale and window only change
-// the output placement, done when copying. The cache is keyed by this content key, not by
+// Source given by the layer times, and upstream changes). The render window only changes the
+// output placement, done when copying; a render scale gives other input images, so another key.
+// The cache is keyed by this content key, not by
 // instance: Natron renders through instance clones, and duplicated nodes get the same results;
 // each instance refers to the key of its last Frame render, and an entry that no instance refers
 // to any more is dropped (another key, another Output Layer, the instance destroyed). Nothing
@@ -2360,12 +2422,15 @@ static std::string frameCacheKey(const GlobalData* globalDataP, const std::strin
 
 // the host purges its caches (kOfxActionPurgeCaches): drop all the entries (Natron renders
 // through clones, so the instance purged is not the one that refers to the entries)
+static void geometryCachePurge(); // (below)
+
 void pluginPurgeCaches()
 {
 	std::vector<CachedFrames> dropped; // freed after unlocking
 	FrameCache& c = frameCache();
 	std::lock_guard<std::mutex> lock(c.mutex);
 	while (!c.entries.empty()) frameCacheDrop(c, c.entries.begin(), dropped);
+	geometryCachePurge();
 }
 
 // Output Layer changed (any reason): not Frame, the instance's entry may be dropped now
@@ -2383,9 +2448,865 @@ static long long frameNumberOf(const SequenceData* sequenceDataP)
 	return (long long)std::floor(sequenceDataP->time - sequenceDataP->frameRangeStart + 0.5);
 }
 
+// the Resize Mode of a render (kResizeModeFixed...)
+static int resizeModeOf(const SequenceData* sequenceDataP, const GlobalData* globalDataP)
+{
+	return (int)sequenceDataP->floatValue[PARAM_RESIZE][0];
+}
+
+// The result that a render outputs, among nofImages > 0 results. Output Layer: 0 is Merged (a
+// single image), k > 0 is "Layer -(k-1)", i.e. image [k-1], counted from the top of the stack like
+// the inputs (Source = [0] = "Layer 0", the active layer in G'MIC-Qt, then the "Layer -1" input =
+// [1]...). Past the last result: the last one. Frame: image [frame mod N] (see frameNumberOf), or
+// [0] if G'MIC kept only the one needed (selected, see kFrameSelectCommand).
+static unsigned int resultIndexOf(const SequenceData* sequenceDataP, const GlobalData* globalDataP, unsigned int nofImages,
+	long long frame, bool selected)
+{
+	int idx = (int)sequenceDataP->floatValue[PARAM_OUTPUT][0] - 1;
+	if (outputIsFrame(sequenceDataP, globalDataP)) {
+		idx = selected ? 0 : (int)(((frame % (long long)nofImages) + nofImages) % nofImages);
+	}
+	if (idx < 0) idx = 0;
+	if ((unsigned)idx >= nofImages) idx = (int)nofImages - 1;
+	return (unsigned int)idx;
+}
+
+// The geometry of a result: its size, and the pos(x,y) of its name, read as G'MIC-Qt's GIMP host
+// does (get_output_layer_props in host_gimp.cpp: integers, any one character between them). The
+// inputs are named pos(0,0) (gmicImageName): a result that keeps its input's name, or has no pos,
+// is at Source's top-left corner.
+static const long kMaxPos = 1000000;
+static ResultGeometry resultGeometryOf(const gmic_interface_image& image)
+{
+	ResultGeometry g;
+	g.width = (int)image.width;
+	g.height = (int)image.height;
+	const char* const pos = strstr(image.name, "pos(");
+	if (pos) {
+		const char* p = pos + 4;
+		char* end = nullptr;
+		const long x = strtol(p, &end, 10);
+		if (end != p && *end && *end != ')') {
+			p = end + 1;
+			const long y = strtol(p, &end, 10);
+			// (bounded, so that the region of definition stays far from the int range; an overflow
+			// gives LONG_MIN or LONG_MAX, out of these bounds: no labs, undefined for LONG_MIN)
+			if (end != p && *end == ')' && x >= -kMaxPos && x <= kMaxPos && y >= -kMaxPos && y <= kMaxPos) {
+				g.x = (int)x;
+				g.y = (int)y;
+			}
+		}
+	}
+	return g;
+}
+
+static string gmicImageName(const string& clipName); // (below)
+
+bool pluginKeepsResultSize()
+{
+	return hostSupportsMultiResolution();
+}
+
+// G'MIC's name of input image i: gmicImageName, with pos(dx,dy), the offset of its top-left corner
+// from Source's (x to the right, y down), as G'MIC-Qt's GIMP host names each layer with its
+// offset (host_gimp.cpp). Source and the inputs at its corner are pos(0,0).
+static string gmicInputName(const SequenceData* sequenceDataP, unsigned int i)
+{
+	const World& in = sequenceDataP->inWorld[i];
+	const World& source = sequenceDataP->inWorld[0];
+	string name = gmicImageName(in.name);
+	const int dx = in.origin_x - source.origin_x;
+	const int dy = (source.origin_y + source.height) - (in.origin_y + in.height);
+	if (dx != 0 || dy != 0) {
+		name.replace(0, std::string("pos(0,0)").size(), "pos(" + std::to_string(dx) + "," + std::to_string(dy) + ")");
+	}
+	return name;
+}
+
+// the names of the input images[0..nofImages-1] of a run (see gmicInputName)
+static void nameInputImages(const SequenceData* sequenceDataP, unsigned int nofImages, gmic_interface_image* images)
+{
+	for (unsigned int i = 0; i < nofImages; i++) {
+		const string name = gmicInputName(sequenceDataP, i);
+		strncpy(images[i].name, name.c_str(), sizeof(images[i].name) - 1);
+		images[i].name[sizeof(images[i].name) - 1] = '\0';
+	}
+}
+
+// The time budget of a prediction, in seconds: all its G'MIC runs (probes and the preview runs of
+// preview-first filters), a safety limit (most probes run on small images, in a fraction of a
+// second); past it, G'MIC is stopped, and the output keeps Source's region of definition (logged)
+static const double kPredictionTimeLimit = 10.;
+using Deadline = std::chrono::steady_clock::time_point;
+
+// One prediction (see pluginResultGeometry): its deadline, and whether a run failed for a reason
+// that may not happen again (C++ Core Guidelines F.17: in-out, through every probe): a timeout, out
+// of memory or another exception, unlike G'MIC's own errors. A prediction with such a failure is
+// not kept.
+struct PredictionRun
+{
+	Deadline deadline;
+	bool transient = false;
+	bool timedOut = false;
+};
+
+// gmic_plugin_call() on a worker thread (GmicWorker), as a render's runs: stopped at deadline, then
+// *timedOut is true (G'MIC's result, which it returns, is then incomplete: discard it). Without a
+// thread, it runs here.
+static int gmicCallTimed(const GmicCall& call, Deadline deadline, bool* timedOut)
+{
+	*timedOut = false;
+	if (std::chrono::steady_clock::now() >= deadline) {
+		*timedOut = true;
+		return -1;
+	}
+	gmic_interface_options* const options = call.options;
+	// G'MIC's abort flag, written here and read by G'MIC's threads: a plain bool, since G'MIC's API
+	// takes a bool* (C++ Core Guidelines CP.2: the same upstream design as in gmicCallAbortable,
+	// which gmic-qt shares; a stale value only delays the stop by one of G'MIC's checks)
+	bool isAbort = false;
+	GmicCallData d;
+	d.call = call;
+	d.result = -1;
+	d.done = false;
+	options->p_is_abort = &isAbort;
+	options->p_progress = NULL;
+	struct ResetAbort {
+		gmic_interface_options* options;
+		~ResetAbort() { options->p_is_abort = NULL; }
+	} resetAbort{ options };
+	GmicWorker worker;
+	if (!worker.start(d)) {
+		options->p_is_abort = NULL;
+		return gmic_plugin_call(call);
+	}
+	try {
+		std::unique_lock<std::mutex> lock(d.mutex);
+		while (!d.cond.wait_for(lock, std::chrono::milliseconds(50), [&d] { return d.done; })) {
+			if (std::chrono::steady_clock::now() >= deadline) {
+				*timedOut = true;
+				isAbort = true; // (on every poll: G'MIC resets the flag when its interpreter starts)
+			}
+		}
+	} catch (...) {
+		isAbort = true;
+		worker.join();
+		throw;
+	}
+	worker.join();
+	if (d.exception) std::rethrow_exception(d.exception);
+	return d.result;
+}
+
+// The result images of a run, freed on destruction (C++ Core Guidelines R.1), except the inputs'
+// buffers, which a result may share
+struct GmicResultImages
+{
+	std::vector<gmic_interface_image> images;
+	unsigned int nofImages = 0;
+	std::vector<const void*> inputs;
+	explicit GmicResultImages(size_t maxImages) : images(maxImages) {}
+	GmicResultImages(const GmicResultImages&) = delete;
+	GmicResultImages& operator=(const GmicResultImages&) = delete;
+	~GmicResultImages()
+	{
+		for (unsigned int i = 0; i < nofImages; i++) {
+			if (images[i].data && std::find(inputs.begin(), inputs.end(), images[i].data) == inputs.end()) {
+				gmic_delete_external((float*)images[i].data);
+			}
+		}
+	}
+};
+
+// What a probe found: the geometry of every result, in order (empty: G'MIC failed, gave no result,
+// or the probe failed), and whether Output Layer "Frame" kept only the one of its frame
+// (kFrameSelectCommand, as a render with too many or too large results)
+struct ProbeResult
+{
+	std::vector<ResultGeometry> results;
+	bool selected = false;
+};
+
+// The probes' results, by command line and input sizes, shared by all instances and their render
+// clones, behind a mutex. At most kMaxGeometries entries, the least recently used dropped first.
+// Single flight: a lookup of a key whose probe is running waits for it.
+static const size_t kMaxGeometries = 1024;
+struct GeometryEntry
+{
+	bool done = false; // false while its probe runs
+	ProbeResult result;
+	std::list<const string*>::iterator lru; // (done only) its place in GeometryCache::lru
+};
+struct GeometryCache
+{
+	std::mutex mutex;
+	std::condition_variable cond; // a probe is done
+	std::map<string, GeometryEntry> entries;
+	std::list<const string*> lru; // the keys of the done entries, least recently used first
+};
+
+static GeometryCache& geometryCache()
+{
+	static GeometryCache cache;
+	return cache;
+}
+
+// the done entry of key (and true), after waiting for its running probe; or, if there is none, a
+// new running entry, which the caller must finish with geometryCacheStore (and false)
+static bool geometryCacheFind(const string& key, ProbeResult& result)
+{
+	GeometryCache& c = geometryCache();
+	std::unique_lock<std::mutex> lock(c.mutex);
+	for (;;) {
+		const auto it = c.entries.find(key);
+		if (it == c.entries.end()) {
+			c.entries.emplace(key, GeometryEntry());
+			return false;
+		}
+		if (it->second.done) {
+			c.lru.splice(c.lru.end(), c.lru, it->second.lru);
+			result = it->second.result;
+			return true;
+		}
+		c.cond.wait(lock);
+	}
+}
+
+// finishes the running entry of key: keeps result if keep, else drops the entry (a timeout, out of
+// memory: the next lookup probes again)
+static void geometryCacheStore(const string& key, const ProbeResult& result, bool keep) noexcept
+{
+	GeometryCache& c = geometryCache();
+	{
+		std::lock_guard<std::mutex> lock(c.mutex);
+		const auto it = c.entries.find(key);
+		if (it != c.entries.end() && !it->second.done) {
+			if (!keep) {
+				c.entries.erase(it);
+			} else {
+				try {
+					it->second.result = result;
+					it->second.lru = c.lru.insert(c.lru.end(), &it->first);
+					it->second.done = true;
+				} catch (...) {
+					c.entries.erase(it); // (out of memory: the next lookup probes again)
+				}
+			}
+			while (c.lru.size() > kMaxGeometries) {
+				const auto oldest = c.entries.find(*c.lru.front());
+				c.lru.pop_front();
+				if (oldest != c.entries.end()) c.entries.erase(oldest); // (by iterator: the key is in the node)
+			}
+		}
+	}
+	c.cond.notify_all();
+}
+
+// the done entry of key, if any, without waiting or probing; it becomes the most recently used
+static bool geometryCacheLookup(const string& key, ProbeResult& result)
+{
+	GeometryCache& c = geometryCache();
+	std::lock_guard<std::mutex> lock(c.mutex);
+	const auto it = c.entries.find(key);
+	if (it == c.entries.end() || !it->second.done) return false;
+	c.lru.splice(c.lru.end(), c.lru, it->second.lru);
+	result = it->second.result;
+	return true;
+}
+
+// a done entry for key, unless one is there or running (the predictions, see pluginResultGeometry)
+static void geometryCachePut(const string& key, const ProbeResult& result) noexcept
+{
+	ProbeResult existing;
+	try {
+		if (geometryCacheLookup(key, existing)) return;
+		{
+			GeometryCache& c = geometryCache();
+			std::lock_guard<std::mutex> lock(c.mutex);
+			if (c.entries.count(key)) return;
+			c.entries.emplace(key, GeometryEntry());
+		}
+		geometryCacheStore(key, result, true);
+	} catch (...) {
+	}
+}
+
+// kOfxActionPurgeCaches: the probes' results go too (not the running entries)
+static void geometryCachePurge()
+{
+	GeometryCache& c = geometryCache();
+	std::lock_guard<std::mutex> lock(c.mutex);
+	while (!c.lru.empty()) {
+		const auto it = c.entries.find(*c.lru.front());
+		c.lru.pop_front();
+		if (it != c.entries.end()) c.entries.erase(it);
+	}
+}
+
+// One probe (see pluginResultGeometry): the filter's command line cmd (without the thread count),
+// then suffix, on opaque gradient images of the inputs' sizes, as the render runs it (the preview
+// command first if the filter needs its state). key: its entry in the cache.
+static ProbeResult probeRun(SequenceData& probe, const GlobalData* globalDataP, unsigned int nofImages, const string& key,
+	const string& suffix, PredictionRun& run)
+{
+	ProbeResult result;
+	if (geometryCacheFind(key, result)) return result;
+	// the entry is running: finish it on every path, so that the lookups waiting for it go on.
+	// Only G'MIC's own results are kept, errors included; not a timeout, out of memory or another
+	// exception, so that one slow run doesn't keep Source's size for the key
+	struct Store {
+		const string& key;
+		ProbeResult& result;
+		bool keep = false;
+		~Store() { geometryCacheStore(key, result, keep); }
+	} store{ key, result };
+	SequenceData* const sequenceDataP = &probe;
+	const EffectData& effectData = effectDataOf(globalDataP);
+	try {
+		// opaque, not uniform: filters that crop a uniform border (autocrop) or the transparent
+		// parts would find no or a smaller image on blank or transparent inputs
+		std::vector<std::vector<float>> buffers(nofImages);
+		GmicResultImages out((size_t)maxResultsOf(sequenceDataP, globalDataP));
+		gmic_interface_image* const images = out.images.data();
+		for (unsigned int i = 0; i < nofImages; i++) {
+			World& in = sequenceDataP->inWorld[i];
+			const size_t plane = (size_t)in.width * (size_t)in.height;
+			buffers[i].resize(plane * 4);
+			float* const p = buffers[i].data();
+			for (int y = 0; y < in.height; y++) {
+				for (int x = 0; x < in.width; x++) {
+					const size_t k = (size_t)y * (size_t)in.width + (size_t)x;
+					p[k] = 255.f * (float)x / (float)std::max(1, in.width - 1);
+					p[plane + k] = 255.f * (float)y / (float)std::max(1, in.height - 1);
+					p[2 * plane + k] = 255.f * (float)((x + y) % 64) / 63.f;
+					p[3 * plane + k] = 255.f;
+				}
+			}
+			in.data = p;
+			out.inputs.push_back(p);
+			images[i].width = in.width;
+			images[i].height = in.height;
+			images[i].data = p;
+			images[i].spectrum = 4;
+			images[i].depth = 1;
+			images[i].format = E_FORMAT_FLOAT;
+			images[i].is_interleaved = false;
+		}
+		nameInputImages(sequenceDataP, nofImages, images);
+		// its own G'MIC options: a render of the same instance may run at the same time
+		GmicInstanceData instance;
+		instance.options().no_inplace_processing = true;
+		string customCommands;
+		struct ResetCustomCommands {
+			gmic_interface_options& options;
+			~ResetCustomCommands() { options.custom_commands = NULL; }
+		} resetCustomCommands{ instance.options() };
+		const bool preview = effectData.previewOnly || sequenceDataP->floatValue[PARAM_PREVIEW][0] > 0;
+		const bool previewFirst = !preview && effectData.previewFirst;
+		const string threads = gmicThreadsPrefix();
+		GmicRunState state;
+		bool previewDone = false;
+		bool timedOut = false;
+		const auto runDone = [&](int status) {
+			if (timedOut) {
+				run.transient = run.timedOut = true;
+				gmicLog("G'MIC: %s: measuring the result's size took more than %g s: stopped, the output keeps Source's size\n",
+				        effectData.name.c_str(), kPredictionTimeLimit);
+			}
+			return status == 0 && !timedOut;
+		};
+		if (previewFirst) {
+			// as pluginProcess: the preview command first, for the _persistent and the status that
+			// the main command may need (they may change the result's size)
+			const string previewCmd = threads + fullCommand(sequenceDataP, globalDataP, &instance, nofImages, GmicRun::kPreviewState, customCommands);
+			unsigned int n = nofImages;
+			GmicCall call;
+			call.cmd = previewCmd.c_str();
+			call.nofImages = &n;
+			call.images = images;
+			call.maxImages = (unsigned int)out.images.size();
+			call.options = &instance.options();
+			call.stateOut = &state;
+			call.results = GmicResults::kDiscard;
+			previewDone = runDone(gmicCallTimed(call, run.deadline, &timedOut));
+			if (timedOut) return result;
+		}
+		const string cmd = threads + fullCommand(sequenceDataP, globalDataP, &instance, nofImages, preview ? GmicRun::kPreview : GmicRun::kMain,
+			customCommands, previewDone ? &state.status : nullptr) + suffix;
+		unsigned int n = nofImages;
+		GmicCall call;
+		call.cmd = cmd.c_str();
+		call.nofImages = &n;
+		call.images = images;
+		call.maxImages = (unsigned int)out.images.size();
+		call.options = &instance.options();
+		call.persistentIn = previewDone ? &state.persistent : nullptr;
+		const int status = gmicCallTimed(call, run.deadline, &timedOut);
+		if (status == 0) out.nofImages = n; // (freed on return, also if discarded)
+		if (!runDone(status)) {
+			if (!timedOut) {
+				store.keep = true; // (G'MIC's own error: the same on the next lookup)
+				gmicLog("G'MIC: %s: the run that measures the result's size failed (%s)\n",
+				        effectData.name.c_str(), instance.options().error_message_buffer);
+			}
+			return result;
+		}
+		result.selected = outputIsFrame(sequenceDataP, globalDataP) && n == 1 && strcmp(images[0].name, "openfx_gmic_frame_selected") == 0;
+		for (unsigned int i = 0; i < n; i++) {
+			result.results.push_back(images[i].data ? resultGeometryOf(images[i]) : ResultGeometry());
+		}
+		store.keep = true;
+		if (n == 0) {
+			gmicLog("G'MIC: %s: the run that measures the result's size gave no image\n", effectData.name.c_str());
+		}
+	} catch (const std::bad_alloc&) {
+		result = ProbeResult();
+		run.transient = true;
+		gmicLog("G'MIC: %s: not enough memory for a run that measures the result's size\n", effectData.name.c_str());
+	} catch (const std::exception& e) {
+		result = ProbeResult();
+		run.transient = true;
+		gmicLog("G'MIC: %s: the run that measures the result's size failed (%s)\n", effectData.name.c_str(), e.what());
+	} catch (...) {
+		result = ProbeResult();
+		run.transient = true;
+		gmicLog("G'MIC: %s: the run that measures the result's size failed\n", effectData.name.c_str());
+	}
+	return result;
+}
+
+// The key of a probe of these inputs: the command line of the render (without the thread count, and
+// without the status of a preview run, which only depends on what the key holds), and the inputs'
+// sizes and offsets. Not the frame (Output Layer "Frame"): one run gives every frame's result,
+// unless G'MIC kept only one (selected), as in the render.
+static string probeKey(SequenceData& probe, const GlobalData* globalDataP, unsigned int nofImages)
+{
+	SequenceData* const sequenceDataP = &probe;
+	GmicInstanceData instance;
+	string customCommands;
+	const bool preview = effectDataOf(globalDataP).previewOnly || sequenceDataP->floatValue[PARAM_PREVIEW][0] > 0;
+	string key = fullCommand(sequenceDataP, globalDataP, &instance, nofImages, preview ? GmicRun::kPreview : GmicRun::kMain, customCommands);
+	instance.options().custom_commands = NULL;
+	for (unsigned int i = 0; i < nofImages; i++) {
+		const World& in = sequenceDataP->inWorld[i];
+		key += '\n' + gmicInputName(sequenceDataP, i) + ' ' + std::to_string(in.width) + 'x' + std::to_string(in.height);
+	}
+	return key;
+}
+
+// The geometry of the result that a render of probe's inputs (their sizes and offsets) outputs,
+// from one probe of them (probeRun, cached); empty if it failed or gave no or an empty result.
+// count: the number of results (0 if it failed).
+static std::optional<ResultGeometry> probeGeometry(SequenceData& probe, const GlobalData* globalDataP, unsigned int nofImages,
+	unsigned int& count, PredictionRun& run)
+{
+	SequenceData* const sequenceDataP = &probe;
+	const EffectData& effectData = effectDataOf(globalDataP);
+	count = 0;
+	string key = probeKey(probe, globalDataP, nofImages);
+	const long long frame = frameNumberOf(sequenceDataP);
+	const bool frameMode = outputIsFrame(sequenceDataP, globalDataP);
+	const string budget = "," + std::to_string(kMaxFrameResults) + "," + std::to_string((unsigned long long)frameCacheBudget());
+	ProbeResult r = probeRun(probe, globalDataP, nofImages, key, frameMode ? " -_openfx_gmic_frame_select 0" + budget : string(), run);
+	if (frameMode && r.selected) {
+		// too many or too large results: the render runs the filter for each frame, so does this
+		key += "\nframe " + std::to_string(frame);
+		r = probeRun(probe, globalDataP, nofImages, key, " -_openfx_gmic_frame_select " + std::to_string(frame) + budget, run);
+	}
+	if (r.results.empty()) return std::nullopt;
+	count = (unsigned int)r.results.size();
+	const ResultGeometry& g = r.results[resultIndexOf(sequenceDataP, globalDataP, count, frame, r.selected)];
+	if (g.width <= 0 || g.height <= 0) {
+		gmicLog("G'MIC: %s: the run that measures the result's size gave an empty image\n", effectData.name.c_str());
+		return std::nullopt;
+	}
+	return g;
+}
+
+// The probes' sizes: Source's long side, in pixels (maintainer's decision on #175: small probes and
+// an affine fit, instead of a run at full size). Large enough that the filters' usual fixed borders
+// and outlines (a few to some 20 pixels) leave most of the image; multiples of 16, so that the
+// common percentages (50%, 25%, 12.5%, 150%...) of the long side are whole numbers. Two sizes give
+// the fit; the third one checks it, since a line goes through any two points: a size that isn't
+// an affine function of the input's (e.g. one that depends on W*H) fails it. They keep Source's
+// proportions, so that sizes in percent of max(w,h) or min(w,h) (e.g. Frame [Regular]) stay
+// affine functions of the width and of the height.
+static const int kProbeSizes[3] = { 64, 80, 96 };
+// The refinement's thin probes (see resultGeometry): Source's real width x kThinSize, and
+// kThinSize x its real height
+static const int kThinSize = 48;
+// about the pixels of the three small probes (64x48 + 80x60 + 96x72 for a 4:3 Source)
+static const double kSmallProbesPixels = 15000.;
+// The check probe: Source's long side at kCheckSize pixels, its proportions kept (about 2% of
+// 1920x1080's pixels). Every prediction must give it (exactly, or within a pixel for a joint
+// fit), or the size is measured at full size: the small and thin probes never have both a large
+// width and a large height, so a weak product such as W*H/1024 fits them within a pixel, and only
+// shows at a probe where both are large.
+static const int kCheckSize = 256;
+
+// A fit Y = a*X + b of a size or an offset against Source's width or height (see fitAxis)
+struct AxisFit
+{
+	double a = 0.;
+	double b = 0.;
+	bool snapped = false; // a = p/q with q a power of 2 up to 16, b an integer: exact
+	int at(int x) const { return (int)std::lround(a * x + b); }
+};
+
+// The fit of Y against X over the probes, if it is affine. a is first tried as p/q, q = 1, 2, 4, 8
+// or 16 (2, 3/2, 1/4...), with an integer b, within half a pixel of every probe (the rounding of a
+// size in percent): sizes in percent of the image plus fixed borders are then exact (snapped).
+// Only powers of 2: with other denominators, an irrational slope (a rotation's) can pass for a
+// fraction over sizes 32 pixels apart (e.g. 15/13). Else the least-squares fit, within 1 pixel of
+// every probe, not snapped: its slope is only known to about 1/32, which the refinement corrects.
+// Empty if no fit is close enough: not an affine function.
+static std::optional<AxisFit> fitAxis(const int* X, const int* Y) // (the 3 small probes)
+{
+	const double mx = (X[0] + X[1] + X[2]) / 3., my = (Y[0] + Y[1] + Y[2]) / 3.;
+	double sxx = 0., sxy = 0.;
+	for (int k = 0; k < 3; k++) {
+		sxx += (X[k] - mx) * (X[k] - mx);
+		sxy += (X[k] - mx) * (Y[k] - my);
+	}
+	if (!(sxx > 0.)) return std::nullopt;
+	const double slope = sxy / sxx;
+	const auto fits = [&](double a, double b, double tolerance) {
+		for (int k = 0; k < 3; k++) {
+			if (std::fabs(a * X[k] + b - Y[k]) > tolerance + 1e-9) return false;
+		}
+		return true;
+	};
+	AxisFit f;
+	for (int q = 1; q <= 16; q *= 2) {
+		f.a = std::round(slope * q) / q;
+		f.b = std::round(my - f.a * mx);
+		if (fits(f.a, f.b, 0.5)) {
+			f.snapped = true;
+			return f;
+		}
+	}
+	f.a = slope;
+	f.b = my - slope * mx;
+	if (fits(f.a, f.b, 1.)) return f;
+	return std::nullopt;
+}
+
+// A fit Y = a*W + c*H + b (see fitPlane)
+struct PlaneFit
+{
+	double a = 0., c = 0., b = 0.;
+	double value(int w, int h) const { return a * w + c * h + b; }
+	int at(int w, int h) const { return (int)std::lround(value(w, h)); }
+};
+
+// The least-squares fit Y = a*W + c*H + b over n probes of sizes (W[k], H[k]), if it is within 1
+// pixel of every probe
+static std::optional<PlaneFit> fitPlane(const int* W, const int* H, const int* Y, int n)
+{
+	// the normal equations, solved by Cramer's rule (3x3)
+	double m[3][3] = {}, v[3] = {};
+	for (int k = 0; k < n; k++) {
+		const double r[3] = { (double)W[k], (double)H[k], 1. };
+		for (int i = 0; i < 3; i++) {
+			for (int j = 0; j < 3; j++) m[i][j] += r[i] * r[j];
+			v[i] += r[i] * Y[k];
+		}
+	}
+	const auto det = [](const double (&a)[3][3]) {
+		return a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) +
+			a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+	};
+	const double d = det(m);
+	if (!(std::fabs(d) > 1e-9)) return std::nullopt;
+	double x[3];
+	for (int i = 0; i < 3; i++) {
+		double mi[3][3];
+		for (int r = 0; r < 3; r++) {
+			for (int c = 0; c < 3; c++) mi[r][c] = c == i ? v[r] : m[r][c];
+		}
+		x[i] = det(mi) / d;
+	}
+	PlaneFit f;
+	f.a = x[0];
+	f.c = x[1];
+	f.b = x[2];
+	for (int k = 0; k < n; k++) {
+		if (std::fabs(f.value(W[k], H[k]) - Y[k]) > 1. + 1e-9) return std::nullopt;
+	}
+	return f;
+}
+
+// one probe of the inputs scaled by (sx, sy) (Source's size at the probe: W, H), its result's
+// geometry in g; false if it failed
+static bool probeScaled(const SequenceData& sequenceData, const GlobalData* globalDataP, unsigned int nofImages, double sx, double sy,
+	int& W, int& H, ResultGeometry& g, unsigned int& count, PredictionRun& run)
+{
+	SequenceData probe = sequenceData;
+	for (unsigned int i = 0; i < nofImages; i++) {
+		World& in = probe.inWorld[i];
+		in.origin_x = (int)std::lround(in.origin_x * sx);
+		in.origin_y = (int)std::lround(in.origin_y * sy);
+		in.width = std::max(1, (int)std::lround(in.width * sx));
+		in.height = std::max(1, (int)std::lround(in.height * sy));
+	}
+	W = probe.inWorld[0].width;
+	H = probe.inWorld[0].height;
+	const std::optional<ResultGeometry> r = probeGeometry(probe, globalDataP, nofImages, count, run);
+	if (!r) return false;
+	g = *r;
+	return true;
+}
+
+// The geometry at the real size (maintainer's decisions on #175):
+// 1. three small probes keeping Source's proportions (kProbeSizes), and two thin probes that span
+//    the real size, Source's real width x kThinSize and kThinSize x its real height (about 160k
+//    pixels in all for 1920x1080), always;
+// 2. for each of the result's width, height and pos() offsets: a fit against Source's width or
+//    height over the small probes (fitAxis). An exact fraction that also gives both thin probes'
+//    values exactly is exact (sizes in percent such as 2x, 50%, 150%, fixed borders): no margin.
+//    (Over sizes 32 pixels apart, a slope that is no such fraction may pass for one: 10% for
+//    1/8, a rotation's for 19/16; the thin probes, at the real size, catch it.) Otherwise a joint
+//    fit against (W, H) over the five probes (fitPlane), within a pixel at the real size, with a
+//    1-pixel transparent margin (ResultGeometry), so that a result 1 pixel off still fits
+//    the output, without a warning (e.g. rotations, 10%);
+// 3. any failure (a probe that fails, a fit that isn't affine, as a size in rounded percent of
+//    max(w,h) over the thin probes or one that depends on W*H, a different number of results in
+//    Output Layer "Frame", or a Source so thin that its small probes are 1 pixel wide): one
+//    probe at the real size, exact (the cost of a render on a gradient).
+// Everything within kPredictionTimeLimit; past it, empty (Source's region of definition).
+static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequenceData, const GlobalData& globalData, PredictionRun& run)
+{
+	const GlobalData* const globalDataP = &globalData;
+	const EffectData& effectData = effectDataOf(globalDataP);
+	if (effectData.command.empty()) return std::nullopt; // passes Source through
+	unsigned int nofImages = 0;
+	for (int i = 0; i < globalDataP->nofInputs && i < kMaxLayers; i++) {
+		const World& in = sequenceData.inWorld[i];
+		if (!sequenceData.inputConnected[i] || in.width <= 0 || in.height <= 0) break;
+		nofImages++;
+	}
+	if (nofImages == 0) return std::nullopt;
+	const World& source = sequenceData.inWorld[0];
+	const int longSide = std::max(source.width, source.height);
+	// the fallback: one probe at the real size
+	const auto fullSize = [&](const char* why) -> std::optional<ResultGeometry> {
+		int fw = 0, fh = 0;
+		unsigned int n = 0;
+		ResultGeometry full;
+		if (!probeScaled(sequenceData, globalDataP, nofImages, 1., 1., fw, fh, full, n, run)) {
+			gmicLog("G'MIC: %s: the result's size could not be measured: the output keeps Source's size\n", effectData.name.c_str());
+			return std::nullopt;
+		}
+		if (why) {
+			gmicLog("openfx-gmic: %s: the result's size, %dx%d, confirmed at full size (%s)\n", effectData.name.c_str(),
+			        full.width, full.height, why);
+		}
+		return full;
+	};
+	// a Source no larger than the probes would be (the small ones, about 15k pixels, the thin ones
+	// and the check probe): one probe at its own size, exact. (Over a small Source, the thin probes
+	// span too little to keep the joint fit within a pixel: e.g. rotations of 160x120 by 12.5
+	// degrees, 2 off.)
+	const double checkPixels = (double)kCheckSize * std::max(1., std::round((double)kCheckSize * std::min(source.width, source.height) / longSide));
+	if (longSide <= kCheckSize ||
+		(double)source.width * source.height <= (double)kThinSize * (source.width + source.height) + kSmallProbesPixels + checkPixels) {
+		return fullSize(nullptr);
+	}
+	// [0..2]: the small probes, [3..4]: the thin ones, [5]: the check probe
+	const int kN = 6;
+	int W[kN], H[kN], w[kN], h[kN], x[kN], y[kN];
+	unsigned int counts[kN];
+	for (int k = 0; k < kN; k++) {
+		// (not "small": a macro of the Windows headers, rpcndr.h)
+		const double scale = (double)(k == 5 ? kCheckSize : kProbeSizes[std::min(k, 2)]) / longSide;
+		const bool thin = k == 3 || k == 4;
+		const double sx = !thin ? scale : (k == 3 ? 1. : (double)kThinSize / source.width);
+		const double sy = !thin ? scale : (k == 3 ? (double)kThinSize / source.height : 1.);
+		ResultGeometry g;
+		if (!probeScaled(sequenceData, globalDataP, nofImages, sx, sy, W[k], H[k], g, counts[k], run)) {
+			return fullSize("a probe failed");
+		}
+		w[k] = g.width;
+		h[k] = g.height;
+		x[k] = g.x;
+		y[k] = g.y;
+	}
+	// Output Layer "Frame": the same number of results, so that the frame picks the same one
+	if (outputIsFrame(&sequenceData, globalDataP)) {
+		for (int k = 1; k < kN; k++) {
+			if (counts[k] != counts[0]) return fullSize("another number of results");
+		}
+	}
+	// one value: exact if an exact fraction gives the thin and check probes too, else the joint fit
+	// over the small and thin probes, if it gives the check probe within a pixel
+	ResultGeometry g;
+	bool refined = false;
+	const auto predict = [&](const int* X, const int* Y, int real, int& value, bool& margin) {
+		const std::optional<AxisFit> f = fitAxis(X, Y);
+		if (f && f->snapped && f->at(X[3]) == Y[3] && f->at(X[4]) == Y[4] && f->at(X[5]) == Y[5]) {
+			value = f->at(real);
+			margin = false;
+			return true;
+		}
+		const std::optional<PlaneFit> p = fitPlane(W, H, Y, 5);
+		if (!p || std::fabs(p->value(W[5], H[5]) - Y[5]) > 1. + 1e-9) return false;
+		value = p->at(source.width, source.height);
+		margin = true;
+		refined = true;
+		return true;
+	};
+	bool mw = false, mh = false, mx = false, my = false;
+	if (!predict(W, w, source.width, g.width, mw) || !predict(H, h, source.height, g.height, mh) ||
+		!predict(W, x, source.width, g.x, mx) || !predict(H, y, source.height, g.y, my)) {
+		return fullSize("not an affine function of the input's size");
+	}
+	// a margin on each side that a value 1 pixel off could leave short: a size, its far side; an
+	// offset, both sides
+	g.marginRight = (mw ? 1 : 0) + (mx ? 1 : 0);
+	g.marginLeft = mx ? 1 : 0;
+	g.marginBottom = (mh ? 1 : 0) + (my ? 1 : 0);
+	g.marginTop = my ? 1 : 0;
+	if (g.width <= 0 || g.height <= 0 || g.width > kMaxPos || g.height > kMaxPos) return fullSize("an implausible size");
+	if (refined) {
+		gmicLog("openfx-gmic: %s: the result's size, %dx%d, refined with thin probes (a 1-pixel margin)\n", effectData.name.c_str(),
+		        g.width, g.height);
+	}
+	g.x = std::max(-(int)kMaxPos, std::min((int)kMaxPos, g.x));
+	g.y = std::max(-(int)kMaxPos, std::min((int)kMaxPos, g.y));
+	return g;
+}
+
+// the key of the prediction for these inputs, in the same cache as the probes
+static string predictionKey(const SequenceData& sequenceData, const GlobalData* globalDataP, unsigned int& nofImages)
+{
+	nofImages = 0;
+	for (int i = 0; i < globalDataP->nofInputs && i < kMaxLayers; i++) {
+		const World& in = sequenceData.inWorld[i];
+		if (!sequenceData.inputConnected[i] || in.width <= 0 || in.height <= 0) break;
+		nofImages++;
+	}
+	if (nofImages == 0 || effectDataOf(globalDataP).command.empty()) return string();
+	SequenceData probe = sequenceData;
+	// (the frame only for Output Layer "Frame", which picks a result by frame: elsewhere, a playback
+	// would add an entry per frame)
+	const string frame = outputIsFrame(&probe, globalDataP) ? std::to_string(frameNumberOf(&probe)) : string();
+	return "prediction\n" + frame + '\n' + probeKey(probe, globalDataP, nofImages);
+}
+
+// The predictions that ran out of time, by key, for kTimeoutMemory seconds: their region of
+// definition is Source's without trying again, so that a slow filter doesn't block the host for
+// kPredictionTimeLimit on every query (in Natron, its main thread). Another key (an edit) tries.
+static const double kTimeoutMemory = 30.;
+static const size_t kMaxTimeouts = 64;
+struct TimeoutMemory
+{
+	std::mutex mutex;
+	std::map<string, Deadline> until; // key -> when it may be tried again
+};
+
+static TimeoutMemory& timeoutMemory()
+{
+	static TimeoutMemory memory;
+	return memory;
+}
+
+// is key's prediction still to be skipped (it ran out of time less than kTimeoutMemory ago)?
+static bool timedOutRecently(const string& key)
+{
+	TimeoutMemory& m = timeoutMemory();
+	std::lock_guard<std::mutex> lock(m.mutex);
+	const auto it = m.until.find(key);
+	if (it == m.until.end()) return false;
+	if (std::chrono::steady_clock::now() < it->second) return true;
+	m.until.erase(it);
+	return false;
+}
+
+static void rememberTimeout(const string& key) noexcept
+{
+	try {
+		TimeoutMemory& m = timeoutMemory();
+		std::lock_guard<std::mutex> lock(m.mutex);
+		const Deadline now = std::chrono::steady_clock::now();
+		for (auto it = m.until.begin(); it != m.until.end();) it = it->second <= now ? m.until.erase(it) : std::next(it);
+		if (m.until.size() >= kMaxTimeouts) m.until.erase(m.until.begin());
+		m.until[key] = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(kTimeoutMemory));
+	} catch (...) {
+	}
+}
+
+std::optional<ResultGeometry> pluginResultGeometry(const SequenceData& sequenceData, const GlobalData& globalData)
+{
+	if (!hostSupportsMultiResolution()) return std::nullopt;
+	try {
+		unsigned int nofImages = 0;
+		const string key = predictionKey(sequenceData, &globalData, nofImages);
+		if (key.empty()) return std::nullopt;
+		ProbeResult cached;
+		if (geometryCacheLookup(key, cached)) {
+			if (cached.results.empty()) return std::nullopt;
+			return cached.results[0];
+		}
+		if (timedOutRecently(key)) {
+			gmicLog("openfx-gmic: %s: the result's size timed out less than %g s ago: the output keeps Source's size\n",
+			        effectDataOf(&globalData).name.c_str(), kTimeoutMemory);
+			return std::nullopt;
+		}
+		PredictionRun run;
+		run.deadline = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+			std::chrono::duration<double>(kPredictionTimeLimit));
+		const std::optional<ResultGeometry> g = resultGeometry(sequenceData, globalData, run);
+		// kept, unless a run failed for a reason that may not happen again (a timeout, out of
+		// memory, an exception: Source's size, tried again later; a timeout after kTimeoutMemory)
+		if (run.timedOut) rememberTimeout(key);
+		if (!run.transient) {
+			ProbeResult r;
+			if (g) r.results.push_back(*g);
+			geometryCachePut(key, r);
+		}
+		return g;
+	} catch (const std::bad_alloc&) {
+		gmicLog("G'MIC: %s: not enough memory to measure the result's size: the output keeps Source's size\n",
+		        effectDataOf(&globalData).name.c_str());
+	} catch (...) {
+		gmicLog("G'MIC: %s: the result's size could not be measured: the output keeps Source's size\n",
+		        effectDataOf(&globalData).name.c_str());
+	}
+	return std::nullopt;
+}
+
+std::optional<ResultGeometry> pluginCachedResultGeometry(const SequenceData& sequenceData, const GlobalData& globalData)
+{
+	try {
+		unsigned int nofImages = 0;
+		const string key = predictionKey(sequenceData, &globalData, nofImages);
+		ProbeResult cached;
+		if (key.empty() || !geometryCacheLookup(key, cached) || cached.results.empty()) return std::nullopt;
+		return cached.results[0];
+	} catch (...) {
+		return std::nullopt;
+	}
+}
+
 bool pluginPassesSourceThrough(const GlobalData& globalData)
 {
 	return effectDataOf(&globalData).command.empty();
+}
+
+// G'MIC-Qt lets the user zoom the preview of a filter whose preview factor ends with "+", and gives
+// it the image downscaled to the zoom (GmicProcessor.cpp: CroppedImageListProxy::get with the zoom
+// factor, and _preview_x1/y1, _preview_width/height from the zoomed extent). A render at a render
+// scale is that: the host gives the inputs at that scale, and fullCommand() makes the preview area
+// (_preview_x0/y0/x1/y1, and _preview_width/height for a preview) the size of these inputs. The
+// other factors tell that the preview is only right at its own zoom ("(N)"; G'MIC-Qt shows a
+// warning at another zoom), or that it needs the whole full-size image, which it zooms itself
+// ("(N)*", e.g. Difference of Gaussians or Halftone [Generic], whose sizes are in pixels); without
+// a factor, nothing is known of the filter at another scale. "+" is the author's claim: a "+"
+// filter with sizes in pixels (Ascii Art, Painting, Local Contrast...) looks different at a
+// render scale, as in G'MIC-Qt's zoomed preview.
+bool pluginSupportsRenderScale(const GlobalData& globalData)
+{
+	return effectDataOf(&globalData).previewFactor == EffectData::PreviewFactor::Accurate;
 }
 
 // The G'MIC name of an input image, as G'MIC-Qt names its layers (host_none.cpp, and the GIMP
@@ -2486,6 +3407,9 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	// ones (G'MIC-Qt keeps it between its runs of a filter). If the preview command fails, the main
 	// command runs without them, as G'MIC-Qt's Apply after a failed preview.
 	const bool previewFirst = !preview && effectData.previewFirst;
+	// the names of the inputs: layer inputs elsewhere than Source (multi-resolution) are at their
+	// pos(dx,dy) from it (see gmicInputName)
+	nameInputImages(sequenceDataP, nofImages, images);
 	// the custom commands, set in the options by fullCommand(): must stay valid until the G'MIC calls return
 	string customCommands;
 	// customCommands goes out of scope: reset the pointer on return, also when G'MIC throws
@@ -2502,6 +3426,8 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	// the preview command run first failed (shown with warning; kept with Output Layer "Frame"
 	// results, and shown again for the frames taken from them)
 	string previewWarning;
+	// the result doesn't fit the output (Resize Mode Dynamic, see the copy below)
+	string geometryWarning;
 	// Output Layer "Frame": the results kept from a previous render, if the key is the same
 	const long long frame = frameNumberOf(sequenceDataP);
 	string cacheKey;
@@ -2595,11 +3521,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 		// the result selected by G'MIC: too many or too large to keep
 		const bool selected = frameMode && nofImages == 1 && strcmp(images[0].name, "openfx_gmic_frame_selected") == 0;
 		if (!res && nofImages > 0) {
-			int idx = (int)sequenceDataP->floatValue[PARAM_OUTPUT][0] - 1;
-			if (frameMode) idx = selected ? 0 : (int)(((frame % (long long)nofImages) + nofImages) % nofImages);
-			if (idx < 0) idx = 0;
-			if ((unsigned)idx >= nofImages) idx = (int)nofImages - 1;
-			res = &images[idx];
+			res = &images[resultIndexOf(sequenceDataP, globalDataP, nofImages, frame, selected)];
 		}
 
 		if (!res || res->spectrum == 0 || !res->data) {
@@ -2620,9 +3542,13 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 			const int dw = out.width, dh = out.height;
 			const int sw = (int)res->width, sh = (int)res->height;
 			// G'MIC anchors images at their top-left corner: a result of another size than the first
-			// input keeps the input's left and top edges (pixel y goes up)
-			const int sx1 = sequenceDataP->inWorld[0].origin_x;
-			const int sy1 = sequenceDataP->inWorld[0].origin_y + sequenceDataP->inWorld[0].height - sh;
+			// input keeps the input's left and top edges (pixel y goes up). Resize Mode Dynamic: moved
+			// by the pos(x,y) of its name (G'MIC's y goes down), as the region of definition
+			// (pluginResultGeometry)
+			const bool dynamic = resizeModeOf(sequenceDataP, globalDataP) == kResizeModeDynamic && hostSupportsMultiResolution();
+			const ResultGeometry at = dynamic ? resultGeometryOf(*res) : ResultGeometry();
+			const int sx1 = sequenceDataP->inWorld[0].origin_x + at.x;
+			const int sy1 = sequenceDataP->inWorld[0].origin_y + sequenceDataP->inWorld[0].height - at.y - sh;
 			const int dx1 = out.origin_x, dy1 = out.origin_y;
 			const size_t dplane = (size_t)dw * (size_t)dh, splane = (size_t)sw * (size_t)sh;
 			float* const dst = out.data;
@@ -2636,6 +3562,24 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 			const bool same = (sw == dw && sh == dh && sx1 == dx1 && sy1 == dy1);
 			if (!same) {
 				memset(dst, 0, dplane * 4 * sizeof(float));
+			}
+			// (a refined prediction with a margin: a result within the output fits, see
+			// ResultGeometry; looked up in the cache, never predicted again: after an eviction,
+			// the render warns)
+			const bool inside = sx1 >= dx1 && sy1 >= dy1 && sx1 + sw <= dx1 + dw && sy1 + sh <= dy1 + dh;
+			bool withinMargin = false;
+			if (!same && dynamic && inside) {
+				const std::optional<ResultGeometry> predicted = pluginCachedResultGeometry(*sequenceDataP, *globalDataP);
+				withinMargin = predicted && predicted->hasMargin();
+			}
+			if (!same && dynamic && !withinMargin) {
+				// the output doesn't have the size that the region of definition declared (a size that
+				// depends on the pixels, which pluginResultGeometry's probes can't predict, a size rule
+				// that isn't affine, a prediction some pixels off, or
+				// a host that gives another output): cropped or padded, never resized
+				geometryWarning = "The result (" + std::to_string(sw) + "x" + std::to_string(sh) + " at " +
+					std::to_string(at.x) + "," + std::to_string(at.y) + " from Source's top-left corner) doesn't match the output (" +
+					std::to_string(dw) + "x" + std::to_string(dh) + "): it is cropped or padded.";
 			}
 			// overlap, in pixel coordinates (y up)
 			const int x1 = std::max(sx1, dx1), x2 = std::min(sx1 + sw, dx1 + dw);
@@ -2671,6 +3615,9 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 	}
 	if (!previewWarning.empty()) {
 		warning = warning.empty() ? previewWarning : previewWarning + "\n" + warning;
+	}
+	if (!geometryWarning.empty()) {
+		warning = warning.empty() ? geometryWarning : geometryWarning + "\n" + warning;
 	}
 	if (result != 0 && !aborted) {
 		// persistent message on the node, instead of a modal message on every render
@@ -2792,7 +3739,11 @@ GmicStatusRun pluginRunStatus(SequenceData& sequenceData, const GlobalData& glob
 	const EffectData& effectData = effectDataOf(globalDataP);
 	// G'MIC-Qt makes no preview run for a filter whose preview command is "_none_"
 	// (MainWindow::onPreviewUpdateRequested(), isNoPreviewFilter()), nor for a page without command
-	if (effectData.command.empty() || effectData.noPreview) return run;
+	if (effectData.command.empty()) return run;
+	if (effectData.noPreview) {
+		run.warning = "the filter has no preview command (\"_none_\"), which a press runs: nothing done.";
+		return run;
+	}
 	std::vector<gmic_interface_image> images((size_t)std::max(1, globalDataP->nofInputs));
 	unsigned int nofImages = gmicInputImages(sequenceDataP, globalDataP, images.data());
 	if (nofImages == 0) return run; // no Source image
@@ -2852,7 +3803,12 @@ GmicStatusRun pluginRunStatus(SequenceData& sequenceData, const GlobalData& glob
 	}
 	run.visibility = statusDisplay(state.visibilities, globalDataP);
 	const SequenceData before = sequenceData;
-	if (!setStatusValues(state.status, globalDataP, sequenceDataP)) return run;
+	const size_t nofArguments = gmicArguments(globalDataP).size();
+	if (!state.status.empty() && state.status.size() != nofArguments) {
+		run.warning = "the filter's preview gives " + std::to_string(state.status.size()) + " values, for " +
+			std::to_string(nofArguments) + " parameters: nothing changed.";
+	}
+	if (!setStatusValues(state.status, globalDataP, sequenceDataP, &run.exact)) return run;
 	// Changed: what G'MIC would get differs. The values themselves may differ without that: a
 	// status often gives the values that the run got back, whose text has 8 significant digits.
 	for (const int i : gmicArguments(globalDataP)) {

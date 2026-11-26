@@ -14,7 +14,9 @@
 #define GMIC_PLUGIN_H
 
 #include <array>
+#include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -38,6 +40,13 @@ constexpr const char* kOutputLayerParam = "Output Layer";
 constexpr const char* kDraftModeParam = "Preview/Draft Mode";
 // the last option of the Output Layer parameter, "Frame" (issue #65): see pluginProcess
 constexpr int kOutputLayerFrame = 11;
+// Resize Mode (issue #175): Fixed (Inplace) gives Source's rectangle (a result of another size is
+// cropped or padded), Dynamic (the default) the result's own size and position, which the region
+// of definition declares (see pluginResultGeometry); Downsample 1/N (2 to 5) processes a
+// downsampled input and resizes the result to Source's size
+constexpr const char* kResizeModeParam = "Resize Mode";
+constexpr int kResizeModeFixed = 0;
+constexpr int kResizeModeDynamic = 1;
 
 // The number of plug-ins, one per G'MIC filter (the filters are loaded on first use).
 int getNofPlugins();
@@ -85,6 +94,13 @@ void showRenderWarning(OFX::ImageEffect& effect, const std::string& msg);
 // render copies Source without calling pluginProcess.
 bool pluginPassesSourceThrough(const gmic_ofx::GlobalData& globalData);
 
+// Does the filter accept render scales? Yes if its preview factor ends with "+"
+// (EffectData::PreviewFactor::Accurate): its author says that its preview is right at any zoom.
+// Natron then renders it at its render scale (proxy mode, zoomed-out viewer); the other filters
+// refuse render scales other than 1 there, and Natron renders them at full size (see
+// refuseRenderScale in gmic_ofx.cpp, issue #179).
+bool pluginSupportsRenderScale(const gmic_ofx::GlobalData& globalData);
+
 // Run G'MIC on sequenceData's input images (float planar RGBA, values up to 255), into its
 // outWorld buffer, with the parameter values of sequenceData. Polls effect.abort() while G'MIC
 // runs, and reports G'MIC's errors on effect. False if the output is not valid (G'MIC failed,
@@ -108,6 +124,12 @@ struct GmicStatusRun
 	std::vector<std::pair<int, gmic_ofx::DisplayStatus>> visibility;
 	std::string error; // G'MIC's message, if the run failed
 	bool cancelled = false; // the user cancelled the run (the host's Cancel)
+	// why the run changed nothing, for the user: no preview command, or a status with another
+	// number of values than the parameters
+	std::string warning;
+	// the value that the status gives each float parameter that it sets, as a double (sequenceData
+	// has a float: the status's "0.3" stays 0.3)
+	std::map<int, double> exact;
 };
 
 // G'MIC-Qt's run of the filter's preview command after a change of its parameters, for the status
@@ -130,5 +152,51 @@ void pluginPurgeCaches();
 
 // the Output Layer parameter of an instance changed (any reason), to the option outputLayer
 void pluginOutputLayerChanged(GmicInstanceData& instanceData, int outputLayer);
+
+// The size and position of the result that a render outputs, in pixels: its offset from the
+// top-left corner of the first input (Source), x to the right and y down as in G'MIC (the pos(x,y)
+// in the result's name, as G'MIC-Qt's hosts read it), and its size.
+struct ResultGeometry
+{
+	int x = 0;
+	int y = 0;
+	int width = 0;
+	int height = 0;
+	// a transparent margin around it in the region of definition, in pixels (0 or 1 per side:
+	// left, top, right, bottom, G'MIC's orientation): a refined prediction that is not an exact
+	// fraction may be 1 pixel off (see pluginResultGeometry); a result within it fits the output
+	int marginLeft = 0;
+	int marginTop = 0;
+	int marginRight = 0;
+	int marginBottom = 0;
+	bool hasMargin() const { return marginLeft || marginTop || marginRight || marginBottom; }
+};
+
+// Does the output keep the result's size with Resize Mode Fixed and Dynamic (issue #175)? Only on
+// a host with multi-resolution (or with the test aid OFX_GMIC_MULTIRES=1): on the others, the
+// output keeps Source's size, the result is resized to it as before, and there is no probe
+// (pluginResultGeometry).
+bool pluginKeepsResultSize();
+
+// Resize Mode Dynamic (issue #175): the geometry of the result that a render with sequenceData's
+// values and input sizes gives, for the region of definition, which OFX needs before the render.
+// Runs the filter as the render does (pluginProcess), on a worker thread, on small, thin and
+// check probes, opaque gradient images (their data is ignored: the region of definition action
+// has no images), and predicts the size and position at the real size from affine fits (fitAxis,
+// fitPlane in gmic_plugin.cpp); a fit that fails, a size that isn't affine or a probe that fails
+// gets one probe at the real size, exact. A Source no larger than the probes would be (by area,
+// see kSmallProbesPixels) is probed at its own size. The probes and predictions are kept for
+// their command lines and input sizes (for Output Layer "Frame", per frame), so that they run
+// again only when these change; a lookup of a probe that is running waits for it. All within
+// kPredictionTimeLimit. Empty if the host has no multi-resolution (pluginKeepsResultSize, which
+// the test aid OFX_GMIC_MULTIRES can override), if even
+// the probe at the real size failed, ran out of memory or past the time limit (logged; a timeout
+// is remembered for a while, see timedOutRecently), or if it gave no or an empty result: the
+// output then keeps Source's region of definition.
+std::optional<ResultGeometry> pluginResultGeometry(const gmic_ofx::SequenceData& sequenceData, const gmic_ofx::GlobalData& globalData);
+
+// The prediction that pluginResultGeometry last made for these values and input sizes, if it is
+// still in its cache (never a new prediction: for the render)
+std::optional<ResultGeometry> pluginCachedResultGeometry(const gmic_ofx::SequenceData& sequenceData, const gmic_ofx::GlobalData& globalData);
 
 #endif

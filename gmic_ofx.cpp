@@ -137,24 +137,6 @@ static DisplayStatus describedDisplayStatus(const Parameter& param)
 	return (param.followsStatus && !statusVisibilityOnHost()) ? DisplayStatus::Normal : param.displayStatus;
 }
 
-// Render scale (issue #49). G'MIC parameters carry no unit, so pixel-sized ones (radii, sizes,
-// amplitudes in pixels) can't be scaled with the render scale, and a zoomed-out viewer or a proxy
-// render doesn't match the full-resolution render. On Natron, the actions fail for render scales other
-// than 1: Natron then marks the effect as not supporting render scale (OfxEffectInstance tries the
-// region of definition at scale 0.5) and renders it at full resolution, then downscales the result
-// (renderFullScaleThenDownscale in EffectInstance::renderRoI). Other hosts (Resolve, Nuke, Vegas) don't
-// fall back to full resolution, and the render would fail: there, render scales are accepted as
-// before, with unscaled pixel-sized parameters. Natron is recognized by kNatronOfxHostIsNatron, not by
-// kOfxPropName, which Natron can set to another host's name for compatibility.
-// The same rule for every action that has a render scale (region of definition, regions of
-// interest, isIdentity, render): throws kOfxStatFailed if the action must fail.
-void refuseRenderScale(const OfxPointD& renderScale)
-{
-	if (hostIsNatron() && (renderScale.x != 1. || renderScale.y != 1.)) {
-		OFX::throwSuiteStatusException(kOfxStatFailed);
-	}
-}
-
 // Check the effect descriptor for potentially bad XML in the OFX Plugin cache.
 //
 // The function that wrote string properties to the OFX plugin cache used to
@@ -433,10 +415,10 @@ void premultiplyPlanar(float* data, int width, int height, float maxValue)
 // would be opaque everywhere, with hard bright edges where the input was transparent. Before the
 // premultiplication handling, G'MIC got the premultiplied colours, i.e. the input composited over
 // black, and the result looked composited over black too. To keep that look, the colours are
-// multiplied by the main input's alpha and the output alpha stays opaque. The result is resized to
-// the input's size at the end of the G'MIC command: only gray or RGB results that had the processed
-// input's size come here without alpha, the others get an opaque alpha before that resize, since
-// the input alpha wouldn't line up with them (see kOpaqueResizedCommand in gmic_plugin.cpp). out is the
+// multiplied by the main input's alpha and the output alpha stays opaque. Only gray or RGB results
+// that have the processed input's size come here without alpha: the others get an opaque alpha at
+// the end of the G'MIC command, since the input alpha wouldn't line up with them (see
+// kOpaqueResizedCommand in gmic_plugin.cpp). out is the
 // output buffer, in the main input's buffer, both in pixel coordinates with rows top-down.
 void multiplyByInputAlphaPlanar(const World& out, const World& in, float maxValue)
 {
@@ -581,6 +563,8 @@ private:
 	void changedClip(const OFX::InstanceChangedArgs& args, const std::string& clipName) override;
 	void endChanged(OFX::InstanceChangeReason reason) override;
 	void purgeCaches() override { pluginPurgeCaches(); }
+	// throws kOfxStatFailed for a render scale that the action must refuse
+	void refuseRenderScale(const OfxPointD& renderScale) const;
 
 	// the render fails (a missing image): unless the host aborted it, then the output is discarded
 	void failUnlessAborted() const;
@@ -593,6 +577,7 @@ private:
 
 	bool pointIsDefault(const Parameter& param, double x, double y) const;
 	std::optional<OfxRectD> sourceRoD(double time) const;
+	std::optional<OfxRectD> resultRoD(const OfxRectD& sourceRod, double time, const OfxPointD& renderScale) const;
 	void pointsFromSourceRead();
 	void pointsFromSourceWrite();
 	void pointsMoveToSource(double time, int onlyParam);
@@ -605,7 +590,8 @@ private:
 	void runStatus(double time, std::optional<int> button);
 	void statusDisplayFromHost();
 	void applyStatusVisibility(const std::vector<std::pair<int, DisplayStatus>>& visibility);
-	void setParamValue(int i, const SequenceData& sd, const GmicInputs& in, const OfxPointD& renderScale, double time);
+	void setParamValue(int i, const SequenceData& sd, const GmicInputs& in, const OfxPointD& renderScale, double time,
+		std::optional<double> exact = std::nullopt);
 
 	const GlobalData& _gd;
 	OFX::Clip* _output;
@@ -615,6 +601,7 @@ private:
 	OFX::ChoiceParam* _outputLayer;
 	OFX::BooleanParam* _animateSeed;
 	OFX::BooleanParam* _draftMode;
+	OFX::ChoiceParam* _resizeMode;
 	// layer times (see layerTimesAt), NULL for plug-ins without them
 	OFX::IntParam* _layersFromSource = nullptr;
 	int _lastLayersFromSource = 0; // its value at the previous change (see changedParam)
@@ -644,6 +631,7 @@ GMICEffect::GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData
 	, _outputLayer(fetchChoiceParam(kOutputLayerParam))
 	, _animateSeed(fetchBooleanParam(kAnimateSeedParam))
 	, _draftMode(fetchBooleanParam(kDraftModeParam))
+	, _resizeMode(fetchChoiceParam(kResizeModeParam))
 	, _pointFromSource((size_t)globalData.nofParams)
 	, _statusDisplay((size_t)globalData.nofParams)
 {
@@ -739,6 +727,47 @@ void GMICEffect::failUnlessAborted() const
 	}
 }
 
+// Render scale (issues #49 and #179). G'MIC parameters carry no unit, so pixel-sized ones (radii,
+// sizes, amplitudes in pixels) can't be scaled with the render scale, and a zoomed-out viewer or a
+// proxy render wouldn't match the full-resolution render.
+// - Natron, filters whose preview factor ends with "+" (pluginSupportsRenderScale: G'MIC's "the
+//   preview is accurate at any zoom"): every render scale is accepted, and the inputs come at
+//   that scale, as in G'MIC-Qt's zoomed preview.
+// - Natron, the other filters: the actions fail for render scales other than 1. Natron then marks
+//   the effect as not supporting render scale (OfxEffectInstance tries the region of definition at
+//   scale 0.5), renders it at full resolution, and downscales the result
+//   (renderFullScaleThenDownscale in EffectInstance::renderRoI).
+// - Other hosts (Resolve, Nuke, Vegas): every render scale is accepted, as before, with unscaled
+//   pixel-sized parameters. They don't fall back to full resolution: a refusal would fail the
+//   render.
+// Natron is recognized by kNatronOfxHostIsNatron, not by kOfxPropName, which Natron can set to
+// another host's name for compatibility. The same rule for every action that has a render scale
+// (region of definition, regions of interest, isIdentity, render): throws kOfxStatFailed if the
+// action must fail.
+void GMICEffect::refuseRenderScale(const OfxPointD& renderScale) const
+{
+	const bool scaled = renderScale.x != 1. || renderScale.y != 1.;
+	if (scaled && hostIsNatron() && !pluginSupportsRenderScale(_gd)) {
+		OFX::throwSuiteStatusException(kOfxStatFailed);
+	}
+}
+
+// A point parameter's canonical coordinates as G'MIC's: percent of the image rect (in pixels, of
+// pixel aspect ratio par) at renderScale, from its top-left corner (G'MIC's y goes down); an empty
+// rect (no input, empty output) counts as 1 pixel, so as not to divide by 0. pointFromPercent is
+// its inverse.
+static OfxPointD pointToPercent(const OfxPointD& p, const OfxRectI& rect, double par, const OfxPointD& renderScale)
+{
+	const int w = std::max(1, rect.x2 - rect.x1), h = std::max(1, rect.y2 - rect.y1);
+	return { (p.x * renderScale.x / par - rect.x1) * 100. / w, 100. - (p.y * renderScale.y - rect.y1) * 100. / h };
+}
+
+static OfxPointD pointFromPercent(const OfxPointD& percent, const OfxRectI& rect, double par, const OfxPointD& renderScale)
+{
+	const int w = std::max(1, rect.x2 - rect.x1), h = std::max(1, rect.y2 - rect.y1);
+	return { (percent.x * w / 100. + rect.x1) * par / renderScale.x, ((100. - percent.y) * h / 100. + rect.y1) / renderScale.y };
+}
+
 // dstRect is in pixels; point parameters are in canonical coordinates: pixel x = canonical x *
 // renderScale.x / par, pixel y = canonical y * renderScale.y (par: the pixel aspect ratio of the
 // image dstRect belongs to)
@@ -770,12 +799,9 @@ void GMICEffect::fetchParamValues(SequenceData& sd, const OfxRectI& dstRect, dou
 			}
 			break;
 		case ParamType::Point: {
-			// percent of the image, from its top-left corner (G'MIC's y goes down); an empty dstRect
-			// (no input, empty output) counts as 1 pixel, so as not to divide by 0
-			const OfxPointD p = std::get<OFX::Double2DParam*>(_params[i])->getValueAtTime(t);
-			const int w = std::max(1, dstRect.x2 - dstRect.x1), h = std::max(1, dstRect.y2 - dstRect.y1);
-			value[0] = static_cast<float>((p.x * renderScale.x / par - dstRect.x1) * 100. / w);
-			value[1] = 100.f - static_cast<float>((p.y * renderScale.y - dstRect.y1) * 100. / h);
+			const OfxPointD p = pointToPercent(std::get<OFX::Double2DParam*>(_params[i])->getValueAtTime(t), dstRect, par, renderScale);
+			value[0] = static_cast<float>(p.x);
+			value[1] = static_cast<float>(p.y);
 		} break;
 		case ParamType::Select:
 			value[0] = static_cast<float>(std::get<OFX::ChoiceParam*>(_params[i])->getValueAtTime(t));
@@ -832,7 +858,7 @@ double GMICEffect::inputTime(const LayerTimes& lt, int i, double t) const
 }
 
 // tells the host what region we are capable of filling: Source's (the host's default if it can't
-// be read)
+// be read), or with Resize Mode Dynamic, the result's (see resultRoD)
 bool GMICEffect::getRegionOfDefinition(const OFX::RegionOfDefinitionArguments& args, OfxRectD& rod)
 {
 	refuseRenderScale(args.renderScale);
@@ -840,7 +866,99 @@ bool GMICEffect::getRegionOfDefinition(const OFX::RegionOfDefinitionArguments& a
 	const std::optional<OfxRectD> sourceRod = hostQuery([&] { return source->getRegionOfDefinition(args.time); });
 	if (!sourceRod) return false;
 	rod = *sourceRod;
+	// (a host without multi-resolution keeps the output at Source's size: no probe, see
+	// pluginKeepsResultSize)
+	if (pluginKeepsResultSize() && !pluginPassesSourceThrough(_gd) && source->isConnected() && !isEmpty(*sourceRod) &&
+		_resizeMode->getValueAtTime(args.time) == kResizeModeDynamic) {
+		try {
+			if (const std::optional<OfxRectD> result = resultRoD(*sourceRod, args.time, args.renderScale)) {
+				rod = *result;
+			}
+		} catch (const std::bad_alloc&) {
+			gmicLog("G'MIC: %s: not enough memory to measure the result's size: the output keeps Source's size\n",
+			        _gd.pluginInfo.name.c_str());
+		}
+	}
 	return true;
+}
+
+// the pixels of a canonical rectangle, as hosts compute the bounds of images (Natron's
+// RectD::toPixelEnclosing, hostDemo's canonicalToPixelEnclosing)
+OfxRectI toPixelEnclosing(const OfxRectD& r, const OfxPointD& renderScale, double par)
+{
+	return OfxRectI{ (int)std::floor(r.x1 * renderScale.x / par), (int)std::floor(r.y1 * renderScale.y),
+		(int)std::ceil(r.x2 * renderScale.x / par), (int)std::ceil(r.y2 * renderScale.y) };
+}
+
+// The canonical coordinate of a pixel edge p (x: par is the pixel aspect ratio and scale the
+// render scale x; y: par 1 and the render scale y), such that the host's rounding of the region of
+// definition to pixels (toPixelEnclosing: floor(c * scale / par) for the low edges, ceil for the
+// high ones, as Natron's RectD::toPixelEnclosing) gives p back. Exact when it does (e.g. an edge at
+// 0 stays 0, which Natron's connection test compares exactly); else moved inwards by 1e-6 pixel,
+// the same in both axes.
+double canonicalEdge(int p, double par, double scale, bool high)
+{
+	const double c = p * par / scale;
+	const double back = high ? std::ceil(c * scale / par) : std::floor(c * scale / par);
+	if (back == p) return c;
+	constexpr double kInwards = 1e-6; // pixel
+	return (high ? p - kInwards : p + kInwards) * par / scale;
+}
+
+// Resize Mode Dynamic (issue #175): the region of definition of the result, from its geometry
+// (pluginResultGeometry, which predicts it from small probes of the inputs' regions of
+// definition, at the render time, with the layer times). Empty if it is Source's (a result of
+// Source's size at its top-left corner: Source's region of definition, exactly as before), or if
+// it is unknown (G'MIC failed, or a size that isn't affine).
+// At the action's render scale (issue #179: the filters whose preview factor ends with "+" in
+// Natron, every filter elsewhere): the inputs' pixels and the point percentages at that scale,
+// as the render gets them, so the probes' command lines and cache keys are the render's at that
+// scale. (Natron's other filters refuse a render scale here, before any probe.) The pixel rectangle is the result's, its top-left corner at
+// Source's moved by the result's pos(x,y), in canonical coordinates (see canonicalEdge).
+std::optional<OfxRectD> GMICEffect::resultRoD(const OfxRectD& sourceRod, double time, const OfxPointD& renderScale) const
+{
+	// the values of the render at this time (see render), the inputs without images
+	SequenceData values;
+	SequenceData* const sd = &values;
+	for (int i = 0; i < _gd.nofParams; i++) {
+		sd->textValue[i] = _gd.param[i].text;
+		std::copy(_gd.param[i].defaultValue, _gd.param[i].defaultValue + 4, sd->floatValue[i]);
+	}
+	sd->time = time;
+	if (const std::optional<OfxRangeD> range = frameRangeOf(*_inputs[0]);
+		range && range->min <= range->max && std::fabs(range->min) < 1e9) {
+		sd->frameRangeStart = range->min;
+	}
+	double par = hostQuery([this] { return _inputs[0]->getPixelAspectRatio(); }).value_or(1.);
+	if (!(par > 0.)) par = 1.;
+	const OfxRectI sourcePixels = toPixelEnclosing(sourceRod, renderScale, par);
+	const LayerTimes lt = layerTimesAt(time);
+	for (int i = 0; i < lt.nofInputs; i++) {
+		const int c = lt.clipIndex(i);
+		OFX::Clip* clip = _inputs[c];
+		if (!clip->isConnected()) break;
+		const double t = inputTime(lt, i, time);
+		const std::optional<OfxRectD> inRod = i == 0 ? std::optional<OfxRectD>(sourceRod) : hostQuery([&] { return clip->getRegionOfDefinition(t); });
+		if (!inRod || isEmpty(*inRod)) break;
+		const OfxRectI r = toPixelEnclosing(*inRod, renderScale, par);
+		World& in = sd->inWorld[i];
+		in.name = inputName(c);
+		in.origin_x = r.x1;
+		in.origin_y = r.y1;
+		in.width = r.x2 - r.x1;
+		in.height = r.y2 - r.y1;
+		sd->inputConnected[i] = true;
+	}
+	fetchParamValues(values, sourcePixels, par, time, renderScale);
+	const std::optional<ResultGeometry> g = pluginResultGeometry(values, _gd);
+	const int sw = sourcePixels.x2 - sourcePixels.x1, sh = sourcePixels.y2 - sourcePixels.y1;
+	if (!g || (!g->hasMargin() && g->x == 0 && g->y == 0 && g->width == sw && g->height == sh)) return std::nullopt;
+	// pixels (y up): the result's top edge is Source's, moved down by pos y; then its margin
+	const int rx1 = sourcePixels.x1 + g->x, ry2 = sourcePixels.y2 - g->y;
+	const int x1 = rx1 - g->marginLeft, y2 = ry2 + g->marginTop;
+	const int x2 = rx1 + g->width + g->marginRight, y1 = ry2 - g->height - g->marginBottom;
+	return OfxRectD{ canonicalEdge(x1, par, renderScale.x, false), canonicalEdge(y1, 1., renderScale.y, false),
+		canonicalEdge(x2, par, renderScale.x, true), canonicalEdge(y2, 1., renderScale.y, true) };
 }
 
 // tells the host how much of the input we need to fill the given window
@@ -1317,6 +1435,9 @@ void GMICEffect::runStatus(double time, std::optional<int> button)
 	const InputsResult fetched = fetchInputs(time, sd, inputs);
 	if (fetched.status != InputsStatus::kOk) {
 		gmicLog("openfx-gmic: %s: %s: %s\n", _gd.pluginInfo.name.c_str(), what.c_str(), fetched.message.c_str());
+		// a press: a warning, so that the button doesn't just look broken (no Source, or no image
+		// from the host in the instance changed action)
+		if (press) sendMessage(OFX::Message::eMessageWarning, "", what + ": nothing done. " + fetched.message);
 		return;
 	}
 	// (the host's: 1 in Natron, which gives full-resolution images outside renders)
@@ -1340,6 +1461,9 @@ void GMICEffect::runStatus(double time, std::optional<int> button)
 		if (press) sendMessage(OFX::Message::eMessageError, "", what + ": " + run.error);
 		return;
 	}
+	if (press && !run.warning.empty()) {
+		sendMessage(OFX::Message::eMessageWarning, "", what + ": " + run.warning);
+	}
 	// a press: one undo step, begun at the first change only; best-effort: without an undo block if
 	// the host refuses it. An edit: none (see above)
 	EditBlock editBlock(*this, what, press, EditBlock::eBeginOnChange, EditBlock::eHostErrorsIgnore);
@@ -1357,7 +1481,9 @@ void GMICEffect::runStatus(double time, std::optional<int> button)
 		}
 		editBlock.open();
 		// a value that the host refuses doesn't keep the others from being set
-		hostTry([&] { setParamValue(i, sd, inputs, renderScale, time); });
+		const auto exact = run.exact.find(i);
+		const std::optional<double> exactValue = (exact != run.exact.end()) ? std::optional<double>(exact->second) : std::nullopt;
+		hostTry([&] { setParamValue(i, sd, inputs, renderScale, time, exactValue); });
 	}
 	applyStatusVisibility(run.visibility);
 }
@@ -1402,13 +1528,14 @@ void setValueOrKey(P* param, double time, const V&... value)
 
 // Sets parameter i to its value in sd, at time (see setValueOrKey): the inverse of
 // fetchParamValues, points relative to in.firstRect at renderScale. Push buttons have no value.
-void GMICEffect::setParamValue(int i, const SequenceData& sd, const GmicInputs& in, const OfxPointD& renderScale, double time)
+void GMICEffect::setParamValue(int i, const SequenceData& sd, const GmicInputs& in, const OfxPointD& renderScale, double time,
+	std::optional<double> exact)
 {
 	const Parameter& param = _gd.param[i];
 	const float* const value = sd.floatValue[i];
 	switch (param.paramType) {
-	case ParamType::Float:
-		setValueOrKey(std::get<OFX::DoubleParam*>(_params[i]), time, static_cast<double>(value[0]));
+	case ParamType::Float: // (exact: the status's number, which sd only has as a float)
+		setValueOrKey(std::get<OFX::DoubleParam*>(_params[i]), time, exact.value_or(static_cast<double>(value[0])));
 		break;
 	case ParamType::Int:
 		setValueOrKey(std::get<OFX::IntParam*>(_params[i]), time, static_cast<int>(value[0]));
@@ -1429,12 +1556,9 @@ void GMICEffect::setParamValue(int i, const SequenceData& sd, const GmicInputs& 
 		}
 		break;
 	case ParamType::Point: {
-		// percent of Source, from its top-left corner, to canonical coordinates (see fetchParamValues)
-		const OfxRectI& r = in.firstRect;
-		const int w = std::max(1, r.x2 - r.x1), h = std::max(1, r.y2 - r.y1);
-		const double x = (value[0] * w / 100. + r.x1) * in.firstPAR / renderScale.x;
-		const double y = ((100. - value[1]) * h / 100. + r.y1) / renderScale.y;
-		setValueOrKey(std::get<OFX::Double2DParam*>(_params[i]), time, x, y);
+		// percent of Source to canonical coordinates (see fetchParamValues)
+		const OfxPointD p = pointFromPercent({ value[0], value[1] }, in.firstRect, in.firstPAR, renderScale);
+		setValueOrKey(std::get<OFX::Double2DParam*>(_params[i]), time, p.x, p.y);
 	} break;
 	case ParamType::Text: {
 		OFX::StringParam* const text = std::get<OFX::StringParam*>(_params[i]);
@@ -1721,7 +1845,10 @@ void GMICPluginFactory::describe(OFX::ImageEffectDescriptor& desc)
 	desc.setRenderThreadSafety(OFX::eRenderInstanceSafe);
 	desc.setSupportsTiles(false);
 	desc.setHostFrameThreading(false);
-	desc.setSupportsMultiResolution(false);
+	// (issue #175) inputs of any size and position, and an output with the result's own (Resize
+	// Mode Dynamic): Natron refuses to connect inputs whose regions of definition differ, or don't
+	// start at 0,0, to an effect without multi-resolution (checkCanConnectNoMultiRes)
+	desc.setSupportsMultiResolution(true);
 
 	// the parameters the clip preferences depend on, by name (they are defined in describeInContext).
 	// Not with addClipPreferencesSlaveParam in describeInContext: hosts copy this descriptor's

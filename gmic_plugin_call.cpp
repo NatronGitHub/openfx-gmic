@@ -14,8 +14,11 @@
 #include "gmic.h"
 #include "gmic_plugin_call.h"
 #include "gmic_log.h"
-#if defined(_WIN32) && defined(_OPENMP)
+#ifdef _OPENMP
 #include <omp.h>
+#if !defined(_WIN32) && !defined(__APPLE__)
+#include <dlfcn.h>
+#endif
 #endif
 
 // as in gmic_libc.cpp
@@ -243,6 +246,39 @@ static void setPersistent(gmic& interpreter, const std::string& persistent)
 	}
 }
 
+// Keeps the OpenMP runtime (vcomp140.dll, libgomp) loaded until the process exits: when the host
+// unloads GMIC.ofx, the runtime would be unloaded too, under its threads still running (those of
+// a pool finishing to exit after gmicCallAbortable()'s worker is joined; on the fallback path in
+// the host's thread, idle ones), which then crash (issue #213). The first G'MIC run is early
+// enough: no OpenMP thread exists before it, so an earlier unload, with the runtime (e.g. after
+// HostSupport's plug-in scan, which loads GMIC.ofx again at first use), is harmless. The module is
+// found from a function's address, not by name (Windows: the bundle's vcomp140.dll); with a
+// static runtime, GMIC.ofx is pinned, so its static destructors run at exit() instead of at
+// unload. Not on macOS: libomp joins its threads at unload, and pinning it would move that to
+// exit(), where libomp had a crash (https://reviews.llvm.org/D159324).
+static void pinOpenMpRuntime()
+{
+#if defined(_OPENMP) && !defined(__APPLE__)
+	static const bool pinned = [] {
+#ifdef _WIN32
+		HMODULE h;
+		const bool ok = GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+		                                   reinterpret_cast<LPCWSTR>(&omp_get_max_threads), &h) != 0;
+#else
+		Dl_info info;
+		const bool ok = dladdr(reinterpret_cast<void*>(&omp_get_max_threads), &info) != 0 && info.dli_fname &&
+		                *info.dli_fname &&
+		                dlopen(info.dli_fname, RTLD_LAZY | RTLD_NOLOAD | RTLD_NODELETE) != nullptr;
+#endif
+		if (!ok) {
+			gmicLog("openfx-gmic: Warning: could not keep the OpenMP runtime loaded: the host may crash when it unloads the plug-in (issue #213)\n");
+		}
+		return ok;
+	}();
+	(void)pinned;
+#endif
+}
+
 int gmic_plugin_call(const GmicCall& call)
 {
 	gmic_interface_options* const options = call.options;
@@ -255,28 +291,7 @@ int gmic_plugin_call(const GmicCall& call)
 		                  std::to_string(call.persistentIn->size()) + " bytes).");
 		return -1;
 	}
-#if defined(_WIN32) && defined(_OPENMP)
-	// MSVC's OpenMP runtime (vcomp140.dll) must never be unloaded once its worker threads exist:
-	// when the host unloads the plug-in (FreeLibrary), the loader unmaps VCOMP140.DLL under the idle
-	// workers, and the process crashes (0xC0000005) after rendering. Pin it, once, before the first
-	// G'MIC run. Found with openfx's hostDemo, which unloads the plug-in before exiting: every
-	// multithreaded render then crashed at exit; pinning VCOMP140.DLL (or GMIC.ofx) fixed them all.
-	// This is the pattern of FFTW's unload crash on Linux (see makeFftwThreadSafe() in
-	// gmic_plugin.cpp and patches/cimg-fftw-no-cleanup-at-unload.sh): a thread pool whose idle
-	// threads outlive the code they run once the host unloads the plug-in; both keep the pool
-	// until the process exits.
-	// The module is found from the address of one of its functions, not by name: GMIC.ofx's
-	// manifest loads the vcomp140.dll of the bundle, which a lookup by name, outside of the
-	// plug-in's activation context, doesn't find (it looks for System32's). (Should the address be
-	// an import thunk of GMIC.ofx, GMIC.ofx is pinned, which also keeps vcomp140.dll; with MinGW,
-	// libgomp is pinned, which is harmless.)
-	static const bool vcompPinned = [] {
-		HMODULE h;
-		return GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
-		                          (LPCWSTR)(void*)&omp_get_max_threads, &h) != 0;
-	}();
-	(void)vcompPinned;
-#endif
+	pinOpenMpRuntime();
 	const unsigned int nofInputs = *call.nofImages;
 	gmic_list<float> list(nofInputs);
 	gmic_list<char> names(nofInputs);
