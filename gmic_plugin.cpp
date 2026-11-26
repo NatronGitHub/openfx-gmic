@@ -1096,6 +1096,7 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		} else if (param.visibility == EffectParameter::Visibility::Disabled) {
 			globalDataP->param[p].displayStatus = DisplayStatus::Disabled;
 		}
+		if (t == ParamType::Point) globalDataP->param[p].pointHandle = param.pointHandle;
 		// the status changes it at run time (issue #173): not the always hidden ones, nor the points
 		// and their checkboxes, which stay visible (see gmic_parse_single), nor the separators,
 		// which are only a layout hint
