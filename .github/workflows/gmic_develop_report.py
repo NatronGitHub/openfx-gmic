@@ -58,6 +58,7 @@ _PARAM = re.compile(r'^([^=]*?)\s*=\s*(.*)$')
 # between (), [] or {}, then the visibility state and its propagation
 _TYPEDEF = re.compile(r'^([_~]*)([A-Za-z_]+)\s*[(\[{](.*)[)\]}]\s*(?:_([0-2]))?\s*[-+*]?\s*$', re.DOTALL)
 _NO_VALUE_TYPES = ('note', 'link', 'separator')
+_PFM_HEADER = re.compile(rb'(P[Ff])\s+(\d+)\s+(\d+)\s+([-+0-9.eE]+)\s')
 _DEFINITION = re.compile(r'^\+?([A-Za-z_]\w*)\s*:(?!=)')
 # a command call: a word at the start of an item (after a blank, a quote, a brace or ';'), maybe
 # with '+' or '-', then the end, a blank, a selection or a quote; long quoted strings (texts, e.g.
@@ -346,15 +347,21 @@ def _read_pfm(path):
     try:
         with open(path, 'rb') as stream:
             data = stream.read()
-        magic, width, height, scale, pixels = data.split(maxsplit=4)
-        channels = {b'PF': 3, b'Pf': 1}[magic]
-        values = array.array('f')
-        values.frombytes(pixels[:int(width) * int(height) * channels * 4])
-        if float(scale) > 0:  # big-endian
-            values.byteswap()
-        return int(width), int(height), channels, values
-    except (OSError, ValueError, KeyError):
+    except OSError:
         return None
+    # one whitespace byte after the scale: the pixels may start with bytes that look like more
+    header = _PFM_HEADER.match(data)
+    if not header:
+        return None
+    width, height, channels = int(header.group(2)), int(header.group(3)), 3 if header.group(1) == b'PF' else 1
+    size = width * height * channels * 4
+    if len(data) - header.end() < size:
+        return None
+    values = array.array('f')
+    values.frombytes(data[header.end():header.end() + size])
+    if float(header.group(4)) > 0:  # big-endian
+        values.byteswap()
+    return width, height, channels, values
 
 
 def _outputs(render_dir):
