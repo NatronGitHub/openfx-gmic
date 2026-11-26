@@ -2,12 +2,11 @@
 # What openfx's Support/include/linuxCheckBundle.sh (run on the same bundles in ci.yml) doesn't
 # check in a Linux GMIC.ofx:
 # - it doesn't need libcurl (G'MIC downloads with the curl or wget command), FFTW (linked
-#   statically with FFT=fftw3) or EGL; OpenGL (libGL, or GLVND's libOpenGL and libGLX, which
-#   linuxCheckBundle.sh accepts as system libraries) only for the point handles of GPL builds
-#   (SupportExt's PointsInteract; COMMERCIAL=1: none, GMIC_OFX/Makefile filters out -lGL); nor,
-#   unless SHARED_DEPS=1, the shared
-#   zlib or libpng (GMIC_STATIC_DEPS links them statically; linuxCheckBundle.sh allows a system
-#   libz.so.1);
+#   statically with FFT=fftw3) or EGL; OpenGL only as libGL.so.1, for the point handles of GPL
+#   builds (SupportExt's PointsInteract; CMake's OpenGL_GL_PREFERENCE LEGACY), not GLVND's
+#   libOpenGL and libGLX, which not every system has (COMMERCIAL=1: none, GMIC_OFX/Makefile
+#   filters out -lGL; not run in CI, which doesn't build COMMERCIAL); nor, unless SHARED_DEPS=1, the shared zlib or libpng (GMIC_STATIC_DEPS
+#   links them statically; linuxCheckBundle.sh allows a system libz.so.1);
 # - it exports only OfxGetNumberOfPlugins and OfxGetPlugin (the version script keeps the symbols
 #   of the static libraries local);
 # - its RUNPATH and RPATH, if present, are not empty and have no empty entry, which the loader
@@ -31,7 +30,7 @@ echo "NEEDED: $(echo $needed)"
 for lib in $needed; do
     case "$lib" in
         libcurl*|libfftw3*|libEGL*) echo "FAIL: $bin needs $lib"; status=1 ;;
-        libGL.so.1|libOpenGL.so.0|libGLX.so.0)
+        libGL.so.1)
             [ "${COMMERCIAL:-0}" != 1 ] || { echo "FAIL: $bin needs $lib (COMMERCIAL builds have no point handles)"; status=1; } ;;
         libGL*|libOpenGL*) echo "FAIL: $bin needs $lib"; status=1 ;;
         libz.so.*|libpng*)

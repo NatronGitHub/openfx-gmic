@@ -106,6 +106,11 @@ int main()
 		}
 	}
 	const int total = (int)(sizeof(kExpected) / sizeof(kExpected[0]));
-	std::printf("point arguments: %d of %d points right\n", total - failures, total);
+	if (failures) {
+		std::printf("point_args_test: %d of %d checks failed\n", failures, total);
+	} else {
+		std::printf("point_args_test: %d checks passed (colour, colormap, burst, malformed arguments)\n", total);
+	}
+	std::fflush(stdout);
 	return failures ? 1 : 0;
 }

@@ -30,7 +30,7 @@ Getting the sources
 -------------------
 
     git clone --recursive https://github.com/NatronGitHub/openfx-gmic.git
-    git submodule update -i    # in an existing clone: the openfx and SupportExt submodules are required
+    git submodule update -i    # in an existing clone: the openfx and SupportExt (GPL builds) submodules are required
 
 The G'MIC sources (version GMICVER in the Makefile, 4.0.8) are downloaded at build time and are
 not in git: the release tarball gmic_<version>.tar.gz, from the GitHub release of GreycLab/gmic,

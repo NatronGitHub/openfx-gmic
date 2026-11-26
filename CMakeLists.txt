@@ -51,7 +51,7 @@ endif()
 
 project(OpenFXGMIC CXX)
 
-if(NOT EXISTS "${PROJECT_SOURCE_DIR}/openfx/include" OR NOT EXISTS "${PROJECT_SOURCE_DIR}/SupportExt/cmake/SupportExt.cmake")
+if(NOT EXISTS "${PROJECT_SOURCE_DIR}/openfx/include")
   message(FATAL_ERROR
     "\n submodule(s) are missing, please update your repository:\n"
     "  > git submodule update -i\n")
@@ -611,6 +611,20 @@ target_link_libraries(GMIC PRIVATE openfx::Support)
 # GPLv2+), with its text renderer, linked with OpenGL. COMMERCIAL builds (CeCILL-C) leave it out
 # and keep the host's handles (OFX_GMIC_COMMERCIAL in gmic_ofx.cpp), as GMIC_OFX/Makefile does.
 if(NOT OFX_LICENSE STREQUAL "COMMERCIAL")
+  if(NOT EXISTS "${PROJECT_SOURCE_DIR}/SupportExt/cmake/SupportExt.cmake")
+    message(FATAL_ERROR
+      "\n the SupportExt submodule is missing, please update your repository:\n"
+      "  > git submodule update -i\n")
+  endif()
+  # Linux: libGL.so.1, not GLVND's libOpenGL.so.0 and libGLX.so.0, which not every system has
+  # (linuxCheckBundle.sh: libglvnd-opengl on EL9)
+  set(OpenGL_GL_PREFERENCE LEGACY)
+  # macOS: the OpenGL framework weak-linked, as Makefile.master does, so that the plug-in loads
+  # without it (SupportExt then finds this OpenGL::GL instead of FindOpenGL's)
+  if(APPLE AND NOT TARGET OpenGL::GL)
+    add_library(OpenGL::GL INTERFACE IMPORTED GLOBAL)
+    set_target_properties(OpenGL::GL PROPERTIES INTERFACE_LINK_OPTIONS "LINKER:-weak_framework,OpenGL")
+  endif()
   include(SupportExt/cmake/SupportExt.cmake)
   supportext_add_sources(GMIC COMPONENTS POSITION_INTERACT)
 endif()

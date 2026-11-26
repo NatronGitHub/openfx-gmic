@@ -545,7 +545,8 @@ jobs:
   # apply the patches): static zlib, libpng (and expat, for the test hosts) from vcpkg's
   # x64-windows-static triplet, pinned by vcpkg.json's builtin-baseline, and the static C runtime
   # (/MT). OpenMP is MSVC's /openmp: the bundle ships the redistributable vcomp140.dll next to
-  # GMIC.ofx. GMIC.ofx may only import KERNEL32, SHELL32 and VCOMP140.
+  # GMIC.ofx. GMIC.ofx may only import KERNEL32, OPENGL32 (the point handles, openfx-supportext's
+  # overlay, GPL builds), SHELL32 and VCOMP140.
   windows:
     name: Windows x64 (MSVC)
     runs-on: windows-2025
@@ -616,8 +617,8 @@ jobs:
           deps=$(MSYS2_ARG_CONV_EXCL='*' dumpbin -nologo -dependents "$(cygpath -w "$ofx")" |
                  sed -n '/has the following dependencies/,/Summary/p' | grep -iE '^ +[^ ]+\.dll$' | tr -d ' \r' | tr 'a-z' 'A-Z' | sort | tr '\n' ' ')
           echo "GMIC.ofx imports: $deps"
-          [ "$deps" = "KERNEL32.DLL SHELL32.DLL VCOMP140.DLL " ] ||
-            { echo "FAIL: GMIC.ofx must import only KERNEL32, SHELL32 and VCOMP140"; exit 1; }
+          [ "$deps" = "KERNEL32.DLL OPENGL32.DLL SHELL32.DLL VCOMP140.DLL " ] ||
+            { echo "FAIL: GMIC.ofx must import only KERNEL32, OPENGL32 (the point handles), SHELL32 and VCOMP140"; exit 1; }
           ls -l "$dir"
           [ "$(ls "$dir" | tr '\n' ' ')" = "GMIC.ofx vcomp140.dll " ] ||
             { echo "FAIL: Contents/Win64 must have GMIC.ofx and vcomp140.dll only"; exit 1; }
@@ -684,8 +685,8 @@ jobs:
           deps=$(MSYS2_ARG_CONV_EXCL='*' dumpbin -nologo -dependents "$(cygpath -w build-debug/Plugins/GMIC.ofx.bundle/Contents/Win64/GMIC.ofx)" |
                  sed -n '/has the following dependencies/,/Summary/p' | grep -iE '^ +[^ ]+\.dll$' | tr -d ' \r' | tr 'a-z' 'A-Z' | sort | tr '\n' ' ')
           echo "GMIC.ofx (debug) imports: $deps"
-          [ "$deps" = "KERNEL32.DLL SHELL32.DLL VCOMP140.DLL " ] ||
-            { echo "FAIL: the debug GMIC.ofx must import only KERNEL32, SHELL32 and VCOMP140"; exit 1; }
+          [ "$deps" = "KERNEL32.DLL OPENGL32.DLL SHELL32.DLL VCOMP140.DLL " ] ||
+            { echo "FAIL: the debug GMIC.ofx must import only KERNEL32, OPENGL32 (the point handles), SHELL32 and VCOMP140"; exit 1; }
       - name: Build and describe (release, C++20)
         if: env.BUILD_VARIANTS == 'true'
         run: |
@@ -871,7 +872,7 @@ jobs:
                    grep -iE '^ +[^ ]+\.dll$' | tr -d ' \r' | tr 'a-z' 'A-Z' | sort | tr '\n' ' ')
             machine=$(MSYS2_ARG_CONV_EXCL='*' dumpbin -nologo -headers "$w" | grep -m1 ' machine ' | tr -d '\r' | sed 's/^ *//; s/ *$//')
             echo "$dir/GMIC.ofx: $machine; imports $deps"
-            [ "$deps" = "KERNEL32.DLL SHELL32.DLL VCOMP140.DLL " ] || { echo "FAIL: GMIC.ofx must import only KERNEL32, SHELL32 and VCOMP140"; exit 1; }
+            [ "$deps" = "KERNEL32.DLL OPENGL32.DLL SHELL32.DLL VCOMP140.DLL " ] || { echo "FAIL: GMIC.ofx must import only KERNEL32, OPENGL32 (the point handles), SHELL32 and VCOMP140"; exit 1; }
             case $want in
               ARM64X) echo "$machine" | grep -q 'AA64 machine (ARM64) (ARM64X)' ;;
               ARM64) echo "$machine" | grep -q 'AA64 machine (ARM64)$' ;;

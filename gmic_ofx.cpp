@@ -587,7 +587,7 @@ private:
 
 	const GlobalData& globalData() const { return _gd; }
 	// parameter i if it is a point, else NULL
-	OFX::Double2DParam* pointParam(int i) const;
+	OFX::Double2DParam* pointParamAt(int i) const;
 	bool pointIsOn(int i) const;
 	std::optional<OfxRectD> sourceRoD(double time) const;
 	void pointChangedByUser(int i, double time, bool moveToSource = true);
@@ -1170,7 +1170,7 @@ void GMICEffect::changedParam(const OFX::InstanceChangedArgs& args, const std::s
 	}
 }
 
-OFX::Double2DParam* GMICEffect::pointParam(int i) const
+OFX::Double2DParam* GMICEffect::pointParamAt(int i) const
 {
 	OFX::Double2DParam* const* point = (i >= 0 && i < _gd.nofParams) ? std::get_if<OFX::Double2DParam*>(&_params[i]) : nullptr;
 	return point ? *point : nullptr;
@@ -1179,11 +1179,11 @@ OFX::Double2DParam* GMICEffect::pointParam(int i) const
 // Point i changed by the user, in the parameters or with its handle (GMICPointsInteract, whose changes
 // the host reports as plug-in edits), from the instance changed action or an interact action: reset
 // to its default (if moveToSource), it goes within Source too (pointsMoveToSource sets parameters:
-// the instance changed actions this causes are plug-in edits, ignored in changedParam); moved
-// elsewhere, the plug-in forgets the value it gave it.
+// the instance changed actions this causes are plug-in edits, ignored in changedParam; the handles
+// pass false: a drag is not a reset); moved elsewhere, the plug-in forgets the value it gave it.
 void GMICEffect::pointChangedByUser(int i, double time, bool moveToSource)
 {
-	OFX::Double2DParam* point = pointParam(i);
+	OFX::Double2DParam* point = pointParamAt(i);
 	if (!point) return;
 	const std::optional<OfxPointD> v = hostQuery([point] { return point->getValue(); });
 	if (!v) return;
@@ -1243,9 +1243,8 @@ void GMICEffect::endChanged(OFX::InstanceChangeReason /*reason*/)
 // (instance changed action: parameters cannot be set in render, and should only be set in the
 // instance changed action or in interacts), each point parameter still at its default is moved to its G'MIC default within
 // Source's region of definition, as openfx-misc's Transform does with its center; so is a point that
-// the user resets to its default (or sets to it), in the parameters or with its handle (instance
-// changed action, or the overlay's actions: see pointChangedByUser). Points don't follow Source
-// when its size changes
+// the user resets to its default (or sets to it) in the parameters (a point dragged onto it with its
+// handle is not a reset: see GMICPointsInteract). Points don't follow Source when its size changes
 // otherwise (e.g. a Reformat upstream edited), as with openfx-misc. A point is at its default if it
 // is not animated and has the default converted with the project size and offset, with the size only
 // (Natron ignores the offset), or unconverted (hosts without a project size); or the value the
@@ -1322,8 +1321,7 @@ void GMICEffect::pointsFromSourceWrite()
 }
 
 // Move the point parameters at their default (and, if onlyParam >= 0, only that one) within Source,
-// in one edit block (nested in the caller's, if any). Called from the instance changed action, or
-// from an interact action (pointChangedByUser).
+// in one edit block. Called from the instance changed action only.
 void GMICEffect::pointsMoveToSource(double time, int onlyParam)
 {
 	const std::optional<OfxRectD> rod = sourceRoD(time);
@@ -1869,9 +1867,9 @@ bool GMICPointsInteract::isPointShown(int i, double /*time*/) const
 }
 
 // An edit block for every change, opened and closed here, so that the plug-in's bookkeeping
-// (pointChangedByUser: the hidden kPointsFromSourceParam, or the move within Source of a point
-// dropped on its default) is in the same undo step as the value: at the first change of the drag,
-// and at its end.
+// (pointChangedByUser: the hidden kPointsFromSourceParam) is in the same undo step as the value: at
+// the first change of the drag, and at its end. A drag is never a reset: a point dropped on its
+// project default stays there (no move within Source).
 void GMICPointsInteract::setPointValue(int i, double time, const OfxPointD& p, bool firstChange, bool dragEnd)
 {
 	OFX::ParamSet::EditBlock block(_effect, "Move point", true, OFX::ParamSet::EditBlock::eBeginNow,
@@ -1882,7 +1880,7 @@ void GMICPointsInteract::setPointValue(int i, double time, const OfxPointD& p, b
 	} else {
 		point->setValue(p.x, p.y);
 	}
-	if (firstChange || dragEnd) _effect.pointChangedByUser(_param[i], time, dragEnd);
+	if (firstChange || dragEnd) _effect.pointChangedByUser(_param[i], time, false);
 }
 #endif // OFX_GMIC_COMMERCIAL
 
