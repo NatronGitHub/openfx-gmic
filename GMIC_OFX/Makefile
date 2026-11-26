@@ -3,12 +3,20 @@ PLUGINSOURCES = gmic.cpp gmic_ofx.cpp gmic_plugin.cpp gmic_plugin_call.cpp gmic_
 PLUGINOBJECTS = $(PLUGINSOURCES:.cpp=.o)
 
 SRCDIR = ..
+# LICENSE (GPL or COMMERCIAL) and FFT (pocketfft or fftw3): see license.mk
+include $(SRCDIR)/license.mk
+# The point handles (issue #176): openfx-supportext's PointsInteract (ofxsPositionInteract.h,
+# GPLv2+) and its text renderer, which call OpenGL (Makefile.master links it). COMMERCIAL builds
+# (CeCILL-C) leave them out and keep the host's handles, as CMakeLists.txt does. (Before
+# Makefile.master, whose link rule lists PLUGINOBJECTS when it is read.)
+ifneq ($(LICENSE),COMMERCIAL)
+SUPPORTEXT_SOURCES = ofxsOGLTextRenderer.cpp ofxsOGLFontData.cpp
+PLUGINSOURCES += $(SUPPORTEXT_SOURCES)
+endif
 # the OpenFX C++ Support library: Plugins/Makefile.master compiles its sources (SUPPORTOBJECTS)
 # into the plug-in
 PATHTOROOT = $(SRCDIR)/openfx/Support
 include $(PATHTOROOT)/Plugins/Makefile.master
-# LICENSE (GPL or COMMERCIAL) and FFT (pocketfft or fftw3): see license.mk
-include $(SRCDIR)/license.mk
 
 # the licences of the plug-in and G'MIC (COPYING: dual CeCILL-C / CeCILL v2; COMMERCIAL builds use
 # CeCILL-C)
@@ -132,6 +140,9 @@ endif
 ifeq ($(LICENSE),COMMERCIAL)
 CXXFLAGS += -DOFX_GMIC_COMMERCIAL
 endif
+ifneq ($(SUPPORTEXT_SOURCES),)
+CXXFLAGS += -I$(SRCDIR)/SupportExt
+endif
 
 # The libraries, through pkg-config: zlib (to decompress the G'MIC standard library), libpng
 # (HaldCLUTs) and FFTW (FFT=fftw3). No libcurl, on any system: G'MIC downloads filter data with
@@ -150,10 +161,13 @@ endif
 DEPS_MODULES = libpng zlib $(FFT_MODULES)
 ifeq ($(OS),Linux)
   GMIC_STATIC_DEPS ?= 1
-  # Makefile.master links OpenGL to every plug-in: G'MIC doesn't use it
+  ifeq ($(LICENSE),COMMERCIAL)
+  # Makefile.master links OpenGL to every plug-in: COMMERCIAL builds don't use it (no point
+  # handles, see SUPPORTEXT_SOURCES)
   LINKFLAGS := $(filter-out -lGL,$(LINKFLAGS))
   # (openfx >= #161 moves -lGL -pthread -ldl into SYSLIBS, at the end of the link line)
   SYSLIBS := $(filter-out -lGL,$(SYSLIBS))
+  endif
 else
   override GMIC_STATIC_DEPS = 0
 endif
@@ -179,7 +193,7 @@ LINKFLAGS += `pkg-config --libs $(DEPS_MODULES)` $(FFT_LIBS)
 endif
 
 # (after Plugins/Makefile.master's VPATH, the Support library's sources)
-VPATH += $(SRCDIR) $(SRCDIR)/Helpers
+VPATH += $(SRCDIR) $(SRCDIR)/Helpers $(if $(SUPPORTEXT_SOURCES),$(SRCDIR)/SupportExt)
 
 # C++ standard: Plugins/Makefile.master (above) adds it to CXXFLAGS: -std=c++17 by default (the
 # Support library needs C++17), none if CXX or CXXFLAGS_EXTRA (or CXXFLAGS_ADD) already has a -std

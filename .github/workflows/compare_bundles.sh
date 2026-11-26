@@ -4,8 +4,8 @@
 #   Contents/_CodeSignature of an ad hoc signature (the CMake install step signs the bundle);
 # - the same contents, except for the plug-in binary and the bundled libraries;
 # - the same exported symbols of the plug-in binary;
-# - the same direct dependencies (library names), except OpenGL: Makefile.master links it to
-#   every plug-in, but G'MIC doesn't use it.
+# - the same direct dependencies (library names), OpenGL included: both builds link it for the
+#   point handles (openfx-supportext).
 # Usage: compare_bundles.sh <GMIC.ofx.bundle> <GMIC.ofx.bundle>
 set -euo pipefail
 
@@ -59,12 +59,7 @@ esac
 # A tool failure (set -e, pipefail) or an empty list is an error: two empty lists would "match".
 list() { # list <symbols|deps> <bundle> <output>
     "$1" "$2/$binary" > "$3.raw"
-    if [ "$1" = deps ]; then
-        { grep -v -i -E '^(OpenGL|libGL\.so.*|opengl32\.dll)$' "$3.raw" || [ $? = 1 ]; } > "$3.unsorted"
-    else
-        cp "$3.raw" "$3.unsorted"
-    fi
-    LC_ALL=C sort "$3.unsorted" > "$3"
+    LC_ALL=C sort "$3.raw" > "$3"
     if [ ! -s "$3" ]; then
         echo "FAIL: no $1 found in $2/$binary"
         exit 1

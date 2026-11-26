@@ -8,6 +8,8 @@ name: Continuous Integration
 # builds C++20). Build artifacts are uploaded only on demand or for pre-release tags, and the
 # Windows bundle (x64 + Arm, merged) also weekly. On demand, "only: windows-arm" runs just the
 # Windows on Arm job (gh workflow run ci.yml -f only=windows-arm).
+# "gmic: develop" runs just the job that tests G'MIC's develop sources against the pinned release
+# (gh workflow run ci.yml -f gmic=develop, see the gmic-develop job).
 #
 # CI builds with CMake (NatronGitHub/Natron#1181), as Natron's build-plugins.sh does by default.
 # The top-level Makefile is a fallback (build-plugins.sh's PLUGINS_BUILD_SYSTEM=make), kept tested
@@ -58,6 +60,21 @@ on:
         type: choice
         options: [ all, windows-arm ]
         default: all
+      # develop: only the G'MIC develop job (gmic-develop, #226), with the refs below
+      gmic:
+        description: "release: the pinned G'MIC (GMICVER); develop: only the job that tests G'MIC develop against it"
+        type: choice
+        options: [ release, develop ]
+        default: release
+      gmic-ref:
+        description: "gmic: develop: the GreycLab/gmic branch, tag or commit"
+        default: develop
+      cimg-ref:
+        description: "gmic: develop: the GreycLab/CImg branch, tag or commit"
+        default: develop
+      community-ref:
+        description: "gmic: develop: the GreycLab/gmic-community branch, tag or commit"
+        default: master
   schedule:
     - cron: '17 3 * * 6' # weekly, Saturday 03:17 UTC: also builds the variants (see above)
   # pushes to master (and tags) only: pull requests are built by the pull_request trigger,
@@ -80,9 +97,10 @@ on:
 
 # One group per event type and PR number (branch names can collide across forks) or ref (master,
 # tags): a new run cancels the superseded one, except for tags. The event type keeps a master push
-# from cancelling the weekly or on-demand run, which also builds the variants.
+# from cancelling the weekly or on-demand run, which also builds the variants, and a G'MIC develop
+# run is in a group of its own.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}${{ inputs.gmic == 'develop' && '-gmic-develop' || '' }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
@@ -116,15 +134,20 @@ jobs:
       run: ${{ steps.check.outputs.run }}
       # the Windows ARM64/Arm64EC/Arm64X job: weekly and on demand only
       arm: ${{ steps.check.outputs.arm }}
+      # the G'MIC develop job (gmic: develop), alone
+      develop: ${{ steps.check.outputs.develop }}
     steps:
       - id: check
         run: |
           run=true
           arm=false
           case "${{ github.event_name }}" in schedule|workflow_dispatch) arm=$run;; esac
+          develop=false
           if [ "${{ inputs.only }}" = windows-arm ]; then run=false; arm=true; fi
+          if [ "${{ inputs.gmic }}" = develop ]; then run=false; arm=false; develop=true; fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
           echo "arm=$arm" >> "$GITHUB_OUTPUT"
+          echo "develop=$develop" >> "$GITHUB_OUTPUT"
 
   linux:
     name: Linux (Ubuntu 24.04)
@@ -161,6 +184,13 @@ jobs:
             Helpers/gmic_string.cpp Helpers/gmic_log.cpp -o parser_test
           ./parser_test
       - uses: ./.github/actions/gmic-sources
+      # the parser alone, before the build: the point() arguments that give the point handles
+      # (#176), which no other test sees (hostDemo has no overlays)
+      - name: Parser test (point arguments)
+        run: |
+          c++ -std=c++17 -O1 -Wall -Wextra -IHelpers .github/workflows/point_args_test.cpp Helpers/gmic_parser.cpp \
+            Helpers/gmic_string.cpp Helpers/gmic_log.cpp -o point_args_test
+          ./point_args_test
       # static zlib and libpng built with -fPIC, linked into GMIC.ofx (GMIC_STATIC_DEPS)
       - uses: ./.github/actions/static-deps
       - name: Build (release, OpenMP)
@@ -172,7 +202,8 @@ jobs:
           .github/workflows/check_fft.sh install/OFX/Plugins/GMIC.ofx.bundle pocketfft
           openfx/Support/include/linuxCheckBundle.sh install/OFX/Plugins
           .github/workflows/check_linux_deps.sh install/OFX/Plugins/GMIC.ofx.bundle
-      # the tests run on the installed bundle, the one that is shipped (see "Upload bundle")
+      # the tests run on the installed bundle, the one that is shipped (see "Upload bundle");
+      # gmic_develop_tests.sh (the gmic-develop job) runs the same tests: keep them in sync
       - name: Describe all plug-ins
         run: DESCRIBE_USER_LIST=1 DESCRIBE_UPDATE_FILE=1 PLUGIN_LIST=plugins.txt .github/workflows/describe_plugins.sh install/OFX/Plugins $GMIC_PLUGIN_COUNT
       # the default FFT (pocketfft) on a non-power-of-two image, with an interpreter built from the
@@ -347,7 +378,7 @@ jobs:
       - name: Install packages
         run: |
           dnf install -y git gcc-c++ make cmake pkgconf-pkg-config expat-devel perl binutils diffutils \
-            findutils which xz tar gzip python3
+            findutils which xz tar gzip python3 mesa-libGL-devel
           gcc --version | sed -n 1p; ldd --version | sed -n 1p; cmake --version | sed -n 1p
       - uses: actions/checkout@v5
         with:
@@ -501,7 +532,8 @@ jobs:
   # apply the patches): static zlib, libpng (and expat, for the test hosts) from vcpkg's
   # x64-windows-static triplet, pinned by vcpkg.json's builtin-baseline, and the static C runtime
   # (/MT). OpenMP is MSVC's /openmp: the bundle ships the redistributable vcomp140.dll next to
-  # GMIC.ofx. GMIC.ofx may only import KERNEL32, SHELL32 and VCOMP140.
+  # GMIC.ofx. GMIC.ofx may only import KERNEL32, OPENGL32 (the point handles, openfx-supportext's
+  # overlay, GPL builds), SHELL32 and VCOMP140.
   windows:
     name: Windows x64 (MSVC)
     runs-on: windows-2025
@@ -858,3 +890,105 @@ jobs:
           path: merged
           retention-days: 14
           compression-level: 9
+
+  # G'MIC develop (#226), on demand only (gmic: develop, with gmic-ref, cimg-ref, community-ref):
+  # builds the plug-in with the pinned G'MIC release (in release/) and with GreycLab/gmic develop,
+  # GreycLab/CImg develop and GreycLab/gmic-community master (in develop/, made by
+  # gmic_develop_sources.sh: a G'MIC bump in that checkout only, with the local patches that still
+  # apply), runs the describe, full render, FFT and user-file tests on both
+  # (gmic_develop_tests.sh: the tests of the linux job, keep them in sync), and compares them
+  # (gmic_develop_report.py), the outputs of the renders included: the job summary, and the
+  # results artifact (logs, summary.md, summary.json, the develop standard library). Test failures
+  # are findings, not job failures: the job fails only if a build or the comparison fails. Shared
+  # zlib and libpng (GMIC_STATIC_DEPS=OFF): the bundles are not shipped.
+  gmic-develop:
+    name: Linux (Ubuntu 24.04), G'MIC develop
+    runs-on: ubuntu-24.04
+    needs: changes
+    if: needs.changes.outputs.develop == 'true'
+    timeout-minutes: 160
+    defaults:
+      run:
+        shell: bash -eo pipefail {0}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: release
+          submodules: recursive
+      - uses: actions/checkout@v5
+        with:
+          path: develop
+          submodules: recursive
+      - uses: actions/checkout@v5
+        with:
+          repository: GreycLab/gmic
+          ref: ${{ inputs.gmic-ref }}
+          path: upstream/gmic
+      - uses: actions/checkout@v5
+        with:
+          repository: GreycLab/CImg
+          ref: ${{ inputs.cimg-ref }}
+          path: upstream/CImg
+      - uses: actions/checkout@v5
+        with:
+          repository: GreycLab/gmic-community
+          ref: ${{ inputs.community-ref }}
+          path: upstream/gmic-community
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config zlib1g-dev libpng-dev libexpat1-dev \
+            libgl-dev
+      # each step has its own timeout, and the comparison and the upload run whatever happened
+      # before them (a build failure, a hang, a timeout): the summary then says what didn't run
+      - name: Test the pinned G'MIC release
+        timeout-minutes: 40
+        run: |
+          mkdir -p results
+          release/.github/workflows/gmic_develop_tests.sh release results/release $GMIC_PLUGIN_COUNT
+      - name: G'MIC develop sources
+        timeout-minutes: 15
+        run: |
+          develop/.github/workflows/gmic_develop_sources.sh upstream/gmic upstream/CImg upstream/gmic-community \
+            develop results/sources.md
+          cp develop/update*.gmic results/
+      - name: Test G'MIC develop
+        timeout-minutes: 45
+        run: develop/.github/workflows/gmic_develop_tests.sh develop results/develop $GMIC_PLUGIN_COUNT
+      # the plug-ins whose outputs differ, rendered again on each side: those whose output changes
+      # from one render to the next are not reproducible on that side, and listed apart (develop
+      # without cimg-omp-rand.sh: random numbers that depend on the thread scheduling)
+      - name: Render again the plug-ins whose outputs differ
+        if: always()
+        timeout-minutes: 30
+        run: |
+          python3 develop/.github/workflows/gmic_develop_report.py --release results/release --develop results/develop \
+            --release-renders release/render-all --develop-renders develop/render-all --write-differing results/differing.txt
+          echo "$(tr ',' '\n' < results/differing.txt | grep -c .) plug-ins whose outputs differ"
+          if [ -s results/differing.txt ]; then
+            for side in release develop; do
+              (cd $side && OFX_GMIC_MULTIRES=1 python3 .github/workflows/render_plugins.py --host build \
+                --plugins install/OFX/Plugins --list ../results/$side/plugins.txt --only "$(cat ../results/differing.txt)" \
+                --jobs 2 --work render-again) > results/$side/render-again.log 2>&1 || true
+              tail -n 3 results/$side/render-again.log
+            done
+          fi
+      - name: Compare
+        if: always()
+        timeout-minutes: 10
+        run: |
+          again=()
+          for side in release develop; do
+            if [ -d $side/render-again ]; then again+=(--$side-again $side/render-again); fi
+          done
+          python3 develop/.github/workflows/gmic_develop_report.py --release results/release \
+            --develop results/develop --release-renders release/render-all --develop-renders develop/render-all \
+            "${again[@]}" --sources results/sources.md --json results/summary.json > results/summary.md
+          cat results/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gmic-develop-results
+          path: results
+          retention-days: 14

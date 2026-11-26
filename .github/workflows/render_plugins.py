@@ -3,16 +3,16 @@
 
 Each plug-in is rendered at frame 0 with its default parameters, on a small fixed test input
 (160x120 float RGB with gradients, stripes and a rectangle: every input clip, the extra layers
-included, gets the same image), in its own directory, with a timeout. The test fails on any
-load, describe, instance or render error, and on a missing output (a crash is reported as "at
-exit" when hostDemo had written report.json and the outputs), and on NaN pixels in an output,
-except for the plug-ins of KNOWN_NAN. A few plug-ins are skipped (SKIP), are expected to fail with
-a given error (EXPECTED_FAIL), or have a longer timeout (TIMEOUT), with the reason; the test also
-fails when an expected failure renders (XPASS), when a plug-in of KNOWN_NAN renders without NaN
-(with --subset all; a warning otherwise), or when fewer than --min-rendered plug-ins rendered
-(default: 100 with --subset pr, 700 with --subset all). It warns when a listed plug-in, or a
-filter that uses the FFT, is not in the list of plug-ins, except for COMMERCIAL builds (--stdlib
-is their standard library), which leave many out.
+included, gets the same image), in its own directory, which keeps the host's output (hostDemo.log),
+with a timeout. The test fails on any load, describe, instance or render error, and on a missing
+output (a crash is reported as "at exit" when hostDemo had written report.json and the outputs),
+and on NaN pixels in an output, except for the plug-ins of KNOWN_NAN. A few plug-ins are skipped
+(SKIP), are expected to fail with a given error (EXPECTED_FAIL), or have a longer timeout
+(TIMEOUT), with the reason; the test also fails when an expected failure renders (XPASS), when a
+plug-in of KNOWN_NAN renders without NaN (with --subset all; a warning otherwise), or when fewer
+than --min-rendered plug-ins rendered (default: 100 with --subset pr, 700 with --subset all). It
+warns when a listed plug-in, or a filter that uses the FFT, is not in the list of plug-ins, except
+for COMMERCIAL builds (--stdlib is their standard library), which leave many out.
 
 usage: render_plugins.py --host <hostDemo, or the CMake build directory> [--config <config>]
                          --plugins <dir with GMIC.ofx.bundle>
@@ -179,6 +179,15 @@ def host_demo_path(host, config):
     return None
 
 
+def plugin_id(filter_name):
+    """The plug-in id of a G'MIC filter, from its name in its '#@gui <name> :' line.
+
+    The plug-in's rule (getUniqueId, Helpers/gmic_parser.cpp) on a plain name: main() warns about
+    the FFT filters whose id is not a plug-in.
+    """
+    return ID_PREFIX + re.sub(r'[^A-Za-z0-9]', '', filter_name)
+
+
 def fft_plugins(stdlib_header):
     """Ids of the filters whose command (or its _<command> helpers) uses the FFT."""
     text = stdlib_text(stdlib_header)
@@ -193,15 +202,13 @@ def fft_plugins(stdlib_header):
     bodies = {k: '\n'.join(v) for k, v in defs.items()}
     ids = set()
     for line in text.split('\n'):
-        # the plug-in's id rule (getUniqueId, Helpers/gmic_parser.cpp) on a plain name: main()
-        # warns about the ids that are not plug-ins
         gui = re.match(r'#@gui ([^:_][^:]*?)\s*:\s*([A-Za-z_][A-Za-z0-9_]*)', line)
         if not gui or gui.group(2) == '_none_':
             continue
         cmd = gui.group(2)
         body = bodies.get(cmd, '') + ''.join(v for k, v in bodies.items() if k.startswith('_' + cmd))
         if FFT_COMMANDS.search(body):
-            ids.add(ID_PREFIX + re.sub(r'[^A-Za-z0-9]', '', gui.group(1)))
+            ids.add(plugin_id(gui.group(1)))
     return ids
 
 
@@ -329,6 +336,9 @@ def render(host, host_args, plugins, work, timeout, plugin, host_threads=False, 
     except subprocess.TimeoutExpired as e:
         rc, log, timed_out = None, (e.stdout or b'').decode('utf-8', 'replace'), True
     seconds = time.time() - start
+    # the host's output (with the plug-in's log), kept for the failures' triage
+    with open(os.path.join(d, 'hostDemo.log'), 'w', encoding='utf-8') as f:
+        f.write(log)
     problem, nan, updates, report = None, 0, 0, None
     if timed_out:
         problem = 'timeout after %ds' % timeout
