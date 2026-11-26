@@ -32,19 +32,32 @@ drag_point(start[0], start[1], d[0] + 20.0, d[1] + 20.0, steps=10)
 wait_idle(120.0)
 near = point(node, "Shift")
 print("after the first drag: %r" % (near,))
-# 2: at zoom 1 around the default, from the widget pixel nearest to it
-v.setCenter(d[0], d[1])
+# 2: at zoom 1 around the default, from the widget pixel nearest to it; the widget pixels may fall
+# half a canvas pixel off the default (it depends on the widget's size): then move the centre by 0.5
+
+
+def nearest_pixel():
+    """(error, canvas position) of the widget pixel that maps nearest to the default."""
+    w = v.canvasToWidget(d[0], d[1])
+    best = None
+    for wx in (int(w[0]) - 1, int(w[0]), int(w[0]) + 1):
+        for wy in (int(w[1]) - 1, int(w[1]), int(w[1]) + 1):
+            c = v.widgetToCanvas(wx, wy)
+            e = max(abs(c[0] - d[0]), abs(c[1] - d[1]))
+            if best is None or e < best[0]:
+                best = (e, (c[0], c[1]))
+    return best
+
+
 v.setZoom(1.0)
-wait_idle(120.0)
-w = v.canvasToWidget(d[0], d[1])
-best = None
-for wx in (int(w[0]) - 1, int(w[0]), int(w[0]) + 1):
-    for wy in (int(w[1]) - 1, int(w[1]), int(w[1]) + 1):
-        c = v.widgetToCanvas(wx, wy)
-        e = max(abs(c[0] - d[0]), abs(c[1] - d[1]))
-        if best is None or e < best[0]:
-            best = (e, c)
-print("zoom %r; drop at canvas (%r, %r) (%g from the default)" % (zoom(app), best[1][0], best[1][1], best[0]))
+for ox, oy in ((0.0, 0.0), (0.5, 0.0), (0.0, 0.5), (0.5, 0.5)):
+    v.setCenter(d[0] + ox, d[1] + oy)
+    wait_idle(120.0)
+    best = nearest_pixel()
+    if best[0] < 1e-6:
+        break
+print("zoom %r; drop at canvas %r (%g from the default)" % (zoom(app), best[1], best[0]))
+check(best[0] < 1e-6, "no widget pixel maps to the default %r: the nearest is at %r" % (d, best[1]))
 drag_point(near[0], near[1], best[1][0], best[1][1], steps=5)
 wait_idle(120.0)
 end = point(node, "Shift")
