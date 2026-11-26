@@ -179,8 +179,13 @@ jobs:
       # same sources
       - name: Render FFT filters (720x576)
         run: .github/workflows/fft_smoke.sh build/gmic
-      # all the plug-ins on the weekly and on-demand runs, a subset per PR
+      # all the plug-ins on the weekly and on-demand runs, a subset per PR. hostDemo renders any
+      # region of definition but reports no multi-resolution support: OFX_GMIC_MULTIRES=1 makes
+      # the plug-in predict each result's size (#175), as on Natron. The OFX 1.4 step below runs
+      # without it, and keeps the old path (results resized to Source's size) covered.
       - name: Render plug-ins
+        env:
+          OFX_GMIC_MULTIRES: '1'
         run: |
           python3 .github/workflows/render_plugins.py --host build \
             --plugins install/OFX/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
