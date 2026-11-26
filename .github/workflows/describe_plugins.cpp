@@ -19,6 +19,17 @@
 
 using namespace OFX::Host;
 
+// The values of a property of a parameter descriptor, comma-separated ("" if it has none)
+static std::string propertyValues(const Param::Descriptor& param, const char* name)
+{
+    Property::Property* prop = param.getProperties().fetchProperty(name);
+    std::string values;
+    for (int i = 0; prop && i < prop->getDimension(); ++i) {
+        values += (i ? "," : "") + prop->getStringValue(i);
+    }
+    return values;
+}
+
 class DescribeHost : public ImageEffect::Host
 {
 public:
@@ -83,6 +94,15 @@ int main(int argc, char** argv)
                 if ((*p)->getType() == kOfxParamTypePushButton) {
                     fprintf(stderr, "PUSHBUTTON %s\t%s\n", id.c_str(), (*p)->getName().c_str());
                 }
+                // for gmic_develop_report.py: each parameter as the host sees it (type, label,
+                // default, range, choice options, secret), tab-separated
+                std::string line = "PARAM " + id + "\t" + (*p)->getName() + "\t" + (*p)->getType() + "\t" + (*p)->getLabel();
+                const char* const props[] = { kOfxParamPropDefault, kOfxParamPropMin, kOfxParamPropMax,
+                                              kOfxParamPropChoiceOption, kOfxParamPropSecret };
+                for (const char* name : props) {
+                    line += std::string("\t") + name + "=" + propertyValues(**p, name);
+                }
+                fprintf(stderr, "%s\n", line.c_str());
             }
         } else {
             ++failed;

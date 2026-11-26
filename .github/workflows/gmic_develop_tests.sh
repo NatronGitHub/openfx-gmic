@@ -41,7 +41,9 @@ cp "$TREE/build/gmic/gmic_stdlib_community.h" "$RESULTS/"
 stdlib=build/gmic/gmic_stdlib_community.h
 plugins=install/OFX/Plugins
 
-run_test describe env DESCRIBE_LOG="$RESULTS/describe-host.log" PLUGIN_LIST="$RESULTS/plugins.txt" \
+# (OFX_GMIC_TEST_LOG_HOTFIXES=1: the plug-in also logs the hot fixes that it applies, and those
+# that G'MIC no longer needs)
+run_test describe env OFX_GMIC_TEST_LOG_HOTFIXES=1 DESCRIBE_LOG="$RESULTS/describe-host.log" PLUGIN_LIST="$RESULTS/plugins.txt" \
     .github/workflows/describe_plugins.sh "$plugins" "$COUNT"
 [ -s "$RESULTS/plugins.txt" ] || { echo "No plug-in list: the other tests are skipped"; exit 0; }
 run_test fft_smoke .github/workflows/fft_smoke.sh build/gmic
