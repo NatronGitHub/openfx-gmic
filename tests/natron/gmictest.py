@@ -15,12 +15,14 @@ OUT_DIR = os.environ.get("GMIC_TEST_OUT", "/tmp")
 
 
 def make_source(app):
-    """A generator node of the project's format; skip the test if there is none."""
+    """A flat grey (0.5) generator node of the project's format; skip the test if there is none."""
     ids = natron.getPluginIDs()
     for pid in SOURCES:
         if pid in ids:
             node = app.createNode(pid)
             check(node is not None, "createNode(%s) failed" % pid)
+            if pid != GENERATOR:  # Constant is black by default; the test generator is grey
+                node.getParam("color").set(0.5, 0.5, 0.5, 1.0)
             return node
     NatronGuiTest.skip("no generator plug-in among %s (OFX_PLUGIN_PATH=%s)" % (SOURCES, os.environ.get("OFX_PLUGIN_PATH", "")))
 
@@ -45,7 +47,8 @@ def open_gmic(app, plugin_id, source=None):
     app.clearSelection()
     app.selectNode(node, True)
     NatronGuiTest.sendKey("NodeGraph", "Return")  # opens the settings panel: the overlay is shown
-    fit_viewer()
+    wait_idle(120.0)
+    NatronGuiTest.sendKey(VIEWER, "F")  # fit_viewer(), with a longer wait: renders are slow in CI
     wait_idle(120.0)
     return node, source
 
