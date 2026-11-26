@@ -1029,7 +1029,7 @@ jobs:
     runs-on: ubuntu-24.04
     needs: changes
     if: needs.changes.outputs.develop == 'true'
-    timeout-minutes: 150
+    timeout-minutes: 160
     defaults:
       run:
         shell: bash -eo pipefail {0}
@@ -1078,30 +1078,35 @@ jobs:
       - name: Test G'MIC develop
         timeout-minutes: 45
         run: develop/.github/workflows/gmic_develop_tests.sh develop results/develop $GMIC_PLUGIN_COUNT
-      # the plug-ins whose outputs differ, rendered again with the release: those whose output
-      # changes from one release render to the next are not reproducible, and listed apart
-      - name: Render again with the release the plug-ins whose outputs differ
+      # the plug-ins whose outputs differ, rendered again on each side: those whose output changes
+      # from one render to the next are not reproducible on that side, and listed apart (develop
+      # without cimg-omp-rand.sh: random numbers that depend on the thread scheduling)
+      - name: Render again the plug-ins whose outputs differ
         if: always()
-        timeout-minutes: 25
+        timeout-minutes: 30
         run: |
           python3 develop/.github/workflows/gmic_develop_report.py --release results/release --develop results/develop \
             --release-renders release/render-all --develop-renders develop/render-all --write-differing results/differing.txt
           echo "$(tr ',' '\n' < results/differing.txt | grep -c .) plug-ins whose outputs differ"
           if [ -s results/differing.txt ]; then
-            (cd release && OFX_GMIC_MULTIRES=1 python3 .github/workflows/render_plugins.py --host build \
-              --plugins install/OFX/Plugins --list ../results/release/plugins.txt --only "$(cat ../results/differing.txt)" \
-              --jobs 2 --work render-again) > results/release/render-again.log 2>&1 || true
-            tail -n 5 results/release/render-again.log
+            for side in release develop; do
+              (cd $side && OFX_GMIC_MULTIRES=1 python3 .github/workflows/render_plugins.py --host build \
+                --plugins install/OFX/Plugins --list ../results/$side/plugins.txt --only "$(cat ../results/differing.txt)" \
+                --jobs 2 --work render-again) > results/$side/render-again.log 2>&1 || true
+              tail -n 3 results/$side/render-again.log
+            done
           fi
       - name: Compare
         if: always()
         timeout-minutes: 10
         run: |
-          baseline=()
-          if [ -d release/render-again ]; then baseline=(--baseline release/render-again); fi
+          again=()
+          for side in release develop; do
+            if [ -d $side/render-again ]; then again+=(--$side-again $side/render-again); fi
+          done
           python3 develop/.github/workflows/gmic_develop_report.py --release results/release \
             --develop results/develop --release-renders release/render-all --develop-renders develop/render-all \
-            "${baseline[@]}" --sources results/sources.md --json results/summary.json > results/summary.md
+            "${again[@]}" --sources results/sources.md --json results/summary.json > results/summary.md
           cat results/summary.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload the results
         if: always()

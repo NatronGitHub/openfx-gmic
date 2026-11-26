@@ -3,27 +3,29 @@
 
 Reads the results directories of gmic_develop_tests.sh for the release and for develop (a
 missing file reads as empty: the test table then says "not run"), and prints a Markdown summary:
-- the sources (the report of gmic_develop_sources.sh) and each test's exit status;
+- the sources (the report of gmic_develop_sources.sh), the patches whose outcome differs from the
+  release, and each test's exit status; a render log cut short is flagged;
 - the plug-ins that develop adds or removes, and those whose menu category or inputs change;
 - the describe problems that only develop has, and the outcome of each hot fix on both sides;
 - the renders that differ: failures with their first G'MIC error (crashes and timeouts
   included), expected failures that render (XPASS), NaN outputs and results that don't match
-  their region of definition; a render log cut short is flagged;
+  their region of definition;
 - the plug-ins that render on both sides with different outputs (largest mean difference
-  first). With --baseline, the release has rendered those plug-ins again: one whose output
-  changes from one release render to the next is listed apart, as not reproducible;
-- the commands that the release defines, develop doesn't, and develop still calls, with the
-  plug-ins that call them (directly or not);
-- the parameter changes of the plug-ins of both sides, as the plug-in reads them (type,
-  default, range, labels, removable, visibility): default, range and type changes first; the
-  changes of the #@gui text alone are counted by parameter type;
-- the new failure lines of the other tests.
+  first). With --release-again and --develop-again, each side has rendered those plug-ins a
+  second time: one whose output then changes is listed apart, as not reproducible on that side;
+- the commands that the release defines and develop doesn't, that develop may still call (a
+  heuristic), with the plug-ins that may reach them;
+- the parameters of the plug-ins of both sides as the host sees them (describe_plugins.cpp's
+  PARAM lines: type, label, default, range, choice options, secret): type, default and range
+  changes first; the plug-ins whose #@gui text changed with nothing the host sees are counted;
+- the new failure lines of the other tests (the checkout paths left out).
 --json also writes the differences as JSON, with every list in full. --write-differing only
-writes the ids of the plug-ins whose outputs differ (comma-separated, for the --baseline renders).
+writes the ids of the plug-ins whose outputs differ (comma-separated, for the second renders).
 
 usage: gmic_develop_report.py --release <dir> --develop <dir> [--release-renders <dir>]
-                              [--develop-renders <dir>] [--baseline <dir>] [--sources <report.md>]
-                              [--json <file>] [--write-differing <file>]
+                              [--develop-renders <dir>] [--release-again <dir>]
+                              [--develop-again <dir>] [--sources <report.md>] [--json <file>]
+                              [--write-differing <file>]
 """
 import argparse
 import array
@@ -49,15 +51,15 @@ _RENDER_NAN = re.compile(r'^WARNING: (eu\.gmic\.\w+): (\d+) NaN values')
 _RENDER_MISMATCH = re.compile(r'^WARNING: \d+ plug-ins whose result does not match .*: (.*)$')
 _RENDER_DONE = re.compile(r'^\d+ rendered in \d+s')
 _FAIL_LINE = re.compile(r'^(FAIL|Error|.*\bError:)')
-# a path in the release or develop checkout (in the other tests' lines)
-_TREE_PATH = re.compile(r'\S*/(release|develop)/')
 _GUI_FILTER = re.compile(r'^#@gui ([^:_][^:]*?)\s*:\s*(.*)$')
 _GUI_PARAM = re.compile(r'^#@gui\s*:\s*(.*)$')
-_PARAM = re.compile(r'^([^=]*?)\s*=\s*(.*)$')
-# a parameter's definition: flags ('_': no preview update, '~': randomizable), type, arguments
-# between (), [] or {}, then the visibility state and its propagation
-_TYPEDEF = re.compile(r'^([_~]*)([A-Za-z_]+)\s*[(\[{](.*)[)\]}]\s*(?:_([0-2]))?\s*[-+*]?\s*$', re.DOTALL)
-_NO_VALUE_TYPES = ('note', 'link', 'separator')
+# describe_plugins.cpp's line for each parameter: id, name, type, label, then property=values
+_PARAM_LINE = re.compile(r'^PARAM (\S+)\t([^\t\n]*)\t([^\t\n]*)\t([^\t\n]*)((?:\t[^\t\n]*)*)$', re.MULTILINE)
+_PARAM_FIELDS = ('type', 'OfxParamPropDefault', 'OfxParamPropMin', 'OfxParamPropMax', 'label',
+                 'OfxParamPropChoiceOption', 'OfxParamPropSecret')
+_VALUE_FIELDS = ('type', 'OfxParamPropDefault', 'OfxParamPropMin', 'OfxParamPropMax')
+# a row of gmic_develop_sources.sh's patch table: patch, file, outcome
+_PATCH_ROW = re.compile(r'^\| `(patches/[^`]+)` \| [^|]+ \| (.*) \|$', re.MULTILINE)
 _PFM_HEADER = re.compile(rb'(P[Ff])\s+(\d+)\s+(\d+)\s+([-+0-9.eE]+)\s')
 _DEFINITION = re.compile(r'^\+?([A-Za-z_]\w*)\s*:(?!=)')
 # a command call: a word at the start of an item (after a blank, a quote, a brace or ';'), maybe
@@ -71,8 +73,8 @@ _MAX_ITEMS = 100  # the longest list printed in the summary (the JSON has them a
 _OUTPUT_TOLERANCE = 1e-4  # the largest difference of two outputs that counts as none
 
 Results = collections.namedtuple(
-    'Results', 'status plugins groupings inputs describe hotfixes renders xpasses nans mismatches '
-               'render_done filters text logs')
+    'Results', 'status plugins groupings inputs params describe hotfixes renders xpasses nans '
+               'mismatches render_cut filters text logs')
 
 
 def _read(path):
@@ -84,74 +86,6 @@ def _read(path):
         return ''
 
 
-def _split_arguments(text):
-    """Splits a parameter's arguments at the commas outside quotes and brackets."""
-    args, depth, current, quoted = [], 0, '', False
-    for char in text:
-        if char == '"':
-            quoted = not quoted
-        elif not quoted and char in '([{':
-            depth += 1
-        elif not quoted and char in ')]}':
-            depth -= 1
-        if char == ',' and depth == 0 and not quoted:
-            args.append(current.strip())
-            current = ''
-        else:
-            current += char
-    args.append(current.strip())
-    return args
-
-
-def _number(text):
-    """Returns text as a float, or text itself if it is not a number."""
-    try:
-        return float(text)
-    except ValueError:
-        return text
-
-
-def exposed(definition):
-    """Returns what the plug-in reads of a parameter definition, or None for a no-value one.
-
-    Args:
-        definition: the text after '=' in a '#@gui : <name> = <definition>' line.
-
-    Returns:
-        A dict: the type, the visibility and, depending on the type, the default, the range,
-        the labels or removable, as Helpers/gmic_parser.cpp reads them (e.g. only X, Y and
-        removable of a point). An unknown syntax gives {'type': '?', 'text': definition}.
-    """
-    match = _TYPEDEF.match(definition.strip())
-    if not match:
-        return {'type': '?', 'text': definition}
-    kind = match.group(2).lower()
-    if kind in _NO_VALUE_TYPES:
-        return None
-    args = _split_arguments(match.group(3))
-    result = {'type': kind, 'visibility': match.group(4) or '2'}
-    if kind in ('float', 'int'):
-        result['default'] = _number(args[0])
-        result['range'] = tuple(_number(arg) for arg in args[1:3])
-    elif kind == 'bool':
-        result['default'] = args[0].lower() in ('1', 'true')
-    elif kind == 'choice':
-        if re.fullmatch(r'\d+', args[0]):
-            result['default'], labels = int(args[0]), args[1:]
-        else:
-            result['default'], labels = 0, args
-        result['labels'] = tuple(label.strip('"') for label in labels)
-    elif kind == 'point':
-        result['default'] = tuple(_number(arg) for arg in args[:2])
-        removable = args[2] if len(args) > 2 else '0'
-        result['removable'] = removable if removable in ('-1', '1') else '0'
-    elif kind == 'color':
-        result['default'] = tuple(args)
-    else:  # text, file, folder, value, button...
-        result['default'] = match.group(3).strip()
-    return result
-
-
 def gui_filters(text):
     """Returns the filters of a G'MIC standard library's text, by plug-in id.
 
@@ -159,10 +93,9 @@ def gui_filters(text):
         text: the text of the library (render_plugins.stdlib_text(), decoded).
 
     Returns:
-        {id: [(commands, [(name, definition)...])...]}: one entry per filter with that id
+        {id: [(commands, [parameter text...])...]}: one entry per filter with that id
         (render_plugins.plugin_id() of its name; two filters may have the same), with the text
-        after the name in its '#@gui <name> :' line and its '#@gui : <name> = <definition>'
-        lines.
+        after the name in its '#@gui <name> :' line and the text of its '#@gui : ' lines.
     """
     found, params = collections.defaultdict(list), None
     for line in text.split('\n'):
@@ -173,8 +106,7 @@ def gui_filters(text):
             continue
         param = _GUI_PARAM.match(line)
         if param and params is not None:
-            named = _PARAM.match(param.group(1))
-            params.append((named.group(1), named.group(2)) if named else (param.group(1), ''))
+            params.append(param.group(1))
         elif not line.startswith('#@gui_'):  # (the localized lines don't end a filter)
             params = None
     return found
@@ -205,6 +137,11 @@ def read_results(directory):
     plugins = set(re.findall(r'^PLUGIN (\S+)', host_log, re.MULTILINE))
     groupings = dict(re.findall(r'^GROUPING (\S+)\t(.*)$', host_log, re.MULTILINE))
     inputs = dict(re.findall(r'^RENDERINFO (\S+)\t(.*)$', host_log, re.MULTILINE))
+    params = collections.defaultdict(collections.OrderedDict)
+    for pid, name, kind, label, props in _PARAM_LINE.findall(host_log):
+        fields = {'type': kind, 'label': label}
+        fields.update(prop.split('=', 1) for prop in props.split('\t')[1:] if '=' in prop)
+        params[pid][name] = fields
     describe_lines = (host_log + '\n' + _read(os.path.join(directory, 'describe.log'))).splitlines()
     describe = {line.strip() for line in describe_lines
                 if _DESCRIBE_PROBLEM.search(line) and not _DESCRIBE_COUNT.match(line)}
@@ -236,74 +173,49 @@ def read_results(directory):
         # (stdlib_text() decodes Latin-1, the files are UTF-8)
         text = render_plugins.stdlib_text(header).encode('latin-1').decode('utf-8', 'replace')
     logs = {test: _read(os.path.join(directory, test + '.log')) for test in _TESTS}
-    return Results(status, plugins, groupings, inputs, describe, hotfixes, renders, xpasses, nans,
-                   mismatches, any(map(_RENDER_DONE.match, render_lines)), gui_filters(text), text, logs)
+    # a render log without its summary line: the render was cut short (an exception, a timeout)
+    render_cut = bool(render_lines) and not any(map(_RENDER_DONE.match, render_lines))
+    return Results(status, plugins, groupings, inputs, dict(params), describe, hotfixes, renders, xpasses,
+                   nans, mismatches, render_cut, gui_filters(text), text, logs)
 
 
-def _shorten(text, size=60):
-    """text, cut to size characters with '...'."""
-    return text if len(text) <= size else text[:size - 3] + '...'
-
-
-def _valued(params):
-    """Returns {name: (exposed(), definition)} for the parameters that hold a value."""
-    result = collections.OrderedDict()
-    for name, definition in params:
-        value = exposed(definition)
-        if value is not None:
-            while name in result:  # a repeated name gets primes
-                name += "'"
-            result[name] = (value, definition)
-    return result
-
-
-def compare_filters(old, new, plugins):
-    """Compares the parameters that the plug-in reads, for the plug-ins of both sides.
+def compare_parameters(old, new, old_gui, new_gui, plugins):
+    """Compares the parameters as the host sees them (describe_plugins.cpp's PARAM lines).
 
     Args:
-        old, new: gui_filters() results.
+        old, new: {id: {name: fields}} of the two sides (read_results()).
+        old_gui, new_gui: gui_filters() results, to count the plug-ins whose #@gui text alone
+            changed.
         plugins: the ids that are plug-ins on both sides.
 
     Returns:
-        (changes, syntax, ambiguous): {id: {'values': [...], 'parameters': [...],
-        'other': [...]}} (default, range and type changes; parameters added or removed; labels,
-        removable, visibility and command changes), {parameter type: number of definitions
-        whose text alone changed}, and the ids that several filters share on a side (skipped).
+        (changes, text_only): {id: {'values': [...], 'parameters': [...], 'other': [...]}}
+        (type, default and range changes; parameters added or removed, or their order;
+        labels, choice options and secret flags), and the number of plug-ins whose #@gui text
+        changed with nothing the host sees.
     """
-    changes, syntax, ambiguous = {}, collections.Counter(), []
-    for pid in sorted(plugins & set(old) & set(new)):
-        if len(old[pid]) > 1 or len(new[pid]) > 1:
-            ambiguous.append(pid)
-            continue
-        (old_commands, old_params), (new_commands, new_params) = old[pid][0], new[pid][0]
+    changes, text_only = {}, 0
+    for pid in sorted(plugins):
+        before, after = old.get(pid, {}), new.get(pid, {})
         found = collections.defaultdict(list)
-        if old_commands != new_commands:
-            found['other'].append('commands: `%s` -> `%s`' % (old_commands, new_commands))
-        before, after = _valued(old_params), _valued(new_params)
-        for name, (value, definition) in before.items():
+        for name, fields in before.items():
             if name not in after:
-                found['parameters'].append('removed `%s` (%s)' % (name, value['type']))
+                found['parameters'].append('removed `%s` (%s)' % (name, fields['type']))
                 continue
-            new_value, new_definition = after[name]
-            if value == new_value:
-                if definition != new_definition:
-                    syntax[value['type']] += 1
-                continue
-            keys = [key for key in ('type', 'default', 'range') if value.get(key) != new_value.get(key)]
-            for key in keys[:1] if 'type' in keys else keys:
-                found['values'].append('`%s` %s: %s -> %s' % (name, key, value.get(key), new_value.get(key)))
-            if not keys:
-                for key in ('labels', 'removable', 'visibility', 'text'):
-                    if value.get(key) != new_value.get(key):
-                        found['other'].append('`%s` %s: %s -> %s' % (name, key, value.get(key), new_value.get(key)))
-        found['parameters'] += ['added `%s = %s`' % (name, _shorten(definition))
-                                for name, (_, definition) in after.items() if name not in before]
+            for key in _PARAM_FIELDS:
+                if fields.get(key) != after[name].get(key):
+                    section = 'values' if key in _VALUE_FIELDS else 'other'
+                    found[section].append('`%s` %s: %s -> %s' % (name, key, fields.get(key), after[name].get(key)))
+        found['parameters'] += ['added `%s` (%s)' % (name, fields['type'])
+                                for name, fields in after.items() if name not in before]
         if [name for name in before if name in after] != [name for name in after if name in before]:
             found['parameters'].append('parameter order changed')
         found = {section: lines for section, lines in found.items() if lines}
         if found:
             changes[pid] = found
-    return changes, dict(syntax), ambiguous
+        elif old_gui.get(pid) != new_gui.get(pid):
+            text_only += 1
+    return changes, text_only
 
 
 def removed_commands(release, develop):
@@ -446,13 +358,34 @@ def _render_problem(results, pid):
     return None if pid in results.plugins else 'not a plug-in'
 
 
-def differences(release, develop, renders, baseline):
+def _unstable(outputs, first, again):
+    """{id: difference} of the plug-ins of outputs whose render in first differs from the one in again."""
+    if not first or not again:
+        return {}
+    result = {}
+    for pid in outputs:
+        name = pid[len('eu.gmic.'):]
+        difference = output_difference(os.path.join(first, name), os.path.join(again, name))
+        if difference:
+            result[pid] = difference
+    return result
+
+
+def _patch_outcomes(sources):
+    """{patch: outcome} from gmic_develop_sources.sh's report (every patch applies to the release)."""
+    return {patch: outcome for patch, outcome in _PATCH_ROW.findall(sources)}
+
+
+def differences(release, develop, renders, again, trees, sources):
     """Returns the differences between the release's Results and develop's, as a JSON-able dict.
 
     Args:
         release, develop: read_results() of the two sides.
         renders: (release render dir, develop render dir), either may be None.
-        baseline: the release's second render dir of the plug-ins whose outputs differ, or None.
+        again: (release, develop) render dirs of the plug-ins whose outputs differ, rendered a
+            second time, either may be None.
+        trees: the (release, develop) checkouts, whose paths are left out of the lines compared.
+        sources: gmic_develop_sources.sh's report ('' if there is none).
     """
     both = release.plugins & develop.plugins
     render_changes = {}
@@ -465,27 +398,29 @@ def differences(release, develop, renders, baseline):
             if release.nans.get(pid, 0) != develop.nans.get(pid, 0)}
     rendered = both - set(release.renders) - set(develop.renders)
     outputs = compare_outputs(renders[0], renders[1], rendered)
-    unstable = {}
-    if baseline:
-        for pid in outputs:
-            name = pid[len('eu.gmic.'):]
-            again = output_difference(os.path.join(renders[0], name), os.path.join(baseline, name))
-            if again:
-                unstable[pid] = {'develop': outputs[pid], 'release_again': again}
+    unstable = {'release': _unstable(outputs, renders[0], again[0]),
+                'develop': _unstable(outputs, renders[1], again[1])}
     other = {}
     for test in _OTHER_TESTS:
         def fail_lines(results, test=test):
-            return [_TREE_PATH.sub('<checkout>/', line)
-                    for line in results.logs[test].splitlines() if _FAIL_LINE.match(line)]
+            lines = [line for line in results.logs[test].splitlines() if _FAIL_LINE.match(line)]
+            for tree in trees:
+                lines = [line.replace(tree, '<checkout>') for line in lines] if tree else lines
+            return lines
         before = set(fail_lines(release))
         new_lines = [line for line in fail_lines(develop) if line not in before]
         if new_lines:
             other[test] = new_lines
-    filter_changes, syntax, ambiguous = compare_filters(release.filters, develop.filters, both)
+    filter_changes, text_only = compare_parameters(release.params, develop.params, release.filters,
+                                                   develop.filters, both)
+    patches = _patch_outcomes(sources)
     return {
         'status': {test: {'release': release.status.get(test), 'develop': develop.status.get(test)}
                    for test in _TESTS},
-        'render_done': {'release': release.render_done, 'develop': develop.render_done},
+        'render_cut': {'release': release.render_cut, 'develop': develop.render_cut},
+        'patches_changed': {patch: outcome for patch, outcome in patches.items() if outcome != 'applied'},
+        'random_expected': any('does not apply' in outcome for patch, outcome in patches.items()
+                               if patch.endswith('cimg-omp-rand.sh')),
         'plugins': {
             'release': len(release.plugins), 'develop': len(develop.plugins),
             'added': sorted(develop.plugins - release.plugins),
@@ -502,13 +437,13 @@ def differences(release, develop, renders, baseline):
         'nans': nans,
         'mismatches': {'added': sorted((develop.mismatches - release.mismatches) & both),
                        'removed': sorted((release.mismatches - develop.mismatches) & both)},
-        'outputs': {pid: value for pid, value in outputs.items() if pid not in unstable},
+        'outputs': {pid: value for pid, value in outputs.items()
+                    if pid not in unstable['release'] and pid not in unstable['develop']},
         'outputs_unstable': unstable,
         'removed_commands': removed_commands(release.text, develop.text),
         'other_tests': other,
-        'filters': filter_changes,
-        'filters_syntax_only': syntax,
-        'filters_ambiguous': ambiguous,
+        'parameters': filter_changes,
+        'parameters_text_only': text_only,
     }
 
 
@@ -560,10 +495,13 @@ def _summary_lines(diff):
             % len(ranked), '']
     out += _items(['%s: %s' % (pid, value.get('note') or 'mean %.3g, max %.3g' % (value['mean'], value['max']))
                    for pid, value in ranked])
-    if diff['outputs_unstable']:
-        out += ['', 'Not reproducible (another output when the release renders them again): %d'
-                % len(diff['outputs_unstable'])]
-        out += _items(sorted(diff['outputs_unstable']))
+    if diff['random_expected']:
+        out += ['', '`cimg-omp-rand.sh` does not apply to develop: the random numbers of its OpenMP loops depend '
+                'on the thread scheduling, so the outputs of filters that use them are expected to differ.']
+    for side, unstable in diff['outputs_unstable'].items():
+        if unstable:
+            out += ['', 'Not reproducible with %s (another output when rendered again): %d' % (side, len(unstable))]
+            out += _items(sorted(unstable))
     return out
 
 
@@ -575,29 +513,28 @@ def markdown(diff, sources):
     out += ['### Tests (exit status)', '', '| Test | Release | Develop |', '|---|---|---|']
     out += ['| %s | %s | %s |' % (test, status['release'] or 'not run', status['develop'] or 'not run')
             for test, status in diff['status'].items()]
-    for side, done in diff['render_done'].items():
-        if not done and diff['status']['render'][side] is not None:
+    for side, cut in diff['render_cut'].items():
+        if cut:
             out += ['', '**The %s render log has no summary line: the render was cut short.**' % side]
+    if diff['patches_changed']:
+        out += ['', 'Patches whose outcome differs from the release (where they all apply): '
+                + ', '.join('`%s`' % patch for patch in diff['patches_changed'])]
     out += _summary_lines(diff)
-    out += ['', '### Commands that develop removed and still calls: %d' % len(diff['removed_commands']), '']
-    out += _items(['`%s`: called by %s; plug-ins: %s'
+    out += ['', '### Commands that develop removed and may still call: %d' % len(diff['removed_commands']), '']
+    out += _items(['`%s`: named by %s; plug-ins that may call it: %s'
                    % (name, ', '.join('`%s`' % caller for caller in value['callers']), ', '.join(value['plugins']) or 'none')
                    for name, value in diff['removed_commands'].items()])
     out += ['', '### Other tests: new failure lines', '']
     for test, lines in diff['other_tests'].items():
         out += ['%s:' % test] + _items(['`%s`' % line for line in lines]) + ['']
-    changes = diff['filters']
-    out += ['', '### Parameters, as the plug-in reads them: %d plug-ins changed' % len(changes), '']
-    for section, title in (('values', 'Default, range or type changes'),
+    changes = diff['parameters']
+    out += ['', '### Parameters, as the host sees them: %d plug-ins changed' % len(changes), '']
+    for section, title in (('values', 'Type, default or range changes'),
                            ('parameters', 'Parameters added or removed'),
-                           ('other', 'Labels, removable points, visibility, commands')):
+                           ('other', 'Labels, choice options, secret flags')):
         rows = ['%s: %s' % (pid, '; '.join(value[section])) for pid, value in changes.items() if section in value]
         out += ['%s: %d plug-ins' % (title, len(rows))] + _items(rows) + ['']
-    syntax = diff['filters_syntax_only']
-    out.append('Changes of the #@gui text alone (not read by the plug-in), by parameter type: %s'
-               % (', '.join('%s %d' % item for item in sorted(syntax.items())) or 'none'))
-    if diff['filters_ambiguous']:
-        out += ['', 'Not compared (several filters give this id): ' + ', '.join(diff['filters_ambiguous'])]
+    out.append('Plug-ins whose #@gui text changed with nothing the host sees: %d' % diff['parameters_text_only'])
     return '\n'.join(out) + '\n'
 
 
@@ -608,7 +545,8 @@ def main():
     parser.add_argument('--develop', required=True, help="the results of G'MIC develop")
     parser.add_argument('--release-renders', help="the release's render work directory")
     parser.add_argument('--develop-renders', help="develop's render work directory")
-    parser.add_argument('--baseline', help='the second release renders of the plug-ins whose outputs differ')
+    parser.add_argument('--release-again', help='the second release renders of the plug-ins whose outputs differ')
+    parser.add_argument('--develop-again', help='the second develop renders of the plug-ins whose outputs differ')
     parser.add_argument('--sources', help="gmic_develop_sources.sh's report")
     parser.add_argument('--json', help='where to write the differences, as JSON')
     parser.add_argument('--write-differing', help='where to write the ids whose outputs differ (only)')
@@ -619,11 +557,15 @@ def main():
         with open(args.write_differing, 'w', encoding='utf-8') as stream:
             stream.write(','.join(compare_outputs(args.release_renders, args.develop_renders, rendered)))
         return
-    diff = differences(release, develop, (args.release_renders, args.develop_renders), args.baseline)
+    trees = tuple(os.path.dirname(os.path.abspath(renders)) if renders else None
+                  for renders in (args.release_renders, args.develop_renders))
+    sources = _read(args.sources) if args.sources else ''
+    diff = differences(release, develop, (args.release_renders, args.develop_renders),
+                       (args.release_again, args.develop_again), trees, sources)
     if args.json:
         with open(args.json, 'w', encoding='utf-8') as stream:
             json.dump(diff, stream, indent=1)
-    print(markdown(diff, _read(args.sources) if args.sources else ''), end='')
+    print(markdown(diff, sources), end='')
 
 
 if __name__ == '__main__':
