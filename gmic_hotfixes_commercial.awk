@@ -2,8 +2,9 @@
 # kept lines on stdout), for both the top-level Makefile and CMakeLists.txt. These builds only
 # keep the fixes of the commands of their standard library (the others fix code under a licence
 # that they leave out, see gmic_stdlib_commercial.txt): a block
-# "#@hotfix <command> <original> <fixed> [callee:checksum...]" is left out when its command (not
-# when <original> is "-": G'MIC no longer defines it) or one of its callees is not in the file
+# "#@hotfix <command> <original> <fixed>[,<other>...] [callee:checksum...]" is left out when its
+# command (not when <original> is "-": G'MIC no longer defines it) or one of its callees is not in
+# the file
 # "cmds" (gmic_stdlib_community.h.commands, one command per line, from gmic_stdlib_commercial.sh).
 #   awk -v cmds=<commands file> -f gmic_hotfixes_commercial.awk gmic_hotfixes.gmic
 BEGIN { while ((getline c < cmds) > 0) def[c] = 1; keep = 1 }

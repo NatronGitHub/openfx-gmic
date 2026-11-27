@@ -159,6 +159,14 @@ Licence_pocketfft.txt: pocketfft_hdronly.h
 #   (https://github.com/GreycLab/CImg/issues/502)
 # - cimg-abs-peephole.sh: the same for the abs(maxabs()) -> absmaxabs() optimization, e.g.
 #   'm=maxabs(a,b,c);abs(a)' gave abs(maxabs(a,b,c)) (https://github.com/GreycLab/CImg/issues/502)
+# - cimg-fusion-guards.sh: the math parser's fusions of '+', '-', '*' and '/' only rewrite a
+#   temporary, e.g. 'z=1+(y=x*2);y' gave nan (https://github.com/GreycLab/CImg/issues/502, #232)
+# - cimg-vector-assign.sh: the same for the vector assignments 'V = expr' and '(V) = expr', e.g.
+#   'A=[3,1,2];B=sort(A);(A)=B;size(B)' gave 0 (https://github.com/GreycLab/CImg/issues/505, #245)
+# - cimg-same-reuse.sh: same() no longer writes its result into a live temporary, e.g.
+#   'a=1;sin(a)+same(vector36(a),vector36(a))' gave 2 (#246)
+# - cimg-hypot-layout.sh: hypot() of 1 or 2 values doesn't overflow or underflow with CImg
+#   develop's opcode layout (does nothing with CImg 4.0.8) (#244)
 # - cimg-fftw-no-cleanup-at-unload.sh (FFT=fftw3): no fftw_cleanup_threads() in the destructor of
 #   CImg's static FFTW3_static, run by the host's dlclose(): FFTW's worker threads were still
 #   exiting when the plug-in was unmapped (crash after the render, e.g. ABN Filigrees on Linux)
@@ -171,7 +179,7 @@ Licence_pocketfft.txt: pocketfft_hdronly.h
 # pocketfft support (cimg_use_pocketfft, https://github.com/GreycLab/CImg/pull/497).
 # CMakeLists.txt reads CIMG_PATCHES (a plain one-line assignment, see above), and applies the
 # scripts in the same order.
-CIMG_PATCHES = patches/cimg-omp-rand.sh patches/cimg-vvar2.sh patches/cimg-vargkth2.sh patches/cimg-log1p-peephole.sh patches/cimg-abs-peephole.sh patches/cimg-fftw-no-cleanup-at-unload.sh patches/cimg-msvc-snprintf.sh
+CIMG_PATCHES = patches/cimg-omp-rand.sh patches/cimg-vvar2.sh patches/cimg-vargkth2.sh patches/cimg-log1p-peephole.sh patches/cimg-abs-peephole.sh patches/cimg-fusion-guards.sh patches/cimg-vector-assign.sh patches/cimg-same-reuse.sh patches/cimg-hypot-layout.sh patches/cimg-fftw-no-cleanup-at-unload.sh patches/cimg-msvc-snprintf.sh
 CImg.h: gmic_sources.request $(CIMG_PATCHES)
 # GMIC_PATCHES: the same for gmic.cpp (read by CMakeLists.txt too). gmic-win-thread-stack.sh: an
 # 8 MiB stack for the threads of G'MIC's 'parallel' command on Windows

@@ -6,7 +6,8 @@
 # (STATUS_STACK_OVERFLOW: e.g. VintageStyle, PaperCuts, 3DConversion in an MSVC-linked host).
 # Reported upstream: https://github.com/GreycLab/gmic/issues/226
 # Usage: gmic-win-thread-stack.sh <gmic.cpp>   (prints "already patched" on a patched file)
-# Running it again on a patched file does nothing; it fails if the code changed (e.g. after a
+# Running it again on a patched file does nothing, and so does running it on a gmic.cpp that has
+# the same call (an upstream fix, in G'MIC develop); it fails if the code changed (e.g. after a
 # GMICVER bump: then check what upstream changed, and update or remove this patch). Only POSIX sh,
 # grep and awk are used, for Linux, macOS, MSYS2 and Git for Windows.
 set -e
@@ -16,6 +17,8 @@ old1='_gmic_threads[l].thread_id = CreateThread(0,0,(LPTHREAD_START_ROUTINE)gmic
 new1='_gmic_threads[l].thread_id = CreateThread(0,(SIZE_T)8*1024*1024,(LPTHREAD_START_ROUTINE)gmic_parallel<T>, // openfx-gmic patch: 8 MiB stack'
 old2='(void*)&_gmic_threads[l],0,0);'
 new2='(void*)&_gmic_threads[l],STACK_SIZE_PARAM_IS_A_RESERVATION,0);'
+# the upstream fix (G'MIC develop, after 4.0.8): the same call, without the patch's comment
+up1='_gmic_threads[l].thread_id = CreateThread(0,(SIZE_T)8*1024*1024,(LPTHREAD_START_ROUTINE)gmic_parallel<T>,'
 
 # pairs <first line> <second line>: how many times the call (its two lines, without their
 # indentation) is in the file
@@ -29,6 +32,10 @@ pairs() {
 
 if [ "$(pairs "$new1" "$new2")" = 1 ] && [ "$(pairs "$old1" "$old2")" = 0 ]; then
   echo "$f: already patched (threads of 'parallel' with an 8 MiB stack on Windows)"
+  exit 0
+fi
+if [ "$(pairs "$up1" "$new2")" = 1 ] && [ "$(pairs "$old1" "$old2")" = 0 ]; then
+  echo "$f: the threads of 'parallel' already have an 8 MiB stack on Windows: not patched (fixed upstream)"
   exit 0
 fi
 n=$(pairs "$old1" "$old2")

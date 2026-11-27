@@ -375,27 +375,30 @@ static string gmicChecksum(const string& def)
 	return s;
 }
 
-// The hot fixes that apply to the commands that G'MIC runs: those of the standard library stdlib,
-// replaced by those that userCommands defines again (the user's filter file userFile, passed as
-// custom commands, see PluginGlobalData::userCommands; empty with the built-in filters). Each
-// block of gmic_hotfixes.gmic starts with '#@hotfix <command> <original> <fixed>
-// [<callee>:<checksum>...]': the FNV-1a 64-bit hashes of the built-in definition the fix was made
-// from, of the fixed definition (the block's own), and of the built-in definitions of the commands
-// the fix relies on; <original> is "-" for a command that the built-in G'MIC no longer defines
-// (but still calls). A block is applied if the command is the original one (or, for "-", is not
-// defined) and the callees are unchanged, and skipped silently if the command already is the fixed
-// one (fixed upstream). Otherwise it is skipped: with a note if the user's file defines the
-// command or a callee another way (its definition is kept: a copy of the built-in definition
-// still gets the fix), else with a warning for the developers.
 // A block of gmic_hotfixes.gmic (see gmicGetHotfixes)
 struct HotfixBlock
 {
 	// (command, checksum of its original definition), then (callee, checksum or empty) for each callee
 	vector<std::pair<string, string> > checks;
 	string fixedChecksum; // the checksum of the fixed definition
+	vector<string> otherChecksums; // the checksums of the definitions that the block leaves alone
 	string text; // the block's lines
 };
 
+// The hot fixes that apply to the commands that G'MIC runs: those of the standard library stdlib,
+// replaced by those that userCommands defines again (the user's filter file userFile, passed as
+// custom commands, see PluginGlobalData::userCommands; empty with the built-in filters). Each
+// block of gmic_hotfixes.gmic starts with '#@hotfix <command> <original> <fixed>[,<other>...]
+// [<callee>:<checksum>...]': the FNV-1a 64-bit hashes of the built-in definition the fix was made
+// from, of the fixed definition (the block's own), and of the built-in definitions of the commands
+// the fix relies on; <original> is "-" for a command that the built-in G'MIC no longer defines
+// (but still calls); the <other> definitions are those the block leaves alone (another G'MIC
+// version that doesn't have the bug, or whose bug another block fixes). A block is applied if the
+// command is the original one (or, for "-", is not defined) and the callees are unchanged, and
+// skipped silently if the command already is the fixed one (fixed upstream) or one of the others.
+// Otherwise it is skipped: with a note if the user's file defines the command or a callee another
+// way (its definition is kept: a copy of the built-in definition still gets the fix), else with a
+// warning for the developers.
 static string gmicGetHotfixes(const string& stdlib, const string& userCommands, const string& userFile)
 {
 	static const string marker = "#@hotfix ";
@@ -406,8 +409,14 @@ static string gmicGetHotfixes(const string& stdlib, const string& userCommands, 
 		if (line.compare(0, marker.size(), marker) == 0) {
 			std::istringstream ls(line.substr(marker.size()));
 			HotfixBlock block;
-			string name, checksum, callee;
-			ls >> name >> checksum >> block.fixedChecksum;
+			string name, checksum, sums, callee;
+			ls >> name >> checksum >> sums;
+			// '<fixed>[,<other>...]'
+			std::istringstream fs(sums);
+			getline(fs, block.fixedChecksum, ',');
+			for (string sum; getline(fs, sum, ',');) {
+				block.otherChecksums.push_back(sum);
+			}
 			block.checks.push_back(std::make_pair(name, checksum));
 			while (ls >> callee) {
 				const string::size_type colon = callee.find(':');
@@ -457,6 +466,14 @@ static string gmicGetHotfixes(const string& stdlib, const string& userCommands, 
 			// already fixed in G'MIC (then the callees do not matter)
 			if (logOutcomes) {
 				gmicLog("openfx-gmic: hot fix for the G'MIC command '%s' not needed: G'MIC has the fixed definition\n", command.c_str());
+			}
+			continue;
+		}
+		if (!defs[command].empty() &&
+		    std::find(block.otherChecksums.begin(), block.otherChecksums.end(), gmicChecksum(defs[command])) != block.otherChecksums.end()) {
+			// a definition that this block leaves alone (another G'MIC version)
+			if (logOutcomes) {
+				gmicLog("openfx-gmic: hot fix for the G'MIC command '%s' not needed: a definition that this fix leaves alone\n", command.c_str());
 			}
 			continue;
 		}
