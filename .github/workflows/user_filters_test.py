@@ -621,10 +621,10 @@ def check_no_multires(host, plugins, work):
 def check_scaled_geometry(host, plugins, work):
     """Renders User File Larger and User File Shifted at render scales 1 and RENDER_SCALE.
 
-    On a Source that hostDemo makes in canonical coordinates: at
-    RENDER_SCALE, the output must be the scale-1 output times RENDER_SCALE. Larger's canonical
-    region of definition must be the scale-1 one; Shifted's pos(10,20) is in pixels of the image
-    that G'MIC gets, so its offset from Source is twice the scale-1 one in canonical coordinates.
+    On a Source that hostDemo makes in canonical coordinates: at RENDER_SCALE, the output must be
+    the scale-1 output times RENDER_SCALE. Larger's canonical region of definition must be the
+    scale-1 one; Shifted's pos(10,20) is in pixels of the image that G'MIC gets, so its offset
+    from Source is twice the scale-1 one in canonical coordinates.
 
     Args:
         host: the path of hostDemo.
@@ -1088,8 +1088,9 @@ def main():
         parser.error('--update-file and --user-source are exclusive')
     # the renders inherit this environment (render_plugins.render() leaves out GMIC_PATH and
     # XDG_CONFIG_HOME, so that G'MIC's folder, where the plug-in looks for the update file, is
-    # the HOME's .config/gmic): the update file only with --update-file
-    for var in ('OFX_GMIC_UPDATE_FILE', STATUS_VISIBILITY_VAR):
+    # the HOME's .config/gmic): the update file only with --update-file, and hostDemo's own
+    # multi-resolution support but where a check sets MULTIRES_OFF
+    for var in ('OFX_GMIC_UPDATE_FILE', STATUS_VISIBILITY_VAR, 'OFX_GMIC_MULTIRES'):
         os.environ.pop(var, None)
     name = USER_FILE
     if args.update_file:

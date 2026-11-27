@@ -216,8 +216,8 @@ jobs:
         run: .github/workflows/gmic_fix_tests.sh "$RUNNER_TEMP/gmic" build/gmic/gmic_stdlib_community.h
       # all the plug-ins on the weekly and on-demand runs, a subset per PR. hostDemo reports
       # multi-resolution support: the plug-in predicts each result's size (#175), as on Natron. The
-      # OFX 1.4 step below runs with OFX_GMIC_MULTIRES=0, and keeps the path of the hosts without
-      # it (results resized to Source's size) covered.
+      # OFX 1.4 step below runs with OFX_GMIC_MULTIRES=0, and keeps the path of hosts without
+      # multi-resolution (results resized to Source's size) covered.
       - name: Render plug-ins
         run: |
           python3 .github/workflows/render_plugins.py --host build \
@@ -239,10 +239,11 @@ jobs:
       # the OpenMP runtime stays loaded when the host unloads GMIC.ofx (#213): libgomp, unloaded
       # with it, crashed intermittently under its threads that were still exiting. In glibc's
       # LD_DEBUG=files log of hostDemo (one ld.<pid> file per process), the plug-in's pin is
-      # "activating NODELETE" for libgomp, at the first render; after it, GMIC.ofx is unloaded
-      # ("destroying link map") and libgomp is not. hostDemo also loads and unloads GMIC.ofx for
-      # the plug-in scan, before any render: libgomp, not pinned yet, is unloaded then, harmlessly
-      # (no OpenMP thread exists before the first G'MIC run), and loaded again for the render
+      # "activating NODELETE" for libgomp, at the first G'MIC run (a render, or a probe of the
+      # region of definition action); after it, GMIC.ofx is unloaded ("destroying link map") and
+      # libgomp is not. hostDemo also loads and unloads GMIC.ofx for the plug-in scan, before any
+      # G'MIC run: libgomp, not pinned yet, is unloaded then, harmlessly (no OpenMP thread exists
+      # before the first G'MIC run), and loaded again for the render
       - name: Check that unloading the plug-in keeps libgomp loaded
         run: |
           rm -rf ld-debug && mkdir ld-debug
