@@ -30,6 +30,9 @@ name: Continuous Integration
 # the three systems; weekly and on demand, all the plug-ins on Linux. Linux also renders the pr
 # subset with hostDemo --ofx14 (an OFX 1.4-only host: the plug-ins must work in OFX 1.4 hosts).
 #
+# Natron tests (tests/natron, the natron job): weekly and on demand, on Linux, what hostDemo can't
+# test (point handles and their undo, parameter visibilities), in Natron RB-2.6 (see the job).
+#
 # Linux dependencies: GMIC.ofx may need only system libraries (glibc's, libstdc++, libgcc_s,
 # libgomp): no libcurl, static zlib and libpng (see GMIC_OFX/Makefile). Each Linux build checks it
 # with openfx's linuxCheckBundle.sh on the installed bundle (Ubuntu builds: with Ubuntu 24.04's
@@ -56,9 +59,9 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "all: every job; windows-arm: only the Windows ARM64/Arm64EC/Arm64X job"
+        description: "all: every job; windows-arm: only the Windows ARM64/Arm64EC/Arm64X job; natron: only the Natron tests"
         type: choice
-        options: [ all, windows-arm ]
+        options: [ all, windows-arm, natron ]
         default: all
       # develop: only the G'MIC develop job (gmic-develop, #226), with the refs below
       gmic:
@@ -98,9 +101,9 @@ on:
 # One group per event type and PR number (branch names can collide across forks) or ref (master,
 # tags): a new run cancels the superseded one, except for tags. The event type keeps a master push
 # from cancelling the weekly or on-demand run, which also builds the variants, and a G'MIC develop
-# run is in a group of its own.
+# run and an "only: natron" run are in groups of their own.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}${{ inputs.gmic == 'develop' && '-gmic-develop' || '' }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}${{ inputs.gmic == 'develop' && '-gmic-develop' || '' }}${{ inputs.only == 'natron' && '-natron' || '' }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
@@ -124,8 +127,8 @@ env:
 jobs:
   # Which jobs run: every pull request once it is ready, not drafts (this job is skipped, and with
   # it every job, which all need it); "only: windows-arm" (workflow_dispatch) runs just the Windows
-  # on Arm job. The weekly scheduled run is never skipped: the toolchains (package managers, runner
-  # images) move even when master doesn't.
+  # on Arm job, "only: natron" just the Natron tests (natron job). The weekly scheduled run is
+  # never skipped: the toolchains (package managers, runner images) move even when master doesn't.
   changes:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
@@ -136,18 +139,23 @@ jobs:
       arm: ${{ steps.check.outputs.arm }}
       # the G'MIC develop job (gmic: develop), alone
       develop: ${{ steps.check.outputs.develop }}
+      # the Natron tests (natron job): weekly and on demand only
+      natron: ${{ steps.check.outputs.natron }}
     steps:
       - id: check
         run: |
           run=true
           arm=false
           case "${{ github.event_name }}" in schedule|workflow_dispatch) arm=$run;; esac
+          natron=$arm
           develop=false
-          if [ "${{ inputs.only }}" = windows-arm ]; then run=false; arm=true; fi
-          if [ "${{ inputs.gmic }}" = develop ]; then run=false; arm=false; develop=true; fi
+          if [ "${{ inputs.only }}" = windows-arm ]; then run=false; arm=true; natron=false; fi
+          if [ "${{ inputs.only }}" = natron ]; then run=false; arm=false; natron=true; fi
+          if [ "${{ inputs.gmic }}" = develop ]; then run=false; arm=false; natron=false; develop=true; fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
           echo "arm=$arm" >> "$GITHUB_OUTPUT"
           echo "develop=$develop" >> "$GITHUB_OUTPUT"
+          echo "natron=$natron" >> "$GITHUB_OUTPUT"
 
   linux:
     name: Linux (Ubuntu 24.04)
@@ -997,4 +1005,125 @@ jobs:
         with:
           name: gmic-develop-results
           path: results
+          retention-days: 14
+
+  # Natron tests (tests/natron, #233), weekly and on demand ("only: natron" runs just this job): the
+  # point handles (#223) with Natron --test under Xvfb (Mesa llvmpipe), and the parameter
+  # visibilities after an edit (#224) with NatronRenderer -t, on a release build of the plug-in.
+  # Natron is built here from the head of RB-2.6, as Natron's CI does (its Fast build, with ccache:
+  # about 9 minutes cold, 30 s warm; the job takes 8 to 16 minutes). Not per PR: the job tests
+  # against two moving targets, Natron's RB-2.6 head and openfx-misc's natron_testing bundle, whose
+  # regressions would turn unrelated PRs red. In CI, a skipped test is a failure
+  # (NATRON_TESTS_NO_SKIP): a missing OpenGL context or Natron test API must not go unnoticed.
+  # Later, Natron's natron_testing pre-release (Natron-RB-2.6-Linux-x86_64.tar.xz, with
+  # natron_testing-commit.txt) could replace the build: remove its bundled GMIC.ofx.bundle, and
+  # check first that the plug-in built here (Ubuntu 24.04, GLIBCXX_3.4.33) loads with the libstdc++
+  # of that Rocky Linux 9 archive.
+  natron:
+    name: Natron tests (Ubuntu 24.04)
+    runs-on: ubuntu-24.04
+    needs: changes
+    if: needs.changes.outputs.natron == 'true'
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash -eo pipefail {0}
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_MAXSIZE: 500M
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      # the plug-in's and Natron's (as the Linux job of Natron's ci.yml: Qt 5, PySide2, Python 3.12)
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config zlib1g-dev libpng-dev libexpat1-dev \
+            libgl-dev xvfb xauth libgl1-mesa-dri mesa-utils x11-utils \
+            build-essential libboost-serialization-dev libboost-system-dev libcairo2-dev \
+            qt5-qmake qtbase5-dev qtdeclarative5-dev \
+            python3-dev libshiboken2-dev libpyside2-dev python3-pyside2.qtwidgets python3-qtpy \
+            libwayland-dev libwayland-client0 libwayland-egl1 extra-cmake-modules ccache
+      - uses: ./.github/actions/gmic-sources
+      - uses: ./.github/actions/static-deps
+      - name: Build the plug-in (release, OpenMP)
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
+            -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h"
+          cmake --build build -j4
+          cmake --install build --prefix install
+      - name: Natron RB-2.6 head
+        id: natron
+        run: |
+          commit=$(git ls-remote https://github.com/NatronGitHub/Natron refs/heads/RB-2.6 | cut -f1)
+          [[ $commit =~ ^[0-9a-f]{40}$ ]] || { echo "no RB-2.6 commit: '$commit'"; exit 1; }
+          echo "Natron: NatronGitHub/Natron@$commit"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+      - name: Check out Natron
+        uses: actions/checkout@v5
+        with:
+          repository: NatronGitHub/Natron
+          ref: ${{ steps.natron.outputs.commit }}
+          path: natron-src
+          submodules: recursive
+      - name: Restore ccache
+        id: ccache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: natron-ccache-ubuntu-24.04-${{ steps.natron.outputs.commit }}
+          restore-keys: natron-ccache-ubuntu-24.04-
+      # Natron's Fast build (Debug, -O1, no -g), without its test suite
+      - name: Build Natron
+        run: |
+          ccache -z
+          cmake -S natron-src -B natron-build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_FLAGS_DEBUG=-O1 \
+            -DCMAKE_CXX_FLAGS_DEBUG=-O1 -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DNATRON_BUILD_TESTS=OFF
+          cmake --build natron-build -j"$(nproc)" --target Natron NatronRenderer
+          ccache -s
+          mkdir natron
+          ln -s "$PWD/natron-build/App/Natron" "$PWD/natron-build/Renderer/NatronRenderer" natron/
+      - name: Save ccache
+        if: steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
+      # the tests' generator (Constant), from openfx-misc's rolling natron_testing bundle: log which
+      # one, so that a red run can be traced to openfx-misc
+      - name: Download openfx-misc (natron_testing)
+        run: |
+          url=https://github.com/NatronGitHub/openfx-misc/releases/download/natron_testing/openfx-misc-build-ubuntu_24-testing.zip
+          mkdir natron-plugins && cd natron-plugins
+          curl -fsSL --retry 3 -D headers.txt -o misc.zip "$url"
+          echo "openfx-misc natron_testing: $(grep -i '^last-modified:' headers.txt | tail -n 1 | tr -d '\r')"
+          gh release view natron_testing -R NatronGitHub/openfx-misc --json assets \
+            --jq '.assets[] | select(.name == "openfx-misc-build-ubuntu_24-testing.zip") | "asset updated \(.updatedAt), \(.size) bytes"' || true
+          unzip -q misc.zip && rm misc.zip headers.txt
+          find . -maxdepth 5 -name '*.ofx.bundle' | sort
+        env:
+          GH_TOKEN: ${{ github.token }}
+      # the GUI tests need an OpenGL context: fail without one (the tests would be skipped)
+      - name: Check GLX under Xvfb
+        run: xvfb-run -a -s "-screen 0 1920x1200x24" glxinfo -B
+      - name: Run the Natron tests
+        run: |
+          plugins=$(find "$PWD/natron-plugins" -maxdepth 5 -name '*.ofx.bundle' -printf '%h\n' | sort -u | paste -sd:)
+          NATRON_BIN_DIR=$PWD/natron GMIC_PLUGIN_DIR=$PWD/install/OFX/Plugins NATRON_TEST_PLUGINS="$plugins" \
+            NATRON_COMMIT=${{ steps.natron.outputs.commit }} NATRON_TESTS_NO_SKIP=1 OUT=$PWD/natron-tests \
+            xvfb-run -a -s "-screen 0 1920x1200x24" tests/natron/run_tests.sh
+      # always (also on a timeout or a cancel): the logs have the probe values, zooms and timings
+      - name: Upload the test logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: natron-tests
+          path: |
+            natron-tests
+            !natron-tests/cache
+            !natron-tests/*/cache
+            !natron-tests/scripts/__pycache__
           retention-days: 14

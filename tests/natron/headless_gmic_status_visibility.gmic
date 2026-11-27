@@ -1,0 +1,13 @@
+#@gui Natron Test
+#@gui User File Status Edit : fx_userfile_status, fx_userfile_status_preview
+#@gui : Mode = choice("Off","On")
+#@gui : note = note("Amount and Echo: with Mode On")
+#@gui : Amount = float(0.2,0,1)_0-
+#@gui : Echo = float(0,0,1)_1
+#@gui : Tail = int(3,0,10)
+fx_userfile_status :
+  fill_color {$2*255},{$3*255},{$4*25.5}
+
+fx_userfile_status_preview :
+  if $1 u "{"$1"}{"$2"}_2{"$2"}_2{7}" else u "{"$1"}{"$2"}{"$3"}{"$4"}" fi
+  fill_color 255,0,255

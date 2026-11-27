@@ -1,0 +1,41 @@
+# openfx-gmic #176/#223: one Ctrl+Z in the viewer undoes one drag of a point handle, two undo two.
+# Quadrangle's Top-Left Vertex is a burst point (red): each pen motion sets it, and the drag, with the
+# plug-in's hidden PointsFromSource bookkeeping, must still be one undo step.
+from gmictest import *
+
+PLUGIN = "eu.gmic.Quadrangle"
+node, source = open_gmic(app, PLUGIN)
+pen_away(app, node)
+pfs = node.getParam("PointsFromSource")
+p0 = point(node, "TopLeft_Vertex")
+s0 = pfs.getValue()
+print("start %r, PointsFromSource %r" % (p0, s0))
+px = 1.0 / zoom(app)
+a = (p0[0] + 150.0, p0[1] - 100.0)
+b = (a[0] + 100.0, a[1] - 75.0)
+drag_point(p0[0], p0[1], a[0], a[1], steps=10)
+wait_idle(120.0)
+p1 = point(node, "TopLeft_Vertex")
+s1 = pfs.getValue()
+print("after drag 1: %r, PointsFromSource %r" % (p1, s1))
+drag_point(a[0], a[1], b[0], b[1], steps=10)
+wait_idle(120.0)
+p2 = point(node, "TopLeft_Vertex")
+print("after drag 2: %r, PointsFromSource %r" % (p2, pfs.getValue()))
+check_close(p1[0], a[0], 2 * px, "x after drag 1")
+check_close(p1[1], a[1], 2 * px, "y after drag 1")
+check_close(p2[0], b[0], 2 * px, "x after drag 2")
+check_close(p2[1], b[1], 2 * px, "y after drag 2")
+pen_away(app, node)
+NatronGuiTest.sendKey(VIEWER, "Ctrl+Z")
+wait_idle(120.0)
+u1 = point(node, "TopLeft_Vertex")
+print("after one undo: %r, PointsFromSource %r" % (u1, pfs.getValue()))
+NatronGuiTest.sendKey(VIEWER, "Ctrl+Z")
+wait_idle(120.0)
+u2 = point(node, "TopLeft_Vertex")
+print("after two undos: %r, PointsFromSource %r; other vertices %r" % (u2, pfs.getValue(),
+      [point(node, n) for n in ("TopRight_Vertex", "BottomRight_Vertex", "BottomLeft_Vertex")]))
+check(u1 == p1, "after one undo: %r, expected %r (after drag 1)" % (u1, p1))
+check(u2 == p0, "after two undos: %r, expected %r (the start)" % (u2, p0))
+check(pfs.getValue() == s0, "after two undos, PointsFromSource %r, expected %r" % (pfs.getValue(), s0))
