@@ -1322,8 +1322,8 @@ static bool isRemovablePoint(const GlobalData* globalDataP, int i)
 // whatever its type (issue #231); a value that it can't read leaves the parameter's own; an int or
 // float is clamped to the parameter's range, as by G'MIC-Qt's spin box; a choice outside its
 // options, or a color that is not 3 or 4 values, is ignored; a bool is on for "1" only; a button
-// is left as it is. Visibilities are not applied. False if nothing was set (an empty status, or
-// another number of values).
+// is left as it is. Visibilities are not applied. False if the status doesn't apply (an empty
+// status, or another number of values).
 static bool setStatusValues(const std::vector<std::string>& status, const GlobalData* globalDataP, SequenceData* sequenceDataP,
 	std::map<int, double>* exact = nullptr)
 {
