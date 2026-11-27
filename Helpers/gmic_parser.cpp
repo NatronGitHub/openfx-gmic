@@ -1227,9 +1227,6 @@ static void markStatusFilters(const CommandFile& file, vector<Filter>& filters)
 			}
 		}
 	}
-	// About G'MIC gathers the pages of the About folder (see gmic_parse_multi), whose own commands
-	// are not kept: one of them, What's New?, changes the visibility at run time
-	visibilityFilterCommands.insert("fx_gmicky");
 	for (Filter& f : filters) {
 		EffectData& cd = f.data;
 		cd.statusOnEdit = !cd.command.empty() && !cd.noPreview && statusFilterCommands.count(cd.preview_command);
@@ -1553,8 +1550,8 @@ static bool writesGmicChosenFile(const vector<string>& items)
 //   into G'MIC's folders or at a path that a command computes (writesGmicChosenFile): e.g. Layers
 //   To PNG, and the pages that download or post through the files where they keep their data;
 // - the main command (only) waits for keys in a display window ({*,ESC}...): Diaporama.
-// (The parser already leaves out the Sequences category and the [animated] and [interactive]
-// filters.) Removed after the plug-in identifiers are assigned, so that the others keep theirs.
+// (The parser already leaves out the Sequences folders and the [interactive] filters.) Removed
+// after the plug-in identifiers are assigned, so that the others keep theirs.
 // There is no list of filters: as in G'MIC-Qt, which hides none, a filter that these rules miss is
 // shown (e.g. Intarsia, which writes its HTML page and images into the Output Directory that the
 // user chooses), and if it really can't work in a host, it is for upstream to mark it.
@@ -1810,16 +1807,12 @@ vector<Filter> gmic_parse_multi(const string& content)
 		// the rules below look at the filter's own folder, the last one of its path (e.g.
 		// Testing/Samj/Sequences is a Sequences folder)
 		const string folder = it->plainPath.empty() ? string() : it->plainPath.back();
-		// Left out: the interactive and animated filters (anywhere in their lines, e.g. a choice
-		// label), the Sequences folders, and the page that G'MIC's update_deprecate inserts into
-		// the update file of an older G'MIC version (update408.gmic once a newer G'MIC is out),
-		// which tells G'MIC-Qt users to upgrade: no filter, and a plug-in there would shift the
-		// index of every other one. A Various folder keeps all its filters (e.g. CeKoaSa 009,
-		// whose choice "New Curves [interactive]" is one option).
-		const string lc = strLowercase(line2);
-		const bool leftOut = lc.find("[interactive]") != string::npos || folder == "Sequences" ||
-			lc.find("[animated]") != string::npos || line2.find("[ New Version Available! ]") != string::npos;
-		if ((folder == "Various" || !leftOut) && !cd.name.empty()) {
+		// Left out: the interactive filters ("[interactive]" anywhere in their lines, e.g. a choice
+		// label: they open a display window, which a host's render can't have), and the Sequences
+		// folders. G'MIC-Qt shows the Sequences filters, which make an animation as layers: they stay
+		// left out until the plug-in renders them as sequence generators (issue #255).
+		const bool leftOut = strLowercase(line2).find("[interactive]") != string::npos || folder == "Sequences";
+		if (!leftOut && !cd.name.empty()) {
 			result.push_back(Filter{cd, line2});
 			hiddenResults.push_back(it->hidden);
 		}
@@ -1861,16 +1854,14 @@ vector<Filter> gmic_parse_multi(const string& content)
         EffectData& cd = f.data;
         // (nested folders: "G'MIC/Testing/Afre/Colors", see gmic_parse_multi; a filter in no
         // folder is in the G'MIC group itself)
-        if (cd.category == "About") {
-            cd.category = "G'MIC";
-        } else {
-            cd.category = cd.category.empty() ? string("G'MIC") : "G'MIC/" + cd.category;
-            cd.name = "G'MIC " + cd.name;
-        }
+        cd.category = cd.category.empty() ? string("G'MIC") : "G'MIC/" + cd.category;
+        cd.name = "G'MIC " + cd.name;
+        // (without the blanks inside the brackets: "[ New Version Available! ]")
+        strReplace(cd.name, "[ ", "[");
+        strReplace(cd.name, " ]", "]");
         strReplace(cd.name, "[", "");
         strReplace(cd.name, "]", "");
         strReplace(cd.name, " - ", " ");
-        strReplace(cd.name, "inverse", "inv.");
     }
     return result;
 }

@@ -97,6 +97,27 @@ const char* const kValueFilter =
 	"fx_tv_preview :\n"
 	"  fx_tv $*\n";
 
+// The rules on the #@gui lines alone (issue #204: no rule names a filter, an author or a folder
+// other than G'MIC's Sequences convention): the pages of an About folder are filters of a folder
+// like any other; a filter with "[interactive]" in any of its lines is left out, also in a Various
+// folder; the Sequences folders are left out (issue #255); the page that G'MIC's update_deprecate
+// adds to an outdated update file is shown, as in G'MIC-Qt; names are not abbreviated.
+const char* const kGuiFilters =
+	"#@gui <i>About</i>\n"
+	"#@gui Test About Page : _none_, _none_\n"
+	"#@gui : _ = note(\"text\")\n"
+	"#@gui _<i>Various</i>\n"
+	"#@gui Test Various : fx_tw, fx_tw\n"
+	"#@gui : Mode = choice(\"Off\",\"New Curves [interactive]\")\n"
+	"#@gui Test inverse Name : fx_tx, fx_tx\n"
+	"#@gui : X = float(1,0,2)\n"
+	"#@gui _<b>Sequences</b>\n"
+	"#@gui Test Sequence : fx_ty, fx_ty\n"
+	"#@gui : Frames = int(10,2,100)\n"
+	"#@gui ________\n"
+	"#@gui !<b><i>[ New Version Available! ]</i></b> : _none_, _none_\n"
+	"#@gui : note = note{\"A new version is available\"}\n";
+
 const gmic_ofx::EffectData* find(const std::vector<gmic_ofx::Filter>& filters, const std::string& id)
 {
 	for (const gmic_ofx::Filter& f : filters) {
@@ -140,6 +161,23 @@ int main()
 		if (!ok) ++failed;
 		std::printf("%s %s: %s (expected %s)\n", ok ? "ok" : "FAIL", c.id,
 			!d ? "hidden" : d->dynamicVisibility ? "dynamic visibility" : "static", c.dynamicVisibility ? "dynamic visibility" : "static");
+	}
+	// the #@gui rules: id, then the name and category (nullptr: left out)
+	const std::vector<gmic_ofx::Filter> guiFilters = gmic_ofx::gmic_parse_multi(kGuiFilters);
+	const struct { const char* id; const char* name; const char* category; } guiCases[] = {
+		{ "eu.gmic.TestAboutPage", "G'MIC Test About Page", "G'MIC/About" },
+		{ "eu.gmic.TestVarious", nullptr, nullptr },
+		{ "eu.gmic.TestinverseName", "G'MIC Test inverse Name", "G'MIC/Various" },
+		{ "eu.gmic.TestSequence", nullptr, nullptr },
+		{ "eu.gmic.NewVersionAvailable", "G'MIC New Version Available!", "G'MIC" },
+	};
+	for (const auto& c : guiCases) {
+		const gmic_ofx::EffectData* const d = find(guiFilters, c.id);
+		const bool ok = c.name ? d && d->name == c.name && d->category == c.category : !d;
+		if (!ok) ++failed;
+		std::printf("%s %s: %s%s%s (expected %s%s%s)\n", ok ? "ok" : "FAIL", c.id, d ? ("\"" + d->name + "\"").c_str() : "hidden",
+			d ? " in " : "", d ? d->category.c_str() : "", c.name ? ("\"" + std::string(c.name) + "\"").c_str() : "hidden",
+			c.name ? " in " : "", c.category ? c.category : "");
 	}
 	// the locale: the first one with a decimal comma that the system has
 	const char* locale = nullptr;
