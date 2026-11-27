@@ -175,11 +175,17 @@ Licence_pocketfft.txt: pocketfft_hdronly.h
 #   the CRT's _vsnprintf, which doesn't when it truncates): G'MIC's 'input' left image titles
 #   unterminated, read past their end (crash, e.g. Montage Pappus Chain on Windows ARM64) (#111,
 #   https://github.com/GreycLab/CImg/issues/507)
+# - cimg-run-realloc.sh: a fill or eval of an image fails with an error ("Running pipeline has
+#   re-allocated the image list.") when a run() in its expression inserts enough images to
+#   re-allocate the image list, instead of writing into the freed image (its writes were lost):
+#   the check of G'MIC develop, made in CImg's mp_run() (#243,
+#   https://github.com/GreycLab/gmic/issues/231; fixed in GreycLab/gmic 6938fc8 and GreycLab/CImg
+#   e3e326b, where the script does nothing: drop it at the next G'MIC bump)
 # G'MIC 4.0.8 has the fixes of the other patches that 4.0.7 needed (see CHANGELOG.md), and CImg's
 # pocketfft support (cimg_use_pocketfft, https://github.com/GreycLab/CImg/pull/497).
 # CMakeLists.txt reads CIMG_PATCHES (a plain one-line assignment, see above), and applies the
 # scripts in the same order.
-CIMG_PATCHES = patches/cimg-omp-rand.sh patches/cimg-vvar2.sh patches/cimg-vargkth2.sh patches/cimg-log1p-peephole.sh patches/cimg-abs-peephole.sh patches/cimg-fusion-guards.sh patches/cimg-vector-assign.sh patches/cimg-same-reuse.sh patches/cimg-hypot-layout.sh patches/cimg-fftw-no-cleanup-at-unload.sh patches/cimg-msvc-snprintf.sh
+CIMG_PATCHES = patches/cimg-omp-rand.sh patches/cimg-vvar2.sh patches/cimg-vargkth2.sh patches/cimg-log1p-peephole.sh patches/cimg-abs-peephole.sh patches/cimg-fusion-guards.sh patches/cimg-vector-assign.sh patches/cimg-same-reuse.sh patches/cimg-hypot-layout.sh patches/cimg-fftw-no-cleanup-at-unload.sh patches/cimg-msvc-snprintf.sh patches/cimg-run-realloc.sh
 CImg.h: gmic_sources.request $(CIMG_PATCHES)
 # GMIC_PATCHES: the same for gmic.cpp (read by CMakeLists.txt too). gmic-win-thread-stack.sh: an
 # 8 MiB stack for the threads of G'MIC's 'parallel' command on Windows

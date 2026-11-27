@@ -25,7 +25,7 @@ status=0
 
 # check <issue> <description> <expected output> <gmic arguments>...: gmic must succeed, and the
 # last line of its output be <expected>, or, for '!~<regex>', be non-empty and not match the
-# extended regular expression
+# extended regular expression, or, for '~<regex>', match it
 check() {
   local issue=$1 what=$2 expected=$3 out rc=0 ok=0
   shift 3
@@ -34,6 +34,7 @@ check() {
   if [ $rc = 0 ]; then
     case $expected in
       '!~'*) [ -n "$out" ] && ! printf '%s\n' "$out" | grep -Eq -- "${expected#!~}" && ok=1;;
+      '~'*) printf '%s\n' "$out" | grep -Eq -- "${expected#\~}" && ok=1;;
       *) [ "$out" = "$expected" ] && ok=1;;
     esac
   else
@@ -62,6 +63,16 @@ check 245 "'X = sort(X)' still sorts in place" "1,2,3" e '{A=[3,1,2];A=sort(A);A
 check 246 "same() doesn't overwrite a live temporary" "1.8414709848078965" e '{a=1;sin(a)+same(vector36(a),vector36(a))}'
 check 244 "hypot() doesn't overflow" "1.414213562373095e+200" e '{hypot(1e200,1e200)}'
 check 244 "hypot() doesn't underflow" "1.414213562373095e-200" e '{hypot(1e-200,1e-200)}'
+# a run() that re-allocates the image list of a fill/eval of an image: an error, not a write into
+# the freed image (with the bug, the writes were lost: 7)
+check 243 "eval[0] whose run() re-allocates the image list fails" "~re-allocated the image list" \
+  100,100,1,1,7 local eval[0] "run('1x20');i(0,0)=3" e "no error: {0,i(0,0)}" onfail e '${}' "done"
+check 243 "fill whose run() re-allocates the image list fails" "~re-allocated the image list" \
+  100,100,1,1,7 local f[0] ">x==5&&y==5?(run('1x20');i(0,0)=3);i" e "no error: {0,i(0,0)}" onfail e '${}' "done"
+check 243 "eval[0] whose run() doesn't re-allocate the image list still writes" "3" \
+  100,100,1,1,7 eval[0] "run('1x2');i(0,0)=3" e '{0,i(0,0)}'
+check 243 "eval without a selection may still re-allocate the image list" "41" \
+  100,100 eval "for(k=0,k<40,++k,run('1x1'))" e '$!'
 
 # filters of the standard library and of gmic-community (hot fixes)
 check 229 "Zone System (fx_apply_curve)" "ok" 64,64,1,3,"x*4" fx_zonesystem 1,10,1,1,0,255,0 e ok
