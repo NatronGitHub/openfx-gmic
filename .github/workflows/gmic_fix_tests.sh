@@ -69,8 +69,8 @@ check 243 "eval[0] whose run() re-allocates the image list fails" "~re-allocated
   100,100,1,1,7 local eval[0] "run('1x20');i(0,0)=3" e "no error: {0,i(0,0)}" onfail e '${}' "done"
 check 243 "fill whose run() re-allocates the image list fails" "~re-allocated the image list" \
   100,100,1,1,7 local f[0] ">x==5&&y==5?(run('1x20');i(0,0)=3);i" e "no error: {0,i(0,0)}" onfail e '${}' "done"
-check 243 "eval[0] whose run() doesn't re-allocate the image list still writes" "3" \
-  100,100,1,1,7 eval[0] "run('1x2');i(0,0)=3" e '{0,i(0,0)}'
+check 243 "eval[0] whose run() doesn't change the image list still writes" "3" \
+  100,100,1,1,7 eval[0] "run('a=1');i(0,0)=3" e '{0,i(0,0)}'
 check 243 "eval without a selection may still re-allocate the image list" "41" \
   100,100 eval "for(k=0,k<40,++k,run('1x1'))" e '$!'
 
