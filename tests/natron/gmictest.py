@@ -1,7 +1,7 @@
 # Helpers for openfx-gmic's Natron GUI tests (Natron --test test_gmic_*.py), on top of Natron's
 # natrontest.py (Tests/gui/natrontest.py, which run_tests.sh fetches at the Natron commit under test).
-# The tests need GMIC.ofx.bundle and a generator on OFX_PLUGIN_PATH: Natron's test generator
-# (net.natron.test.Generator, Tests/OfxTestPlugin) or openfx-misc's Constant. A missing generator
+# The tests need GMIC.ofx.bundle and a generator on OFX_PLUGIN_PATH: openfx-misc's Constant (as in CI)
+# or Natron's test generator (net.natron.test.Generator, Tests/OfxTestPlugin). A missing generator
 # skips a test; a missing G'MIC plug-in fails it.
 import os
 
@@ -9,8 +9,8 @@ import NatronGuiTest
 from natrontest import *
 
 VIEWER = "Viewer1"
-# a generator for Source, in order of preference
-SOURCES = (GENERATOR, "net.sf.openfx.ConstantPlugin")
+# a generator for Source, in order of preference: Constant, which CI uses, first
+SOURCES = ("net.sf.openfx.ConstantPlugin", GENERATOR)
 OUT_DIR = os.environ.get("GMIC_TEST_OUT", "/tmp")
 
 
@@ -54,9 +54,12 @@ def open_gmic(app, plugin_id, source=None):
 
 
 def zoom(app):
-    """Screen pixels per canvas unit in the viewer (PyViewer.getZoom), 1 if not available."""
+    """Screen pixels per canvas unit in the viewer (PyViewer.getZoom); skip the test without it."""
     v = app.getViewer(VIEWER)
-    return v.getZoom() if v is not None and hasattr(v, "getZoom") else 1.0
+    check(v is not None, "no viewer %s" % VIEWER)
+    if not hasattr(v, "getZoom"):
+        NatronGuiTest.skip("PyViewer has no getZoom")
+    return v.getZoom()
 
 
 def point(node, name):

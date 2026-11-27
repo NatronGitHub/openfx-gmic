@@ -23,17 +23,17 @@ def between(i):
     rendering = NatronGuiTest.isRendering()
     v = point(node, "Shift")
     idle = NatronGuiTest.waitIdle(60.0, 0.2)
+    check(idle, "the GUI was not idle 60 s after motion %d" % i)
     steps.append((i, rendering, v, idle, [pixel(*p) for p in probes]))
 
 
 drag_point(x0, y0, x1, y1, steps=8, between=between)
-release_rendering = NatronGuiTest.isRendering()
 wait_idle(120.0)
 for s in steps:
     print("motion %d: rendering right after the motion %r, Shift %r, idle %r, probes %r" % s)
 end = point(node, "Shift")
 after = [pixel(*p) for p in probes]
-print("after the release: rendering %r, Shift %r, probes %r" % (release_rendering, end, after))
+print("after the release: Shift %r, probes %r" % (end, after))
 save_viewer("gmic_point_drag_release")
 
 px = 1.0 / zoom(app)

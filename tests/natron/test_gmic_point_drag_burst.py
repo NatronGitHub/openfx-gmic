@@ -28,6 +28,7 @@ def between(i):
     rendering = NatronGuiTest.isRendering()
     v = point(node, "Position")
     idle = NatronGuiTest.waitIdle(60.0, 0.2)
+    check(idle, "the GUI was not idle 60 s after motion %d" % i)
     steps.append((i, rendering, v, idle, probe_pixels()))
 
 
@@ -41,8 +42,6 @@ print("after the release: Position %r, probes %r" % (end, after))
 save_viewer("gmic_point_drag_burst")
 
 px = 1.0 / zoom(app)
-moved = [s for s in steps if abs(s[2][0] - x0) > 2 * px]
-check(len(moved) >= 6, "the value changed at %d of 8 motions only (burst point): %r" % (len(moved), [s[2] for s in steps]))
 for i, _, v, _, _ in steps:
     check_close(v[0], x0 + (x1 - x0) * i / 8.0, 2 * px, "Position x after motion %d" % i)
 check(any(s[4] != before for s in steps[:-1]),

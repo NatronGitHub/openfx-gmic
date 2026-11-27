@@ -16,7 +16,7 @@ fetches at the Natron commit under test, `NATRON_COMMIT`.
 ## Running
 
 ```sh
-NATRON_BIN_DIR=/path/to/natron GMIC_PLUGIN_DIR=/path/to/OFX/Plugins OFX_PLUGIN_PATH=/path/to/openfx-misc \
+NATRON_BIN_DIR=/path/to/natron GMIC_PLUGIN_DIR=/path/to/OFX/Plugins NATRON_TEST_PLUGINS=/path/to/openfx-misc \
   NATRON_COMMIT=<Natron commit> tests/natron/run_tests.sh [test.py ...]
 ```
 
@@ -24,9 +24,14 @@ NATRON_BIN_DIR=/path/to/natron GMIC_PLUGIN_DIR=/path/to/OFX/Plugins OFX_PLUGIN_P
   `Natron-RB-2.6-Linux-x86_64.tar.xz` of Natron's `natron_testing` pre-release (remove its bundled
   `Plugins/OFX/Natron/GMIC.ofx.bundle`) or a Natron build with symbolic links to them.
 - `GMIC_PLUGIN_DIR`: the directory holding the `GMIC.ofx.bundle` under test.
-- `OFX_PLUGIN_PATH`: a generator for the tests' source, openfx-misc's Constant (bundled in the Natron
-  archive) or Natron's test generator (`Tests/OfxTestPlugin`); without one, the tests are skipped.
+- `NATRON_TEST_PLUGINS`: plug-in directories (colon-separated) with a generator for the tests' source,
+  openfx-misc's Constant (preferred, as in CI) or Natron's test generator (`Tests/OfxTestPlugin`);
+  without one, the tests are skipped. Natron gets only these and `GMIC_PLUGIN_DIR` on its
+  `OFX_PLUGIN_PATH` (yours is ignored), and the script fails if another `GMIC.ofx.bundle` could be
+  loaded instead of the one under test: in these directories, in Natron's bundled plug-ins or in the
+  default OpenFX locations (`/usr/OFX/Plugins`, `/Library/OFX/Plugins`).
 - `NATRON_TEST_WRAPPER`: a command to run Natron and NatronRenderer with (e.g. a debugger script).
+- `NATRON_TESTS_NO_SKIP=1`: a skipped test is a failure (CI sets it).
 - `OUT` (default `./natron-tests`): one directory per test, with its log (`log.txt`), screenshots and
   user filter file; Natron's caches go there too.
 
@@ -36,7 +41,7 @@ Each test prints PASS, FAIL or SKIP. The GUI tests need a display with OpenGL: o
 skipped. A missing G'MIC plug-in fails the tests.
 
 CI runs them weekly and on demand (`gh workflow run ci.yml -f only=natron`), in the `natron` job of
-`.github/workflows/ci.yml`.
+`.github/workflows/ci.yml`, with a Natron built from the head of RB-2.6 and `NATRON_TESTS_NO_SKIP=1`.
 
 ## Writing tests
 

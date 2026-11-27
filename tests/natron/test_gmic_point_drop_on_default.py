@@ -2,11 +2,22 @@
 # A point reset to its default (in the parameters) goes to its G'MIC default within Source, as
 # Transform's center does; a drag must not be taken for such a reset.
 # Poincaré Disk's Shift (non-burst, default 50 %, 50 %: (960, 540) in the 1920x1080 project) gets a
-# Source twice as large (G'MIC Upscale [Scale2x]): connecting it moves Shift to Source's centre
-# (1920, 1080). Shift is then dragged back exactly onto (960, 540) and must stay there.
+# Source twice as large (G'MIC Upscale [Scale2x]): connecting it moves Shift to Source's centre, read
+# from Source's region of definition ((1920, 0) while that grows downwards from the top edge, #238).
+# Shift is then dragged back exactly onto (960, 540) and must stay there. The phases' times are
+# printed: the renders are 3840x2160.
 # To drop exactly on (960, 540), the last drag is made at zoom 1 around it, from a widget pixel that
 # maps to it (pen events have integer widget coordinates; the plug-in rounds the value to the pixel).
+import time
+
 from gmictest import *
+
+t0 = time.monotonic()
+
+
+def phase(what):
+    print("%6.1f s: %s" % (time.monotonic() - t0, what))
+
 
 PLUGIN = "eu.gmic.PoincarDisk"
 UPSCALE = "eu.gmic.UpscaleScale2x"
@@ -15,6 +26,7 @@ gen = make_source(app)
 up = app.createNode(UPSCALE)
 up.connectInput(0, gen)
 node, _ = open_gmic(app, PLUGIN, up)
+phase("Poincare Disk on the upscaled Source, viewer fitted")
 v = app.getViewer(VIEWER)
 if not all(hasattr(v, f) for f in ("setCenter", "setZoom", "canvasToWidget", "widgetToCanvas")):
     NatronGuiTest.skip("PyViewer has no setCenter/setZoom/canvasToWidget/widgetToCanvas")
@@ -22,8 +34,8 @@ rod = up.getRegionOfDefinition(1, 0)
 d = (960.0, 540.0)  # the default in the 1920x1080 project
 start = point(node, "Shift")
 print("Source %r, Shift %r" % ((rod.left(), rod.bottom(), rod.right(), rod.top()), start))
-if abs(rod.right() - rod.left() - 1920.0) < 1:
-    NatronGuiTest.skip("%s did not change the size of Source" % UPSCALE)
+check(abs(rod.right() - rod.left() - 3840.0) < 1, "%s did not double the width of Source: %r"
+      % (UPSCALE, (rod.left(), rod.right())))
 check_close(start[0], (rod.left() + rod.right()) / 2, 1, "Shift x at Source's centre")
 check_close(start[1], (rod.bottom() + rod.top()) / 2, 1, "Shift y at Source's centre")
 
@@ -31,6 +43,7 @@ check_close(start[1], (rod.bottom() + rod.top()) / 2, 1, "Shift y at Source's ce
 drag_point(start[0], start[1], d[0] + 20.0, d[1] + 20.0, steps=10)
 wait_idle(120.0)
 near = point(node, "Shift")
+phase("first drag")
 print("after the first drag: %r" % (near,))
 # 2: at zoom 1 around the default, from the widget pixel nearest to it; the widget pixels may fall
 # half a canvas pixel off the default (it depends on the widget's size): then move the centre by 0.5
@@ -56,11 +69,13 @@ for ox, oy in ((0.0, 0.0), (0.5, 0.0), (0.0, 0.5), (0.5, 0.5)):
     best = nearest_pixel()
     if best[0] < 1e-6:
         break
+phase("zoom 1 around the default")
 print("zoom %r; drop at canvas %r (%g from the default)" % (zoom(app), best[1], best[0]))
 check(best[0] < 1e-6, "no widget pixel maps to the default %r: the nearest is at %r" % (d, best[1]))
 drag_point(near[0], near[1], best[1][0], best[1][1], steps=5)
 wait_idle(120.0)
 end = point(node, "Shift")
+phase("drop on the default")
 print("after the drop on the default: %r" % (end,))
 save_viewer("gmic_point_drop_on_default")
 check(end != start, "Shift went back to Source's default %r after a drop on its default" % (start,))

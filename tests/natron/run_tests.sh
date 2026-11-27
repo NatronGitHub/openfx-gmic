@@ -5,11 +5,14 @@
 # Environment:
 #   NATRON_BIN_DIR       the directory of the Natron and NatronRenderer launchers (required)
 #   GMIC_PLUGIN_DIR      the directory holding GMIC.ofx.bundle (required)
-#   OFX_PLUGIN_PATH      more plug-ins, e.g. openfx-misc for its Constant generator (optional)
+#   NATRON_TEST_PLUGINS  more plug-in directories (colon-separated), e.g. openfx-misc's, for its
+#                        Constant generator (optional); OFX_PLUGIN_PATH is ignored: Natron gets only
+#                        these and GMIC_PLUGIN_DIR, and no other GMIC.ofx.bundle may be found
 #   NATRON_COMMIT        the Natron commit whose Tests/gui helpers are fetched (default RB-2.6)
 #   NATRON_TEST_WRAPPER  a command to run Natron and NatronRenderer with, e.g. a debugger script (optional)
 #   OUT                  the work directory (default ./natron-tests): logs, screenshots, caches
 #   TEST_TIMEOUT         seconds per test (default 600)
+#   NATRON_TESTS_NO_SKIP 1: a skipped test (exit status 77) is a failure, as in CI
 # Exit status: 1 if a test failed, 77 if Natron is missing or every test was skipped, else 0.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
@@ -22,7 +25,18 @@ if [ -z "${NATRON_BIN_DIR:-}" ] || [ ! -x "$renderer" ]; then
   exit 77
 fi
 [ -d "${GMIC_PLUGIN_DIR:-}/GMIC.ofx.bundle" ] || { echo "FAIL: no GMIC.ofx.bundle in GMIC_PLUGIN_DIR (${GMIC_PLUGIN_DIR:-unset})"; exit 1; }
-plugin_path=$GMIC_PLUGIN_DIR${OFX_PLUGIN_PATH:+:$OFX_PLUGIN_PATH}
+no_skip=${NATRON_TESTS_NO_SKIP:-0}
+plugin_path=$GMIC_PLUGIN_DIR${NATRON_TEST_PLUGINS:+:$NATRON_TEST_PLUGINS}
+# another GMIC.ofx.bundle could be loaded instead of the one under test: in the other plug-in
+# directories, Natron's bundled plug-ins or the default OpenFX locations
+IFS=: read -r -a others <<< "${NATRON_TEST_PLUGINS:-}"
+for d in ${others[@]+"${others[@]}"} "$NATRON_BIN_DIR/Plugins/OFX/Natron" "$NATRON_BIN_DIR/../Plugins/OFX/Natron" \
+    /usr/OFX/Plugins /Library/OFX/Plugins "${COMMONPROGRAMFILES:-/nonexistent}/OFX/Plugins"; do
+  if [ -n "$d" ] && [ -e "$d/GMIC.ofx.bundle" ]; then
+    echo "FAIL: $d/GMIC.ofx.bundle could be loaded instead of $GMIC_PLUGIN_DIR/GMIC.ofx.bundle"
+    exit 1
+  fi
+done
 # shellcheck disable=SC2206  # a command and its arguments
 wrapper=(${NATRON_TEST_WRAPPER:-})
 
@@ -64,14 +78,15 @@ for t in "$@"; do
   if [ ${#cmd[@]} = 0 ]; then
     rc=77; echo "no display or no Natron GUI: skipped" > "$o/log.txt"
   else
-    ( cd "$o" && HOME="$o/home" OFX_PLUGIN_PATH="$plugin_path" NATRON_PLUGIN_PATH="$out/empty-natron-path" \
+    ( cd "$o" && unset XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME && HOME="$o/home" OFX_PLUGIN_PATH="$plugin_path" NATRON_PLUGIN_PATH="$out/empty-natron-path" \
         NATRON_DISK_CACHE_PATH="$cache" GMIC_TEST_OUT="$o" NATRON_GUI_TESTS=1 NATRON_TEST_TIMEOUT="$tmo" \
         timeout -s TERM -k 60 $((tmo + 60)) ${wrapper[@]+"${wrapper[@]}"} "${cmd[@]}" < /dev/null > "$o/log.txt" 2>&1 )
     rc=$?
   fi
   case $rc in
     0) r=PASS; pass=$((pass + 1)) ;;
-    77) r=SKIP; skip=$((skip + 1)) ;;
+    77) if [ "$no_skip" = 1 ]; then r="FAIL (skipped, NATRON_TESTS_NO_SKIP=1)"; fail=$((fail + 1))
+        else r=SKIP; skip=$((skip + 1)); fi ;;
     *) r="FAIL (exit status $rc)"; fail=$((fail + 1)) ;;
   esac
   line="$name: $r, $(($(date +%s) - start)) s"

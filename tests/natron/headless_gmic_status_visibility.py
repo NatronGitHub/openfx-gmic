@@ -39,6 +39,8 @@ def main(app):
     print("Mode On: %r" % (s1,))
     check(s1["Amount"][0] and s1["Echo"][1], "Mode On: Amount hidden or Echo disabled: %r" % (s1,))
     check(s1["Tail"][2] == 7, "Mode On: Tail %r, expected 7 from the status" % (s1["Tail"][2],))
+    check(abs(s1["Echo"][2] - s1["Amount"][2]) < 1e-6, "Mode On: Echo %r, expected Amount's value %r from the status"
+          % (s1["Echo"][2], s1["Amount"][2]))
     node.getParam("Mode").setValue(0)
     s2 = state(node)
     print("Mode Off: %r" % (s2,))

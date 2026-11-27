@@ -101,9 +101,9 @@ on:
 # One group per event type and PR number (branch names can collide across forks) or ref (master,
 # tags): a new run cancels the superseded one, except for tags. The event type keeps a master push
 # from cancelling the weekly or on-demand run, which also builds the variants, and a G'MIC develop
-# run is in a group of its own.
+# run and an "only: natron" run are in groups of their own.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}${{ inputs.gmic == 'develop' && '-gmic-develop' || '' }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}${{ inputs.gmic == 'develop' && '-gmic-develop' || '' }}${{ inputs.only == 'natron' && '-natron' || '' }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
@@ -127,7 +127,7 @@ env:
 jobs:
   # Which jobs run: every pull request once it is ready, not drafts (this job is skipped, and with
   # it every job, which all need it); "only: windows-arm" (workflow_dispatch) runs just the Windows
-  # on Arm job. The weekly scheduled run is never skipped: the toolchains (package managers, runner
+  # on Arm job, "only: natron" just the Natron tests (natron job). The weekly scheduled run is never skipped: the toolchains (package managers, runner
   # images) move even when master doesn't.
   changes:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
@@ -1010,9 +1010,15 @@ jobs:
   # Natron tests (tests/natron, #233), weekly and on demand ("only: natron" runs just this job): the
   # point handles (#223) with Natron --test under Xvfb (Mesa llvmpipe), and the parameter
   # visibilities after an edit (#224) with NatronRenderer -t, on a release build of the plug-in.
-  # Natron is the RB-2.6 Linux archive of Natron's rolling natron_testing pre-release; while that
-  # has no assets, the job builds Natron RB-2.6 as Natron's CI does (its Fast build, with ccache):
-  # about 30 minutes more, hence not per PR.
+  # Natron is built here from the head of RB-2.6, as Natron's CI does (its Fast build, with ccache:
+  # about 9 minutes cold, 30 s warm; the job takes 8 to 16 minutes). Not per PR: the job tests
+  # against two moving targets, Natron's RB-2.6 head and openfx-misc's natron_testing bundle, whose
+  # regressions would turn unrelated PRs red. In CI, a skipped test is a failure
+  # (NATRON_TESTS_NO_SKIP): a missing OpenGL context or Natron test API must not go unnoticed.
+  # Later, Natron's natron_testing pre-release (Natron-RB-2.6-Linux-x86_64.tar.xz, with
+  # natron_testing-commit.txt) could replace the build: remove its bundled GMIC.ofx.bundle, and check
+  # first that the plug-in built here (Ubuntu 24.04, GLIBCXX_3.4.33) loads with the libstdc++ of that
+  # Rocky Linux 9 archive.
   natron:
     name: Natron tests (Ubuntu 24.04)
     runs-on: ubuntu-24.04
@@ -1025,16 +1031,21 @@ jobs:
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_BASEDIR: ${{ github.workspace }}
-      CCACHE_MAXSIZE: 1500M
+      CCACHE_MAXSIZE: 500M
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
+      # the plug-in's and, as the Linux job of Natron's ci.yml (Qt 5, PySide2, Python 3.12), Natron's
       - name: Install packages
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build pkg-config zlib1g-dev libpng-dev libexpat1-dev \
-            libgl-dev xvfb xauth libgl1-mesa-dri mesa-utils x11-utils
+            libgl-dev xvfb xauth libgl1-mesa-dri mesa-utils x11-utils \
+            build-essential libboost-serialization-dev libboost-system-dev libcairo2-dev \
+            qt5-qmake qtbase5-dev qtdeclarative5-dev \
+            python3-dev libshiboken2-dev libpyside2-dev python3-pyside2.qtwidgets python3-qtpy \
+            libwayland-dev libwayland-client0 libwayland-egl1 extra-cmake-modules ccache
       - uses: ./.github/actions/gmic-sources
       - uses: ./.github/actions/static-deps
       - name: Build the plug-in (release, OpenMP)
@@ -1043,52 +1054,29 @@ jobs:
             -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h"
           cmake --build build -j4
           cmake --install build --prefix install
-      # natron_testing, or the RB-2.6 head to build if it has no assets (yet, or during an update)
-      - name: Download Natron (natron_testing)
+      - name: Natron RB-2.6 head
         id: natron
         run: |
-          base=https://github.com/NatronGitHub/Natron/releases/download/natron_testing
-          if commit=$(curl -fsSL --retry 3 "$base/natron_testing-commit.txt") &&
-             curl -fsSL --retry 3 -o natron.tar.xz "$base/Natron-RB-2.6-Linux-x86_64.tar.xz"; then
-            mkdir natron && tar -xJf natron.tar.xz -C natron --strip-components=1 && rm natron.tar.xz
-            # the bundled openfx-gmic would be loaded instead of the one under test
-            rm -rf natron/Plugins/OFX/Natron/GMIC.ofx.bundle
-            echo "source=release" >> "$GITHUB_OUTPUT"
-            echo "Natron: natron_testing, built from NatronGitHub/Natron@$commit"
-          else
-            commit=$(git ls-remote https://github.com/NatronGitHub/Natron refs/heads/RB-2.6 | cut -f1)
-            echo "source=build" >> "$GITHUB_OUTPUT"
-            echo "::notice::natron_testing has no Linux archive: building Natron RB-2.6 ($commit)"
-          fi
+          commit=$(git ls-remote https://github.com/NatronGitHub/Natron refs/heads/RB-2.6 | cut -f1)
+          [[ $commit =~ ^[0-9a-f]{40}$ ]] || { echo "no RB-2.6 commit: '$commit'"; exit 1; }
+          echo "Natron: NatronGitHub/Natron@$commit"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
       - name: Check out Natron
-        if: steps.natron.outputs.source == 'build'
         uses: actions/checkout@v5
         with:
           repository: NatronGitHub/Natron
           ref: ${{ steps.natron.outputs.commit }}
           path: natron-src
           submodules: recursive
-      # as the Linux job of Natron's ci.yml (Qt 5, PySide2, Python 3.12)
-      - name: Install Natron's build dependencies
-        if: steps.natron.outputs.source == 'build'
-        run: |
-          sudo apt-get install -y build-essential libboost-serialization-dev libboost-system-dev libcairo2-dev \
-            qt5-qmake qtbase5-dev qtdeclarative5-dev \
-            python3-dev libshiboken2-dev libpyside2-dev python3-pyside2.qtwidgets python3-qtpy \
-            libwayland-dev libwayland-client0 libwayland-egl1 extra-cmake-modules ccache
       - name: Restore ccache
         id: ccache
-        if: steps.natron.outputs.source == 'build'
         uses: actions/cache/restore@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: natron-ccache-ubuntu-24.04-${{ steps.natron.outputs.commit }}
           restore-keys: natron-ccache-ubuntu-24.04-
-      # Natron's Fast build (Debug, -O1, no -g), without its test suite; openfx-misc's natron_testing
-      # bundle gives the tests a generator (Constant), which the natron_testing archive bundles
+      # Natron's Fast build (Debug, -O1, no -g), without its test suite
       - name: Build Natron
-        if: steps.natron.outputs.source == 'build'
         run: |
           ccache -z
           cmake -S natron-src -B natron-build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_FLAGS_DEBUG=-O1 \
@@ -1098,28 +1086,38 @@ jobs:
           ccache -s
           mkdir natron
           ln -s "$PWD/natron-build/App/Natron" "$PWD/natron-build/Renderer/NatronRenderer" natron/
-          mkdir natron-plugins && cd natron-plugins
-          curl -fsSL --retry 3 -O https://github.com/NatronGitHub/openfx-misc/releases/download/natron_testing/openfx-misc-build-ubuntu_24-testing.zip
-          unzip -q openfx-misc-build-ubuntu_24-testing.zip && rm openfx-misc-build-ubuntu_24-testing.zip
       - name: Save ccache
-        if: steps.natron.outputs.source == 'build' && steps.ccache.outputs.cache-hit != 'true'
+        if: steps.ccache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ${{ steps.ccache.outputs.cache-primary-key }}
-      # the GUI tests need an OpenGL context: without one, Natron --test skips them (exit status 77)
-      - name: Check GLX under Xvfb
+      # the tests' generator (Constant), from openfx-misc's rolling natron_testing bundle: log which
+      # one, so that a red run can be traced to openfx-misc
+      - name: Download openfx-misc (natron_testing)
         run: |
-          xvfb-run -a -s "-screen 0 1920x1200x24" glxinfo -B ||
-            echo "::warning::no GLX context under Xvfb: the GUI tests will be skipped"
+          url=https://github.com/NatronGitHub/openfx-misc/releases/download/natron_testing/openfx-misc-build-ubuntu_24-testing.zip
+          mkdir natron-plugins && cd natron-plugins
+          curl -fsSL --retry 3 -D headers.txt -o misc.zip "$url"
+          echo "openfx-misc natron_testing: $(grep -i '^last-modified:' headers.txt | tail -n 1 | tr -d '\r')"
+          gh release view natron_testing -R NatronGitHub/openfx-misc --json assets \
+            --jq '.assets[] | select(.name == "openfx-misc-build-ubuntu_24-testing.zip") | "asset updated \(.updatedAt), \(.size) bytes"' || true
+          unzip -q misc.zip && rm misc.zip headers.txt
+          find . -maxdepth 5 -name '*.ofx.bundle' | sort
+        env:
+          GH_TOKEN: ${{ github.token }}
+      # the GUI tests need an OpenGL context: fail without one (the tests would be skipped)
+      - name: Check GLX under Xvfb
+        run: xvfb-run -a -s "-screen 0 1920x1200x24" glxinfo -B
       - name: Run the Natron tests
         run: |
-          plugins=$(find "$PWD/natron-plugins" -maxdepth 5 -name '*.ofx.bundle' -printf '%h\n' 2>/dev/null | sort -u | paste -sd:) || true
-          NATRON_BIN_DIR=$PWD/natron GMIC_PLUGIN_DIR=$PWD/install/OFX/Plugins OFX_PLUGIN_PATH="$plugins" \
-            NATRON_COMMIT=${{ steps.natron.outputs.commit }} OUT=$PWD/natron-tests \
+          plugins=$(find "$PWD/natron-plugins" -maxdepth 5 -name '*.ofx.bundle' -printf '%h\n' | sort -u | paste -sd:)
+          NATRON_BIN_DIR=$PWD/natron GMIC_PLUGIN_DIR=$PWD/install/OFX/Plugins NATRON_TEST_PLUGINS="$plugins" \
+            NATRON_COMMIT=${{ steps.natron.outputs.commit }} NATRON_TESTS_NO_SKIP=1 OUT=$PWD/natron-tests \
             xvfb-run -a -s "-screen 0 1920x1200x24" tests/natron/run_tests.sh
+      # always (also on a timeout or a cancel): the logs have the probe values, zooms and timings
       - name: Upload the test logs and screenshots
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: natron-tests
