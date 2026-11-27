@@ -114,6 +114,8 @@ EXPECTED = {
     # (#231) the preview's status, which the render runs first, gives Steps 7 and keeps Flag on
     'eu.gmic.UserFileStatusKeep': (0.25, 1.0, 0.7),
     'eu.gmic.UserFilePressSize': (0.0, 0.0, 1.0),
+    # Output Layer Merged, the default (#207): the red layer at 50% over the blue one
+    'eu.gmic.UserFileLayers': (0.5, 0.0, 0.5),
 }
 TOLERANCE = 1e-4
 DEFINED_BY = ' is defined by '  # the note of a kept definition of a hot-fixed command
@@ -212,6 +214,13 @@ CPUS_PLUGIN = 'eu.gmic.UserFileCpus'  # its output is G'MIC's $_cpus (divided by
 CHANNELS_PLUGIN = 'eu.gmic.UserFileFiveChannels'
 CHANNELS_ERROR = 'has 5 channels (should be at most 4)'
 USER_SOURCE = '.gmic'  # (install_user_file): the user source, ~/.gmic
+# (#207) the filter with two layers: Output Layer, and the RGB value of its output (Merged, the
+# default, is rendered by render_all())
+LAYERS_PLUGIN = 'eu.gmic.UserFileLayers'
+LAYER_CASES = [
+    ('Layer 0', ['-s', 'Output Layer=1'], (1.0, 0.0, 0.0)),
+    ('Layer -1', ['-s', 'Output Layer=2'], (0.0, 0.0, 1.0)),
+]
 PUSH_BUTTON = 'OfxParamTypePushButton'
 # (the plug-in): follow the status's visibilities on any host, not only on Natron (#173)
 STATUS_VISIBILITY_VAR = 'OFX_GMIC_TEST_STATUS_VISIBILITY'
@@ -1017,6 +1026,26 @@ def check_status(host, plugins, work):
     return problems
 
 
+def check_layers(host, plugins, work):
+    """Renders LAYERS_PLUGIN with each Output Layer of LAYER_CASES, and checks its output.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems, empty if every case gave its output.
+    """
+    problems = []
+    for name, args, output in LAYER_CASES:
+        found, _, _ = render_report(host, plugins, work, LAYERS_PLUGIN, args, output)
+        problems += ['%s, %s: %s' % (LAYERS_PLUGIN, name, p) for p in found]
+    if not problems:
+        print('Output Layer (#207): %d cases checked' % len(LAYER_CASES))
+    return problems
+
+
 def check_cpus(host, plugins, work):
     """Renders CPUS_PLUGIN without OMP_NUM_THREADS, and prints and checks G'MIC's $_cpus.
 
@@ -1193,6 +1222,7 @@ def run_test(host, plugins, stdlib, runs, work, name):
     problems += check_channels(host, plugins, work)
     problems += check_buttons(host, plugins, work)
     problems += check_status(host, plugins, work)
+    problems += check_layers(host, plugins, work)
     if not any(KEPT_NOTE in log for log in logs):
         problems.append("no note that the file's own definition of 'star_tone' is kept")
     if name == USER_FILE:

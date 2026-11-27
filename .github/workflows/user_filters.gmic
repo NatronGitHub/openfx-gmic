@@ -307,6 +307,12 @@ fx_userfile_area_size :
 fx_userfile_frames :
   fill_color 255,0,255,255 +r[0] 50%,50%,1,100%,0 rv nm[0] "pos(5,6),name(Small)"
 
+# two layers (#207): [0] red, at 50% opacity in its layer name, over [1] blue. Output Layer Merged,
+# the default, gives purple (as G'MIC-Qt's Apply in GIMP), Layer 0 red, Layer -1 blue
+#@gui User File Layers : fx_userfile_layers, fx_userfile_layers
+fx_userfile_layers :
+  fill_color 0,0,255,255 +fill_color 255,0,0,255 rv nm[0] "name(Red),mode(normal),opacity(50)"
+
 # a rotation: its size, round(1 + |cos|*(W-1) + |sin|*(H-1)) wide (CImg's get_rotate), is affine
 # but irrational, which the small probes can't predict at a large size: the plug-in refines it
 # with two thin probes, within a pixel, and adds a 1-pixel margin (rendered on a 1920x1080 Source)

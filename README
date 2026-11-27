@@ -385,6 +385,11 @@ position (the plug-in supports OpenFX multi-resolution); a layer input elsewhere
 its offset from Source as its pos(x,y), as in G'MIC-Qt. On hosts without multi-resolution, the
 output always has Source's size, and Fixed and Dynamic resize the result to it, as before.
 
+Several results (issue #207): filters such as Light Leaks or Rooster make several layers, which
+G'MIC-Qt merges into GIMP's image. Output Layer (in Advanced Options) picks the output: Merged,
+the default, is that merged image; Layer 0, Layer -1... one result, counted from the top of the
+stack; Frame one result per frame.
+
 A render can be aborted while G'MIC runs. The filters that report their progress to G'MIC (with
 its progress command; most filters don't) show it in the host's progress bar, e.g. Natron's
 Progress panel, which lists a render once it is expected to last a few seconds. The plug-in

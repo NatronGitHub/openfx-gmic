@@ -1141,8 +1141,11 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 	for (const char* option : kOutputLayerOptions) {
 		outputLayerOptions += (outputLayerOptions.empty() ? "" : "|") + string(option);
 	}
-	globalDataP->param[p] = Parameter(kOutputLayerParam, "", ParamType::Select, 0, kOutputLayerFrame, 1, 0, 0, 0, outputLayerOptions);
-	globalDataP->param[p].hint = "The image of the G'MIC results to output. Merged: all the results merged into one. "
+	// Merged, the default (issue #207), is what G'MIC-Qt's Apply gives GIMP: with "Layer 0", the
+	// default before, the filters that add a layer (Light Leaks, Rooster...) output only that layer
+	globalDataP->param[p] = Parameter(kOutputLayerParam, "", ParamType::Select, 0, kOutputLayerFrame, kOutputLayerMerged, 0, 0, 0, outputLayerOptions);
+	globalDataP->param[p].hint = "The image of the G'MIC results to output. Merged, the default: all the results merged into one, as "
+		"G'MIC-Qt gives them to GIMP. "
 		"Layer 0, Layer -1...: one result, counted from the top of the stack as in G'MIC-Qt (Layer 0 is the first). "
 		"Frame: the result whose number is the frame number minus the first frame of Source, modulo the number of "
 		"results, for the filters that make several frames in one run (often set by a number of frames or layers "
@@ -1599,7 +1602,7 @@ fullCommand(const SequenceData* sequenceDataP, const GlobalData* globalDataP, Gm
 		cmd = "-_openfx_gmic_alpha_split " + cmd + (render ? " -_openfx_gmic_alpha_restore" : "");
 	}
 
-	if (render && sequenceDataP->floatValue[PARAM_OUTPUT][0] == 0.f) {
+	if (render && sequenceDataP->floatValue[PARAM_OUTPUT][0] == (float)kOutputLayerMerged) {
 		// G'MIC >= 2.9 renamed gimp_merge_layers to gui_merge_layers ("Unknown command" otherwise)
 		cmd += " -gui_merge_layers";
 	}
