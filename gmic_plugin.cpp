@@ -246,10 +246,10 @@ static const int kNofLayerTimeParams = 2 + 1 + 4;
 // Does the host support multi-resolution (kOfxImageEffectPropSupportsMultiResolution)? Without
 // it, the output keeps Source's size whatever the region of definition says: Resize Mode Fixed and
 // Dynamic then resize the result to Source's size, as before issue #175, and there is no probe.
-// OFX_GMIC_MULTIRES=1 or 0 overrides the host's property, read once: a test aid, for test hosts
-// that render any region of definition but don't say so (openfx's hostDemo sets the property to
-// 0). On a host that really lacks multi-resolution, 1 gives wrong outputs. Another value is
-// ignored, with a note; an override that contradicts the host's property gets a note, once.
+// OFX_GMIC_MULTIRES=1 or 0 overrides the host's property, read once: a test aid (the CI tests run
+// openfx's hostDemo, which supports multi-resolution, with 0 to cover the hosts without it). On a
+// host that really lacks multi-resolution, 1 gives wrong outputs. Another value is ignored, with a
+// note; an override that contradicts the host's property gets a note, once.
 static bool hostSupportsMultiResolution()
 {
 	static const std::optional<bool> forced = []() -> std::optional<bool> {

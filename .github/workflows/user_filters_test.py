@@ -26,12 +26,11 @@ render, whose fair share is all the hardware threads). This shows that the count
 not that the plug-in's prefix is applied: the value is also G'MIC's own default.
 
 The result-size checks (#175) run only with the user filter file (not with --update-file or
---user-source: they don't depend on where the file comes from). hostDemo renders any region of
-definition but reports no multi-resolution support. As it is, without OFX_GMIC_MULTIRES, User
-File Larger (Resize Mode Dynamic) and User File Smaller (Fixed) must be resized to Source's size,
-as before #175, with no warning. The other result-size checks render with OFX_GMIC_MULTIRES=1 (a
-test aid of the plug-in), which makes it predict the result's size, as on Natron; the
-render-scale, CPU and channel checks render without it. With Resize Mode Dynamic, the default,
+--user-source: they don't depend on where the file comes from). hostDemo reports multi-resolution
+support. With OFX_GMIC_MULTIRES=0 (a test aid of the plug-in: it then acts as on a host without
+it), User File Larger (Resize Mode Dynamic) and User File Smaller (Fixed) must be resized to
+Source's size, as before #175, with no warning. The other checks render on hostDemo as it is,
+where the plug-in predicts the result's size, as on Natron. With Resize Mode Dynamic, the default,
 User File Larger, User File Smaller and User File Shifted must output the result's size, and the
 region of definition its size and position, from Source's top-left corner; with Fixed
 (Inplace), Source's size and region of definition, cropped or padded. No render may warn that
@@ -138,10 +137,9 @@ GEOMETRY_CASES = [
     ('eu.gmic.UserFileFrames', ['-s', 'Output Layer=11'], (1.0, 1.0, 0, 0), (1.0, 0.0, 1.0, 1.0), False, EXACT, '1'),
 ]
 GEOMETRY_WARNING = "doesn't match the output"
-# the plug-in's override of the host's multi-resolution support (see run_test)
-MULTIRES_ENV = 'OFX_GMIC_MULTIRES'
-MULTIRES_ON = {MULTIRES_ENV: '1'}  # (render_plugins.render()'s extra_env)
-MULTIRES_UNSET = {MULTIRES_ENV: None}
+# the plug-in's override of the host's multi-resolution support: as on a host without it (see
+# check_no_multires; render_plugins.render()'s extra_env)
+MULTIRES_OFF = {'OFX_GMIC_MULTIRES': '0'}
 # the plug-in's notes when it refines a prediction with thin probes, or confirms it with a probe at
 # full size (see resultGeometry)
 REFINED_NOTE = 'refined with thin probes'
@@ -411,7 +409,7 @@ def large_source_render(host, plugins, work, pid, args):
     """
     sw, sh = LARGE_SOURCE
     result = render_plugins.render(host, ['-i', 'Source=rod:0,0,%d,%d' % (sw, sh)] + args, plugins, work,
-                                   TIMEOUT, (pid, CONTEXT, []), extra_env=MULTIRES_ON)
+                                   TIMEOUT, (pid, CONTEXT, []))
     problem, errors, log = result.problem, result.errors, result.log
     if problem:
         return '%s %s' % (problem, ' '.join(errors)), log, {}, [], (0, 0), 1.0
@@ -561,8 +559,7 @@ def check_timeout(host, plugins, work):
         A list of problems, empty if both frames have Source's size, the first prediction timed
         out, and the second query didn't try again (the timeout is remembered).
     """
-    result = render_plugins.render(host, [], plugins, work, TIMEOUT, (SLOW_PLUGIN, CONTEXT, ['Source']), frame='0,1',
-                                   extra_env=MULTIRES_ON)
+    result = render_plugins.render(host, [], plugins, work, TIMEOUT, (SLOW_PLUGIN, CONTEXT, ['Source']), frame='0,1')
     problem, errors, log = result.problem, result.errors, result.log
     if problem:
         return ['%s: %s %s' % (SLOW_PLUGIN, problem, ' '.join(errors))]
@@ -581,7 +578,7 @@ def check_timeout(host, plugins, work):
 
 
 def check_no_multires(host, plugins, work):
-    """Renders results of another size on hostDemo as it is, without multi-resolution support.
+    """Renders results of another size with OFX_GMIC_MULTIRES=0, without multi-resolution.
 
     User File Larger (Resize Mode Dynamic) and User File Smaller (Fixed) must then be resized to
     Source's size, as before #175: Source's size and region of definition, a uniform output, and
@@ -600,7 +597,7 @@ def check_no_multires(host, plugins, work):
                              ('eu.gmic.UserFileSmaller', ['-s', 'Resize Mode=0'], (0.0, 1.0, 0.0, 1.0))):
         name = '%s %s without multi-resolution' % (pid, ' '.join(args))
         result = render_plugins.render(host, args, plugins, work, TIMEOUT, (pid, CONTEXT, ['Source']),
-                                       extra_env=MULTIRES_UNSET)
+                                       extra_env=MULTIRES_OFF)
         problem, errors, log = result.problem, result.errors, result.log
         if problem:
             problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
@@ -624,7 +621,7 @@ def check_no_multires(host, plugins, work):
 def check_scaled_geometry(host, plugins, work):
     """Renders User File Larger and User File Shifted at render scales 1 and RENDER_SCALE.
 
-    With OFX_GMIC_MULTIRES=1, on a Source that hostDemo makes in canonical coordinates: at
+    On a Source that hostDemo makes in canonical coordinates: at
     RENDER_SCALE, the output must be the scale-1 output times RENDER_SCALE. Larger's canonical
     region of definition must be the scale-1 one; Shifted's pos(10,20) is in pixels of the image
     that G'MIC gets, so its offset from Source is twice the scale-1 one in canonical coordinates.
@@ -643,7 +640,7 @@ def check_scaled_geometry(host, plugins, work):
         for scale in (1, RENDER_SCALE):
             name = '%s at scale %s' % (pid, scale)
             result = render_plugins.render(host, ['--scale', str(scale), '-i', 'Source=rod:0,0,160,120'], plugins,
-                                           work, TIMEOUT, (pid, CONTEXT, []), extra_env=MULTIRES_ON)
+                                           work, TIMEOUT, (pid, CONTEXT, []))
             problem, errors, log = result.problem, result.errors, result.log
             if problem:
                 problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))
@@ -693,8 +690,7 @@ def check_geometry(host, plugins, work):
     for pid, args, geometry, color, warns, path, frame in GEOMETRY_CASES:
         name = '%s %s frame %s' % (pid, ' '.join(args), frame)
         clips = [] if args is OFFSET_SOURCE else ['Source']
-        result = render_plugins.render(host, args, plugins, work, TIMEOUT, (pid, CONTEXT, clips), frame=frame,
-                                       extra_env=MULTIRES_ON)
+        result = render_plugins.render(host, args, plugins, work, TIMEOUT, (pid, CONTEXT, clips), frame=frame)
         problem, errors, log = result.problem, result.errors, result.log
         if problem:
             problems.append('%s: %s %s' % (name, problem, ' '.join(errors)))

@@ -52,7 +52,7 @@ run_test fft_smoke env GMIC_CLI_OUT="$TREE/gmic-cli" .github/workflows/fft_smoke
 if [ -x "$TREE/gmic-cli" ] && [ -f "$TREE/.github/workflows/gmic_fix_tests.sh" ]; then
     run_test fix_tests .github/workflows/gmic_fix_tests.sh "$TREE/gmic-cli" "$stdlib"
 fi
-run_test render env OFX_GMIC_MULTIRES=1 python3 .github/workflows/render_plugins.py --host build \
+run_test render python3 .github/workflows/render_plugins.py --host build \
     --plugins "$plugins" --list "$RESULTS/plugins.txt" --stdlib "$stdlib" --subset all --jobs 2 \
     --work "$TREE/render-all"
 # the host's output for each failed render (FAIL <id>: <problem>)
