@@ -61,7 +61,8 @@ render scale: hostDemo is not Natron, and the plug-in accepts every render scale
 also rendered with its default point on hostDemo --no-normalised-defaults, a host without
 kOfxParamPropDefaultCoordinateSystem that gives the normalised default as is, as DaVinci Resolve
 (#221): the plug-in must convert it with the project size, so that the point and the output are
-those of a host that converts it (hostDemo by default).
+those of a host that converts it (hostDemo by default); also after the user sets the raw default
+again (hostDemo's -s Spot=0.5,0.5, as a Reset on that host).
 
 usage: user_filters_test.py --host <hostDemo, or the CMake build directory> [--config <config>]
                             --plugins <dir with GMIC.ofx.bundle>
@@ -1018,7 +1019,8 @@ def check_normalised_defaults(host, plugins, work):
 
     On hostDemo --no-normalised-defaults, the plug-in gets the point's normalised default as is,
     and must convert it as hostDemo does by default: the point's value and the output must be the
-    same on both hosts.
+    same on both hosts, also after a user edit that sets the raw default again (a Reset there).
+    Not covered: a project offset (hostDemo's is 0).
 
     Args:
         host: the path of hostDemo.
@@ -1029,8 +1031,9 @@ def check_normalised_defaults(host, plugins, work):
         A list of problems, empty if both renders give the same point and output.
     """
     problems, results = [], []
-    for args in ([], ['--no-normalised-defaults']):
-        name = '%s, default point%s' % (SCALE_PLUGIN, ', ' + args[0] if args else '')
+    for args in ([], ['--no-normalised-defaults'],
+                 ['--no-normalised-defaults', '-s', 'Spot=0.5,0.5']):
+        name = '%s, default point%s' % (SCALE_PLUGIN, ', ' + ' '.join(args) if args else '')
         result = render_plugins.render(host, args, plugins, work, TIMEOUT,
                                        (SCALE_PLUGIN, CONTEXT, []))
         if result.problem:
@@ -1039,11 +1042,13 @@ def check_normalised_defaults(host, plugins, work):
         spot = (((result.report or {}).get('params') or {}).get('Spot') or {}).get('value')
         output = first_render(result.report).get('output') or {}
         results.append((name, spot, output.get('min'), output.get('max')))
-    if len(results) == 2:
-        (name0, *expected), (name1, *found) = results
-        for what, e, f in zip(('Spot', 'the output minimum', 'the output maximum'), expected, found):
-            if e is None or not same_value(f, e):
-                problems.append('%s: %s is %r, %r with %s' % (name1, what, f, e, name0))
+    if len(results) == 3:
+        (name0, *expected) = results[0]
+        for name1, *found in results[1:]:
+            for what, e, f in zip(('Spot', 'the output minimum', 'the output maximum'),
+                                  expected, found):
+                if e is None or not same_value(f, e):
+                    problems.append('%s: %s is %r, %r with %s' % (name1, what, f, e, name0))
     if not problems:
         print('point defaults on a host without normalised defaults (#221): %r' % (results[0][1],))
     return problems
