@@ -187,7 +187,8 @@ fx_userfile_status_main_preview :
 # - User File Status Keep: an empty value "{}" keeps the parameter's value, whatever its type
 #   (#231, as G'MIC-Qt), also with a visibility ("{}_0", "{}_1"). Mode Keep: every value is "{}".
 #   Mode Visibility: every value is empty, and every other parameter is hidden ("_0") or disabled
-#   ("_1"), except the point Spot, which stays shown and enabled. Mode Off sets no status. The render's red, green and blue are Level, Flag and Steps / 10.
+#   ("_1"), except the point Spot, which stays shown and enabled. Mode Off sets no status. The
+#   render's red, green and blue are Level, Flag and Steps / 10.
 #@gui User File Status Keep : fx_userfile_status_keep, fx_userfile_status_keep_preview
 #@gui : Mode = choice("Off","Keep","Visibility")
 #@gui : Level = float(0.25,0,1)
