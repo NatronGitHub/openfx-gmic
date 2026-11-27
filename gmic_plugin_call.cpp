@@ -311,7 +311,8 @@ int gmic_plugin_call(const GmicCall& call)
 		if (call.statusOut) {
 			std::string s = interpreter.status._data ? std::string(interpreter.status._data) : std::string();
 			gmic::strreplace_fw(s.data()); // (in place: the same length, up to s's terminating null)
-			*call.statusOut = s.c_str();
+			s.resize(std::strlen(s.c_str())); // (up to the terminating null)
+			*call.statusOut = std::move(s);
 		}
 		if (call.stateOut) {
 			state.status = statusValues(interpreter.status);

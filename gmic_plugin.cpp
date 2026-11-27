@@ -314,14 +314,18 @@ static const char* const kOpaqueResizedCommand =
 	"\n_openfx_gmic_opaque_resized :\n"
 	"  repeat $! { if (w#$>!=$1||h#$>!=$2)&&(s#$>==1||s#$>==3) to_a[$>] fi }\n";
 
-// _openfx_gmic_merge_layers: Output Layer "Merged" (see fullCommand), G'MIC's gui_merge_layers, on
-// copies of the results. If it fails (e.g. a result with more than 4 channels, or a layer name
-// that gui_merge_layers can't read), the result that Layer 0 gives, image [0], and the status
-// kMergeFailedStatus followed by G'MIC's error, for the warning on the node (see pluginProcess).
-// The probes run the same command, so the region of definition is Layer 0's too.
-static const char* const kMergeFailedStatus = "openfx_gmic_merge_failed ";
-static const std::string kMergeLayersCommand = std::string("\n_openfx_gmic_merge_layers :\n"
-	"  l +gui_merge_layers k. onfail k[0] u \"") + kMergeFailedStatus + "\"${} done\n";
+// _openfx_gmic_merge_layers: Output Layer "Merged" (see fullCommand), G'MIC's gui_merge_layers on
+// the results, with a copy of the first one only (nothing to merge with a single result, or none).
+// If it fails (e.g. a result with more than 4 channels, or a layer name that gui_merge_layers can't
+// read), that copy, which is the result that Layer 0 gives, and the status kMergeFailedStatus
+// followed by G'MIC's error, for the warning on the node (see pluginProcess). The probes run the
+// same command, so the region of definition is Layer 0's too.
+static constexpr const char* kMergeFailedStatus = "openfx_gmic_merge_failed ";
+static constexpr const char* kMergeLayersCommand =
+	"\n_openfx_gmic_merge_layers :\n"
+	"  if $!>1 l [0] mv. 0 gui_merge_layers[1--1] k[1] onfail k[0] u \"openfx_gmic_merge_failed \"${} done fi\n";
+static_assert(std::string_view(kMergeLayersCommand).find(kMergeFailedStatus) != std::string_view::npos,
+	"kMergeLayersCommand sets the status kMergeFailedStatus");
 
 // Hot fixes for bugs in the G'MIC standard library (gmic_hotfixes.gmic, embedded by the build as
 // the null-terminated array gmic_hotfixes[]): corrected command definitions, passed to G'MIC as
@@ -3505,7 +3509,7 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 				const size_t stars = reason.rfind("*** ");
 				if (stars != string::npos) reason.erase(0, stars + 4);
 				if (!reason.empty() && reason.back() == '.') reason.pop_back();
-				mergeWarning = "Output Layer Merged: G'MIC couldn't merge the results (" + reason +
+				mergeWarning = "Output Layer Merged: G'MIC couldn't merge the results (gui_merge_layers: " + reason +
 					"), so Layer 0 is shown instead.";
 				gmicLog("G'MIC: %s: %s\n", effectData.name.c_str(), mergeWarning.c_str());
 			}
