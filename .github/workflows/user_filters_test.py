@@ -338,12 +338,13 @@ STATUS_CASES = (
     StatusCase(STATUS_KEEP, KEEP_EDITS + ['-s', 'Mode=1'], True, (0.6, 1.0, 0.5),
                dict(KEEP_VALUES, Mode=1), {p: False for p in KEEP_VALUES}, {'Steps': True},
                len(KEEP_EDITS) // 2 + 1),
-    # "{}_0" and "{}_1": the values stay, and every other parameter is hidden or disabled
+    # "{}_0" and "{}_1": the values stay, and every other parameter is hidden or disabled, but
+    # the point Spot, which stays shown and enabled (Parameter::followsStatus)
     StatusCase(STATUS_KEEP, KEEP_EDITS + ['-s', 'Mode=2'], True, (0.6, 1.0, 0.5),
                dict(KEEP_VALUES, Mode=2),
                {'Level': True, 'Pick': True, 'Tint': True, 'Label': True, 'Folder': True,
                 'Steps': False},
-               {'Steps': False, 'Flag': False, 'Spot': False, 'Path': False},
+               {'Steps': False, 'Flag': False, 'Spot': True, 'Path': False},
                len(KEEP_EDITS) // 2 + 1),
     # a press's status hides Hidden Level ("_0")
     StatusCase('eu.gmic.UserFileStatusVisibility', ['-s', 'Hide'], True, (0.6, 0.0, 1.0),
