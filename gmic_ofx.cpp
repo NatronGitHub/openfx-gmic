@@ -34,6 +34,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cfloat>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -52,6 +53,7 @@
 
 #include "ofxsImageEffect.h"
 #ifndef OFX_GMIC_COMMERCIAL
+#include "ofxsNormalisedDefaults.h" // point defaults on hosts that ignore normalised defaults (SupportExt, GPL)
 #include "ofxsPositionInteract.h" // OFX::PointsInteract (SupportExt, GPL)
 #endif
 
@@ -442,6 +444,8 @@ void multiplyByInputAlphaPlanar(const World& out, const World& in, float maxValu
 
 // relative tolerance when comparing point values (canonical coordinates, absolute near 0)
 constexpr double kPointValueTolerance = 1e-6;
+// the display range of a point's coordinates, in canonical coordinates (as SupportExt's points)
+constexpr double kPointDisplayRange = 10000.;
 
 bool pointValueIs(double a, double b)
 {
@@ -583,6 +587,7 @@ private:
 	std::optional<OfxRectD> resultRoD(const OfxRectD& sourceRod, double time, const OfxPointD& renderScale) const;
 	void pointsFromSourceRead();
 	void pointsFromSourceWrite();
+	void pointDenormaliseDefault(OFX::Double2DParam& point);
 	void pointsMoveToSource(double time, int onlyParam);
 	bool isPointCheckbox(int i) const;
 	bool mayBeEnabled(int i, bool draft) const;
@@ -691,6 +696,10 @@ GMICEffect::GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData
 	statusDisplayFromHost();
 	pointsUpdateEnabled(-1);
 	draftModeUpdateEnabled();
+	// (last: it may set values, and the host may call changedParam)
+	for (int i = 0; i < _gd.nofParams; i++) {
+		if (OFX::Double2DParam* point = pointParamAt(i)) pointDenormaliseDefault(*point);
+	}
 }
 
 // The display status that the last status gave the parameters (see applyStatusVisibility), from
@@ -1173,6 +1182,7 @@ void GMICEffect::pointChangedByUser(int i, double time, bool moveToSource)
 {
 	OFX::Double2DParam* point = pointParamAt(i);
 	if (!point) return;
+	pointDenormaliseDefault(*point); // (a Reset on a host that ignores normalised defaults)
 	const std::optional<OfxPointD> v = hostQuery([point] { return point->getValue(); });
 	if (!v) return;
 	if (pointIsDefault(_gd.param[i], v->x, v->y)) {
@@ -1251,6 +1261,29 @@ bool GMICEffect::pointIsDefault(const Parameter& param, double x, double y) cons
 	const OfxPointD offset = hostQuery([this] { return getProjectOffset(); }).value_or(OfxPointD{ 0., 0. });
 	return (pointValueIs(x, n.x * size->x + offset.x) && pointValueIs(y, n.y * size->y + offset.y)) ||
 		(pointValueIs(x, n.x * size->x) && pointValueIs(y, n.y * size->y));
+}
+
+// Point defaults on hosts that ignore normalised defaults (issue #221: DaVinci Resolve, which lacks
+// kOfxParamPropDefaultCoordinateSystem, gives the normalised default as is, a fraction of a pixel):
+// on those hosts only, a point still at its normalised default is converted with the project size
+// and offset, as the host should have done (SupportExt's ofxsDenormaliseUntouchedDefault, which
+// leaves edited and animated points alone). pointIsDefault then sees it as at its default, and
+// pointsMoveToSource can move it within Source. Called when the instance is created (a new
+// instance, or a loaded untouched default) and when the user changes the point (a Reset or an undo
+// that brings the raw default back): parameters may be set in the instance changed action and in
+// interacts. Not without a positive project size, where pointIsDefault takes the raw value for the
+// default. Best effort: a host failure leaves the point as it is. COMMERCIAL builds have no
+// SupportExt (GPL): the points keep the host's value.
+void GMICEffect::pointDenormaliseDefault(OFX::Double2DParam& point)
+{
+#ifndef OFX_GMIC_COMMERCIAL
+	hostTry([this, &point] {
+		const OfxPointD size = getProjectSize();
+		if (size.x > 0. && size.y > 0.) OFX::ofxsDenormaliseUntouchedDefault(*this, point, /*isPosition=*/true);
+	});
+#else
+	(void)point;
+#endif
 }
 
 // Source's region of definition, if it is connected, finite and not empty
@@ -2137,7 +2170,18 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			OFX::Double2DParamDescriptor* p = desc.defineDouble2DParam(name);
 			p->setDefault(n.x, n.y);
 			p->setDoubleType(OFX::eDoubleTypeXYAbsolute);
+#ifdef OFX_GMIC_COMMERCIAL
 			p->setDefaultCoordinateSystem(OFX::eCoordinatesNormalised);
+#else
+			// also records whether the host ignores it (see pointsDenormaliseDefaults)
+			OFX::ofxsSetDefaultCoordinateSystemNormalised(*p);
+#endif
+			// DaVinci Resolve clamps a Double2D parameter without a range and a display range to
+			// (-1, 1) (openfx-misc's README-hosts.txt). The range is the spec's default, which the
+			// Support library already sets: written again, as SupportExt's points do, so that it
+			// isn't lost with another Support version. The display range is SupportExt's.
+			p->setRange(-DBL_MAX, -DBL_MAX, DBL_MAX, DBL_MAX);
+			p->setDisplayRange(-kPointDisplayRange, -kPointDisplayRange, kPointDisplayRange, kPointDisplayRange);
 			// the host's handle only where the plug-in draws none (pluginDrawsPoints). Elsewhere the
 			// plug-in's coloured point wins over a native handle of the host (Natron reports one for
 			// XYAbsolute points, NatronGitHub/Natron#1932): PointsInteract draws it, since it reads this
