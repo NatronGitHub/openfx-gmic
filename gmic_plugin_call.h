@@ -59,6 +59,9 @@ struct GmicCall
 	std::string* persistentIn = nullptr;
 	// if not null: set after a successful run (only then), with what the run left
 	GmicRunState* stateOut = nullptr;
+	// if not null: set after a successful run (only then), to the run's status ('u' command), with
+	// G'MIC's codes replaced back
+	std::string* statusOut = nullptr;
 	GmicResults results = GmicResults::kKeep;
 };
 

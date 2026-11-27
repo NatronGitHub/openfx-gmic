@@ -308,6 +308,11 @@ int gmic_plugin_call(const GmicCall& call)
 			std::string().swap(*call.persistentIn); // (G'MIC has its own copy)
 		}
 		interpreter.run(call.cmd, list, names);
+		if (call.statusOut) {
+			std::string s = interpreter.status._data ? std::string(interpreter.status._data) : std::string();
+			gmic::strreplace_fw(s.data()); // (in place: the same length, up to s's terminating null)
+			*call.statusOut = s.c_str();
+		}
 		if (call.stateOut) {
 			state.status = statusValues(interpreter.status);
 			state.visibilities = statusVisibilities(interpreter.status);

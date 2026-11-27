@@ -313,6 +313,12 @@ fx_userfile_frames :
 fx_userfile_layers :
   fill_color 0,0,255,255 +fill_color 255,0,0,255 rv nm[0] "name(Red),mode(normal),opacity(50)"
 
+# two results that G'MIC's gui_merge_layers can't merge (#260): [1] has 5 channels. Output Layer
+# Merged gives Layer 0, green, with a warning on the node
+#@gui User File Merge Fails : fx_userfile_merge_fails, fx_userfile_merge_fails
+fx_userfile_merge_fails :
+  fill_color 0,255,0,255 100%,100%,1,5
+
 # a rotation: its size, round(1 + |cos|*(W-1) + |sin|*(H-1)) wide (CImg's get_rotate), is affine
 # but irrational, which the small probes can't predict at a large size: the plug-in refines it
 # with two thin probes, within a pixel, and adds a 1-pixel margin (rendered on a 1920x1080 Source)

@@ -391,7 +391,8 @@ Merged, the default, is that composite (each result's mode, opacity and position
 gui_merge_layers merges them); Layer 0, Layer -1... one result, counted from the top of the
 stack; Frame one result per frame. The filters that split an image into layers (e.g. Channels to
 Layers) give the image back when Merged: pick Layer 0, Layer -1... to see one layer, or Frame to
-play them over time.
+play them over time. If gui_merge_layers fails on the results (e.g. a result with more than 4
+channels, or a layer name it can't read), Merged outputs Layer 0, with a warning on the node.
 
 A render can be aborted while G'MIC runs. The filters that report their progress to G'MIC (with
 its progress command; most filters don't) show it in the host's progress bar, e.g. Natron's
@@ -517,8 +518,9 @@ the bundle's plug-in list (OFX_GMIC_WRITE_PLUGIN_LIST), keeps its messages on st
 
 After a successful render, a warning on the node (Natron: its persistent message) tells when
 Output Layer "Frame" runs the filter on every frame, because its results are too many or too
-large to keep, or one of them is empty, and when a result doesn't fit the output that Resize Mode
-Dynamic declared (it is then cropped or padded). G'MIC errors stay error messages on the node.
+large to keep, or one of them is empty, when Output Layer Merged couldn't merge the results (it
+then outputs Layer 0), and when a result doesn't fit the output that Resize Mode Dynamic declared
+(it is then cropped or padded). G'MIC errors stay error messages on the node.
 
 Tests
 -----
