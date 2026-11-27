@@ -4,7 +4,7 @@ openfx-gmic: G'MIC filters as OpenFX plug-ins
 openfx-gmic makes the filters of G'MIC (https://gmic.eu), an open-source image processing
 framework, available as OpenFX plug-ins, mainly for Natron (https://natrongithub.github.io).
 A single GMIC.ofx bundle registers one plug-in per filter of the G'MIC standard library and its
-community filters: 1202 plug-ins with G'MIC 4.0.8 (815 in COMMERCIAL builds). Changes since
+community filters: 1201 plug-ins with G'MIC 4.0.8 (815 in COMMERCIAL builds). Changes since
 Natron 2.5 are in CHANGELOG.md.
 
 It was written by Tobias Fleischer (reduxFX Productions, https://www.reduxfx.com), and is now
@@ -253,8 +253,8 @@ files on every render: e.g. Intarsia writes an HTML page and PNG images into its
 which is empty by default, i.e. the home folder, as in G'MIC-Qt (an empty folder parameter is the
 home folder), so set it first.
 
-As in G'MIC-Qt, each page of G'MIC's About folder is a plug-in of its own, in the G'MIC menu
-group. A page with no command (About G'MIC, Privacy Notice, Release Notes, Tribute to
+As in G'MIC-Qt, each page of G'MIC's About folder is a plug-in of its own, in the G'MIC/About
+menu group. A page with no command (About G'MIC, Privacy Notice, Release Notes, Tribute to
 Sébastien) shows its notes and passes Source through; Gmicky Roddy draws the mascots (it
 downloads their images). Filters whose commands write files into G'MIC's folders, or at a path
 that a command computes, are hidden: they include the pages that download or post (Download

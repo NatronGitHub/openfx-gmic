@@ -246,9 +246,10 @@ fx_update_file_test :
     printf '%s' "$one_filter" | update_case used 1 1
     # in a profile folder with non-ASCII characters (issue #201)
     printf '%s' "$one_filter" | update_case used-Frédéric-日本 1 1
-    # the page that G'MIC's update_deprecate inserts into older update files is no plug-in
+    # the page that G'MIC's update_deprecate inserts into older update files is a plug-in, a page
+    # with no command, as in G'MIC-Qt (#204)
     printf '%s#@gui ________\n#@gui !<b><i>[ New Version Available! ]</i></b> : _none_, _none_\n' "$one_filter" |
-        update_case new-version-page 1 1
+        update_case new-version-page 1 2
     # star_tone is hot-fixed (gmic_hotfixes.gmic): the file's own definition is kept, with a note
     # (not a hot fix warning)
     printf '%sstar_tone :\n  f 64\n' "$one_filter" | update_case hot-fixed-command 1 1 "'star_tone' is defined by "

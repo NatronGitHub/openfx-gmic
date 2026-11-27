@@ -895,10 +895,10 @@ static string ignoreAlphaNote(const EffectData& effectData)
 static string layerTimesNote(const EffectData& effectData)
 {
 	if (!effectData.multiLayer) return string();
-	return "\n\nLayer Times: to give the layer inputs earlier frames of Source (for the filters that treat "
-		"their layers as frames), set Layers from Source to the number of frames (Layer -1, Layer -2... then "
-		"come from Source at the frames given by their time offsets, -1, -2... by default), or connect other "
-		"clips to the layer inputs and set their time offsets.";
+	return "\n\nLayer Times (closed group below): if this filter treats its layers as successive frames, set "
+		"Layers from Source to the number of frames to get the previous frames of Source (Layer -1, Layer -2... "
+		"at the time offsets -1, -2... set by default), or connect other clips to the layer inputs and set their "
+		"time offsets.";
 }
 
 // The plug-in's description: the filter's notes (with those of its note() parameters), the notes
