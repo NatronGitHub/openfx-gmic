@@ -57,7 +57,11 @@ User File Render Scale, whose preview factor ends with "+", is rendered at rende
 the size of the scale-1 output, with the same region of definition, and G'MIC must get the same
 percentages for a point (the plug-in converts it with the render scale) and a preview area of the
 image's size. This checks the scaled render, not the rule that picks the filters that accept a
-render scale: hostDemo is not Natron, and the plug-in accepts every render scale there.
+render scale: hostDemo is not Natron, and the plug-in accepts every render scale there. It is
+also rendered with its default point on hostDemo --no-normalised-defaults, a host without
+kOfxParamPropDefaultCoordinateSystem that gives the normalised default as is, as DaVinci Resolve
+(#221): the plug-in must convert it with the project size, so that the point and the output are
+those of a host that converts it (hostDemo by default).
 
 usage: user_filters_test.py --host <hostDemo, or the CMake build directory> [--config <config>]
                             --plugins <dir with GMIC.ofx.bundle>
@@ -1009,6 +1013,42 @@ def check_render_scale(host, plugins, work):
     return ['%s: %s' % (SCALE_PLUGIN, p) for p in problems]
 
 
+def check_normalised_defaults(host, plugins, work):
+    """Renders SCALE_PLUGIN with its default point, with and without normalised defaults (#221).
+
+    On hostDemo --no-normalised-defaults, the plug-in gets the point's normalised default as is,
+    and must convert it as hostDemo does by default: the point's value and the output must be the
+    same on both hosts.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems, empty if both renders give the same point and output.
+    """
+    problems, results = [], []
+    for args in ([], ['--no-normalised-defaults']):
+        name = '%s, default point%s' % (SCALE_PLUGIN, ', ' + args[0] if args else '')
+        result = render_plugins.render(host, args, plugins, work, TIMEOUT,
+                                       (SCALE_PLUGIN, CONTEXT, []))
+        if result.problem:
+            problems.append('%s: %s %s' % (name, result.problem, ' '.join(result.errors)))
+            continue
+        spot = (((result.report or {}).get('params') or {}).get('Spot') or {}).get('value')
+        output = first_render(result.report).get('output') or {}
+        results.append((name, spot, output.get('min'), output.get('max')))
+    if len(results) == 2:
+        (name0, *expected), (name1, *found) = results
+        for what, e, f in zip(('Spot', 'the output minimum', 'the output maximum'), expected, found):
+            if e is None or not same_value(f, e):
+                problems.append('%s: %s is %r, %r with %s' % (name1, what, f, e, name0))
+    if not problems:
+        print('point defaults on a host without normalised defaults (#221): %r' % (results[0][1],))
+    return problems
+
+
 def run_test(host, plugins, stdlib, runs, work, name):
     """Runs both renders of the test (see the module docstring).
 
@@ -1030,6 +1070,7 @@ def run_test(host, plugins, stdlib, runs, work, name):
     install_user_file(work, user_file, name)
     problems, logs, small = render_all(host, plugins, work, runs)
     problems += check_render_scale(host, plugins, work)
+    problems += check_normalised_defaults(host, plugins, work)
     problems += check_cpus(host, plugins, work)
     problems += check_channels(host, plugins, work)
     problems += check_buttons(host, plugins, work)
