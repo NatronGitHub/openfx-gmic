@@ -386,9 +386,12 @@ its offset from Source as its pos(x,y), as in G'MIC-Qt. On hosts without multi-r
 output always has Source's size, and Fixed and Dynamic resize the result to it, as before.
 
 Several results (issue #207): filters such as Light Leaks or Rooster make several layers, which
-G'MIC-Qt merges into GIMP's image. Output Layer (in Advanced Options) picks the output: Merged,
-the default, is that merged image; Layer 0, Layer -1... one result, counted from the top of the
-stack; Frame one result per frame.
+GIMP composites after G'MIC-Qt's Apply. Output Layer (in Advanced Options) picks the output:
+Merged, the default, is that composite (each result's mode, opacity and position, as G'MIC's
+gui_merge_layers merges them); Layer 0, Layer -1... one result, counted from the top of the
+stack; Frame one result per frame. The filters that split an image into layers (e.g. Channels to
+Layers) give the image back when Merged: pick Layer 0, Layer -1... to see one layer, or Frame to
+play them over time.
 
 A render can be aborted while G'MIC runs. The filters that report their progress to G'MIC (with
 its progress command; most filters don't) show it in the host's progress bar, e.g. Natron's

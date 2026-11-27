@@ -1136,17 +1136,22 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 	// Natron), so the other options keep their meaning in saved projects
 	static constexpr std::array<const char*, kOutputLayerFrame + 1> kOutputLayerOptions = {
 		"Merged", "Layer 0", "Layer -1", "Layer -2", "Layer -3", "Layer -4", "Layer -5", "Layer -6", "Layer -7", "Layer -8", "Layer -9", "Frame" };
+	static_assert(std::string_view(kOutputLayerOptions[kOutputLayerMerged]) == "Merged", "kOutputLayerMerged is the index of \"Merged\"");
 	static_assert(std::string_view(kOutputLayerOptions[kOutputLayerFrame]) == "Frame", "kOutputLayerFrame is the index of \"Frame\"");
 	string outputLayerOptions;
 	for (const char* option : kOutputLayerOptions) {
 		outputLayerOptions += (outputLayerOptions.empty() ? "" : "|") + string(option);
 	}
-	// Merged, the default (issue #207), is what G'MIC-Qt's Apply gives GIMP: with "Layer 0", the
-	// default before, the filters that add a layer (Light Leaks, Rooster...) output only that layer
+	// Merged, the default (issue #207): the results composited by G'MIC's gui_merge_layers, which
+	// approximates what GIMP shows of the separate layers that G'MIC-Qt's Apply gives it. With
+	// "Layer 0", the default before, the filters that add a layer (Light Leaks, Rooster...) output
+	// only that layer
 	globalDataP->param[p] = Parameter(kOutputLayerParam, "", ParamType::Select, 0, kOutputLayerFrame, kOutputLayerMerged, 0, 0, 0, outputLayerOptions);
-	globalDataP->param[p].hint = "The image of the G'MIC results to output. Merged, the default: all the results merged into one, as "
-		"G'MIC-Qt gives them to GIMP. "
+	globalDataP->param[p].hint = "The image of the G'MIC results to output. Merged, the default: all the results composited into one "
+		"image, as GIMP shows them after G'MIC-Qt's Apply. "
 		"Layer 0, Layer -1...: one result, counted from the top of the stack as in G'MIC-Qt (Layer 0 is the first). "
+		"The filters that split an image into layers (e.g. Channels to Layers) give the image back when Merged: pick "
+		"Layer 0, Layer -1... to see one layer, or Frame to play them over time. "
 		"Frame: the result whose number is the frame number minus the first frame of Source, modulo the number of "
 		"results, for the filters that make several frames in one run (often set by a number of frames or layers "
 		"among their parameters). The results are kept in memory, so that the next frames "
