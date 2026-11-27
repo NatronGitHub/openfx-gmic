@@ -889,27 +889,16 @@ static string ignoreAlphaNote(const EffectData& effectData)
 		"whose size changed (frames, rotation, crop, resize...) are opaque.";
 }
 
-// Filters that process their layers as successive frames of a clip (issue #63). Their time offsets
-// default to 0 like the other filters' (saved projects don't store parameters that didn't exist,
-// and these connected the earlier frames through TimeOffset nodes): their help says how to get the
-// earlier frames, and their "Layer Times" group is open.
-static bool isTemporalFilter(const EffectData& effectData)
-{
-	static const char* const commands[] = { "fx_fade_layers", "fx_morph_layers", "fx_rep_z_render",
-		"fx_align_layers", "fx_blend_median", "fx_blend_average_all" };
-	for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); ++i) {
-		if (effectData.command == commands[i]) return true;
-	}
-	return false;
-}
-
+// Help note on Layer Times (issue #63) for the filters with layer inputs. The same for all: G'MIC
+// doesn't say which filters treat their layers as frames. The time offsets default to 0 (saved
+// projects don't store parameters that didn't exist).
 static string layerTimesNote(const EffectData& effectData)
 {
-	if (!effectData.multiLayer || !isTemporalFilter(effectData)) return string();
-	return "\n\nLayer Times: this filter treats its layers as frames. To process the previous frames of "
-		"Source, set Layers from Source to the number of frames (Layer -1, Layer -2... then come from "
-		"Source at the frames given by their time offsets, -1, -2... by default), or connect other "
-		"clips to the layer inputs and set their time offsets.";
+	if (!effectData.multiLayer) return string();
+	return "\n\nLayer Times (closed group below): if this filter treats its layers as successive frames, set "
+		"Layers from Source to the number of frames to get the previous frames of Source (Layer -1, Layer -2... "
+		"at the time offsets -1, -2... set by default), or connect other clips to the layer inputs and set their "
+		"time offsets.";
 }
 
 // The plug-in's description: the filter's notes (with those of its note() parameters), the notes
@@ -1116,7 +1105,7 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		// don't store them. Not animated: the frames needed are given to the host for a render time.
 		// Integer parameters with flags 1 are not animated (see describeInContext).
 		globalDataP->param[p] = Parameter("Layer Times", "", ParamType::TopicStart);
-		globalDataP->param[p].flags = isTemporalFilter(effectData) ? 0 : 1; // closed, except for the filters that use frames
+		globalDataP->param[p].flags = 1; // closed
 		++p;
 		globalDataP->param[p] = Parameter(kLayersFromSourceParam, "", ParamType::Int, 0, 4, 0, 0, 0, 0, "");
 		globalDataP->param[p].flags = 1;
@@ -1156,8 +1145,8 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 	globalDataP->param[p].hint = "The image of the G'MIC results to output. Merged: all the results merged into one. "
 		"Layer 0, Layer -1...: one result, counted from the top of the stack as in G'MIC-Qt (Layer 0 is the first). "
 		"Frame: the result whose number is the frame number minus the first frame of Source, modulo the number of "
-		"results, for the filters that make several frames in one run (Fade Layers, Morph Layers, Tiles to Layers, "
-		"Spline Spirograph's Number of Output Frames...). The results are kept in memory, so that the next frames "
+		"results, for the filters that make several frames in one run (often set by a number of frames or layers "
+		"among their parameters). The results are kept in memory, so that the next frames "
 		"don't run the filter again while its inputs and parameters stay the same (up to 1/8 of the memory, 1 to 4 GiB, "
 		"or OFX_GMIC_FRAME_CACHE_MB megabytes). Each run computes all the results before one is picked or kept, so "
 		"it needs the memory of all of them whatever that limit (e.g. 512 HD frames take about 17 GB): the filter's "

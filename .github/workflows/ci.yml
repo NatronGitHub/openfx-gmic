@@ -111,7 +111,7 @@ permissions:
 
 env:
   # number of plug-ins expected from the pinned G'MIC version: update when upgrading G'MIC
-  GMIC_PLUGIN_COUNT: 1202
+  GMIC_PLUGIN_COUNT: 1201
   # of them, those that run their preview command before their main command (#206; read by
   # describe_plugins.sh): update when upgrading G'MIC or changing the rule (Helpers/gmic_parser.cpp)
   PREVIEW_FIRST_COUNT: 10

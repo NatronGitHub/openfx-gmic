@@ -97,6 +97,38 @@ const char* const kValueFilter =
 	"fx_tv_preview :\n"
 	"  fx_tv $*\n";
 
+// The rules on the #@gui lines alone (issue #204: no rule names a filter, an author or a folder
+// other than G'MIC's Sequences convention): the pages of an About folder are filters of a folder
+// like any other; a filter with "[interactive]" in any of its lines is left out, also in a Various
+// folder; an "[Animated]" filter outside the Sequences folders is shown, and the Sequences folders
+// are left out (issue #255); the page that G'MIC's update_deprecate adds to an outdated update file
+// is shown, as in G'MIC-Qt, with no command; names are not abbreviated.
+const char* const kGuiFilters =
+	"#@gui <i>About</i>\n"
+	"#@gui Test About Page : _none_, _none_\n"
+	"#@gui : _ = note(\"text\")\n"
+	"#@gui _<i>Various</i>\n"
+	"#@gui Test Various : fx_tw, fx_tw\n"
+	"#@gui : Mode = choice(\"Off\",\"New Curves [interactive]\")\n"
+	"#@gui Test inverse Name : fx_tx, fx_tx\n"
+	"#@gui : X = float(1,0,2)\n"
+	"#@gui _<i>Rendering</i>\n"
+	"#@gui Test Anim [Animated] : fx_tz, fx_tz\n"
+	"#@gui : Z = float(1,0,2)\n"
+	"#@gui _<b>Sequences</b>\n"
+	"#@gui Test Sequence : fx_ty, fx_ty\n"
+	"#@gui : Frames = int(10,2,100)\n"
+	"#@gui ________\n"
+	"#@gui !<b><i>[ New Version Available! ]</i></b> : _none_, _none_\n"
+	"#@gui : note = note{\"A new version is available\"}\n";
+
+// "<name>" in <category>[, no command], or "hidden" (d null)
+std::string describe(const gmic_ofx::EffectData* d)
+{
+	if (!d) return "hidden";
+	return "\"" + d->name + "\" in " + d->category + (d->command.empty() ? ", no command" : "");
+}
+
 const gmic_ofx::EffectData* find(const std::vector<gmic_ofx::Filter>& filters, const std::string& id)
 {
 	for (const gmic_ofx::Filter& f : filters) {
@@ -140,6 +172,22 @@ int main()
 		if (!ok) ++failed;
 		std::printf("%s %s: %s (expected %s)\n", ok ? "ok" : "FAIL", c.id,
 			!d ? "hidden" : d->dynamicVisibility ? "dynamic visibility" : "static", c.dynamicVisibility ? "dynamic visibility" : "static");
+	}
+	// the #@gui rules: the id, then the expected describe() result
+	const std::vector<gmic_ofx::Filter> guiFilters = gmic_ofx::gmic_parse_multi(kGuiFilters);
+	const struct { const char* id; const char* expected; } guiCases[] = {
+		{ "eu.gmic.TestAboutPage", "\"G'MIC Test About Page\" in G'MIC/About, no command" },
+		{ "eu.gmic.TestVarious", "hidden" },
+		{ "eu.gmic.TestinverseName", "\"G'MIC Test inverse Name\" in G'MIC/Various" },
+		{ "eu.gmic.TestAnimAnimated", "\"G'MIC Test Anim Animated\" in G'MIC/Rendering" },
+		{ "eu.gmic.TestSequence", "hidden" },
+		{ "eu.gmic.NewVersionAvailable", "\"G'MIC New Version Available!\" in G'MIC, no command" },
+	};
+	for (const auto& c : guiCases) {
+		const std::string got = describe(find(guiFilters, c.id));
+		const bool ok = got == c.expected;
+		if (!ok) ++failed;
+		std::printf("%s %s: %s (expected %s)\n", ok ? "ok" : "FAIL", c.id, got.c_str(), c.expected);
 	}
 	// the locale: the first one with a decimal comma that the system has
 	const char* locale = nullptr;
