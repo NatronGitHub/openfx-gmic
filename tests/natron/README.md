@@ -45,6 +45,9 @@ CI runs them weekly and on demand (`gh workflow run ci.yml -f only=natron`), in 
 
 ## Writing tests
 
+- `gmictest.make_source()` sets a 960x540 project format (`gmictest.FORMAT`): G'MIC's renders, and the
+  plug-in's measure of a result's size (which gives up after 10 s and keeps Source's size), stay quick
+  on a CI runner. Offsets in the tests are in its canvas units.
 - The pen events have integer widget coordinates: for an exact drop, set the viewer's zoom to 1 and
   centre it on the target (`setCenter`), as `test_gmic_point_drop_on_default.py` does.
 - `Double2DParam.getDefaultValue()` returns normalised values for the point parameters: compare with

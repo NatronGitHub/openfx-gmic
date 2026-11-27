@@ -1,12 +1,12 @@
 # openfx-gmic #176/#223: a point dragged with its handle and dropped exactly on its default stays there.
 # A point reset to its default (in the parameters) goes to its G'MIC default within Source, as
 # Transform's center does; a drag must not be taken for such a reset.
-# Poincaré Disk's Shift (non-burst, default 50 %, 50 %: (960, 540) in the 1920x1080 project) gets a
+# Poincaré Disk's Shift (non-burst, default 50 %, 50 %: (480, 270) in the 960x540 project) gets a
 # Source twice as large (G'MIC Upscale [Scale2x]): connecting it moves Shift to Source's centre, read
-# from Source's region of definition ((1920, 0) while that grows downwards from the top edge, #238).
-# Shift is then dragged back exactly onto (960, 540) and must stay there. The phases' times are
-# printed: the renders are 3840x2160.
-# To drop exactly on (960, 540), the last drag is made at zoom 1 around it, from a widget pixel that
+# from Source's region of definition ((960, 0) while that grows downwards from the top edge, #238).
+# Shift is then dragged back exactly onto (480, 270) and must stay there. The phases' times are
+# printed: the renders are 1920x1080.
+# To drop exactly on (480, 270), the last drag is made at zoom 1 around it, from a widget pixel that
 # maps to it (pen events have integer widget coordinates; the plug-in rounds the value to the pixel).
 import time
 
@@ -31,10 +31,10 @@ v = app.getViewer(VIEWER)
 if not all(hasattr(v, f) for f in ("setCenter", "setZoom", "canvasToWidget", "widgetToCanvas")):
     NatronGuiTest.skip("PyViewer has no setCenter/setZoom/canvasToWidget/widgetToCanvas")
 rod = up.getRegionOfDefinition(1, 0)
-d = (960.0, 540.0)  # the default in the 1920x1080 project
+d = (FORMAT[1] / 2.0, FORMAT[2] / 2.0)  # the default (50 %, 50 %) in the project
 start = point(node, "Shift")
 print("Source %r, Shift %r" % ((rod.left(), rod.bottom(), rod.right(), rod.top()), start))
-check(abs(rod.right() - rod.left() - 3840.0) < 1, "%s did not double the width of Source: %r"
+check(abs(rod.right() - rod.left() - 2 * FORMAT[1]) < 1, "%s did not double the width of Source: %r"
       % (UPSCALE, (rod.left(), rod.right())))
 check_close(start[0], (rod.left() + rod.right()) / 2, 1, "Shift x at Source's centre")
 check_close(start[1], (rod.bottom() + rod.top()) / 2, 1, "Shift y at Source's centre")

@@ -127,8 +127,8 @@ env:
 jobs:
   # Which jobs run: every pull request once it is ready, not drafts (this job is skipped, and with
   # it every job, which all need it); "only: windows-arm" (workflow_dispatch) runs just the Windows
-  # on Arm job, "only: natron" just the Natron tests (natron job). The weekly scheduled run is never skipped: the toolchains (package managers, runner
-  # images) move even when master doesn't.
+  # on Arm job, "only: natron" just the Natron tests (natron job). The weekly scheduled run is
+  # never skipped: the toolchains (package managers, runner images) move even when master doesn't.
   changes:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
@@ -1016,9 +1016,9 @@ jobs:
   # regressions would turn unrelated PRs red. In CI, a skipped test is a failure
   # (NATRON_TESTS_NO_SKIP): a missing OpenGL context or Natron test API must not go unnoticed.
   # Later, Natron's natron_testing pre-release (Natron-RB-2.6-Linux-x86_64.tar.xz, with
-  # natron_testing-commit.txt) could replace the build: remove its bundled GMIC.ofx.bundle, and check
-  # first that the plug-in built here (Ubuntu 24.04, GLIBCXX_3.4.33) loads with the libstdc++ of that
-  # Rocky Linux 9 archive.
+  # natron_testing-commit.txt) could replace the build: remove its bundled GMIC.ofx.bundle, and
+  # check first that the plug-in built here (Ubuntu 24.04, GLIBCXX_3.4.33) loads with the libstdc++
+  # of that Rocky Linux 9 archive.
   natron:
     name: Natron tests (Ubuntu 24.04)
     runs-on: ubuntu-24.04
@@ -1036,7 +1036,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
-      # the plug-in's and, as the Linux job of Natron's ci.yml (Qt 5, PySide2, Python 3.12), Natron's
+      # the plug-in's and Natron's (as the Linux job of Natron's ci.yml: Qt 5, PySide2, Python 3.12)
       - name: Install packages
         run: |
           sudo apt-get update
@@ -1125,4 +1125,5 @@ jobs:
             natron-tests
             !natron-tests/cache
             !natron-tests/*/cache
+            !natron-tests/scripts/__pycache__
           retention-days: 14

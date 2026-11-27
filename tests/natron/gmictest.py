@@ -12,10 +12,21 @@ VIEWER = "Viewer1"
 # a generator for Source, in order of preference: Constant, which CI uses, first
 SOURCES = ("net.sf.openfx.ConstantPlugin", GENERATOR)
 OUT_DIR = os.environ.get("GMIC_TEST_OUT", "/tmp")
+# The project format: small, so that G'MIC's renders (and the plug-in's measure of a result's size,
+# which gives up after 10 s) are quick on a CI runner too. The tests' offsets are in its canvas units.
+FORMAT = ("GmicTest", 960, 540)
+
+
+def set_format(app):
+    """Make FORMAT the project's format."""
+    name, width, height = FORMAT
+    app.addFormat("%s %dx%d 1.0" % (name, width, height))
+    app.getProjectParam("outputFormat").set(name)
 
 
 def make_source(app):
-    """A flat grey (0.5) generator node of the project's format; skip the test if there is none."""
+    """A flat grey (0.5) generator node of the project's format (FORMAT); skip the test if there is none."""
+    set_format(app)
     ids = natron.getPluginIDs()
     for pid in SOURCES:
         if pid in ids:
@@ -81,6 +92,36 @@ def pixel(x, y):
 
 def colour_close(c, expected, tol):
     return all(abs(a - b) <= tol for a, b in zip(c, expected))
+
+
+def grid_probes(node, n, avoid, margin):
+    """An n x n grid of points over node's region of definition, at least margin canvas units away
+    from each segment ((x0, y0), (x1, y1)) of avoid (e.g. a handle's path).
+
+    The region must be in the viewer, as the project's format is after fitting.
+    """
+    rod = node.getRegionOfDefinition(1, 0)
+    points = []
+    for i in range(n):
+        for j in range(n):
+            x = rod.left() + (rod.right() - rod.left()) * (i + 0.5) / n
+            y = rod.bottom() + (rod.top() - rod.bottom()) * (j + 0.5) / n
+            if all(distance_to_segment((x, y), a, b) >= margin for a, b in avoid):
+                points.append((x, y))
+    return points
+
+
+def distance_to_segment(p, a, b):
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    t = 0.0
+    if dx or dy:
+        t = max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / float(dx * dx + dy * dy)))
+    return ((p[0] - a[0] - t * dx) ** 2 + (p[1] - a[1] - t * dy) ** 2) ** 0.5
+
+
+def changed(before, after, levels):
+    """The indices of the pixels of after that differ from those of before by more than levels."""
+    return [k for k, (a, b) in enumerate(zip(before, after)) if max(abs(u - v) for u, v in zip(a, b)) > levels]
 
 
 def drag_point(x0, y0, x1, y1, steps=10, between=None):

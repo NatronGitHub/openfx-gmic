@@ -10,9 +10,9 @@ node.getParam("Brightness_").setValue(-100.0)
 wait_idle(120.0)
 pen_away(app, node)
 x0, y0 = point(node, "Position")
-x1, y1 = x0 + 400.0, y0
+x1, y1 = x0 + 200.0, y0
 # off the handle's path, on both sides of the anchor's influence edge, wherever the source puts it
-probes = [(x0 + dx, y0 + dy) for dx in (-300.0, 0.0, 200.0, 400.0, 700.0) for dy in (-300.0, -150.0, 150.0)]
+probes = [(x0 + dx, y0 + dy) for dx in (-150.0, 0.0, 100.0, 200.0, 350.0) for dy in (-150.0, -75.0, 75.0)]
 
 
 def probe_pixels():
