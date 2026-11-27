@@ -66,9 +66,16 @@ check 244 "hypot() doesn't underflow" "1.414213562373095e-200" e '{hypot(1e-200,
 # a run() that re-allocates the image list of a fill/eval of an image: an error, not a write into
 # the freed image (with the bug, the writes were lost: 7)
 check 243 "eval[0] whose run() re-allocates the image list fails" "~re-allocated the image list" \
-  100,100,1,1,7 local eval[0] "run('1x20');i(0,0)=3" e "no error: {0,i(0,0)}" onfail e '${}' "done"
+  100,100,1,1,7 local eval[0] "run('1x20');i(0,0)=3" e "no_error:{0,i(0,0)}" onfail e '${}' "done"
 check 243 "fill whose run() re-allocates the image list fails" "~re-allocated the image list" \
-  100,100,1,1,7 local f[0] ">x==5&&y==5?(run('1x20');i(0,0)=3);i" e "no error: {0,i(0,0)}" onfail e '${}' "done"
+  100,100,1,1,7 local f[0] ">x==5&&y==5?(run('1x20');i(0,0)=3);i" e "no_error:{0,i(0,0)}" onfail e '${}' "done"
+check 243 "fill of a value-sequence-like formula whose run() re-allocates the image list fails" \
+  "~re-allocated the image list" \
+  100,100,1,1,7 local f[0] "1;run('1x20');3" e "no_error:{0,i(0,0)}" onfail e '${}' "done"
+# the stdlib's arrange (Montage): its eval[...] runs run() for each tile, which re-allocates the
+# list of 14 images (with the bug, the montage lost tiles)
+check 243 "arrange of 14 images (the Montage filter) fails" "~re-allocated the image list" \
+  repeat 14 "{" 8,8,1,3,'$>+1' "}" local arrange AH,0.5,0 e "no_error" onfail e '${}' "done"
 check 243 "eval[0] whose run() doesn't change the image list still writes" "3" \
   100,100,1,1,7 eval[0] "run('a=1');i(0,0)=3" e '{0,i(0,0)}'
 check 243 "eval without a selection may still re-allocate the image list" "41" \

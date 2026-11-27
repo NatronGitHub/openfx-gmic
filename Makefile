@@ -177,10 +177,12 @@ Licence_pocketfft.txt: pocketfft_hdronly.h
 #   https://github.com/GreycLab/CImg/issues/507)
 # - cimg-run-realloc.sh: a fill or eval of an image fails with an error ("Running pipeline has
 #   re-allocated the image list.") when a run() in its expression inserts enough images to
-#   re-allocate the image list, instead of writing into the freed image (its writes were lost):
-#   the check of G'MIC develop, made in CImg's mp_run() (#243,
-#   https://github.com/GreycLab/gmic/issues/231; fixed in GreycLab/gmic 6938fc8 and GreycLab/CImg
-#   e3e326b, where the script does nothing: drop it at the next G'MIC bump)
+#   re-allocate the image list, instead of writing into the freed image (its writes were lost, e.g.
+#   the tiles of 'arrange' (Montage) of 13 or 14 images) (#243,
+#   https://github.com/GreycLab/gmic/issues/231). Two parts: the check in mp_run(), G'MIC develop's
+#   (GreycLab/gmic 6938fc8, GreycLab/CImg e3e326b; does nothing on develop: drop it at the next
+#   G'MIC bump), and _fill() no longer reads the freed image after that error ('fill' dropped the
+#   error on macOS): develop needs it too, keep it until upstream fixes it
 # G'MIC 4.0.8 has the fixes of the other patches that 4.0.7 needed (see CHANGELOG.md), and CImg's
 # pocketfft support (cimg_use_pocketfft, https://github.com/GreycLab/CImg/pull/497).
 # CMakeLists.txt reads CIMG_PATCHES (a plain one-line assignment, see above), and applies the
