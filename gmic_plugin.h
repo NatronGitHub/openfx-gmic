@@ -173,7 +173,7 @@ struct ResultGeometry
 };
 
 // Does the output keep the result's size with Resize Mode Fixed and Dynamic (issue #175)? Only on
-// a host with multi-resolution (or with the test aid OFX_GMIC_MULTIRES=1): on the others, the
+// a host with multi-resolution (and without the test aid OFX_GMIC_MULTIRES=0): on the others, the
 // output keeps Source's size, the result is resized to it as before, and there is no probe
 // (pluginResultGeometry).
 bool pluginKeepsResultSize();

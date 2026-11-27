@@ -214,13 +214,11 @@ jobs:
       # their repros, with the interpreter that fft_smoke.sh built from the build's sources
       - name: Local fixes of upstream bugs
         run: .github/workflows/gmic_fix_tests.sh "$RUNNER_TEMP/gmic" build/gmic/gmic_stdlib_community.h
-      # all the plug-ins on the weekly and on-demand runs, a subset per PR. hostDemo renders any
-      # region of definition but reports no multi-resolution support: OFX_GMIC_MULTIRES=1 makes
-      # the plug-in predict each result's size (#175), as on Natron. The OFX 1.4 step below runs
-      # without it, and keeps the old path (results resized to Source's size) covered.
+      # all the plug-ins on the weekly and on-demand runs, a subset per PR. hostDemo reports
+      # multi-resolution support: the plug-in predicts each result's size (#175), as on Natron. The
+      # OFX 1.4 step below runs with OFX_GMIC_MULTIRES=0, and keeps the path of hosts without
+      # multi-resolution (results resized to Source's size) covered.
       - name: Render plug-ins
-        env:
-          OFX_GMIC_MULTIRES: '1'
         run: |
           python3 .github/workflows/render_plugins.py --host build \
             --plugins install/OFX/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
@@ -228,9 +226,12 @@ jobs:
       # an OFX 1.4-only host (hostDemo --ofx14, openfx#170): only the OFX 1.4 host properties and
       # suites. Without OMP_NUM_THREADS (--host-threads), the plug-in sets G'MIC's thread count
       # (#188): hostDemo's multithread suite reports 1 CPU, and each hostDemo process runs one
-      # render, so the fair share gives it all the hardware threads. Baseline: this step on master,
-      # with OMP_NUM_THREADS=2, took about 65 s
+      # render, so the fair share gives it all the hardware threads. OFX_GMIC_MULTIRES=0: as on a
+      # host without multi-resolution (see "Render plug-ins"). Baseline: this step on master, with
+      # OMP_NUM_THREADS=2, took about 65 s
       - name: Render plug-ins (subset, OFX 1.4 host)
+        env:
+          OFX_GMIC_MULTIRES: '0'
         run: |
           python3 .github/workflows/render_plugins.py --host build --host-arg=--ofx14 --host-threads \
             --plugins install/OFX/Plugins --list plugins.txt --stdlib build/gmic/gmic_stdlib_community.h \
@@ -238,10 +239,11 @@ jobs:
       # the OpenMP runtime stays loaded when the host unloads GMIC.ofx (#213): libgomp, unloaded
       # with it, crashed intermittently under its threads that were still exiting. In glibc's
       # LD_DEBUG=files log of hostDemo (one ld.<pid> file per process), the plug-in's pin is
-      # "activating NODELETE" for libgomp, at the first render; after it, GMIC.ofx is unloaded
-      # ("destroying link map") and libgomp is not. hostDemo also loads and unloads GMIC.ofx for
-      # the plug-in scan, before any render: libgomp, not pinned yet, is unloaded then, harmlessly
-      # (no OpenMP thread exists before the first G'MIC run), and loaded again for the render
+      # "activating NODELETE" for libgomp, at the first G'MIC run (a render, or a probe of the
+      # region of definition action); after it, GMIC.ofx is unloaded ("destroying link map") and
+      # libgomp is not. hostDemo also loads and unloads GMIC.ofx for the plug-in scan, before any
+      # G'MIC run: libgomp, not pinned yet, is unloaded then, harmlessly (no OpenMP thread exists
+      # before the first G'MIC run), and loaded again for the render
       - name: Check that unloading the plug-in keeps libgomp loaded
         run: |
           rm -rf ld-debug && mkdir ld-debug
@@ -971,7 +973,7 @@ jobs:
           echo "$(tr ',' '\n' < results/differing.txt | grep -c .) plug-ins whose outputs differ"
           if [ -s results/differing.txt ]; then
             for side in release develop; do
-              (cd $side && OFX_GMIC_MULTIRES=1 python3 .github/workflows/render_plugins.py --host build \
+              (cd $side && python3 .github/workflows/render_plugins.py --host build \
                 --plugins install/OFX/Plugins --list ../results/$side/plugins.txt --only "$(cat ../results/differing.txt)" \
                 --jobs 2 --work render-again) > results/$side/render-again.log 2>&1 || true
               tail -n 3 results/$side/render-again.log

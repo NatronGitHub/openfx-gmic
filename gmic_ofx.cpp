@@ -2138,10 +2138,11 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			p->setDefault(n.x, n.y);
 			p->setDoubleType(OFX::eDoubleTypeXYAbsolute);
 			p->setDefaultCoordinateSystem(OFX::eCoordinatesNormalised);
-			// the host's handle where the plug-in draws none (pluginDrawsPoints), or where the host
-			// has one for the point (PointsInteract then doesn't draw it). Natron draws its own handle
-			// for a point of an effect with an overlay only if this is set.
-			p->setUseHostNativeOverlayHandle(!pluginDrawsPoints() || p->getHostHasNativeOverlayHandle());
+			// the host's handle only where the plug-in draws none (pluginDrawsPoints). Elsewhere the
+			// plug-in's coloured point wins over a native handle of the host (Natron reports one for
+			// XYAbsolute points, NatronGitHub/Natron#1932): PointsInteract draws it, since it reads this
+			// property on the instance, and Natron draws no handle of its own without it.
+			p->setUseHostNativeOverlayHandle(!pluginDrawsPoints());
 			paramDesc = p;
 		} break;
 		case ParamType::Button: {
