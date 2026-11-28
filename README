@@ -35,7 +35,8 @@ Getting the sources
 The G'MIC sources (version GMICVER in gmic_sources.txt, 4.0.8) are downloaded at build time and are
 not in git: the release tarball gmic_<version>.tar.gz, from the GitHub release of GreycLab/gmic,
 gmic.eu or the MacPorts distfiles mirror, checked against GMICSRC_SHA256_<version>. They are then
-patched by the scripts that gmic_sources.txt lists and documents (CIMG_PATCHES, GMIC_PATCHES), and
+patched by the scripts that gmic_sources.txt lists and documents (CIMG_PATCHES, GMIC_PATCHES; and
+POCKETFFT_PATCHES for pocketfft's header), and
 gmic_hotfixes.gmic replaces the definitions of broken filters (each fix is skipped once G'MIC has
 it). Checkouts built with the former Makefile may still have its files at the top: CImg.h,
 gmic.cpp, gmic.h, gmic_libc.h and gmic_stdlib_community.h (which the CMake build refuses), and
@@ -108,7 +109,7 @@ Options:
   to download it (default: the build directory).
 - GMIC_POCKETFFT: a downloaded pocketfft_hdronly.h, for offline builds: the
   file at gmic_sources.txt's POCKETFFTCOMMIT, checked against POCKETFFT_SHA256 (downloaded there if
-  missing).
+  missing), unpatched (the build patches a copy).
 - GMIC_STATIC_DEPS: Linux only, ON (default): link zlib, libpng and FFTW statically; OFF: shared.
 - OFX_DEPLOY_BUNDLES=ON: on macOS, the install step copies the libraries into the bundle.
   GMIC.ofx targets macOS 14.0 by default (CMAKE_OSX_DEPLOYMENT_TARGET, MACOSX_DEPLOYMENT_TARGET),
