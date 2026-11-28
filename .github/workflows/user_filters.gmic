@@ -184,6 +184,34 @@ fx_userfile_status_main_preview :
   u "{"$1"}{"$2"}"
   fill_color {$1*255},0,{$2*25.5}
 
+# - User File Status Keep: an empty value "{}" keeps the parameter's value, whatever its type
+#   (#231, as G'MIC-Qt), also with a visibility ("{}_0", "{}_1"). The status sets Steps to 7 and
+#   gives "{}" for every other parameter: with Mode Keep, without a visibility; with Mode
+#   Visibility, every other parameter is hidden ("_0") or disabled ("_1"), except the point Spot,
+#   which stays shown and enabled. The main command names _persistent, so that a render runs the
+#   preview command first and gets the values that its status gives (#206): Steps 7 and the
+#   others' own, Flag on. The render's red, green and blue are Level, Flag and Steps / 10.
+#@gui User File Status Keep : fx_userfile_status_keep, fx_userfile_status_keep_preview
+#@gui : Mode = choice("Keep","Visibility")
+#@gui : Level = float(0.25,0,1)
+#@gui : Steps = int(3,0,10)
+#@gui : Pick = choice(1,"A","B","C")
+#@gui : Flag = bool(1)
+#@gui : Tint = color(10,20,30)
+#@gui : Spot = point(25,75)
+#@gui : Label = text("before")
+#@gui : Path = file("before.txt")
+#@gui : Folder = folder("before")
+fx_userfile_status_keep :
+  skip "$_persistent"
+  fill_color {$2*255},{$5*255},{$3*25.5}
+
+fx_userfile_status_keep_preview :
+  if $1 u "{}{}_0{7}_1{}_0{}_1{}_0{}_1{}_0{}_1{}_0"
+  else u "{}{}{7}{}{}{}{}{}{}{}"
+  fi
+  fill_color 255,0,255
+
 # - User File Press Size: the status gives the size of the image that the press's run got (at most
 #   512 pixels, G'MIC-Qt's preview image, also with Resize Mode "Downsample 1/2", which downsamples
 #   it again), and 0.3 for Exact, which must stay 0.3 (not the float 0.30000001...)

@@ -1318,11 +1318,12 @@ static bool isRemovablePoint(const GlobalData* globalDataP, int i)
 // Sets the values of sequenceData that the status of a run of the filter's preview command
 // gives, as G'MIC-Qt's FilterParametersWidget::setValues() (only if there is one value per
 // argument, else nothing changes) and each parameter's setValue() (FilterParameters/*Parameter.cpp)
-// apply them: a value that it can't read leaves the parameter's own; an int or float is clamped to
-// the parameter's range, as by G'MIC-Qt's spin box; a choice outside its options, or a color that
-// is not 3 or 4 values, is ignored; a bool is on for "1" only; a button is left as it is.
-// Visibilities are not applied. False if nothing was set (an empty status, or another number of
-// values).
+// apply them: an empty value ("{}", or "{}_1" with a visibility) leaves the parameter as it is,
+// whatever its type (issue #231); a value that it can't read leaves the parameter's own; an int or
+// float is clamped to the parameter's range, as by G'MIC-Qt's spin box; a choice outside its
+// options, or a color that is not 3 or 4 values, is ignored; a bool is on for "1" only; a button
+// is left as it is. Visibilities are not applied. False if the status doesn't apply (an empty
+// status, or another number of values).
 static bool setStatusValues(const std::vector<std::string>& status, const GlobalData* globalDataP, SequenceData* sequenceDataP,
 	std::map<int, double>* exact = nullptr)
 {
@@ -1338,6 +1339,7 @@ static bool setStatusValues(const std::vector<std::string>& status, const Global
 		const int i = args[a];
 		const Parameter& par = globalDataP->param[i];
 		const string& value = status[a];
+		if (value.empty()) continue; // G'MIC-Qt's status2StringList(): a null string, which setValues() skips
 		float* const fv = sequenceDataP->floatValue[i];
 		double v = 0.;
 		switch (par.paramType) {
