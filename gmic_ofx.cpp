@@ -2093,6 +2093,7 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			const FloatSliderSteps steps = floatSliderSteps(param.minValue, param.maxValue);
 			p->setIncrement(steps.increment);
 			p->setDigits(steps.digits);
+			if (!param.animates) p->setAnimates(false);
 			paramDesc = p;
 		} break;
 		case ParamType::Color:

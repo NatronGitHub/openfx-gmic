@@ -163,6 +163,7 @@ struct Parameter
 	float maxValue = 1.f;
 	DisplayStatus displayStatus = DisplayStatus::Normal;
 	int flags = 0;
+	bool animates = true; // ParamType::Float only (the others' animation is set by their type and flags)
 	// used by the filter's preview command only (G'MIC's split preview, see pluginSetup): the OFX
 	// glue enables it only when Preview/Draft Mode is on
 	bool draftModeOnly = false;
