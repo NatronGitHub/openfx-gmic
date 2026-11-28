@@ -21,6 +21,21 @@ if(GMIC_FFT STREQUAL "pocketfft" AND NOT WIN32)
   # alone in its directory
   set(_unpatched_dir "${CMAKE_CURRENT_BINARY_DIR}/pocketfft-unpatched")
   configure_file("${_pocketfft_src}" "${_unpatched_dir}/pocketfft_hdronly.h" COPYONLY)
+  # exported as add_ofx_plugin exports GMIC.ofx's entry points (openfx/cmake/OpenFX.cmake): only
+  # the test's function. On Linux, without the version script, the module stayed loaded after
+  # dlclose(), patched or not, while GMIC.ofx is unloaded (ci.yml's libgomp check): glibc never
+  # unloads a module that exports STB_GNU_UNIQUE symbols (e.g. statics of inline functions of
+  # libstdc++'s headers, which keep default visibility under -fvisibility=hidden), and the
+  # version script makes them local, as GMIC.ofx's does.
+  set(_exports "${CMAKE_CURRENT_BINARY_DIR}/pocketfft_fft_module.exports")
+  if(APPLE)
+    file(WRITE "${_exports}.new" "_pocketfft_unload_test_run\n")
+    set(_export_option "LINKER:-exported_symbols_list,${_exports}")
+  else()
+    file(WRITE "${_exports}.new" "{\n  global:\n    pocketfft_unload_test_run;\n  local:\n    *;\n};\n")
+    set(_export_option "LINKER:--version-script=${_exports}")
+  endif()
+  configure_file("${_exports}.new" "${_exports}" COPYONLY)
   foreach(_variant IN ITEMS patched unpatched)
     set(_module pocketfft_fft_module_${_variant})
     add_library(${_module} MODULE pocketfft_unload/pocketfft_fft_module.cpp)
@@ -32,6 +47,8 @@ if(GMIC_FFT STREQUAL "pocketfft" AND NOT WIN32)
     endif()
     target_compile_features(${_module} PRIVATE cxx_std_${_std})
     target_link_libraries(${_module} PRIVATE Threads::Threads)
+    target_link_options(${_module} PRIVATE "${_export_option}")
+    set_property(TARGET ${_module} APPEND PROPERTY LINK_DEPENDS "${_exports}")
   endforeach()
   add_executable(pocketfft_unload_test pocketfft_unload/pocketfft_unload_test.cpp)
   target_compile_features(pocketfft_unload_test PRIVATE cxx_std_${_std})

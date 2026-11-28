@@ -7,7 +7,8 @@
   GMIC.ofx, which uses the pool through CImg's FFT, could not be unloaded. The patch passes each
   task's share of the work as parameters instead, as upstream's pull request #3 did.
 
-  MODULE (pocketfft_fft_module.cpp) includes the build's patched pocketfft_hdronly.h. This
+  MODULE (pocketfft_fft_module.cpp) includes the build's patched pocketfft_hdronly.h, and is
+  built and exported as GMIC.ofx is (hidden visibility, one exported function). This
   program loads it, runs its checks (multithreaded FFTs bit-identical to single-threaded ones,
   round trips), checks that it has no thread-local variables (macOS: no MH_HAS_TLV_DESCRIPTORS;
   Linux: no PT_TLS segment, which glibc unloads, but which reveals the same variables, so that the
@@ -23,6 +24,8 @@
 #define _GNU_SOURCE // dlinfo(), RTLD_DI_LINKMAP (glibc)
 #endif
 #include <cstdio>
+#include <cstdlib>
+#include <string>
 
 #include <dlfcn.h>
 
@@ -113,6 +116,12 @@ bool loadRunUnload(const char* path, int round)
     std::printf("FAILED: round %d: %s is still loaded after dlclose()\n", round, path);
     dlclose(again);
     ok = false;
+#if defined(__linux__)
+    // (diagnostic: glibc never unloads a module that defines STB_GNU_UNIQUE symbols, or is NODELETE)
+    const std::string cmd = std::string("readelf -dW --dyn-syms '") + path + "' | grep -E 'UNIQUE|NODELETE|FLAGS'";
+    std::fflush(stdout);
+    (void)std::system(cmd.c_str());
+#endif
   }
   return ok;
 }
