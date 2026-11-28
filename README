@@ -35,16 +35,12 @@ Getting the sources
 The G'MIC sources (version GMICVER in gmic_sources.txt, 4.0.8) are downloaded at build time and are
 not in git: the release tarball gmic_<version>.tar.gz, from the GitHub release of GreycLab/gmic,
 gmic.eu or the MacPorts distfiles mirror, checked against GMICSRC_SHA256_<version>. They are then
-patched by the scripts that gmic_sources.txt lists (CIMG_PATCHES, GMIC_PATCHES), e.g.: patches/cimg-omp-rand.sh makes CImg's random numbers in OpenMP loops reproducible,
-patches/cimg-vvar2.sh, patches/cimg-vargkth2.sh, patches/cimg-log1p-peephole.sh and
-patches/cimg-abs-peephole.sh fix math parser bugs,
-patches/cimg-fftw-no-cleanup-at-unload.sh keeps FFTW's threads when the plug-in is unloaded
-(FFT=fftw3), patches/cimg-msvc-snprintf.sh makes cimg_snprintf() always end its output with a
-null character with MSVC, patches/cimg-run-realloc.sh makes a fill or eval fail instead of writing
-into a freed image when a run() in its expression re-allocates the image list,
-patches/gmic-win-thread-stack.sh gives the threads of G'MIC's
-"parallel" command an 8 MiB stack on Windows, and gmic_hotfixes.gmic replaces the
-definitions of broken filters (each fix is skipped once G'MIC has it).
+patched by the scripts that gmic_sources.txt lists and documents (CIMG_PATCHES, GMIC_PATCHES), and
+gmic_hotfixes.gmic replaces the definitions of broken filters (each fix is skipped once G'MIC has
+it). Checkouts built with the former Makefile may still have its files at the top: CImg.h,
+gmic.cpp, gmic.h, gmic_libc.h and gmic_stdlib_community.h (which the CMake build refuses), and
+gmic_hotfixes.h, gmic_hotfixes.version, gmic_sources.license, gmic_sources.request,
+gmic_stdlib_community.h.commands, Licence_pocketfft.txt and gmic_stdlib_commercial/: delete them.
 
 Requirements
 ------------

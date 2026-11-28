@@ -1,6 +1,7 @@
 # The G'MIC sources of the build: the pinned G'MIC release (its tarball's checksum), the pocketfft
-# pin, and the local patches applied to the extracted sources, in order. The only place to change
-# when bumping G'MIC (add GMICSRC_SHA256_<version>; see also GMIC_PLUGIN_COUNT in ci.yml).
+# pin, and the local patches applied to the extracted sources, in order. The place to change the
+# G'MIC version and its checksum (add GMICSRC_SHA256_<version>). A bump also updates
+# GMIC_PLUGIN_COUNT in ci.yml and the '#@openfx_gmic_hotfixes' line of gmic_hotfixes.gmic.
 #
 # Read by CMakeLists.txt, .github/workflows/gmic_version.sh (GMICVER), gmic_develop_sources.sh
 # (which rewrites GMICVER, the checksum and the patch lists in a test checkout), the cache key of
