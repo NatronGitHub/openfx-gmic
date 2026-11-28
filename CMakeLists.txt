@@ -151,13 +151,22 @@ endif()
 set(GMIC_SOURCES_FILE "${PROJECT_SOURCE_DIR}/gmic_sources.txt")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${GMIC_SOURCES_FILE}")
 file(STRINGS "${GMIC_SOURCES_FILE}" _gmic_pins)
-# Only "NAME = value" lines, comments and blank lines (the format that the other readers of the
-# file understand too, see its top): fail on anything else, rather than read a wrong value.
+# Only "NAME = value" lines starting in the first column (as the other readers of the file match
+# them, see its top), each name once, and comment and blank lines: fail on anything else, rather
+# than read a wrong value or ignore one.
+set(_names "")
 foreach(_line IN LISTS _gmic_pins)
-  string(STRIP "${_line}" _line)
-  if(NOT _line STREQUAL "" AND NOT _line MATCHES "^#" AND NOT _line MATCHES "^[A-Za-z0-9_.]+ *= *[^$#]*$")
-    message(FATAL_ERROR "${GMIC_SOURCES_FILE}: not a \"NAME = value\" line (no variables or end-of-line comments): ${_line}")
+  if(_line MATCHES "^[ \t\r]*(#.*)?$")
+    continue()
   endif()
+  if(NOT _line MATCHES "^([A-Za-z0-9_.]+) *= *[^$#]*$")
+    message(FATAL_ERROR "${GMIC_SOURCES_FILE}: not a \"NAME = value\" line from the first column "
+      "(no variables or end-of-line comments): ${_line}")
+  endif()
+  if(CMAKE_MATCH_1 IN_LIST _names)
+    message(FATAL_ERROR "${GMIC_SOURCES_FILE}: ${CMAKE_MATCH_1} is assigned more than once")
+  endif()
+  list(APPEND _names "${CMAKE_MATCH_1}")
 endforeach()
 function(gmic_sources_var _name _out)
   set(_value "")
@@ -501,8 +510,8 @@ foreach(_f IN LISTS GMICSOURCES)
     if(NOT _stray STREQUAL _ours)
       message(FATAL_ERROR "${PROJECT_SOURCE_DIR}/${_f} is not the ${_f} of this build (G'MIC ${GMICVER}, "
         "${OFX_LICENSE}, FFT=${GMIC_FFT}; left by an old Makefile build?), "
-        "and would be included instead of ${GMIC_SRC_DIR}/${_f}: remove it, and the other G'MIC "
-        "sources left in the source directory")
+        "and would be included instead of ${GMIC_SRC_DIR}/${_f}: remove CImg.h, gmic.cpp, gmic.h, "
+        "gmic_libc.h and gmic_stdlib_community.h from the source directory")
     endif()
   endif()
 endforeach()
