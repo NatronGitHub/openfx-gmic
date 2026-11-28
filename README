@@ -367,16 +367,24 @@ Source's top-left corner). The Resize Mode (in Advanced Options) chooses the out
     cost of a render on a gradient. A Source no larger than the probes would be (e.g. 160x120)
     is probed at its own size.
   The probes run again only after an edit, on every frame when a parameter is animated, or when
-  an input's size changes (for Output Layer "Frame", on every frame). A prediction stops after
-  10 s in all: the output then keeps Source's size (a note on stderr), and the same values and
-  sizes are not tried again for 30 s, so that a slow filter doesn't block the host on every
-  query. A prediction that runs out of memory keeps Source's size too, and is tried again at the
-  next query. Sizes that depend on the image's content (automatic crops, crops of the
+  an input's size changes (for Output Layer "Frame", on every frame). A slow filter whose time
+  hardly depends on the image's size (a generator) is measured with one probe at the real size,
+  without the others, when the first small probe takes more than about 1.7 s. In an interactive
+  host, a prediction stops after 10 s in all, so that it doesn't block the GUI: the output then
+  keeps Source's size (a note on stderr), and the same values and sizes are not tried again for
+  30 s. A host that renders in the background (NatronRenderer, natron -b) has no time limit
+  (issue #228). A prediction that runs out of memory keeps Source's size too, and is tried again
+  at the next query. Sizes that depend on the image's content (automatic crops, crops of the
   transparent parts) can't be predicted. A result that doesn't fit the output is cropped or
-  padded, with a warning on the node. When there was no prediction (a filter slower than 10 s,
-  e.g. Nonscape - Woods, or one that fails on the gradient, e.g. Upscale [Solver2x]),
-  that render keeps Source's size, and the next frames get the result's size and position
-  (issue #228).
+  padded, with a warning on the node.
+  When a prediction failed or ran out of time (e.g. Nonscape - Woods in the GUI, or Upscale
+  [Solver2x], which fails on the gradient), the first render keeps Source's size, cropped or
+  padded, and the next renders with the same settings (the other frames, unless a parameter is
+  animated or Output Layer is "Frame") get the size and position that it found (issue #228).
+  Natron keeps the region of definition of each frame until the next edit: the frame shown when
+  you edit stays cropped or padded, also when a Write node renders it from the GUI. In a
+  background render, only a filter whose prediction fails can be cropped, in the frames that
+  start before the first render ends.
 - Fixed (Inplace): Source's size and position. A result of another size is placed as with
   Dynamic, then cropped or padded to Source's rectangle, never resized: switching between Fixed
   and Dynamic never moves the content (before #238, Fixed cropped from the top-left corner and
