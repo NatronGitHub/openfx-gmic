@@ -209,11 +209,12 @@ bool pluginKeepsResultSize();
 // the test aid OFX_GMIC_MULTIRES can override), if even
 // the probe at the real size failed, ran out of memory or past the time limit (logged; a timeout
 // is remembered for a while, see timedOutRecently), or if it gave no or an empty result: the
-// output then keeps Source's region of definition.
+// output then keeps Source's region of definition, and the render that finds a result of another
+// size keeps its geometry as the prediction, for the next queries (issue #228).
 std::optional<ResultGeometry> pluginResultGeometry(const gmic_ofx::SequenceData& sequenceData, const gmic_ofx::GlobalData& globalData);
 
-// The prediction that pluginResultGeometry last made for these values and input sizes, if it is
-// still in its cache (never a new prediction: for the render)
+// The prediction that pluginResultGeometry last made (or a render kept) for these values and input
+// sizes, if it is still in its cache (never a new prediction: for the render)
 std::optional<ResultGeometry> pluginCachedResultGeometry(const gmic_ofx::SequenceData& sequenceData, const gmic_ofx::GlobalData& globalData);
 
 #endif

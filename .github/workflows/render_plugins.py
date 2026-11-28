@@ -122,6 +122,12 @@ TIMEOUT = {
 # the warning of a render whose result doesn't fit the region of definition that the plug-in
 # declared (#175: a size that depends on the pixels); listed, not a failure
 GEOMETRY_MISMATCH = "doesn't match the output"
+# the end of that warning when there was no prediction (#228), and the plug-in's log lines that
+# tell why: the prediction ran out of time (a slow filter), or its probe failed in G'MIC (a filter
+# that fails on the probe's gradient). Listed apart: the next frames get the result's size.
+GEOMETRY_UNPREDICTED = 'Its size was not predicted'
+PREDICTION_TIMED_OUT = "measuring the result's size took more than"
+PREDICTION_FAILED = "the run that measures the result's size failed"
 ERROR_LINE = re.compile(r'\*\*\* Error|\bOfxMessageError\b|\bError\b|\berror:')
 COMMERCIAL_MARKER = ' #  openfx-gmic : COMMERCIAL standard library'
 FFT_COMMANDS = re.compile(r'(?<![A-Za-z0-9_])(fft|ifft|deconvolve|deconvolve_fft|convolve_fft|bandpass|watermark_fourier)(?![A-Za-z0-9_])')
@@ -483,7 +489,7 @@ def main():
     sys.stdout.flush()
 
     start = time.time()
-    fails, xfails, xpasses, nans, stale_nans, times, mismatches = [], [], [], [], [], [], []
+    fails, xfails, xpasses, nans, stale_nans, times, mismatches, unpredicted = [], [], [], [], [], [], [], []
     rendered = 0
     progressed = 0  # plug-ins that updated the host's progress
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as ex:
@@ -520,7 +526,11 @@ def main():
                 nans.append((pid, result.nan))
             elif pid in KNOWN_NAN:
                 stale_nans.append(pid)
-            if GEOMETRY_MISMATCH in result.log:
+            if GEOMETRY_UNPREDICTED in result.log:
+                why = ('timed out' if PREDICTION_TIMED_OUT in result.log else
+                       'failed' if PREDICTION_FAILED in result.log else 'not in the cache')
+                unpredicted.append('%s (%s)' % (pid, why))
+            elif GEOMETRY_MISMATCH in result.log:
                 mismatches.append(pid)
     print('%d plug-ins in %.0fs: %d rendered, %d failed, %d expected failures, %d skipped' % (
         len(todo), time.time() - start, rendered, len(fails), len(xfails), skipped))
@@ -532,6 +542,10 @@ def main():
             print('WARNING: %s: %d NaN values in its output (KNOWN_NAN: %s)' % (pid, nan, KNOWN_NAN[pid]))
         else:
             print('FAIL %s: %d NaN values in its output' % (pid, nan))
+    if unpredicted:
+        print('NOTE: %d plug-ins whose result\'s size was not predicted (#228: the first frame keeps Source\'s '
+              'size, cropped or padded; the next frames get the result\'s): %s'
+              % (len(unpredicted), ' '.join(sorted(unpredicted))))
     if mismatches:
         print('WARNING: %d plug-ins whose result does not match their region of definition (#175, '
               'cropped or padded): %s' % (len(mismatches), ' '.join(sorted(mismatches))))

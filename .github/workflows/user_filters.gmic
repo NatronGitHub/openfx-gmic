@@ -297,6 +297,15 @@ fx_userfile_shifted :
 fx_userfile_content_size :
   w2={i(80,60,0,0)>200&&i(80,60,0,1)<100?80:40} r $w2,60,1,100%,0 fill_color 255,255,0,255
 
+# a filter that fails on the plug-in's probe images, whose blue channel is 0 at the top-left
+# corner (as Upscale [Solver2x] fails on their gradient, #228), and doubles the test's input (blue
+# 127.5 there). Rendered at frames 0 and 1: frame 0 has no prediction, its output keeps Source's
+# size with a warning; frame 1 gets the size that frame 0's render found.
+#@gui User File Probe Fails : fx_userfile_probe_fails, fx_userfile_probe_fails
+fx_userfile_probe_fails :
+  if !i(0,0,0,2) error "fails on the plug-in's probe images" fi
+  r 200%,200%,1,100%,0 fill_color 255,128,0,255
+
 # a size that is not an affine function of the input's: sqrt(W*H) wide. The fits fail, and the
 # plug-in confirms the size with one probe at full size (rendered on the test's small Source, which
 # is probed at its own size anyway, and on a 1920x1080 Source)

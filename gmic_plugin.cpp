@@ -2713,16 +2713,25 @@ static bool geometryCacheLookup(const string& key, ProbeResult& result)
 	return true;
 }
 
-// a done entry for key, unless one is there or running (the predictions, see pluginResultGeometry)
+// a done entry for key, unless one with a result is there (it becomes the most recently used) or
+// one is running; an entry without a result is replaced (the predictions, see pluginResultGeometry,
+// and the geometries that renders measured, see rememberRenderedGeometry)
 static void geometryCachePut(const string& key, const ProbeResult& result) noexcept
 {
-	ProbeResult existing;
 	try {
-		if (geometryCacheLookup(key, existing)) return;
 		{
 			GeometryCache& c = geometryCache();
 			std::lock_guard<std::mutex> lock(c.mutex);
-			if (c.entries.count(key)) return;
+			const auto it = c.entries.find(key);
+			if (it != c.entries.end()) {
+				if (!it->second.done) return;
+				if (!it->second.result.results.empty()) {
+					c.lru.splice(c.lru.end(), c.lru, it->second.lru);
+					return;
+				}
+				c.lru.erase(it->second.lru);
+				c.entries.erase(it);
+			}
 			c.entries.emplace(key, GeometryEntry());
 		}
 		geometryCacheStore(key, result, true);
@@ -3294,6 +3303,23 @@ std::optional<ResultGeometry> pluginCachedResultGeometry(const SequenceData& seq
 	}
 }
 
+// Issue #228: the geometry of a render's result, for the render of these values and input sizes
+// that had no prediction (its probe failed, as Upscale [Solver2x]'s on the probe's gradient, or
+// ran out of time, as slow generators such as Iris): the prediction that the next queries of the
+// region of definition get (the next frames, unless the size changes with them)
+static void rememberRenderedGeometry(const SequenceData& sequenceData, const GlobalData& globalData, const ResultGeometry& g) noexcept
+{
+	try {
+		unsigned int nofImages = 0;
+		const string key = predictionKey(sequenceData, &globalData, nofImages);
+		if (key.empty()) return;
+		ProbeResult r;
+		r.results.push_back(g);
+		geometryCachePut(key, r);
+	} catch (...) {
+	}
+}
+
 bool pluginPassesSourceThrough(const GlobalData& globalData)
 {
 	return effectDataOf(&globalData).command.empty();
@@ -3597,14 +3623,11 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 				memset(dst, 0, dplane * 4 * sizeof(float));
 			}
 			// (a refined prediction with a margin: a result within the output fits, see
-			// ResultGeometry; looked up in the cache, never predicted again: after an eviction,
-			// the render warns)
+			// ResultGeometry; looked up in the cache, never predicted again)
 			const bool inside = sx1 >= dx1 && sy1 >= dy1 && sx1 + sw <= dx1 + dw && sy1 + sh <= dy1 + dh;
-			bool withinMargin = false;
-			if (!same && dynamic && inside) {
-				const std::optional<ResultGeometry> predicted = pluginCachedResultGeometry(*sequenceDataP, *globalDataP);
-				withinMargin = predicted && predicted->hasMargin();
-			}
+			const std::optional<ResultGeometry> predicted =
+				!same && dynamic ? pluginCachedResultGeometry(*sequenceDataP, *globalDataP) : std::nullopt;
+			const bool withinMargin = inside && predicted && predicted->hasMargin();
 			if (!same && dynamic && !withinMargin) {
 				// the output doesn't have the size that the region of definition declared (a size that
 				// depends on the pixels, which pluginResultGeometry's probes can't predict, a size rule
@@ -3614,6 +3637,13 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 					: std::to_string(at.x) + "," + std::to_string(at.y) + " from Source's top-left corner";
 				geometryWarning = "The result (" + std::to_string(sw) + "x" + std::to_string(sh) + " at " + where +
 					") doesn't match the output (" + std::to_string(dw) + "x" + std::to_string(dh) + "): it is cropped or padded.";
+				if (!predicted) {
+					// no prediction: it failed or ran out of time (see the log), and the output kept
+					// Source's region of definition; or it left the cache. The next queries get this
+					// result's geometry (issue #228).
+					rememberRenderedGeometry(*sequenceDataP, *globalDataP, at);
+					geometryWarning += " Its size was not predicted (see the log): the next frames get it.";
+				}
 			}
 			// overlap, in pixel coordinates (y up)
 			const int x1 = std::max(sx1, dx1), x2 = std::min(sx1 + sw, dx1 + dw);

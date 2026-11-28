@@ -373,7 +373,10 @@ Source's top-left corner). The Resize Mode (in Advanced Options) chooses the out
   query. A prediction that runs out of memory keeps Source's size too, and is tried again at the
   next query. Sizes that depend on the image's content (automatic crops, crops of the
   transparent parts) can't be predicted. A result that doesn't fit the output is cropped or
-  padded, with a warning on the node.
+  padded, with a warning on the node. When there was no prediction (a filter slower than 10 s,
+  e.g. Nonscape - Woods, or one that fails on the gradient, e.g. Upscale [Solver2x]),
+  that render keeps Source's size, and the next frames get the result's size and position
+  (issue #228).
 - Fixed (Inplace): Source's size and position. A result of another size is placed as with
   Dynamic, then cropped or padded to Source's rectangle, never resized: switching between Fixed
   and Dynamic never moves the content (before #238, Fixed cropped from the top-left corner and

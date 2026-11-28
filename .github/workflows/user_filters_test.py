@@ -51,6 +51,9 @@ margin; Larger, Smaller and Shifted must be exact, with no margin; and User File
 confirmed at full size, exactly, all without a warning. User File Slow is slower than the
 plug-in's 10 s prediction budget: rendered at frames 0 and 1, its prediction must time out
 once, the second query must not try again, and both outputs have Source's size (about 35 s).
+User File Probe Fails fails on the plug-in's probes and doubles the test's input (#228): rendered
+at frames 0 and 1, frame 0 must keep Source's size, cropped, with the warning that the size was
+not predicted, and frame 1 must get twice Source's size, which frame 0's render found.
 
 With --stdlib, the same filters are then rendered with a copy of the whole built-in standard
 library before them in the file, as in a user's copied gmic_stdlib.gmic: the outputs must be the
@@ -192,6 +195,11 @@ LARGE_EXACT_CASES = [
     ('eu.gmic.UserFileShifted', (1.0, 1.0), (10, 20), (0.0, 0.0, 1.0, 1.0)),
 ]
 SLOW_PLUGIN = 'eu.gmic.UserFileSlow'
+# fails on the probes, doubles the test's input (#228): rendered at frames 0 and 1
+PROBE_FAILS_PLUGIN = 'eu.gmic.UserFileProbeFails'
+PROBE_FAILS_COLOR = (1.0, 128 / 255.0, 0.0, 1.0)
+UNPREDICTED_WARNING = 'Its size was not predicted'
+PROBE_FAILED_NOTE = "the run that measures the result's size failed"
 TIMEOUT_NOTE = 'took more than'
 RECENT_TIMEOUT_NOTE = 'timed out less than'
 PERCENT_PLUGIN = 'eu.gmic.UserFilePercent'
@@ -699,6 +707,53 @@ def check_timeout(host, plugins, work):
         if (output.get('w'), output.get('h')) != (render_plugins.INPUT_WIDTH, render_plugins.INPUT_HEIGHT):
             problems.append('at time %s, the output is %sx%s, not Source\'s size' % (r.get('time'), output.get('w'), output.get('h')))
     return ['%s: %s' % (SLOW_PLUGIN, p) for p in problems]
+
+
+def check_unpredicted(host, plugins, work):
+    """Renders PROBE_FAILS_PLUGIN at frames 0 and 1: a render without a prediction (#228).
+
+    Its probe fails, so frame 0's region of definition is Source's: its output keeps Source's
+    size, cropped, with the warning that the size was not predicted. Frame 1 gets the geometry
+    that frame 0's render found: twice Source's size at its bottom-left corner.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems.
+    """
+    result = render_plugins.render(host, [], plugins, work, TIMEOUT, (PROBE_FAILS_PLUGIN, CONTEXT, ['Source']),
+                                   frame='0,1')
+    problem, errors, log = result.problem, result.errors, result.log
+    if problem:
+        return ['%s: %s %s' % (PROBE_FAILS_PLUGIN, problem, ' '.join(errors))]
+    problems = []
+    if PROBE_FAILED_NOTE not in log:
+        problems.append('the probe did not fail')
+    if UNPREDICTED_WARNING not in log:
+        problems.append('no warning that the size was not predicted (frame 0)')
+    renders = (result.report or {}).get('renders') or []
+    if len(renders) != 2:
+        return ['%s: %d renders, expected 2' % (PROBE_FAILS_PLUGIN, len(renders))]
+    src_w, src_h = render_plugins.INPUT_WIDTH, render_plugins.INPUT_HEIGHT
+    for r, (width, height) in zip(renders, ((src_w, src_h), (2 * src_w, 2 * src_h))):
+        name = 'at time %s' % r.get('time')
+        output = r.get('output') or {}
+        if (output.get('w'), output.get('h')) != (width, height):
+            problems.append('%s: the output is %sx%s, expected %dx%d'
+                            % (name, output.get('w'), output.get('h'), width, height))
+        rod = (r.get('regionOfDefinition') or {}).get('rod') or []
+        src = ((r.get('inputs') or {}).get('Source') or {}).get('regionOfDefinition') or []
+        if len(src) != 4:
+            problems.append('%s: no region of definition of Source' % name)
+            continue
+        expected = expected_rod(src, (src[2] - src[0]) / src_w, width, height, AT_SOURCE_BOTTOM)
+        if len(rod) != 4 or any(abs(a - e) > ROD_TOLERANCE for a, e in zip(rod, expected)):
+            problems.append('%s: the region of definition is %s, expected %s' % (name, rod, expected))
+        problems += ['%s: %s' % (name, p) for p in check_output({'renders': [r]}, PROBE_FAILS_COLOR)]
+    return ['%s: %s' % (PROBE_FAILS_PLUGIN, p) for p in problems]
 
 
 def check_no_multires(host, plugins, work):
@@ -1245,6 +1300,7 @@ def run_test(host, plugins, stdlib, runs, work, name):
         problems += check_scaled_geometry(host, plugins, work)
         problems += check_large_sources(host, plugins, work)
         problems += check_timeout(host, plugins, work)
+        problems += check_unpredicted(host, plugins, work)
     for p in problems:
         print('FAIL (user file): ' + p)
     passed = not problems
