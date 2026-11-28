@@ -243,8 +243,11 @@ fx_userfile_five_channels :
 fx_userfile_render_scale :
   fill_color {$1*2.55},{$2*2.55},{(0$_preview_x1+1==w&&0$_preview_y1+1==h)*255}
 
-# replaces the built-in 'fc' (fill_color)
+# replaces the built-in 'fc' (fill_color). (skip: a command that names no argument doesn't take its
+# arguments, which G'MIC would then read as the next item, here an image 10x20x30, a second result
+# that Output Layer Merged would composite, #260)
 fc :
+  skip $*
   f 128
 
 # a definition of its own of a command that the plug-in hot-fixes (gmic_hotfixes.gmic): it is
@@ -306,6 +309,18 @@ fx_userfile_area_size :
 #@gui User File Frames : fx_userfile_frames, fx_userfile_frames
 fx_userfile_frames :
   fill_color 255,0,255,255 +r[0] 50%,50%,1,100%,0 rv nm[0] "pos(5,6),name(Small)"
+
+# two layers (#207): [0] red, at 50% opacity in its layer name, over [1] blue. Output Layer Merged,
+# the default, gives purple (as G'MIC-Qt's Apply in GIMP), Layer 0 red, Layer -1 blue
+#@gui User File Layers : fx_userfile_layers, fx_userfile_layers
+fx_userfile_layers :
+  fill_color 0,0,255,255 +fill_color 255,0,0,255 rv nm[0] "name(Red),mode(normal),opacity(50)"
+
+# two results that G'MIC's gui_merge_layers can't merge (#260): [1] has 5 channels. Output Layer
+# Merged gives Layer 0, green, with a warning on the node
+#@gui User File Merge Fails : fx_userfile_merge_fails, fx_userfile_merge_fails
+fx_userfile_merge_fails :
+  fill_color 0,255,0,255 100%,100%,1,5
 
 # a rotation: its size, round(1 + |cos|*(W-1) + |sin|*(H-1)) wide (CImg's get_rotate), is affine
 # but irrational, which the small probes can't predict at a large size: the plug-in refines it

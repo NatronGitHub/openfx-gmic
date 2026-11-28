@@ -39,6 +39,10 @@ constexpr const char* kOutputLayerParam = "Output Layer";
 // renders with the filter's preview command (see pluginProcess); the OFX glue enables the
 // parameters that only the preview command uses (Parameter::draftModeOnly) when it is on
 constexpr const char* kDraftModeParam = "Preview/Draft Mode";
+// the first option of the Output Layer parameter, "Merged", its default (issue #207): the results
+// composited into one image by G'MIC's gui_merge_layers, which approximates what GIMP shows of the
+// separate layers that G'MIC-Qt's Apply gives it
+constexpr int kOutputLayerMerged = 0;
 // the last option of the Output Layer parameter, "Frame" (issue #65): see pluginProcess
 constexpr int kOutputLayerFrame = 11;
 // Resize Mode (issue #175): Fixed (Inplace) gives Source's rectangle (a result of another size is
