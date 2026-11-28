@@ -1,5 +1,5 @@
 # The hot fixes of COMMERCIAL builds (gmic_hotfixes.gmic on stdin or as the file argument, the
-# kept lines on stdout), for both the top-level Makefile and CMakeLists.txt. These builds only
+# kept lines on stdout), for CMakeLists.txt. These builds only
 # keep the fixes of the commands of their standard library (the others fix code under a licence
 # that they leave out, see gmic_stdlib_commercial.txt): a block
 # "#@hotfix <command> <original> <fixed>[,<other>...] [callee:checksum...]" is left out when its

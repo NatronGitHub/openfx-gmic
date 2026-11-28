@@ -1,5 +1,5 @@
 #!/bin/sh
-# Patch CImg.h, extracted from the G'MIC sources by the top-level Makefile, so that a fill or eval
+# Patch CImg.h, extracted from the G'MIC sources, so that a fill or eval
 # expression whose run() re-allocates the image list fails with an error, instead of writing into
 # (and reading) the freed image. Usage: cimg-run-realloc.sh <CImg.h>
 # https://github.com/NatronGitHub/openfx-gmic/issues/243, https://github.com/GreycLab/gmic/issues/231

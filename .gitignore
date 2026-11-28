@@ -183,10 +183,7 @@ gmic_*.tar.gz
 CImg.h
 gmic.cpp
 gmic.h
-gmic_libc.cpp
 gmic_libc.h
-gmic_stdlib.h
-gmic_stdlib_gmic.h
 gmic_stdlib_community.h
 ofxTestLog.txt
 ofxPluginLog.txt
@@ -195,13 +192,6 @@ ofxPluginLog.txt
 *.creator.user
 
 *.bak
-gmic_hotfixes.h
-gmic_hotfixes.version
-gmic_stdlib_community.h.commands
-gmic_sources.license
-gmic_stdlib_commercial/
 pocketfft_hdronly.h
-gmic_sources.request
-Licence_pocketfft.txt
 # Python bytecode caches (e.g. of the CI scripts in .github/workflows)
 __pycache__/

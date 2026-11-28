@@ -1,17 +1,17 @@
 #!/bin/bash
-# Build a G'MIC command-line interpreter from the sources of a build ('make sources' or CMake:
-# CImg.h with cimg_use_pocketfft, the standard library of the build), with the default FFT
+# Build a G'MIC command-line interpreter from the sources of a CMake build (CImg.h with
+# cimg_use_pocketfft, the standard library of the build), with the default FFT
 # (pocketfft, cimg_use_pocketfft), and render FFT-based filters on a 720x576 image (not a power of
 # two, which CImg's own FFT rejects): FFT round trip, Fourier Transform, Bandpass.
 # Usage (from the top-level directory, where gmic_<version>.tar.gz is): fft_smoke.sh [<sources dir>]
-# <sources dir>: where the G'MIC sources are, "." (default) after make (any LICENSE, FFT=pocketfft),
-# or <build>/gmic after a CMake build with FFT=pocketfft.
+# <sources dir>: where the G'MIC sources are, <build>/gmic after a CMake build with FFT=pocketfft
+# (any LICENSE; default: build/gmic).
 # Uses $CXX (default c++), and pkg-config for zlib. GMIC_CLI_OUT=<path> keeps the interpreter there.
 set -euo pipefail
 CXX=${CXX:-c++}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
-SRCDIR=${1:-.}
+SRCDIR=${1:-build/gmic}
 ver=$(.github/workflows/gmic_version.sh)
 tar --strip-components 2 -C "$WORK" -zxf "gmic_$ver.tar.gz" "gmic-$ver/src/gmic_cli.cpp"
 # shellcheck disable=SC2046

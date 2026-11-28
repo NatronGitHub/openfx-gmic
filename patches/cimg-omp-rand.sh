@@ -1,5 +1,5 @@
 #!/bin/sh
-# Patch CImg.h, extracted from the G'MIC sources by the top-level Makefile, so that the random
+# Patch CImg.h, extracted from the G'MIC sources, so that the random
 # numbers drawn by rand and noise in OpenMP parallel regions, and by the per-thread copies of the
 # math parser, do not depend on thread scheduling. Usage: cimg-omp-rand.sh <CImg.h>
 # https://github.com/NatronGitHub/openfx-gmic/issues/44

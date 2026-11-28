@@ -1,5 +1,5 @@
 #!/bin/sh
-# Patch gmic.cpp, extracted from the G'MIC sources by the top-level Makefile, so that the
+# Patch gmic.cpp, extracted from the G'MIC sources, so that the
 # 'displacement' and 'serialize' commands no longer write past G'MIC's 1-byte empty string.
 # Usage: gmic-argx-overflow.sh <gmic.cpp>   (prints "already patched" on a patched file)
 # Upstream: https://github.com/GreycLab/gmic/issues/227

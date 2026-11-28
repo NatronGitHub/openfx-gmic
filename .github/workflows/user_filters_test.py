@@ -2,7 +2,7 @@
 """Render the filters of a user filter file (user_filters.gmic) and check their output (#168).
 
 The file is installed as ~/.config/gmic/gmic_ofx.gmic in a temporary HOME, or with --update-file
-as G'MIC's filter update file (update408.gmic for the Makefile's GMICVER 4.0.8, read with
+as G'MIC's filter update file (update408.gmic for GMICVER 4.0.8 in gmic_sources.txt, read with
 OFX_GMIC_UPDATE_FILE=1, #180), which replaces the built-in filters, or with --user-source as the
 user source ~/.gmic, whose filters and commands come after the built-in ones (#206). Its filters
 call a command that the file defines ("Unknown command" before #168), a built-in command, and a
@@ -370,16 +370,17 @@ STATUS_CASES = (
 
 
 def update_file_name():
-    """Returns the name of G'MIC's update file for the Makefile's GMICVER (gmic_version.sh).
+    """Returns the name of G'MIC's update file for gmic_sources.txt's GMICVER (gmic_version.sh).
 
     Returns:
         update<major><minor><patch>.gmic, e.g. update408.gmic for G'MIC 4.0.8.
 
     Raises:
-        subprocess.CalledProcessError: gmic_version.sh found no GMICVER in the Makefile.
+        subprocess.CalledProcessError: gmic_version.sh found no GMICVER in gmic_sources.txt.
         ValueError: GMICVER is not <major>.<minor>.<patch>.
     """
-    version = subprocess.run(['sh', os.path.join(HERE, 'gmic_version.sh'), os.path.join(HERE, '..', '..', 'Makefile')],
+    sources = os.path.join(HERE, '..', '..', 'gmic_sources.txt')
+    version = subprocess.run(['sh', os.path.join(HERE, 'gmic_version.sh'), sources],
                              stdout=subprocess.PIPE, check=True, universal_newlines=True).stdout.strip()
     match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)', version)
     if not match:

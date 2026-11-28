@@ -1,5 +1,5 @@
 #!/bin/sh
-# Patch CImg.h, extracted from the G'MIC sources by the top-level Makefile, so that the math
+# Patch CImg.h, extracted from the G'MIC sources, so that the math
 # parser's vector assignments 'V = expr' and '(V) = expr' don't rewrite an opcode they shouldn't.
 # Usage: cimg-vector-assign.sh <CImg.h>
 # https://github.com/GreycLab/CImg/issues/505, https://github.com/NatronGitHub/openfx-gmic/issues/245

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Patch CImg.h, extracted from the G'MIC sources by the top-level Makefile, so that the math
+# Patch CImg.h, extracted from the G'MIC sources, so that the math
 # parser's hypot() with one or two values uses cimg::hypot() again (no overflow or underflow), on
 # CImg versions whose norm opcodes list their arguments as (slot,size) pairs.
 # Usage: cimg-hypot-layout.sh <CImg.h>
