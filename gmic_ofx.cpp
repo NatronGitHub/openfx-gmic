@@ -595,6 +595,7 @@ private:
 	void pointUpdateEnabled(int checkbox, bool draft);
 	void pointsUpdateEnabled(int onlyParam);
 	void draftModeUpdateEnabled();
+	void predictionLimitUpdateEnabled();
 	void runStatus(double time, std::optional<int> button);
 	void statusDisplayFromHost();
 	void applyStatusVisibility(const std::vector<std::pair<int, DisplayStatus>>& visibility);
@@ -610,6 +611,7 @@ private:
 	OFX::BooleanParam* _animateSeed;
 	OFX::BooleanParam* _draftMode;
 	OFX::ChoiceParam* _resizeMode;
+	OFX::DoubleParam* _predictionLimit;
 	// layer times (see layerTimesAt), NULL for plug-ins without them
 	OFX::IntParam* _layersFromSource = nullptr;
 	int _lastLayersFromSource = 0; // its value at the previous change (see changedParam)
@@ -640,6 +642,7 @@ GMICEffect::GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData
 	, _animateSeed(fetchBooleanParam(kAnimateSeedParam))
 	, _draftMode(fetchBooleanParam(kDraftModeParam))
 	, _resizeMode(fetchChoiceParam(kResizeModeParam))
+	, _predictionLimit(fetchDoubleParam(kPredictionLimitParam))
 	, _pointFromSource((size_t)globalData.nofParams)
 	, _statusDisplay((size_t)globalData.nofParams)
 {
@@ -696,6 +699,7 @@ GMICEffect::GMICEffect(OfxImageEffectHandle handle, const GlobalData& globalData
 	statusDisplayFromHost();
 	pointsUpdateEnabled(-1);
 	draftModeUpdateEnabled();
+	predictionLimitUpdateEnabled();
 	// (last: it may set values, and the host may call changedParam)
 	for (int i = 0; i < _gd.nofParams; i++) {
 		if (OFX::Double2DParam* point = pointParamAt(i)) pointDenormaliseDefault(*point);
@@ -1124,6 +1128,11 @@ void GMICEffect::changedParam(const OFX::InstanceChangedArgs& args, const std::s
 		draftModeUpdateEnabled();
 	}
 
+	// Resize Mode changed in any way: Size Prediction Limit only matters with Dynamic
+	if (paramName == kResizeModeParam) {
+		predictionLimitUpdateEnabled();
+	}
+
 	// Output Layer changed in any way: no longer Frame, the results kept for it can go
 	if (paramName == kOutputLayerParam) {
 		pluginOutputLayerChanged(_gmic, _outputLayer->getValue());
@@ -1465,6 +1474,17 @@ void GMICEffect::draftModeUpdateEnabled()
 			hostTry([param, enabled] { param->setEnabled(enabled); });
 		}
 	}
+}
+
+// Size Prediction Limit (issue #228) is enabled only where there is a prediction: Resize Mode
+// Dynamic, on a host with multi-resolution (pluginKeepsResultSize). Updated when the instance is
+// created and when Resize Mode changes (it isn't animated).
+void GMICEffect::predictionLimitUpdateEnabled()
+{
+	const std::optional<int> mode = hostQuery([this] { return _resizeMode->getValue(); });
+	if (!mode) return;
+	const bool enabled = pluginKeepsResultSize() && *mode == kResizeModeDynamic;
+	hostTry([this, enabled] { _predictionLimit->setEnabled(enabled); });
 }
 
 // A G'MIC button() (issue #174) is a push button, as in G'MIC-Qt, where it gives 1 to the next run
@@ -2089,8 +2109,9 @@ void GMICPluginFactory::describeInContext(OFX::ImageEffectDescriptor& desc, OFX:
 			if (param.flags > 0) p->setDoubleType(OFX::eDoubleTypeScale);
 			p->setDefault(param.defaultValue[0]);
 			p->setRange(param.minValue, param.maxValue);
-			p->setDisplayRange(param.minValue, param.maxValue);
-			const FloatSliderSteps steps = floatSliderSteps(param.minValue, param.maxValue);
+			const float displayMax = param.displayMaxValue > param.minValue ? param.displayMaxValue : param.maxValue;
+			p->setDisplayRange(param.minValue, displayMax);
+			const FloatSliderSteps steps = floatSliderSteps(param.minValue, displayMax);
 			p->setIncrement(steps.increment);
 			p->setDigits(steps.digits);
 			if (!param.animates) p->setAnimates(false);

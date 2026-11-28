@@ -1191,11 +1191,13 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 	// (issue #228) not animated: the region of definition action reads it at its own time
 	globalDataP->param[p] = Parameter(kPredictionLimitParam, "", ParamType::Float, 0, 3600, 0, 0, 0, 0, "");
 	globalDataP->param[p].animates = false;
+	globalDataP->param[p].displayMaxValue = 600; // (the useful values; 3600 is the hard maximum)
 	globalDataP->param[p].hint = "Resize Mode Dynamic: the most time, in seconds, that the plug-in may spend running the filter "
-		"on test images to find the result's size and position, which the host needs before the render (an "
-		"interactive host such as Natron's GUI waits for it). Past it, the output keeps Source's size: that render is "
-		"cropped or padded, and the other frames with the same settings get the result's size. "
-		"0: automatic, 10 s in an interactive host, 10 min in a background render (NatronRenderer). "
+		"on test images to find the result's size and position, which the host needs before the render. "
+		"In Natron's GUI, the interface can freeze for up to this time after each edit of the node. Past it, the "
+		"output keeps Source's size: that render is cropped or padded, and the other frames with the same settings "
+		"get the result's size. 0: automatic, 10 s in an interactive host, 30 min in a background render "
+		"(NatronRenderer); in a background render, a larger value raises the limit, a smaller one doesn't lower it. "
 		"Raise it for a slow filter whose output is cropped.";
 	++p;
 	globalDataP->param[p] = Parameter("Ignore Alpha", "", ParamType::Bool, 0, 1, 0, 0, 0, 0, "");
@@ -2546,14 +2548,15 @@ static void nameInputImages(const SequenceData* sequenceDataP, unsigned int nofI
 // The time budget of a prediction, in seconds: all its G'MIC runs (probes and the preview runs of
 // preview-first filters), a safety limit (most probes run on small images, in a fraction of a
 // second); past it, G'MIC is stopped, and the output keeps Source's region of definition (logged).
-// The node's Size Prediction Limit, or if it is 0 (automatic, issue #228): kPredictionTimeLimit in
-// an interactive host, whose GUI waits for the region of definition (in Natron, its main thread);
-// kBackgroundPredictionTimeLimit in a host that renders in the background
-// (kOfxImageEffectHostPropIsBackground: NatronRenderer, natron -b), which has no GUI to block, so
-// that slow filters (e.g. Nonscape - Woods, about 3 minutes) aren't cropped, while a filter that
-// never ends on the probe images doesn't hang the render.
+// Automatic (issue #228): kPredictionTimeLimit in an interactive host, whose GUI waits for the
+// region of definition (in Natron, its main thread); kBackgroundPredictionTimeLimit in a host
+// that renders in the background (kOfxImageEffectHostPropIsBackground: NatronRenderer, natron -b),
+// which has no GUI to block, so that slow filters (e.g. Nonscape - Woods, about 3 minutes a
+// probe) are usually not cropped, while a filter that never ends on the probe images doesn't hang
+// the render. The node's Size Prediction Limit, if not 0, replaces the interactive limit, and in a
+// background host raises the automatic one (a limit set for the GUI never shortens final renders).
 static const double kPredictionTimeLimit = 10.;
-static const double kBackgroundPredictionTimeLimit = 600.;
+static const double kBackgroundPredictionTimeLimit = 1800.;
 using Deadline = std::chrono::steady_clock::time_point;
 
 static bool hostIsBackground()
@@ -2562,14 +2565,15 @@ static bool hostIsBackground()
 	return host && host->hostIsBackground;
 }
 
-// the time limit of a prediction with these values, in seconds: the node's Size Prediction Limit
-// (not animated, so the same at every time), or if it is 0, automatic (see kPredictionTimeLimit)
+// the time limit of a prediction with these values, in seconds, from the node's Size Prediction
+// Limit (not animated, so the same at every time; 0 is automatic): see kPredictionTimeLimit
 static double predictionTimeLimit(const SequenceData& sequenceData, const GlobalData& globalData)
 {
 	const GlobalData* const globalDataP = &globalData;
 	const float limit = sequenceData.floatValue[PARAM_PREDICTION_LIMIT][0];
-	if (limit > 0.f) return limit;
-	return hostIsBackground() ? kBackgroundPredictionTimeLimit : kPredictionTimeLimit;
+	const double set = limit > 0.f ? (double)limit : 0.;
+	if (hostIsBackground()) return std::max(set, kBackgroundPredictionTimeLimit);
+	return set > 0. ? set : kPredictionTimeLimit;
 }
 
 // One prediction (see pluginResultGeometry): its deadline, and whether a run failed for a reason
@@ -2988,12 +2992,13 @@ static const double kSmallProbesPixels = 15000.;
 // shows at a probe where both are large.
 static const int kCheckSize = 256;
 // The first small probe slower than this, in seconds (a sixth of the GUI's budget,
-// kPredictionTimeLimit), and the second one hardly slower (at most kSameTimeRatio times, for 1.56
-// times the pixels): a filter whose time doesn't depend on the image's size (a generator), whose
-// size is measured at full size, without the other probes (issue #228). (A filter that is slow per
-// pixel keeps the small probes: at full size, it would cost a full render.)
+// kPredictionTimeLimit): a slow filter, whose time at the real size is extrapolated from the first
+// two small probes, linearly in pixels. If that is less than the other four probes would cost
+// (about kRemainingProbes times the second one), as for a filter whose time doesn't depend on the
+// image's size (a generator), the size is measured at full size, without them (issue #228). A
+// filter that is slow per pixel keeps the small probes: at full size, it would cost a full render.
 static const double kSlowProbeTime = kPredictionTimeLimit / 6.;
-static const double kSameTimeRatio = 1.25;
+static const double kRemainingProbes = 4.;
 
 // A fit Y = a*X + b of a size or an offset against Source's width or height (see fitAxis)
 struct AxisFit
@@ -3187,11 +3192,16 @@ static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequence
 		x[k] = g.x;
 		y[k] = g.y;
 		atSourceBottom[k] = g.atSourceBottom;
-		// a slow filter whose time doesn't depend on the image's size (a generator): its six probes
-		// would cost about six renders, one more at the real size costs one
+		// a slow filter whose time hardly depends on the image's size (a generator): its six probes
+		// would cost about six renders, one more at the real size costs about one
 		if (k < 2) probeTime[k] = std::chrono::steady_clock::now() - start;
-		if (k == 1 && probeTime[0].count() > kSlowProbeTime && probeTime[1].count() <= kSameTimeRatio * probeTime[0].count()) {
-			return fullSize("slow probes, whose time doesn't depend on the size");
+		if (k == 1 && probeTime[0].count() > kSlowProbeTime) {
+			const double p0 = (double)W[0] * H[0], p1 = (double)W[1] * H[1];
+			const double perPixel = p1 > p0 ? std::max(0., probeTime[1].count() - probeTime[0].count()) / (p1 - p0) : 0.;
+			const double full = probeTime[0].count() + perPixel * ((double)source.width * source.height - p0);
+			if (full < kRemainingProbes * probeTime[1].count()) {
+				return fullSize("slow probes, cheaper at full size than the other probes");
+			}
 		}
 	}
 	if (!std::all_of(atSourceBottom, atSourceBottom + kN, [&](bool b) { return b == atSourceBottom[0]; })) {
@@ -3389,6 +3399,7 @@ struct RenderPrediction
 	// time (timedOutUnmeasured), not because it left the cache (a purge, the LRU): the region of
 	// definition was then Source's (issue #228)
 	bool failed = false;
+	bool timedOut = false; // failed, because the prediction ran out of time
 };
 
 // the render's RenderPrediction (never a new prediction)
@@ -3404,7 +3415,8 @@ static RenderPrediction renderPrediction(const SequenceData& sequenceData, const
 			if (!cached.results.empty()) p.geometry = cached.results[0];
 			else p.failed = true;
 		} else {
-			p.failed = timedOutUnmeasured(p.key);
+			p.timedOut = timedOutUnmeasured(p.key);
+			p.failed = p.timedOut;
 		}
 	} catch (...) {
 		p = RenderPrediction();
@@ -3756,6 +3768,10 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 						? " Its size could not be predicted (see the log): in Natron, this frame stays cropped or padded until the next edit."
 						: " Its size could not be predicted (see the log): the other frames with the same settings get it, but in Natron this "
 						  "frame stays cropped or padded until the next edit.";
+					if (predicted.timedOut) {
+						// (not after a failed probe: more time doesn't help there)
+						geometryWarning += " It took too long: raise Size Prediction Limit (Advanced Options) to measure it.";
+					}
 				}
 			}
 			// overlap, in pixel coordinates (y up)

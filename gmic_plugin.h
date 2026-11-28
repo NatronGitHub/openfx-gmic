@@ -208,7 +208,7 @@ bool pluginKeepsResultSize();
 // see kSmallProbesPixels) is probed at its own size. The probes and predictions are kept for
 // their command lines and input sizes (for Output Layer "Frame", per frame), so that they run
 // again only when these change; a lookup of a probe that is running waits for it. All within the
-// node's Size Prediction Limit (automatic: 10 s, 10 min in a host that renders in the
+// node's Size Prediction Limit (automatic: 10 s, 30 min in a host that renders in the
 // background, kOfxImageEffectHostPropIsBackground). Empty if the host has no multi-resolution (pluginKeepsResultSize, which
 // the test aid OFX_GMIC_MULTIRES can override), if even
 // the probe at the real size failed, ran out of memory or past the time limit (logged; a timeout

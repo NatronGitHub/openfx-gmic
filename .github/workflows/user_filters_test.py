@@ -201,11 +201,14 @@ SLOW_PLUGIN = 'eu.gmic.UserFileSlow'
 TIMEOUT_NOTE = 'took more than'
 RECENT_TIMEOUT_NOTE = 'timed out less than'
 # (#228) fail or are slow on the probes, double the test's input, rendered at frames 0 and 1 (see
-# check_unpredicted): plug-in id, and the plug-in's note of the failure or the timeout
+# check_unpredicted): plug-in id, the plug-in's note of the failure or the timeout, and whether
+# the warning tells to raise Size Prediction Limit (LIMIT_HINT: after a timeout only)
 UNPREDICTED_CASES = [
-    ('eu.gmic.UserFileProbeFails', "the run that measures the result's size failed"),
-    ('eu.gmic.UserFileProbeSlow', TIMEOUT_NOTE),
+    ('eu.gmic.UserFileProbeFails', "the run that measures the result's size failed", False),
+    ('eu.gmic.UserFileProbeSlow', TIMEOUT_NOTE, True),
 ]
+LIMIT_HINT = 'raise Size Prediction Limit (Advanced Options)'
+
 UNPREDICTED_COLOR = (1.0, 128 / 255.0, 0.0, 1.0)
 # User File Probe Slow with a Size Prediction Limit above its 11 s on the probes: predicted
 LIMIT_ARGS = ['-s', 'Size Prediction Limit (s)=20']
@@ -722,11 +725,11 @@ def check_unpredicted(host, plugins, work):
 
     Their prediction fails or times out, so the first render's region of definition is Source's:
     its output keeps Source's size, cropped, with the warning that the size could not be
-    predicted. hostDemo renders two views per frame: the other renders (frame 0's second view,
-    frame 1's views) get the geometry that the first render found, twice Source's size at its
-    bottom-left corner, without a warning (one in the log). After a timeout, they come within the
-    30 s in which the plug-in doesn't try again: their size shows that the cache is looked up
-    first.
+    predicted, which tells to raise Size Prediction Limit after a timeout only. hostDemo renders
+    two views per frame: the other renders (frame 0's second view, frame 1's views) get the
+    geometry that the first render found, twice Source's size at its bottom-left corner, without
+    a warning (one in the log). After a timeout, they come within the 30 s in which the plug-in
+    doesn't try again: their size shows that the cache is looked up first.
 
     Args:
         host: the path of hostDemo.
@@ -738,7 +741,7 @@ def check_unpredicted(host, plugins, work):
     """
     problems = []
     src_w, src_h = render_plugins.INPUT_WIDTH, render_plugins.INPUT_HEIGHT
-    for pid, note in UNPREDICTED_CASES:
+    for pid, note, hints in UNPREDICTED_CASES:
         result = render_plugins.render(host, [], plugins, work, TIMEOUT, (pid, CONTEXT, ['Source']), frame='0,1')
         problem, errors, log = result.problem, result.errors, result.log
         if problem:
@@ -749,6 +752,8 @@ def check_unpredicted(host, plugins, work):
             found.append('the prediction did not fail or time out (no "%s")' % note)
         if UNPREDICTED_WARNING not in log:
             found.append('no warning that the size could not be predicted')
+        if (LIMIT_HINT in log) != hints:
+            found.append('the warning %s to raise Size Prediction Limit' % ('does not tell' if hints else 'tells'))
         if log.count(GEOMETRY_WARNING) != 1:
             found.append('%d warnings that the result does not match the output, expected 1 (the first render)'
                          % log.count(GEOMETRY_WARNING))
