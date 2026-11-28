@@ -920,13 +920,15 @@ double canonicalEdge(int p, double par, double scale, bool high)
 // Resize Mode Dynamic (issue #175): the region of definition of the result, from its geometry
 // (pluginResultGeometry, which predicts it from small probes of the inputs' regions of
 // definition, at the render time, with the layer times). Empty if it is Source's (a result of
-// Source's size at its top-left corner: Source's region of definition, exactly as before), or if
-// it is unknown (G'MIC failed, or a size that isn't affine).
+// Source's size at its corner: Source's region of definition, exactly as before), or if it is
+// unknown (G'MIC failed, or a size that isn't affine).
 // At the action's render scale (issue #179: the filters whose preview factor ends with "+" in
 // Natron, every filter elsewhere): the inputs' pixels and the point percentages at that scale,
 // as the render gets them, so the probes' command lines and cache keys are the render's at that
-// scale. (Natron's other filters refuse a render scale here, before any probe.) The pixel rectangle is the result's, its top-left corner at
-// Source's moved by the result's pos(x,y), in canonical coordinates (see canonicalEdge).
+// scale. (Natron's other filters refuse a render scale here, before any probe.) The pixel
+// rectangle is the result's, its top-left corner at Source's moved by the result's pos(x,y) in a
+// layout, or its bottom-left corner at Source's otherwise (ResultGeometry), in canonical
+// coordinates (see canonicalEdge).
 std::optional<OfxRectD> GMICEffect::resultRoD(const OfxRectD& sourceRod, double time, const OfxPointD& renderScale) const
 {
 	// the values of the render at this time (see render), the inputs without images
@@ -965,10 +967,10 @@ std::optional<OfxRectD> GMICEffect::resultRoD(const OfxRectD& sourceRod, double 
 	const std::optional<ResultGeometry> g = pluginResultGeometry(values, _gd);
 	const int sw = sourcePixels.x2 - sourcePixels.x1, sh = sourcePixels.y2 - sourcePixels.y1;
 	if (!g || (!g->hasMargin() && g->x == 0 && g->y == 0 && g->width == sw && g->height == sh)) return std::nullopt;
-	// pixels (y up): the result's top edge is Source's, moved down by pos y; then its margin
-	const int rx1 = sourcePixels.x1 + g->x, ry2 = sourcePixels.y2 - g->y;
-	const int x1 = rx1 - g->marginLeft, y2 = ry2 + g->marginTop;
-	const int x2 = rx1 + g->width + g->marginRight, y1 = ry2 - g->height - g->marginBottom;
+	// pixels (y up): the result's rectangle (see ResultGeometry::bottom), then its margin
+	const int rx1 = sourcePixels.x1 + g->x, ry1 = g->bottom(sourcePixels.y1, sourcePixels.y2);
+	const int x1 = rx1 - g->marginLeft, y1 = ry1 - g->marginBottom;
+	const int x2 = rx1 + g->width + g->marginRight, y2 = ry1 + g->height + g->marginTop;
 	return OfxRectD{ canonicalEdge(x1, par, renderScale.x, false), canonicalEdge(y1, 1., renderScale.y, false),
 		canonicalEdge(x2, par, renderScale.x, true), canonicalEdge(y2, 1., renderScale.y, true) };
 }

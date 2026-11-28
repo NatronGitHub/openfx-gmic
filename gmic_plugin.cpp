@@ -1155,12 +1155,14 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 	++p;
 	// (issue #175) "Dynamic", the default, outputs the result at its own size and position, as
 	// G'MIC-Qt does (the region of definition, see pluginResultGeometry); "Fixed (Inplace)" keeps
-	// Source's rectangle, a result of another size cropped or padded (it was resized to Source's
-	// size in both modes before). The option indices and labels are kept for saved projects.
+	// Source's rectangle, a result of another size placed as with Dynamic, then cropped or padded
+	// (#238; it was resized to Source's size in both modes before #175). The option indices and
+	// labels are kept for saved projects.
 	globalDataP->param[p] = Parameter(kResizeModeParam, "", ParamType::Select, 0, 5, kResizeModeDynamic, 0, 0, 0, "Fixed (Inplace)|Dynamic|Downsample 1/2|Downsample 1/4|Downsample 1/8|Downsample 1/16");
 	globalDataP->param[p].hint = "Dynamic: the output has the result's size and position, e.g. larger for a frame or a rotation, "
-		"smaller for a crop, as in G'MIC-Qt. Fixed (Inplace): the output keeps Source's size; a result of another size is "
-		"cropped or padded, from its top-left corner. Downsample 1/N: the filter runs on Source downsampled N times, faster, "
+		"smaller for a crop, as in G'MIC-Qt; a result that the filter doesn't place keeps Source's bottom-left corner. "
+		"Fixed (Inplace): the output keeps Source's size; a result of another size is placed as with Dynamic, then "
+		"cropped or padded. Downsample 1/N: the filter runs on Source downsampled N times, faster, "
 		"and the result is resized to Source's size.";
 	++p;
 	globalDataP->param[p] = Parameter("Ignore Alpha", "", ParamType::Bool, 0, 1, 0, 0, 0, 0, "");
@@ -2106,6 +2108,7 @@ static size_t frameCacheBudget()
 struct CachedFrame
 {
 	gmic_interface_image image;
+	bool layout = false; // its run's results are a layout (runIsLayout)
 	CachedFrame() { memset(&image, 0, sizeof(image)); }
 	~CachedFrame() { if (image.data) gmic_delete_external((float*)image.data); }
 private:
@@ -2273,6 +2276,8 @@ static std::string frameCacheNotKept(const std::string& key, const std::string& 
 // set to NULL. Results that are not usable or don't fit
 // in the budget are left to the caller. Returns a warning for the user if they are not kept (a
 // result is empty, or they are larger than the budget), else an empty string.
+static bool runIsLayout(const gmic_interface_image* images, unsigned int n); // (below)
+
 static std::string frameCacheStore(const void* owner, const std::string& key, gmic_interface_image* images, unsigned int nofImages, const std::string& filterName,
                                    const std::string& runWarning)
 {
@@ -2291,9 +2296,11 @@ static std::string frameCacheStore(const void* owner, const std::string& key, gm
 	entry.lastUse = 0;
 	entry.warning = runWarning; // (before the results are moved: may throw)
 	entry.frames.reserve(nofImages);
+	const bool layout = runIsLayout(images, nofImages);
 	for (unsigned int i = 0; i < nofImages; ++i) {
 		std::shared_ptr<CachedFrame> f = std::make_shared<CachedFrame>();
 		entry.frames.push_back(f);
+		f->layout = layout;
 		f->image = images[i]; // owned from here (nothing throws until the end)
 		images[i].data = NULL;
 	}
@@ -2408,31 +2415,60 @@ static unsigned int resultIndexOf(const SequenceData* sequenceDataP, const Globa
 	return (unsigned int)idx;
 }
 
-// The geometry of a result: its size, and the pos(x,y) of its name, read as G'MIC-Qt's GIMP host
-// does (get_output_layer_props in host_gimp.cpp: integers, any one character between them). The
-// inputs are named pos(0,0) (gmicImageName): a result that keeps its input's name, or has no pos,
-// is at Source's top-left corner.
+// The pos(x,y) of a G'MIC image name, read as G'MIC-Qt's GIMP host does (get_output_layer_props
+// in host_gimp.cpp: integers, any one character between them); 0,0 if it has none
 static const long kMaxPos = 1000000;
-static ResultGeometry resultGeometryOf(const gmic_interface_image& image)
+struct ImagePos
+{
+	int x = 0;
+	int y = 0;
+};
+static ImagePos imagePosOf(const char* name)
+{
+	ImagePos pos;
+	const char* const start = strstr(name, "pos(");
+	if (!start) return pos;
+	const char* p = start + 4;
+	char* end = nullptr;
+	const long x = strtol(p, &end, 10);
+	if (end != p && *end && *end != ')') {
+		p = end + 1;
+		const long y = strtol(p, &end, 10);
+		// (bounded, so that the region of definition stays far from the int range; an overflow
+		// gives LONG_MIN or LONG_MAX, out of these bounds: no labs, undefined for LONG_MIN)
+		if (end != p && *end == ')' && x >= -kMaxPos && x <= kMaxPos && y >= -kMaxPos && y <= kMaxPos) {
+			pos.x = (int)x;
+			pos.y = (int)y;
+		}
+	}
+	return pos;
+}
+
+// Is a run's result a layout (issue #238): does any of images[0..n-1] have a non-zero pos(x,y)
+// (tiles, speech bubbles, layers at an input's offset)? Its results are then placed from Source's
+// top-left corner, as G'MIC-Qt places layers; otherwise none of them has a position of its own
+// (no pos, G'MIC's default pos(0,0) of gui_set_layer_name..., an input's name or a "+" copy of it).
+static bool runIsLayout(const gmic_interface_image* images, unsigned int n)
+{
+	for (unsigned int i = 0; i < n; i++) {
+		const ImagePos pos = imagePosOf(images[i].name);
+		if (pos.x != 0 || pos.y != 0) return true;
+	}
+	return false;
+}
+
+// The geometry of a result of a run (runIsLayout: layout): its size, and in a layout the pos(x,y)
+// of its name; otherwise at Source's bottom-left corner, the origin of OFX images (atSourceBottom)
+static ResultGeometry resultGeometryOf(const gmic_interface_image& image, bool layout)
 {
 	ResultGeometry g;
 	g.width = (int)image.width;
 	g.height = (int)image.height;
-	const char* const pos = strstr(image.name, "pos(");
-	if (pos) {
-		const char* p = pos + 4;
-		char* end = nullptr;
-		const long x = strtol(p, &end, 10);
-		if (end != p && *end && *end != ')') {
-			p = end + 1;
-			const long y = strtol(p, &end, 10);
-			// (bounded, so that the region of definition stays far from the int range; an overflow
-			// gives LONG_MIN or LONG_MAX, out of these bounds: no labs, undefined for LONG_MIN)
-			if (end != p && *end == ')' && x >= -kMaxPos && x <= kMaxPos && y >= -kMaxPos && y <= kMaxPos) {
-				g.x = (int)x;
-				g.y = (int)y;
-			}
-		}
+	g.atSourceBottom = !layout;
+	if (layout) {
+		const ImagePos pos = imagePosOf(image.name);
+		g.x = pos.x;
+		g.y = pos.y;
 	}
 	return g;
 }
@@ -2789,8 +2825,9 @@ static ProbeResult probeRun(SequenceData& probe, const GlobalData* globalDataP, 
 			return result;
 		}
 		result.selected = outputIsFrame(sequenceDataP, globalDataP) && n == 1 && strcmp(images[0].name, "openfx_gmic_frame_selected") == 0;
+		const bool layout = runIsLayout(images, n);
 		for (unsigned int i = 0; i < n; i++) {
-			result.results.push_back(images[i].data ? resultGeometryOf(images[i]) : ResultGeometry());
+			result.results.push_back(images[i].data ? resultGeometryOf(images[i], layout) : ResultGeometry());
 		}
 		store.keep = true;
 		if (n == 0) {
@@ -3052,6 +3089,7 @@ static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequence
 	// [0..2]: the small probes, [3..4]: the thin ones, [5]: the check probe
 	const int kN = 6;
 	int W[kN], H[kN], w[kN], h[kN], x[kN], y[kN];
+	bool atSourceBottom[kN];
 	unsigned int counts[kN];
 	for (int k = 0; k < kN; k++) {
 		// (not "small": a macro of the Windows headers, rpcndr.h)
@@ -3067,6 +3105,10 @@ static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequence
 		h[k] = g.height;
 		x[k] = g.x;
 		y[k] = g.y;
+		atSourceBottom[k] = g.atSourceBottom;
+	}
+	if (!std::all_of(atSourceBottom, atSourceBottom + kN, [&](bool b) { return b == atSourceBottom[0]; })) {
+		return fullSize("a position of its own at some sizes only");
 	}
 	// Output Layer "Frame": the same number of results, so that the frame picks the same one
 	if (outputIsFrame(&sequenceData, globalDataP)) {
@@ -3077,6 +3119,7 @@ static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequence
 	// one value: exact if an exact fraction gives the thin and check probes too, else the joint fit
 	// over the small and thin probes, if it gives the check probe within a pixel
 	ResultGeometry g;
+	g.atSourceBottom = atSourceBottom[0];
 	bool refined = false;
 	const auto predict = [&](const int* X, const int* Y, int real, int& value, bool& margin) {
 		const std::optional<AxisFit> f = fitAxis(X, Y);
@@ -3097,12 +3140,12 @@ static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequence
 		!predict(W, x, source.width, g.x, mx) || !predict(H, y, source.height, g.y, my)) {
 		return fullSize("not an affine function of the input's size");
 	}
-	// a margin on each side that a value 1 pixel off could leave short: a size, its far side; an
-	// offset, both sides
+	// a margin on each side that a value 1 pixel off could leave short: a size, the side away from
+	// the result's corner (the bottom, or the top if atSourceBottom); an offset, both sides
 	g.marginRight = (mw ? 1 : 0) + (mx ? 1 : 0);
 	g.marginLeft = mx ? 1 : 0;
-	g.marginBottom = (mh ? 1 : 0) + (my ? 1 : 0);
-	g.marginTop = my ? 1 : 0;
+	g.marginBottom = (mh && !g.atSourceBottom ? 1 : 0) + (my ? 1 : 0);
+	g.marginTop = (mh && g.atSourceBottom ? 1 : 0) + (my ? 1 : 0);
 	if (g.width <= 0 || g.height <= 0 || g.width > kMaxPos || g.height > kMaxPos) return fullSize("an implausible size");
 	if (refined) {
 		gmicLog("openfx-gmic: %s: the result's size, %dx%d, refined with thin probes (a 1-pixel margin)\n", effectData.name.c_str(),
@@ -3478,14 +3521,26 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 			const World& out = sequenceDataP->outWorld;
 			const int dw = out.width, dh = out.height;
 			const int sw = (int)res->width, sh = (int)res->height;
-			// G'MIC anchors images at their top-left corner: a result of another size than the first
-			// input keeps the input's left and top edges (pixel y goes up). Resize Mode Dynamic: moved
-			// by the pos(x,y) of its name (G'MIC's y goes down), as the region of definition
-			// (pluginResultGeometry)
-			const bool dynamic = resizeModeOf(sequenceDataP, globalDataP) == kResizeModeDynamic && hostSupportsMultiResolution();
-			const ResultGeometry at = dynamic ? resultGeometryOf(*res) : ResultGeometry();
-			const int sx1 = sequenceDataP->inWorld[0].origin_x + at.x;
-			const int sy1 = sequenceDataP->inWorld[0].origin_y + sequenceDataP->inWorld[0].height - at.y - sh;
+			// Resize Modes Dynamic and Fixed (on a host with multi-resolution) place the result alike,
+			// as the region of definition (pluginResultGeometry): in a layout (runIsLayout), moved by
+			// the pos(x,y) of its name (G'MIC's y goes down) from the first input's top-left corner,
+			// otherwise at its bottom-left corner; Fixed then crops or pads it to Source's rectangle,
+			// so that switching modes never moves the content. A result resized to Source's size
+			// (Downsample, a host without multi-resolution) has Source's rectangle.
+			const int resizeMode = resizeModeOf(sequenceDataP, globalDataP);
+			const bool multiRes = hostSupportsMultiResolution();
+			const bool dynamic = resizeMode == kResizeModeDynamic && multiRes;
+			const bool placed = multiRes && (resizeMode == kResizeModeDynamic || resizeMode == kResizeModeFixed);
+			const World& source = sequenceDataP->inWorld[0];
+			const ResultGeometry at = [&] {
+				if (placed) return resultGeometryOf(*res, cachedFrame ? cachedFrame->layout : runIsLayout(images, nofImages));
+				ResultGeometry g;
+				g.width = sw;
+				g.height = sh;
+				return g;
+			}();
+			const int sx1 = source.origin_x + at.x;
+			const int sy1 = at.bottom(source.origin_y, source.origin_y + source.height);
 			const int dx1 = out.origin_x, dy1 = out.origin_y;
 			const size_t dplane = (size_t)dw * (size_t)dh, splane = (size_t)sw * (size_t)sh;
 			float* const dst = out.data;
@@ -3514,9 +3569,10 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 				// depends on the pixels, which pluginResultGeometry's probes can't predict, a size rule
 				// that isn't affine, a prediction some pixels off, or
 				// a host that gives another output): cropped or padded, never resized
-				geometryWarning = "The result (" + std::to_string(sw) + "x" + std::to_string(sh) + " at " +
-					std::to_string(at.x) + "," + std::to_string(at.y) + " from Source's top-left corner) doesn't match the output (" +
-					std::to_string(dw) + "x" + std::to_string(dh) + "): it is cropped or padded.";
+				const string where = at.atSourceBottom ? string("Source's bottom-left corner")
+					: std::to_string(at.x) + "," + std::to_string(at.y) + " from Source's top-left corner";
+				geometryWarning = "The result (" + std::to_string(sw) + "x" + std::to_string(sh) + " at " + where +
+					") doesn't match the output (" + std::to_string(dw) + "x" + std::to_string(dh) + "): it is cropped or padded.";
 			}
 			// overlap, in pixel coordinates (y up)
 			const int x1 = std::max(sx1, dx1), x2 = std::min(sx1 + sw, dx1 + dw);

@@ -28,7 +28,6 @@ usage: gmic_develop_report.py --release <dir> --develop <dir> [--release-renders
                               [--write-differing <file>]
 """
 import argparse
-import array
 import collections
 import json
 import math
@@ -64,7 +63,6 @@ _VALUE_FIELDS = ('type', 'OfxParamPropDefault', 'OfxParamPropMin', 'OfxParamProp
 _POSITION_NAME = re.compile(r'^__\d+$')
 # a row of gmic_develop_sources.sh's patch table: patch, file, outcome
 _PATCH_ROW = re.compile(r'^\| `(patches/[^`]+)` \| [^|]+ \| (.*) \|$', re.MULTILINE)
-_PFM_HEADER = re.compile(rb'(P[Ff])\s+(\d+)\s+(\d+)\s+([-+0-9.eE]+)\s')
 _DEFINITION = re.compile(r'^\+?([A-Za-z_]\w*)\s*:(?!=)')
 # a command call: a word at the start of an item (after a blank, a quote, a brace or ';'), maybe
 # with '+' or '-', then the end, a blank, a selection or a quote; long quoted strings (texts, e.g.
@@ -259,28 +257,6 @@ def removed_commands(release, develop):
     return result
 
 
-def _read_pfm(path):
-    """Returns (width, height, channels, values) of a PFM file, or None if it can't be read."""
-    try:
-        with open(path, 'rb') as stream:
-            data = stream.read()
-    except OSError:
-        return None
-    # one whitespace byte after the scale: the pixels may start with bytes that look like more
-    header = _PFM_HEADER.match(data)
-    if not header:
-        return None
-    width, height, channels = int(header.group(2)), int(header.group(3)), 3 if header.group(1) == b'PF' else 1
-    size = width * height * channels * 4
-    if len(data) - header.end() < size:
-        return None
-    values = array.array('f')
-    values.frombytes(data[header.end():header.end() + size])
-    if float(header.group(4)) > 0:  # big-endian
-        values.byteswap()
-    return width, height, channels, values
-
-
 def _outputs(render_dir):
     """Returns the output files of a render (from its report.json), or None if it has none."""
     try:
@@ -292,7 +268,7 @@ def _outputs(render_dir):
 
 
 def _size(image):
-    """'<width>x<height>x<channels>' of a _read_pfm() image ('unreadable' for None)."""
+    """'<width>x<height>x<channels>' of a render_plugins.read_pfm() image ('unreadable' for None)."""
     return '%dx%dx%d' % image[:3] if image else 'unreadable'
 
 
@@ -324,7 +300,7 @@ def output_difference(old_dir, new_dir):
         old_path, new_path = os.path.join(old_dir, name), os.path.join(new_dir, name)
         if _same_bytes(old_path, new_path):
             continue
-        old, new = _read_pfm(old_path), _read_pfm(new_path)
+        old, new = render_plugins.read_pfm(old_path), render_plugins.read_pfm(new_path)
         if old is None or new is None or old[:3] != new[:3]:
             return {'mean': math.inf, 'max': math.inf, 'note': '%s: %s -> %s' % (name, _size(old), _size(new))}
         for before, after in zip(old[3], new[3]):
