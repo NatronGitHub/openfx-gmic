@@ -207,6 +207,9 @@ jobs:
           .github/workflows/check_fft.sh install/OFX/Plugins/GMIC.ofx.bundle pocketfft
           openfx/Support/include/linuxCheckBundle.sh install/OFX/Plugins
           .github/workflows/check_linux_deps.sh install/OFX/Plugins/GMIC.ofx.bundle
+      # tests/regression (e.g. pocketfft's thread pool unloads: patches/pocketfft-no-thread-local.sh)
+      - name: Regression tests (ctest)
+        run: ctest --test-dir build --output-on-failure --no-tests=error
       # the tests run on the installed bundle, the one that is shipped (see "Upload bundle");
       # gmic_develop_tests.sh (the gmic-develop job) runs the same tests: keep them in sync
       - name: Describe all plug-ins
@@ -388,6 +391,7 @@ jobs:
           cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DGMIC_DOWNLOAD_DIR="$PWD" \
             -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h" -DGMIC_BUILD_TESTS=ON
           cmake --build build -j4
+          ctest --test-dir build --output-on-failure --no-tests=error # tests/regression
           cmake --install build --prefix install
           .github/workflows/check_fft.sh build/Plugins/GMIC.ofx.bundle pocketfft
           openfx/Support/include/linuxCheckBundle.sh install/OFX/Plugins
@@ -449,6 +453,7 @@ jobs:
           cmake -S . -B build $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=17 -DOFX_DEPLOY_BUNDLES=ON \
             -DGMIC_BUILD_TESTS=ON
           cmake --build build -j4
+          ctest --test-dir build --output-on-failure --no-tests=error # tests/regression
           cmake --install build --prefix install
           codesign --verify --strict install/OFX/Plugins/GMIC.ofx.bundle
           .github/workflows/check_fft.sh install/OFX/Plugins/GMIC.ofx.bundle pocketfft

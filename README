@@ -116,7 +116,8 @@ Options:
   but the copied libraries keep the macOS version they were built for. CI builds, which aren't
   shipped, target the runner's macOS (15 on macos-15), as do the MacPorts libraries they bundle;
   Natron's release builds, built on macOS 14, target 14.0.
-- GMIC_BUILD_TESTS=ON: also build openfx's hostDemo, for the render test.
+- GMIC_BUILD_TESTS=ON: also build openfx's hostDemo, for the render test, and the regression tests
+  of tests/regression (run them with `ctest --test-dir <build dir>`).
 - GMIC_PLUGIN_LIST: ON (default unless cross-compiling without CMAKE_CROSSCOMPILING_EMULATOR) or
   OFF: ship the list of the plug-ins, which the build makes by loading the plug-in. Set it OFF
   when the build machine can't load the plug-in but CMake doesn't see it as cross-compiling:

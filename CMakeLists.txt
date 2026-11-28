@@ -123,8 +123,9 @@ endif()
 # Ninja Multi-Config), to hostDemo-path-<config>.txt for each configuration (render_plugins.py
 # --host <build dir> [--config <config>] reads it). Off, openfx's HostSupport isn't even
 # configured. (As a subproject, openfx builds for CMAKE_OSX_ARCHITECTURES as given, the default
-# being the build machine's architecture, like the plug-in.)
-option(GMIC_BUILD_TESTS "Build openfx's hostDemo, for the render test (render_plugins.py)" OFF)
+# being the build machine's architecture, like the plug-in.) Also the regression tests of
+# tests/regression, run by ctest (see the end of this file).
+option(GMIC_BUILD_TESTS "Build openfx's hostDemo, for the render test (render_plugins.py), and tests/regression (ctest)" OFF)
 if(GMIC_BUILD_TESTS)
   set(OFX_BUILD_HOSTSUPPORT ON)
   set(BUILD_EXAMPLE_HOSTS ON)
@@ -980,6 +981,12 @@ if(GMIC_ARM64X)
 endif()
 
 ofx_deploy_bundle(GMIC)
+
+# The regression tests (tests/regression, run with ctest)
+if(GMIC_BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests/regression)
+endif()
 
 message(STATUS "G'MIC ${GMICVER} (${_gmic_tarball}), ${OFX_LICENSE}, FFT: ${GMIC_FFT}, C++${OFX_CXX_STANDARD}, OpenMP: ${OFX_USE_OPENMP}, "
   "static zlib/libpng/FFTW: ${GMIC_STATIC_DEPS}, "
