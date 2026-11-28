@@ -50,6 +50,9 @@ constexpr int kOutputLayerFrame = 11;
 // of definition declares (see pluginResultGeometry); Downsample 1/N (2 to 5) processes a
 // downsampled input and resizes the result to Source's size
 constexpr const char* kResizeModeParam = "Resize Mode";
+// the time limit of the prediction of the result's size (Resize Mode Dynamic, issue #228), in
+// seconds: 0 is automatic (see pluginResultGeometry)
+constexpr const char* kPredictionLimitParam = "Size Prediction Limit (s)";
 constexpr int kResizeModeFixed = 0;
 constexpr int kResizeModeDynamic = 1;
 
@@ -200,20 +203,19 @@ bool pluginKeepsResultSize();
 // Runs the filter as the render does (pluginProcess), on a worker thread, on small, thin and
 // check probes, opaque gradient images (their data is ignored: the region of definition action
 // has no images), and predicts the size and position at the real size from affine fits (fitAxis,
-// fitPlane in gmic_plugin.cpp); a fit that fails, a size that isn't affine or a probe that fails
-// gets one probe at the real size, exact. A Source no larger than the probes would be (by area,
+// fitPlane in gmic_plugin.cpp); a fit that fails, a size that isn't affine, a probe that fails or
+// a slow first probe gets one probe at the real size, exact. A Source no larger than the probes would be (by area,
 // see kSmallProbesPixels) is probed at its own size. The probes and predictions are kept for
 // their command lines and input sizes (for Output Layer "Frame", per frame), so that they run
-// again only when these change; a lookup of a probe that is running waits for it. All within
-// kPredictionTimeLimit. Empty if the host has no multi-resolution (pluginKeepsResultSize, which
+// again only when these change; a lookup of a probe that is running waits for it. All within the
+// node's Size Prediction Limit (automatic: 10 s, 30 min in a host that renders in the
+// background, kOfxImageEffectHostPropIsBackground). Empty if the host has no multi-resolution (pluginKeepsResultSize, which
 // the test aid OFX_GMIC_MULTIRES can override), if even
 // the probe at the real size failed, ran out of memory or past the time limit (logged; a timeout
 // is remembered for a while, see timedOutRecently), or if it gave no or an empty result: the
-// output then keeps Source's region of definition.
+// output then keeps Source's region of definition. After a prediction that failed or timed out
+// (not one that left the cache), the render that finds a result of another size keeps its
+// geometry as the prediction, for the next queries (issue #228).
 std::optional<ResultGeometry> pluginResultGeometry(const gmic_ofx::SequenceData& sequenceData, const gmic_ofx::GlobalData& globalData);
-
-// The prediction that pluginResultGeometry last made for these values and input sizes, if it is
-// still in its cache (never a new prediction: for the render)
-std::optional<ResultGeometry> pluginCachedResultGeometry(const gmic_ofx::SequenceData& sequenceData, const gmic_ofx::GlobalData& globalData);
 
 #endif

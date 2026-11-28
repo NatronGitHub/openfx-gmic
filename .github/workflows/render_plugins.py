@@ -122,6 +122,23 @@ TIMEOUT = {
 # the warning of a render whose result doesn't fit the region of definition that the plug-in
 # declared (#175: a size that depends on the pixels); listed, not a failure
 GEOMETRY_MISMATCH = "doesn't match the output"
+# the end of that warning when there was no prediction (#228), and the plug-in's log lines that
+# tell why: the prediction ran out of time (a slow filter), or its probe failed in G'MIC (a filter
+# that fails on the probe's gradient). Listed apart: the next frames get the result's size.
+GEOMETRY_UNPREDICTED = 'Its size could not be predicted'
+PREDICTION_TIMED_OUT = "measuring the result's size took more than"
+PREDICTION_FAILED = "the run that measures the result's size failed"
+# Plug-ins whose result's size is not predicted with their default parameters on the test's
+# 160x120 input, in the full Linux run (#228), with the reason. Another one gets a warning, so that
+# a filter that starts timing out stands out; a listed one that is predicted gets a warning too
+# (remove it). Warnings, not failures: the timeouts depend on the runner's speed.
+KNOWN_UNPREDICTED = {
+    'eu.gmic.FloconSnowflakeLaser': 'timed out: a 1400x1400 generator, slower than the 10 s budget on a runner',
+    'eu.gmic.Iris': 'timed out: an 800x800 generator (2x internal upscale), slower than the 10 s budget on a runner',
+    'eu.gmic.NonscapeWoods': 'timed out: a 1920x1080 generator, about 3 minutes',
+    'eu.gmic.UpscaleSolver2x': "failed: gcd_upscale_solver2x fails on the probe's gradient ('mask image is empty', "
+                               "an upstream bug)",
+}
 ERROR_LINE = re.compile(r'\*\*\* Error|\bOfxMessageError\b|\bError\b|\berror:')
 COMMERCIAL_MARKER = ' #  openfx-gmic : COMMERCIAL standard library'
 FFT_COMMANDS = re.compile(r'(?<![A-Za-z0-9_])(fft|ifft|deconvolve|deconvolve_fft|convolve_fft|bandpass|watermark_fourier)(?![A-Za-z0-9_])')
@@ -483,8 +500,9 @@ def main():
     sys.stdout.flush()
 
     start = time.time()
-    fails, xfails, xpasses, nans, stale_nans, times, mismatches = [], [], [], [], [], [], []
+    fails, xfails, xpasses, nans, stale_nans, times, mismatches, unpredicted = [], [], [], [], [], [], [], []
     rendered = 0
+    rendered_ids = set()
     progressed = 0  # plug-ins that updated the host's progress
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as ex:
         def run(plugin):
@@ -511,6 +529,7 @@ def main():
                     print('    ' + e)
                 continue
             rendered += 1
+            rendered_ids.add(pid)
             if result.updates:
                 progressed += 1
             if pid in EXPECTED_FAIL:
@@ -520,7 +539,15 @@ def main():
                 nans.append((pid, result.nan))
             elif pid in KNOWN_NAN:
                 stale_nans.append(pid)
-            if GEOMETRY_MISMATCH in result.log:
+            if GEOMETRY_UNPREDICTED in result.log:
+                if PREDICTION_TIMED_OUT in result.log:
+                    why = 'timed out'
+                elif PREDICTION_FAILED in result.log:
+                    why = 'failed'
+                else:
+                    why = 'see its log'
+                unpredicted.append((pid, why))
+            elif GEOMETRY_MISMATCH in result.log:
                 mismatches.append(pid)
     print('%d plug-ins in %.0fs: %d rendered, %d failed, %d expected failures, %d skipped' % (
         len(todo), time.time() - start, rendered, len(fails), len(xfails), skipped))
@@ -532,6 +559,18 @@ def main():
             print('WARNING: %s: %d NaN values in its output (KNOWN_NAN: %s)' % (pid, nan, KNOWN_NAN[pid]))
         else:
             print('FAIL %s: %d NaN values in its output' % (pid, nan))
+    if unpredicted:
+        print('NOTE: %d plug-ins whose result\'s size was not predicted (#228: the first frame keeps Source\'s '
+              'size, cropped or padded; the next renders with the same settings get the result\'s): %s'
+              % (len(unpredicted), ' '.join('%s (%s)' % u for u in sorted(unpredicted))))
+    for pid, why in sorted(unpredicted):
+        if pid not in KNOWN_UNPREDICTED:
+            print('WARNING: %s: its result\'s size was not predicted (%s), and it is not in KNOWN_UNPREDICTED'
+                  % (pid, why))
+    unpredicted_ids = {pid for pid, _ in unpredicted}
+    for pid in sorted(set(KNOWN_UNPREDICTED) & (rendered_ids - unpredicted_ids)):
+        print('WARNING: %s: its result\'s size was predicted: remove it from KNOWN_UNPREDICTED (%s)'
+              % (pid, KNOWN_UNPREDICTED[pid]))
     if mismatches:
         print('WARNING: %d plug-ins whose result does not match their region of definition (#175, '
               'cropped or padded): %s' % (len(mismatches), ' '.join(sorted(mismatches))))

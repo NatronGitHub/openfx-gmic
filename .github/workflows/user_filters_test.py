@@ -48,9 +48,16 @@ coordinates. On a 1800x1080-pixel Source: rotations (User File Rotate) and sizes
 are no exact fractions (User File Percent) must be predicted within the plug-in's 1-pixel
 margin; Larger, Smaller and Shifted must be exact, with no margin; and User File Frame Max
 (percent of max(w,h)), User File Area Size (sqrt(W*H)) and User File Product (W*H/1024) must be
-confirmed at full size, exactly, all without a warning. User File Slow is slower than the
-plug-in's 10 s prediction budget: rendered at frames 0 and 1, its prediction must time out
-once, the second query must not try again, and both outputs have Source's size (about 35 s).
+confirmed at full size, exactly, all without a warning; User File Probe Generator (2 s on every
+probe) must be measured at full size after two small probes, within the 10 s budget (#228).
+User File Slow is slower than the plug-in's 10 s prediction budget: rendered at frames 0 and 1,
+its prediction must time out once, the second query must not try again, and both outputs have Source's size (about 35 s).
+User File Probe Fails fails on the plug-in's probes, User File Probe Slow is slow (11 s) only on
+them, and both double the test's input (#228): rendered at frames 0 and 1 (two views each), the
+first render must keep Source's size, cropped, with the warning that the size could not be
+predicted, and the others must get twice Source's size, which the first render found, without a
+warning (about 15 s). With its Size Prediction Limit at 20 s, User File Probe Slow must be
+predicted: twice Source's size from the first render, without a timeout or a warning (about 12 s).
 
 With --stdlib, the same filters are then rendered with a copy of the whole built-in standard
 library before them in the file, as in a user's copied gmic_stdlib.gmic: the outputs must be the
@@ -194,10 +201,26 @@ LARGE_EXACT_CASES = [
 SLOW_PLUGIN = 'eu.gmic.UserFileSlow'
 TIMEOUT_NOTE = 'took more than'
 RECENT_TIMEOUT_NOTE = 'timed out less than'
+# (#228) fail or are slow on the probes, double the test's input, rendered at frames 0 and 1 (see
+# check_unpredicted): plug-in id, the plug-in's note of the failure or the timeout, and whether
+# the warning tells to raise Size Prediction Limit (LIMIT_HINT: after a timeout only)
+UNPREDICTED_CASES = [
+    ('eu.gmic.UserFileProbeFails', "the run that measures the result's size failed", False),
+    ('eu.gmic.UserFileProbeSlow', TIMEOUT_NOTE, True),
+]
+LIMIT_HINT = 'raise Size Prediction Limit (Advanced Options)'
+
+UNPREDICTED_COLOR = (1.0, 128 / 255.0, 0.0, 1.0)
+# User File Probe Slow with a Size Prediction Limit above its 11 s on the probes: predicted
+LIMIT_ARGS = ['-s', 'Size Prediction Limit (s)=20']
+UNPREDICTED_WARNING = 'Its size could not be predicted'
 PERCENT_PLUGIN = 'eu.gmic.UserFilePercent'
 # not exact fractions of the input's size: refined with a margin, never a warning
 PERCENTS = (10.0, 70.0)
 FRAME_MAX_PLUGIN = 'eu.gmic.UserFileFrameMax'
+# (#228) 2 s on every probe: on the large Source, measured at full size after two small probes
+GENERATOR_PLUGIN = 'eu.gmic.UserFileProbeGenerator'
+GENERATOR_NOTE = 'slow probes, cheaper at full size than the other probes'
 ROD_TOLERANCE = 1e-3
 KEPT_NOTE = "'star_tone'" + DEFINED_BY
 HOTFIX_WARNING = 'Warning: hot fix'
@@ -568,6 +591,8 @@ def check_large_sources(host, plugins, work):
     plus 0 to 2 pixels, at Source's bottom-left corner (they have no position of their own), with
     no warning. The frame in percent of
     max(w,h) and the size in sqrt(W*H) (AREA_PLUGIN) are confirmed at full size: exact.
+    GENERATOR_PLUGIN, 2 s on every probe, is measured at full size after the first two small
+    probes (#228), within the 10 s budget, which six probes would exceed (about 6 s).
 
     Args:
         host: the path of hostDemo.
@@ -668,6 +693,18 @@ def check_large_sources(host, plugins, work):
         problems.append('%s: not confirmed at full size' % FRAME_MAX_PLUGIN)
     report = {'renders': [first]}
     problems += ['%s: %s' % (FRAME_MAX_PLUGIN, p) for p in check_output(report, (0.0, 128 / 255.0, 1.0, 1.0))]
+    # a generator: three probes (about 6 s), not six (12 s, past the 10 s budget)
+    problem, log, first, src, (width, height), par = large_source_render(host, plugins, work, GENERATOR_PLUGIN, [])
+    if problem:
+        return problems + ['%s: %s' % (GENERATOR_PLUGIN, problem)]
+    if GENERATOR_NOTE not in log:
+        problems.append('%s: not measured at full size after two small probes' % GENERATOR_PLUGIN)
+    if TIMEOUT_NOTE in log or GEOMETRY_WARNING in log:
+        problems.append('%s: the prediction timed out, or the result does not match the output' % GENERATOR_PLUGIN)
+    output = first.get('output') or {}
+    if (output.get('w'), output.get('h')) != (width, height):
+        problems.append('%s: the output is %sx%s, expected %dx%d'
+                        % (GENERATOR_PLUGIN, output.get('w'), output.get('h'), width, height))
     return problems
 
 
@@ -699,6 +736,101 @@ def check_timeout(host, plugins, work):
         if (output.get('w'), output.get('h')) != (render_plugins.INPUT_WIDTH, render_plugins.INPUT_HEIGHT):
             problems.append('at time %s, the output is %sx%s, not Source\'s size' % (r.get('time'), output.get('w'), output.get('h')))
     return ['%s: %s' % (SLOW_PLUGIN, p) for p in problems]
+
+
+def check_unpredicted(host, plugins, work):
+    """Renders the UNPREDICTED_CASES at frames 0 and 1: renders without a prediction (#228).
+
+    Their prediction fails or times out, so the first render's region of definition is Source's:
+    its output keeps Source's size, cropped, with the warning that the size could not be
+    predicted, which tells to raise Size Prediction Limit after a timeout only. hostDemo renders
+    two views per frame: the other renders (frame 0's second view, frame 1's views) get the
+    geometry that the first render found, twice Source's size at its bottom-left corner, without
+    a warning (one in the log). After a timeout, they come within the 30 s in which the plug-in
+    doesn't try again: their size shows that the cache is looked up first.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems.
+    """
+    problems = []
+    src_w, src_h = render_plugins.INPUT_WIDTH, render_plugins.INPUT_HEIGHT
+    for pid, note, hints in UNPREDICTED_CASES:
+        result = render_plugins.render(host, [], plugins, work, TIMEOUT, (pid, CONTEXT, ['Source']), frame='0,1')
+        problem, errors, log = result.problem, result.errors, result.log
+        if problem:
+            problems.append('%s: %s %s' % (pid, problem, ' '.join(errors)))
+            continue
+        found = []
+        if note not in log:
+            found.append('the prediction did not fail or time out (no "%s")' % note)
+        if UNPREDICTED_WARNING not in log:
+            found.append('no warning that the size could not be predicted')
+        if (LIMIT_HINT in log) != hints:
+            found.append('the warning %s to raise Size Prediction Limit' % ('does not tell' if hints else 'tells'))
+        if log.count(GEOMETRY_WARNING) != 1:
+            found.append('%d warnings that the result does not match the output, expected 1 (the first render)'
+                         % log.count(GEOMETRY_WARNING))
+        renders = (result.report or {}).get('renders') or []
+        if len(renders) < 2:
+            found.append('%d renders, expected at least 2' % len(renders))
+        for k, r in enumerate(renders):
+            width, height = (src_w, src_h) if k == 0 else (2 * src_w, 2 * src_h)
+            name = 'render %d (time %s, view %s)' % (k, r.get('time'), r.get('view'))
+            output = r.get('output') or {}
+            if (output.get('w'), output.get('h')) != (width, height):
+                found.append('%s: the output is %sx%s, expected %dx%d'
+                             % (name, output.get('w'), output.get('h'), width, height))
+            rod = (r.get('regionOfDefinition') or {}).get('rod') or []
+            src = ((r.get('inputs') or {}).get('Source') or {}).get('regionOfDefinition') or []
+            if len(src) != 4:
+                found.append('%s: no region of definition of Source' % name)
+                continue
+            expected = expected_rod(src, (src[2] - src[0]) / src_w, width, height, AT_SOURCE_BOTTOM)
+            if len(rod) != 4 or any(abs(a - e) > ROD_TOLERANCE for a, e in zip(rod, expected)):
+                found.append('%s: the region of definition is %s, expected %s' % (name, rod, expected))
+            found += ['%s: %s' % (name, p) for p in check_output({'renders': [r]}, UNPREDICTED_COLOR)]
+        problems += ['%s: %s' % (pid, p) for p in found]
+    return problems
+
+
+def check_prediction_limit(host, plugins, work):
+    """Renders User File Probe Slow with LIMIT_ARGS: its prediction ends within the node's limit.
+
+    Every render (frame 0, two views) must output twice Source's size, without a timeout or a
+    warning.
+
+    Args:
+        host: the path of hostDemo.
+        plugins: the directory with GMIC.ofx.bundle.
+        work: the work directory, with the user file installed.
+
+    Returns:
+        A list of problems.
+    """
+    pid = 'eu.gmic.UserFileProbeSlow'
+    name = '%s %s' % (pid, ' '.join(LIMIT_ARGS))
+    result = render_plugins.render(host, LIMIT_ARGS, plugins, work, TIMEOUT, (pid, CONTEXT, ['Source']))
+    problem, errors, log = result.problem, result.errors, result.log
+    if problem:
+        return ['%s: %s %s' % (name, problem, ' '.join(errors))]
+    problems = []
+    if TIMEOUT_NOTE in log or GEOMETRY_WARNING in log:
+        problems.append('the prediction timed out, or the result does not match the output')
+    renders = (result.report or {}).get('renders') or []
+    if not renders:
+        problems.append('no render')
+    for k, r in enumerate(renders):
+        output = r.get('output') or {}
+        expected = (2 * render_plugins.INPUT_WIDTH, 2 * render_plugins.INPUT_HEIGHT)
+        if (output.get('w'), output.get('h')) != expected:
+            problems.append('render %d: the output is %sx%s, expected %dx%d'
+                            % (k, output.get('w'), output.get('h'), expected[0], expected[1]))
+    return ['%s: %s' % (name, p) for p in problems]
 
 
 def check_no_multires(host, plugins, work):
@@ -1245,6 +1377,8 @@ def run_test(host, plugins, stdlib, runs, work, name):
         problems += check_scaled_geometry(host, plugins, work)
         problems += check_large_sources(host, plugins, work)
         problems += check_timeout(host, plugins, work)
+        problems += check_unpredicted(host, plugins, work)
+        problems += check_prediction_limit(host, plugins, work)
     for p in problems:
         print('FAIL (user file): ' + p)
     passed = not problems

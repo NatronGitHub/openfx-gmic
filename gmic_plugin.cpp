@@ -56,11 +56,12 @@ constexpr int kPluginVersionMinor = 0;
 constexpr const char* kPluginDescription = "Wrapper for the G'MIC framework (http://gmic.eu) written by Tobias Fleischer (http://www.reduxfx.com) and Frederic Devernay.";
 
 // Layout of the last parameters (see pluginSetup): Command, [Advanced Options group start], Output Layer,
-// Resize Mode, Ignore Alpha, Preview/Draft Mode, Global Random Seed, Animate Random Seed, Log Verbosity,
-// [group end].
-#define PARAM_COMMAND (globalDataP->nofParams - 10)
-#define PARAM_OUTPUT (globalDataP->nofParams - 8)
-#define PARAM_RESIZE (globalDataP->nofParams - 7)
+// Resize Mode, Size Prediction Limit, Ignore Alpha, Preview/Draft Mode, Global Random Seed, Animate
+// Random Seed, Log Verbosity, [group end].
+#define PARAM_COMMAND (globalDataP->nofParams - 11)
+#define PARAM_OUTPUT (globalDataP->nofParams - 9)
+#define PARAM_RESIZE (globalDataP->nofParams - 8)
+#define PARAM_PREDICTION_LIMIT (globalDataP->nofParams - 7)
 #define PARAM_NOALPHA (globalDataP->nofParams - 6)
 #define PARAM_PREVIEW (globalDataP->nofParams - 5)
 #define PARAM_SRAND (globalDataP->nofParams - 4)
@@ -238,9 +239,9 @@ string homeFolder()
 }
 
 // parameters added by pluginSetup besides the filter's own: Input, 4 layers, Command, the
-// "Advanced Options" group (start and end) and its 7 parameters; for the filters with layer inputs,
+// "Advanced Options" group (start and end) and its 8 parameters; for the filters with layer inputs,
 // also the "Layer Times" group (start and end), Layers from Source and the 4 time offsets
-static const int kNofExtraParams = 1 + 4 + 1 + 2 + 7;
+static const int kNofExtraParams = 1 + 4 + 1 + 2 + 8;
 static const int kNofLayerTimeParams = 2 + 1 + 4;
 
 // Does the host support multi-resolution (kOfxImageEffectPropSupportsMultiResolution)? Without
@@ -981,7 +982,7 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 			"Layer Times", kLayersFromSourceParam, string("Layer -1") + kTimeOffsetParamSuffix,
 			string("Layer -2") + kTimeOffsetParamSuffix, string("Layer -3") + kTimeOffsetParamSuffix,
 			string("Layer -4") + kTimeOffsetParamSuffix, "Command",
-			"Advanced Options", kOutputLayerParam, "Resize Mode", "Ignore Alpha", kDraftModeParam,
+			"Advanced Options", kOutputLayerParam, "Resize Mode", kPredictionLimitParam, "Ignore Alpha", kDraftModeParam,
 			"Global Random Seed", kAnimateSeedParam, "Log Verbosity" };
 		for (size_t r = 0; r < sizeof(reservedNames) / sizeof(reservedNames[0]); ++r) {
 			if (name == reservedNames[r]) {
@@ -1186,6 +1187,18 @@ std::unique_ptr<GlobalData> pluginSetup(int pluginIndex, const PluginInfo& plugi
 		"Fixed (Inplace): the output keeps Source's size; a result of another size is placed as with Dynamic, then "
 		"cropped or padded. Downsample 1/N: the filter runs on Source downsampled N times, faster, "
 		"and the result is resized to Source's size.";
+	++p;
+	// (issue #228) not animated: the region of definition action reads it at its own time
+	globalDataP->param[p] = Parameter(kPredictionLimitParam, "", ParamType::Float, 0, 3600, 0, 0, 0, 0, "");
+	globalDataP->param[p].animates = false;
+	globalDataP->param[p].displayMaxValue = 600; // (the useful values; 3600 is the hard maximum)
+	globalDataP->param[p].hint = "Resize Mode Dynamic: the most time, in seconds, that the plug-in may spend running the filter "
+		"on test images to find the result's size and position, which the host needs before the render. "
+		"In Natron's GUI, the interface can freeze for up to this time after each edit of the node. Past it, the "
+		"output keeps Source's size: that render is cropped or padded, and the other frames with the same settings "
+		"get the result's size. 0: automatic, 10 s in an interactive host, 30 min in a background render "
+		"(NatronRenderer); in a background render, a larger value raises the limit, a smaller one doesn't lower it. "
+		"Raise it for a slow filter whose output is cropped.";
 	++p;
 	globalDataP->param[p] = Parameter("Ignore Alpha", "", ParamType::Bool, 0, 1, 0, 0, 0, 0, "");
 	globalDataP->param[p].hint = "Run the filter on the RGB channels only, then give the inputs' alpha back to the results. "
@@ -2534,9 +2547,34 @@ static void nameInputImages(const SequenceData* sequenceDataP, unsigned int nofI
 
 // The time budget of a prediction, in seconds: all its G'MIC runs (probes and the preview runs of
 // preview-first filters), a safety limit (most probes run on small images, in a fraction of a
-// second); past it, G'MIC is stopped, and the output keeps Source's region of definition (logged)
+// second); past it, G'MIC is stopped, and the output keeps Source's region of definition (logged).
+// Automatic (issue #228): kPredictionTimeLimit in an interactive host, whose GUI waits for the
+// region of definition (in Natron, its main thread); kBackgroundPredictionTimeLimit in a host
+// that renders in the background (kOfxImageEffectHostPropIsBackground: NatronRenderer, natron -b),
+// which has no GUI to block, so that slow filters (e.g. Nonscape - Woods, about 3 minutes a
+// probe) are usually not cropped, while a filter that never ends on the probe images doesn't hang
+// the render. The node's Size Prediction Limit, if not 0, replaces the interactive limit, and in a
+// background host raises the automatic one (a limit set for the GUI never shortens final renders).
 static const double kPredictionTimeLimit = 10.;
+static const double kBackgroundPredictionTimeLimit = 1800.;
 using Deadline = std::chrono::steady_clock::time_point;
+
+static bool hostIsBackground()
+{
+	const OFX::ImageEffectHostDescription* const host = OFX::getImageEffectHostDescription();
+	return host && host->hostIsBackground;
+}
+
+// the time limit of a prediction with these values, in seconds, from the node's Size Prediction
+// Limit (not animated, so the same at every time; 0 is automatic): see kPredictionTimeLimit
+static double predictionTimeLimit(const SequenceData& sequenceData, const GlobalData& globalData)
+{
+	const GlobalData* const globalDataP = &globalData;
+	const float limit = sequenceData.floatValue[PARAM_PREDICTION_LIMIT][0];
+	const double set = limit > 0.f ? (double)limit : 0.;
+	if (hostIsBackground()) return std::max(set, kBackgroundPredictionTimeLimit);
+	return set > 0. ? set : kPredictionTimeLimit;
+}
 
 // One prediction (see pluginResultGeometry): its deadline, and whether a run failed for a reason
 // that may not happen again (C++ Core Guidelines F.17: in-out, through every probe): a timeout, out
@@ -2544,6 +2582,7 @@ using Deadline = std::chrono::steady_clock::time_point;
 // not kept.
 struct PredictionRun
 {
+	double limit = kPredictionTimeLimit; // seconds (see predictionTimeLimit)
 	Deadline deadline;
 	bool transient = false;
 	bool timedOut = false;
@@ -2713,16 +2752,25 @@ static bool geometryCacheLookup(const string& key, ProbeResult& result)
 	return true;
 }
 
-// a done entry for key, unless one is there or running (the predictions, see pluginResultGeometry)
+// a done entry for key, unless one with a result is there (it becomes the most recently used) or
+// one is running; an entry without a result is replaced (the predictions, see pluginResultGeometry,
+// and the geometries that renders measured, see rememberRenderedGeometry)
 static void geometryCachePut(const string& key, const ProbeResult& result) noexcept
 {
-	ProbeResult existing;
 	try {
-		if (geometryCacheLookup(key, existing)) return;
 		{
 			GeometryCache& c = geometryCache();
 			std::lock_guard<std::mutex> lock(c.mutex);
-			if (c.entries.count(key)) return;
+			const auto it = c.entries.find(key);
+			if (it != c.entries.end()) {
+				if (!it->second.done) return;
+				if (!it->second.result.results.empty()) {
+					c.lru.splice(c.lru.end(), c.lru, it->second.lru);
+					return;
+				}
+				c.lru.erase(it->second.lru);
+				c.entries.erase(it);
+			}
 			c.entries.emplace(key, GeometryEntry());
 		}
 		geometryCacheStore(key, result, true);
@@ -2810,7 +2858,7 @@ static ProbeResult probeRun(SequenceData& probe, const GlobalData* globalDataP, 
 			if (timedOut) {
 				run.transient = run.timedOut = true;
 				gmicLog("G'MIC: %s: measuring the result's size took more than %g s: stopped, the output keeps Source's size\n",
-				        effectData.name.c_str(), kPredictionTimeLimit);
+				        effectData.name.c_str(), run.limit);
 			}
 			return status == 0 && !timedOut;
 		};
@@ -2943,6 +2991,23 @@ static const double kSmallProbesPixels = 15000.;
 // width and a large height, so a weak product such as W*H/1024 fits them within a pixel, and only
 // shows at a probe where both are large.
 static const int kCheckSize = 256;
+// The first small probe slower than this, in seconds (a sixth of the GUI's budget,
+// kPredictionTimeLimit): a slow filter, whose time at the real size is extrapolated from the first
+// two small probes, linearly in pixels. If that is less than the other four probes would cost
+// (about kRemainingProbes times the second one), as for a filter whose time doesn't depend on the
+// image's size (a generator), the size is measured at full size, without them (issue #228). A
+// filter that is slow per pixel keeps the small probes: at full size, it would cost a full render.
+// The probes are only 1296 pixels apart (64 and 80 pixels wide, 16:9), and the extrapolation
+// multiplies the difference of their times by about 1600 for an HD Source: the second probe's
+// time is first reduced by kTimingNoise times the first one's, so that a generator whose times
+// jitter by up to about 20% still gives about its first probe's time. A filter that is linear in
+// pixels (the second probe about 1.56 times the first) still extrapolates to about a full render.
+// The trade-off: a filter with up to about 40% of its time per pixel at the first probe takes the
+// shortcut too, which costs at most one more render at full size, and only matters in a background
+// host (in an interactive one, the six probes of such a filter run past the limit as well).
+static const double kSlowProbeTime = kPredictionTimeLimit / 6.;
+static const double kRemainingProbes = 4.;
+static const double kTimingNoise = 1.25;
 
 // A fit Y = a*X + b of a size or an offset against Source's width or height (see fitAxis)
 struct AxisFit
@@ -3071,9 +3136,11 @@ static bool probeScaled(const SequenceData& sequenceData, const GlobalData* glob
 //    the output, without a warning (e.g. rotations, 10%);
 // 3. any failure (a probe that fails, a fit that isn't affine, as a size in rounded percent of
 //    max(w,h) over the thin probes or one that depends on W*H, a different number of results in
-//    Output Layer "Frame", or a Source so thin that its small probes are 1 pixel wide): one
-//    probe at the real size, exact (the cost of a render on a gradient).
-// Everything within kPredictionTimeLimit; past it, empty (Source's region of definition).
+//    Output Layer "Frame", a Source so thin that its small probes are 1 pixel wide, or a filter
+//    whose two first small probes are both slow, see kSlowProbeTime): one probe at the real size,
+//    exact (the cost of a render on a gradient).
+// Everything within run's limit (see predictionTimeLimit); past it, empty (Source's region of
+// definition).
 static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequenceData, const GlobalData& globalData, PredictionRun& run)
 {
 	const GlobalData* const globalDataP = &globalData;
@@ -3117,7 +3184,9 @@ static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequence
 	int W[kN], H[kN], w[kN], h[kN], x[kN], y[kN];
 	bool atSourceBottom[kN];
 	unsigned int counts[kN];
+	std::chrono::duration<double> probeTime[2] = {}; // the two first small probes'
 	for (int k = 0; k < kN; k++) {
+		const auto start = std::chrono::steady_clock::now();
 		// (not "small": a macro of the Windows headers, rpcndr.h)
 		const double scale = (double)(k == 5 ? kCheckSize : kProbeSizes[std::min(k, 2)]) / longSide;
 		const bool thin = k == 3 || k == 4;
@@ -3132,6 +3201,17 @@ static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequence
 		x[k] = g.x;
 		y[k] = g.y;
 		atSourceBottom[k] = g.atSourceBottom;
+		// a slow filter whose time hardly depends on the image's size (a generator): its six probes
+		// would cost about six renders, one more at the real size costs about one
+		if (k < 2) probeTime[k] = std::chrono::steady_clock::now() - start;
+		if (k == 1 && probeTime[0].count() > kSlowProbeTime) {
+			const double p0 = (double)W[0] * H[0], p1 = (double)W[1] * H[1];
+			const double perPixel = p1 > p0 ? std::max(0., probeTime[1].count() - kTimingNoise * probeTime[0].count()) / (p1 - p0) : 0.;
+			const double full = probeTime[0].count() + perPixel * ((double)source.width * source.height - p0);
+			if (full < kRemainingProbes * probeTime[1].count()) {
+				return fullSize("slow probes, cheaper at full size than the other probes");
+			}
+		}
 	}
 	if (!std::all_of(atSourceBottom, atSourceBottom + kN, [&](bool b) { return b == atSourceBottom[0]; })) {
 		return fullSize("a position of its own at some sizes only");
@@ -3199,15 +3279,20 @@ static string predictionKey(const SequenceData& sequenceData, const GlobalData* 
 	return "prediction\n" + frame + '\n' + probeKey(probe, globalDataP, nofImages);
 }
 
-// The predictions that ran out of time, by key, for kTimeoutMemory seconds: their region of
-// definition is Source's without trying again, so that a slow filter doesn't block the host for
-// kPredictionTimeLimit on every query (in Natron, its main thread). Another key (an edit) tries.
+// The predictions that ran out of time, by key and time limit, for kTimeoutMemory seconds: their
+// region of definition is Source's without trying again, so that a slow filter doesn't block the
+// host for its limit on every query (in Natron, its main thread). Another key (an edit) or another
+// limit tries.
+// Also, without expiry, the keys of the timeouts that no render has measured yet (unmeasured: a
+// slow filter's render may end long after kTimeoutMemory; see RenderPrediction). Each holds at
+// most kMaxTimeouts keys, the oldest dropped first.
 static const double kTimeoutMemory = 30.;
 static const size_t kMaxTimeouts = 64;
 struct TimeoutMemory
 {
 	std::mutex mutex;
-	std::map<string, Deadline> until; // key -> when it may be tried again
+	std::map<string, Deadline> until; // retryKey -> when it may be tried again
+	std::list<string> unmeasured; // oldest first
 };
 
 static TimeoutMemory& timeoutMemory()
@@ -3216,27 +3301,57 @@ static TimeoutMemory& timeoutMemory()
 	return memory;
 }
 
-// is key's prediction still to be skipped (it ran out of time less than kTimeoutMemory ago)?
-static bool timedOutRecently(const string& key)
+// the key of a prediction with this time limit in TimeoutMemory::until
+static string retryKey(const string& key, double limit)
+{
+	return key + "\nlimit " + std::to_string(limit);
+}
+
+// is key's prediction with this time limit still to be skipped (it ran out of time less than
+// kTimeoutMemory ago)?
+static bool timedOutRecently(const string& key, double limit)
 {
 	TimeoutMemory& m = timeoutMemory();
 	std::lock_guard<std::mutex> lock(m.mutex);
-	const auto it = m.until.find(key);
+	const auto it = m.until.find(retryKey(key, limit));
 	if (it == m.until.end()) return false;
 	if (std::chrono::steady_clock::now() < it->second) return true;
 	m.until.erase(it);
 	return false;
 }
 
-static void rememberTimeout(const string& key) noexcept
+static void rememberTimeout(const string& key, double limit) noexcept
 {
 	try {
+		const string retry = retryKey(key, limit);
 		TimeoutMemory& m = timeoutMemory();
 		std::lock_guard<std::mutex> lock(m.mutex);
 		const Deadline now = std::chrono::steady_clock::now();
 		for (auto it = m.until.begin(); it != m.until.end();) it = it->second <= now ? m.until.erase(it) : std::next(it);
 		if (m.until.size() >= kMaxTimeouts) m.until.erase(m.until.begin());
-		m.until[key] = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(kTimeoutMemory));
+		m.until[retry] = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(kTimeoutMemory));
+		m.unmeasured.remove(key);
+		if (m.unmeasured.size() >= kMaxTimeouts) m.unmeasured.pop_front();
+		m.unmeasured.push_back(key);
+	} catch (...) {
+	}
+}
+
+// has key's prediction run out of time, with no render that measured its result since?
+static bool timedOutUnmeasured(const string& key)
+{
+	TimeoutMemory& m = timeoutMemory();
+	std::lock_guard<std::mutex> lock(m.mutex);
+	return std::find(m.unmeasured.begin(), m.unmeasured.end(), key) != m.unmeasured.end();
+}
+
+// key's prediction has a result now (predicted, or measured by a render)
+static void forgetUnmeasured(const string& key) noexcept
+{
+	try {
+		TimeoutMemory& m = timeoutMemory();
+		std::lock_guard<std::mutex> lock(m.mutex);
+		m.unmeasured.remove(key);
 	} catch (...) {
 	}
 }
@@ -3253,22 +3368,25 @@ std::optional<ResultGeometry> pluginResultGeometry(const SequenceData& sequenceD
 			if (cached.results.empty()) return std::nullopt;
 			return cached.results[0];
 		}
-		if (timedOutRecently(key)) {
+		const double limit = predictionTimeLimit(sequenceData, globalData);
+		if (timedOutRecently(key, limit)) {
 			gmicLog("openfx-gmic: %s: the result's size timed out less than %g s ago: the output keeps Source's size\n",
 			        effectDataOf(&globalData).name.c_str(), kTimeoutMemory);
 			return std::nullopt;
 		}
 		PredictionRun run;
+		run.limit = limit;
 		run.deadline = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-			std::chrono::duration<double>(kPredictionTimeLimit));
+			std::chrono::duration<double>(limit));
 		const std::optional<ResultGeometry> g = resultGeometry(sequenceData, globalData, run);
 		// kept, unless a run failed for a reason that may not happen again (a timeout, out of
 		// memory, an exception: Source's size, tried again later; a timeout after kTimeoutMemory)
-		if (run.timedOut) rememberTimeout(key);
+		if (run.timedOut) rememberTimeout(key, limit);
 		if (!run.transient) {
 			ProbeResult r;
 			if (g) r.results.push_back(*g);
 			geometryCachePut(key, r);
+			if (g) forgetUnmeasured(key);
 		}
 		return g;
 	} catch (const std::bad_alloc&) {
@@ -3281,16 +3399,53 @@ std::optional<ResultGeometry> pluginResultGeometry(const SequenceData& sequenceD
 	return std::nullopt;
 }
 
-std::optional<ResultGeometry> pluginCachedResultGeometry(const SequenceData& sequenceData, const GlobalData& globalData)
+// What a render knows of the prediction of its values and input sizes (pluginResultGeometry)
+struct RenderPrediction
 {
+	string key; // the prediction's key (empty: none, e.g. a filter that passes Source through)
+	std::optional<ResultGeometry> geometry; // the prediction, if it is in the cache
+	// no geometry because the prediction failed in G'MIC (its entry has no result) or ran out of
+	// time (timedOutUnmeasured), not because it left the cache (a purge, the LRU): the region of
+	// definition was then Source's (issue #228)
+	bool failed = false;
+	bool timedOut = false; // failed, because the prediction ran out of time
+};
+
+// the render's RenderPrediction (never a new prediction)
+static RenderPrediction renderPrediction(const SequenceData& sequenceData, const GlobalData& globalData) noexcept
+{
+	RenderPrediction p;
 	try {
 		unsigned int nofImages = 0;
-		const string key = predictionKey(sequenceData, &globalData, nofImages);
+		p.key = predictionKey(sequenceData, &globalData, nofImages);
+		if (p.key.empty()) return p;
 		ProbeResult cached;
-		if (key.empty() || !geometryCacheLookup(key, cached) || cached.results.empty()) return std::nullopt;
-		return cached.results[0];
+		if (geometryCacheLookup(p.key, cached)) {
+			if (!cached.results.empty()) p.geometry = cached.results[0];
+			else p.failed = true;
+		} else {
+			p.timedOut = timedOutUnmeasured(p.key);
+			p.failed = p.timedOut;
+		}
 	} catch (...) {
-		return std::nullopt;
+		p = RenderPrediction();
+	}
+	return p;
+}
+
+// Issue #228: a render's result geometry g, kept as the prediction of p's values and input sizes if
+// that prediction failed or ran out of time (as Upscale [Solver2x]'s probe, which fails on the
+// probe's gradient, or slow generators such as Nonscape - Woods): the next queries of the region
+// of definition with them get it (the other frames, unless the values change with the frame)
+static void rememberRenderedGeometry(const RenderPrediction& p, const ResultGeometry& g) noexcept
+{
+	if (!p.failed) return;
+	try {
+		ProbeResult r;
+		r.results.push_back(g);
+		geometryCachePut(p.key, r);
+		forgetUnmeasured(p.key);
+	} catch (...) {
 	}
 }
 
@@ -3597,14 +3752,10 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 				memset(dst, 0, dplane * 4 * sizeof(float));
 			}
 			// (a refined prediction with a margin: a result within the output fits, see
-			// ResultGeometry; looked up in the cache, never predicted again: after an eviction,
-			// the render warns)
+			// ResultGeometry; looked up in the cache, never predicted again)
 			const bool inside = sx1 >= dx1 && sy1 >= dy1 && sx1 + sw <= dx1 + dw && sy1 + sh <= dy1 + dh;
-			bool withinMargin = false;
-			if (!same && dynamic && inside) {
-				const std::optional<ResultGeometry> predicted = pluginCachedResultGeometry(*sequenceDataP, *globalDataP);
-				withinMargin = predicted && predicted->hasMargin();
-			}
+			const RenderPrediction predicted = !same && dynamic ? renderPrediction(*sequenceDataP, *globalDataP) : RenderPrediction();
+			const bool withinMargin = inside && predicted.geometry && predicted.geometry->hasMargin();
 			if (!same && dynamic && !withinMargin) {
 				// the output doesn't have the size that the region of definition declared (a size that
 				// depends on the pixels, which pluginResultGeometry's probes can't predict, a size rule
@@ -3614,6 +3765,23 @@ bool pluginProcess(SequenceData& sequenceData, const GlobalData& globalData, Gmi
 					: std::to_string(at.x) + "," + std::to_string(at.y) + " from Source's top-left corner";
 				geometryWarning = "The result (" + std::to_string(sw) + "x" + std::to_string(sh) + " at " + where +
 					") doesn't match the output (" + std::to_string(dw) + "x" + std::to_string(dh) + "): it is cropped or padded.";
+				if (predicted.failed) {
+					// the prediction failed or ran out of time (see the log), and the output kept
+					// Source's region of definition: the next queries with these values and input
+					// sizes get this result's geometry (issue #228). Not after an eviction from the
+					// cache: the region of definition was predicted, and may suit other frames better.
+					// (Output Layer "Frame": a key per frame. Natron keeps the region of definition of
+					// each frame until an edit.)
+					rememberRenderedGeometry(predicted, at);
+					geometryWarning += frameMode
+						? " Its size could not be predicted (see the log): in Natron, this frame stays cropped or padded until the next edit."
+						: " Its size could not be predicted (see the log): the other frames with the same settings get it, but in Natron this "
+						  "frame stays cropped or padded until the next edit.";
+					if (predicted.timedOut) {
+						// (not after a failed probe: more time doesn't help there)
+						geometryWarning += " It took too long: raise Size Prediction Limit (Advanced Options) to measure it.";
+					}
+				}
 			}
 			// overlap, in pixel coordinates (y up)
 			const int x1 = std::max(sx1, dx1), x2 = std::min(sx1 + sw, dx1 + dw);
