@@ -1,7 +1,7 @@
 // The module of pocketfft_unload_test (see pocketfft_unload_test.cpp): it includes the build's
 // patched pocketfft_hdronly.h (patches/pocketfft-no-thread-local.sh), as GMIC.ofx does through
 // CImg.h, and runs its thread pool. Built as GMIC.ofx is (a MODULE with hidden visibility), with
-// one exported function.
+// one exported function; also built with the unpatched header, as the test's control.
 
 #include <algorithm>
 #include <cmath>
@@ -9,16 +9,12 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <mutex>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "pocketfft_hdronly.h"
 
 namespace {
-
-namespace threading = pocketfft::detail::threading;
 
 struct Result {
   bool ok = true;
@@ -29,38 +25,6 @@ struct Result {
     log += "FAILED: " + what + "\n";
   }
 };
-
-// thread_map()'s tasks each get their own share (thread_id(), num_threads()), which multi_iter
-// splits the work with; outside a task, the calling thread's share is (0, 1)
-void checkShares(Result& r)
-{
-  if (threading::thread_id() != 0 || threading::num_threads() != 1) {
-    r.fail("the calling thread's share before thread_map() is not (0, 1)");
-  }
-  const size_t n = 4;
-  std::mutex mut;
-  std::vector<std::pair<size_t, size_t>> seen;
-  threading::thread_map(n, [&] {
-    const std::pair<size_t, size_t> share(threading::thread_id(), threading::num_threads());
-    std::lock_guard<std::mutex> lock(mut);
-    seen.push_back(share);
-  });
-  std::sort(seen.begin(), seen.end());
-  bool sharesOk = seen.size() == n;
-  for (size_t i = 0; sharesOk && i < n; ++i) {
-    sharesOk = seen[i].first == i && seen[i].second == n;
-  }
-  if (!sharesOk) {
-    std::string s;
-    for (const auto& p : seen) {
-      s += " (" + std::to_string(p.first) + ", " + std::to_string(p.second) + ")";
-    }
-    r.fail("thread_map(4) tasks' shares (thread_id(), num_threads()) are" + s + ", not (0..3, 4)");
-  }
-  if (threading::thread_id() != 0 || threading::num_threads() != 1) {
-    r.fail("the calling thread's share after thread_map() is not (0, 1)");
-  }
-}
 
 // FNV-1a of the bytes of v
 uint64_t hash(const std::vector<std::complex<double>>& v)
@@ -74,8 +38,9 @@ uint64_t hash(const std::vector<std::complex<double>>& v)
 }
 
 // An in-place c2c of a w x h x d image along axis, as CImg's FFT() calls it: with 8 threads, the
-// result must be bit-identical to the single-threaded one (each task transforms its own lines;
-// with wrong shares, lines would be transformed twice or not at all), and the inverse must give
+// result must be bit-identical to the single-threaded one (each task transforms its own lines,
+// given by the share that thread_map() passes it; with wrong shares, lines would be transformed
+// twice or not at all), and the inverse must give
 // the input back. Its hash goes into the log, to compare builds (before and after the patch).
 void checkFFT(Result& r, size_t w, size_t h, size_t d, size_t axis)
 {
@@ -117,7 +82,6 @@ extern "C" __attribute__((visibility("default"))) int pocketfft_unload_test_run(
 {
   Result r;
   try {
-    checkShares(r);
     // (CImg's shapes: 3 axes; lines shorter than 1000 have 4 times fewer tasks)
     checkFFT(r, 512, 512, 1, 0);
     checkFFT(r, 512, 512, 1, 1);
