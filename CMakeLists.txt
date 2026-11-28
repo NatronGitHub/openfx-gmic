@@ -123,8 +123,9 @@ endif()
 # Ninja Multi-Config), to hostDemo-path-<config>.txt for each configuration (render_plugins.py
 # --host <build dir> [--config <config>] reads it). Off, openfx's HostSupport isn't even
 # configured. (As a subproject, openfx builds for CMAKE_OSX_ARCHITECTURES as given, the default
-# being the build machine's architecture, like the plug-in.)
-option(GMIC_BUILD_TESTS "Build openfx's hostDemo, for the render test (render_plugins.py)" OFF)
+# being the build machine's architecture, like the plug-in.) Also the regression tests of
+# tests/regression, run by ctest (see the end of this file).
+option(GMIC_BUILD_TESTS "Build openfx's hostDemo, for the render test (render_plugins.py), and tests/regression (ctest)" OFF)
 if(GMIC_BUILD_TESTS)
   set(OFX_BUILD_HOSTSUPPORT ON)
   set(BUILD_EXAMPLE_HOSTS ON)
@@ -383,9 +384,9 @@ if(NOT _old_key STREQUAL _gmic_patch_key)
 endif()
 
 # pocketfft (FFT=pocketfft): pocketfft_hdronly.h, at gmic_sources.txt's POCKETFFTCOMMIT and checked
-# against its POCKETFFT_SHA256, into GMIC_SRC_DIR (next to CImg.h, which includes it), and its
-# licence (BSD-3-Clause, which asks for its notice in binary distributions), from the header's first
-# comment, into GMIC_GENERATED_DIR.
+# against its POCKETFFT_SHA256, patched by gmic_sources.txt's POCKETFFT_PATCHES into GMIC_SRC_DIR
+# (next to CImg.h, which includes it), and its licence (BSD-3-Clause, which asks for its notice in
+# binary distributions), from the header's first comment, into GMIC_GENERATED_DIR.
 set(GMIC_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated")
 if(GMIC_FFT STREQUAL "pocketfft")
   gmic_sources_var(POCKETFFTCOMMIT _pocketfft_commit)
@@ -394,21 +395,23 @@ if(GMIC_FFT STREQUAL "pocketfft")
     message(FATAL_ERROR "Could not read POCKETFFTCOMMIT and POCKETFFT_SHA256 from ${GMIC_SOURCES_FILE}")
   endif()
   # The header: GMIC_POCKETFFT if given (downloaded there if missing, as GMIC_TARBALL), else one in
-  # the source directory (e.g. restored there by CI's cache), else downloaded into GMIC_SRC_DIR.
-  # Each is checked against POCKETFFT_SHA256, then copied into GMIC_SRC_DIR.
+  # the source directory (e.g. restored there by CI's cache), else downloaded into
+  # ${CMAKE_BINARY_DIR}/pocketfft (not an include directory: it isn't patched). Each is checked
+  # against POCKETFFT_SHA256.
   set(GMIC_POCKETFFT "" CACHE FILEPATH "pocketfft_hdronly.h (at gmic_sources.txt's POCKETFFTCOMMIT), downloaded there if missing")
   set(_pocketfft "${GMIC_SRC_DIR}/pocketfft_hdronly.h")
+  set(_pocketfft_download "${CMAKE_BINARY_DIR}/pocketfft/pocketfft_hdronly.h")
   if(GMIC_POCKETFFT)
     set(_pocketfft_src "${GMIC_POCKETFFT}")
   elseif(EXISTS "${PROJECT_SOURCE_DIR}/pocketfft_hdronly.h")
     set(_pocketfft_src "${PROJECT_SOURCE_DIR}/pocketfft_hdronly.h")
   else()
-    set(_pocketfft_src "${_pocketfft}")
+    set(_pocketfft_src "${_pocketfft_download}")
   endif()
   set(_sum "")
   if(EXISTS "${_pocketfft_src}")
     file(SHA256 "${_pocketfft_src}" _sum)
-    if(NOT _sum STREQUAL _pocketfft_sha256 AND NOT _pocketfft_src STREQUAL _pocketfft)
+    if(NOT _sum STREQUAL _pocketfft_sha256 AND NOT _pocketfft_src STREQUAL _pocketfft_download)
       message(FATAL_ERROR "${_pocketfft_src}: checksum mismatch (got ${_sum}, expected ${_pocketfft_sha256}): remove it")
     endif()
   endif()
@@ -427,10 +430,36 @@ if(GMIC_FFT STREQUAL "pocketfft")
     endif()
     file(RENAME "${_pocketfft_src}.tmp" "${_pocketfft_src}")
   endif()
-  if(NOT _pocketfft_src STREQUAL _pocketfft)
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_pocketfft_src}")
-    configure_file("${_pocketfft_src}" "${_pocketfft}" COPYONLY)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_pocketfft_src}")
+  # The local patches (POCKETFFT_PATCHES, as CIMG_PATCHES above), applied to a copy at each
+  # configure (it takes a fraction of a second); configure_file only writes GMIC_SRC_DIR's header
+  # when the result changed.
+  gmic_sources_var(POCKETFFT_PATCHES _pin_pocketfft_patches)
+  if(NOT _pin_pocketfft_patches)
+    message(FATAL_ERROR "Could not read POCKETFFT_PATCHES from ${GMIC_SOURCES_FILE}")
   endif()
+  if(NOT GMIC_PATCH_SH)
+    message(FATAL_ERROR "sh not found: it is needed to apply POCKETFFT_PATCHES to pocketfft_hdronly.h: put a "
+      "POSIX sh in the PATH, or configure with -DGMIC_PATCH_SH=<path to sh>")
+  endif()
+  set(_pocketfft_patch_dir "${CMAKE_BINARY_DIR}/pocketfft/patched")
+  file(REMOVE_RECURSE "${_pocketfft_patch_dir}")
+  file(MAKE_DIRECTORY "${_pocketfft_patch_dir}")
+  configure_file("${_pocketfft_src}" "${_pocketfft_patch_dir}/pocketfft_hdronly.h" COPYONLY)
+  separate_arguments(_scripts UNIX_COMMAND "${_pin_pocketfft_patches}")
+  foreach(_script IN LISTS _scripts)
+    if(NOT _script MATCHES "^patches/[A-Za-z0-9_.-]+\\.sh$" OR NOT EXISTS "${PROJECT_SOURCE_DIR}/${_script}")
+      message(FATAL_ERROR "${GMIC_SOURCES_FILE}: POCKETFFT_PATCHES lists '${_script}', not an existing patches/<name>.sh")
+    endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/${_script}")
+    execute_process(COMMAND "${GMIC_PATCH_SH}" "${PROJECT_SOURCE_DIR}/${_script}" pocketfft_hdronly.h
+      WORKING_DIRECTORY "${_pocketfft_patch_dir}" RESULT_VARIABLE _r)
+    if(NOT _r EQUAL 0)
+      message(FATAL_ERROR "${_script} failed on pocketfft_hdronly.h (POCKETFFTCOMMIT ${_pocketfft_commit})")
+    endif()
+  endforeach()
+  configure_file("${_pocketfft_patch_dir}/pocketfft_hdronly.h" "${_pocketfft}" COPYONLY)
+  file(REMOVE_RECURSE "${_pocketfft_patch_dir}")
   file(READ "${_pocketfft}" _text)
   string(FIND "${_text}" "\n*/\n" _end)
   string(SUBSTRING "${_text}" 0 3 _begin)
@@ -952,6 +981,12 @@ if(GMIC_ARM64X)
 endif()
 
 ofx_deploy_bundle(GMIC)
+
+# The regression tests (tests/regression, run with ctest)
+if(GMIC_BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests/regression)
+endif()
 
 message(STATUS "G'MIC ${GMICVER} (${_gmic_tarball}), ${OFX_LICENSE}, FFT: ${GMIC_FFT}, C++${OFX_CXX_STANDARD}, OpenMP: ${OFX_USE_OPENMP}, "
   "static zlib/libpng/FFTW: ${GMIC_STATIC_DEPS}, "

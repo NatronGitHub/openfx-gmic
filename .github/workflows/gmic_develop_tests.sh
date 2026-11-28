@@ -40,6 +40,8 @@ run_test build sh -c 'cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -D
 cp "$TREE/build/gmic/gmic_stdlib_community.h" "$RESULTS/"
 stdlib=build/gmic/gmic_stdlib_community.h
 plugins=install/OFX/Plugins
+# tests/regression (ctest), as ci.yml's linux job
+run_test regression ctest --test-dir build --output-on-failure --no-tests=error
 
 # (OFX_GMIC_TEST_LOG_HOTFIXES=1: the plug-in also logs the hot fixes that it applies, and those
 # that G'MIC no longer needs)

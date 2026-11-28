@@ -20,6 +20,13 @@ GMICSRC_SHA256_4.0.8 = de30b742c2c69526732ace3a413d4e81fc08d9cf770c3a7b197298b6a
 # branch, and the sha256 of its pocketfft_hdronly.h
 POCKETFFTCOMMIT = 4d865cba24359b05b37da4e75aee24498c3b78e7
 POCKETFFT_SHA256 = 518a95c552aeaee352aa30122137cd9e135d23c91e2863d9272aaa758744c86d
+# Local patches to pocketfft_hdronly.h, applied in order (openfx-misc copies them, as the CImg
+# patches):
+# - pocketfft-no-thread-local.sh: the thread pool passes each task's share of the work as
+#   parameters (upstream's https://github.com/mreineck/pocketfft/pull/3) instead of setting two
+#   thread_local variables, which macOS never unloads (https://github.com/NatronGitHub/openfx/issues/385,
+#   #265)
+POCKETFFT_PATCHES = patches/pocketfft-no-thread-local.sh
 
 # Local patches to CImg.h, extracted from the G'MIC sources (re-extracted when a patch changes):
 # - cimg-omp-rand.sh: the random numbers of rand, noise and the math parser in OpenMP loops do not
