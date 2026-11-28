@@ -3,7 +3,7 @@
 # Transform's center does; a drag must not be taken for such a reset.
 # Poincaré Disk's Shift (non-burst, default 50 %, 50 %: (480, 270) in the 960x540 project) gets a
 # Source twice as large (G'MIC Upscale [Scale2x]): connecting it moves Shift to Source's centre, read
-# from Source's region of definition ((960, 0) while that grows downwards from the top edge, #238).
+# from Source's region of definition ((960, 540): it grows upwards from the bottom edge, #238, #250).
 # Shift is then dragged back exactly onto (480, 270) and must stay there. The phases' times are
 # printed: the renders are 1920x1080.
 # To drop exactly on (480, 270), the last drag is made at zoom 1 around it, from a widget pixel that
