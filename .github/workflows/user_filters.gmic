@@ -306,6 +306,14 @@ fx_userfile_probe_fails :
   if !i(0,0,0,2) error "fails on the plug-in's probe images" fi
   r 200%,200%,1,100%,0 fill_color 255,128,0,255
 
+# the same, slow instead of failing on the probe images (11 s, past the plug-in's 10 s prediction
+# budget; short waits, so that G'MIC stops at the deadline), and quick on the test's input: frame
+# 0's prediction times out, frame 1 gets the size that frame 0's render found (#228)
+#@gui User File Probe Slow : fx_userfile_probe_slow, fx_userfile_probe_slow
+fx_userfile_probe_slow :
+  if !i(0,0,0,2) repeat 110 { wait 100 } fi
+  r 200%,200%,1,100%,0 fill_color 255,128,0,255
+
 # a size that is not an affine function of the input's: sqrt(W*H) wide. The fits fail, and the
 # plug-in confirms the size with one probe at full size (rendered on the test's small Source, which
 # is probed at its own size anyway, and on a 1920x1080 Source)

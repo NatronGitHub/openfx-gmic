@@ -51,9 +51,11 @@ margin; Larger, Smaller and Shifted must be exact, with no margin; and User File
 confirmed at full size, exactly, all without a warning. User File Slow is slower than the
 plug-in's 10 s prediction budget: rendered at frames 0 and 1, its prediction must time out
 once, the second query must not try again, and both outputs have Source's size (about 35 s).
-User File Probe Fails fails on the plug-in's probes and doubles the test's input (#228): rendered
-at frames 0 and 1, frame 0 must keep Source's size, cropped, with the warning that the size was
-not predicted, and frame 1 must get twice Source's size, which frame 0's render found.
+User File Probe Fails fails on the plug-in's probes, User File Probe Slow is slow (11 s) only on
+them, and both double the test's input (#228): rendered at frames 0 and 1 (two views each), the
+first render must keep Source's size, cropped, with the warning that the size could not be
+predicted, and the others must get twice Source's size, which the first render found, without a
+warning (about 15 s).
 
 With --stdlib, the same filters are then rendered with a copy of the whole built-in standard
 library before them in the file, as in a user's copied gmic_stdlib.gmic: the outputs must be the
@@ -195,13 +197,16 @@ LARGE_EXACT_CASES = [
     ('eu.gmic.UserFileShifted', (1.0, 1.0), (10, 20), (0.0, 0.0, 1.0, 1.0)),
 ]
 SLOW_PLUGIN = 'eu.gmic.UserFileSlow'
-# fails on the probes, doubles the test's input (#228): rendered at frames 0 and 1
-PROBE_FAILS_PLUGIN = 'eu.gmic.UserFileProbeFails'
-PROBE_FAILS_COLOR = (1.0, 128 / 255.0, 0.0, 1.0)
-UNPREDICTED_WARNING = 'Its size was not predicted'
-PROBE_FAILED_NOTE = "the run that measures the result's size failed"
 TIMEOUT_NOTE = 'took more than'
 RECENT_TIMEOUT_NOTE = 'timed out less than'
+# (#228) fail or are slow on the probes, double the test's input, rendered at frames 0 and 1 (see
+# check_unpredicted): plug-in id, and the plug-in's note of the failure or the timeout
+UNPREDICTED_CASES = [
+    ('eu.gmic.UserFileProbeFails', "the run that measures the result's size failed"),
+    ('eu.gmic.UserFileProbeSlow', TIMEOUT_NOTE),
+]
+UNPREDICTED_COLOR = (1.0, 128 / 255.0, 0.0, 1.0)
+UNPREDICTED_WARNING = 'Its size could not be predicted'
 PERCENT_PLUGIN = 'eu.gmic.UserFilePercent'
 # not exact fractions of the input's size: refined with a margin, never a warning
 PERCENTS = (10.0, 70.0)
@@ -710,11 +715,15 @@ def check_timeout(host, plugins, work):
 
 
 def check_unpredicted(host, plugins, work):
-    """Renders PROBE_FAILS_PLUGIN at frames 0 and 1: a render without a prediction (#228).
+    """Renders the UNPREDICTED_CASES at frames 0 and 1: renders without a prediction (#228).
 
-    Its probe fails, so frame 0's region of definition is Source's: its output keeps Source's
-    size, cropped, with the warning that the size was not predicted. Frame 1 gets the geometry
-    that frame 0's render found: twice Source's size at its bottom-left corner.
+    Their prediction fails or times out, so the first render's region of definition is Source's:
+    its output keeps Source's size, cropped, with the warning that the size could not be
+    predicted. hostDemo renders two views per frame: the other renders (frame 0's second view,
+    frame 1's views) get the geometry that the first render found, twice Source's size at its
+    bottom-left corner, without a warning (one in the log). After a timeout, they come within the
+    30 s in which the plug-in doesn't try again: their size shows that the cache is looked up
+    first.
 
     Args:
         host: the path of hostDemo.
@@ -724,36 +733,43 @@ def check_unpredicted(host, plugins, work):
     Returns:
         A list of problems.
     """
-    result = render_plugins.render(host, [], plugins, work, TIMEOUT, (PROBE_FAILS_PLUGIN, CONTEXT, ['Source']),
-                                   frame='0,1')
-    problem, errors, log = result.problem, result.errors, result.log
-    if problem:
-        return ['%s: %s %s' % (PROBE_FAILS_PLUGIN, problem, ' '.join(errors))]
     problems = []
-    if PROBE_FAILED_NOTE not in log:
-        problems.append('the probe did not fail')
-    if UNPREDICTED_WARNING not in log:
-        problems.append('no warning that the size was not predicted (frame 0)')
-    renders = (result.report or {}).get('renders') or []
-    if len(renders) != 2:
-        return ['%s: %d renders, expected 2' % (PROBE_FAILS_PLUGIN, len(renders))]
     src_w, src_h = render_plugins.INPUT_WIDTH, render_plugins.INPUT_HEIGHT
-    for r, (width, height) in zip(renders, ((src_w, src_h), (2 * src_w, 2 * src_h))):
-        name = 'at time %s' % r.get('time')
-        output = r.get('output') or {}
-        if (output.get('w'), output.get('h')) != (width, height):
-            problems.append('%s: the output is %sx%s, expected %dx%d'
-                            % (name, output.get('w'), output.get('h'), width, height))
-        rod = (r.get('regionOfDefinition') or {}).get('rod') or []
-        src = ((r.get('inputs') or {}).get('Source') or {}).get('regionOfDefinition') or []
-        if len(src) != 4:
-            problems.append('%s: no region of definition of Source' % name)
+    for pid, note in UNPREDICTED_CASES:
+        result = render_plugins.render(host, [], plugins, work, TIMEOUT, (pid, CONTEXT, ['Source']), frame='0,1')
+        problem, errors, log = result.problem, result.errors, result.log
+        if problem:
+            problems.append('%s: %s %s' % (pid, problem, ' '.join(errors)))
             continue
-        expected = expected_rod(src, (src[2] - src[0]) / src_w, width, height, AT_SOURCE_BOTTOM)
-        if len(rod) != 4 or any(abs(a - e) > ROD_TOLERANCE for a, e in zip(rod, expected)):
-            problems.append('%s: the region of definition is %s, expected %s' % (name, rod, expected))
-        problems += ['%s: %s' % (name, p) for p in check_output({'renders': [r]}, PROBE_FAILS_COLOR)]
-    return ['%s: %s' % (PROBE_FAILS_PLUGIN, p) for p in problems]
+        found = []
+        if note not in log:
+            found.append('the prediction did not fail or time out (no "%s")' % note)
+        if UNPREDICTED_WARNING not in log:
+            found.append('no warning that the size could not be predicted')
+        if log.count(GEOMETRY_WARNING) != 1:
+            found.append('%d warnings that the result does not match the output, expected 1 (the first render)'
+                         % log.count(GEOMETRY_WARNING))
+        renders = (result.report or {}).get('renders') or []
+        if len(renders) < 2:
+            found.append('%d renders, expected at least 2' % len(renders))
+        for k, r in enumerate(renders):
+            width, height = (src_w, src_h) if k == 0 else (2 * src_w, 2 * src_h)
+            name = 'render %d (time %s, view %s)' % (k, r.get('time'), r.get('view'))
+            output = r.get('output') or {}
+            if (output.get('w'), output.get('h')) != (width, height):
+                found.append('%s: the output is %sx%s, expected %dx%d'
+                             % (name, output.get('w'), output.get('h'), width, height))
+            rod = (r.get('regionOfDefinition') or {}).get('rod') or []
+            src = ((r.get('inputs') or {}).get('Source') or {}).get('regionOfDefinition') or []
+            if len(src) != 4:
+                found.append('%s: no region of definition of Source' % name)
+                continue
+            expected = expected_rod(src, (src[2] - src[0]) / src_w, width, height, AT_SOURCE_BOTTOM)
+            if len(rod) != 4 or any(abs(a - e) > ROD_TOLERANCE for a, e in zip(rod, expected)):
+                found.append('%s: the region of definition is %s, expected %s' % (name, rod, expected))
+            found += ['%s: %s' % (name, p) for p in check_output({'renders': [r]}, UNPREDICTED_COLOR)]
+        problems += ['%s: %s' % (pid, p) for p in found]
+    return problems
 
 
 def check_no_multires(host, plugins, work):
