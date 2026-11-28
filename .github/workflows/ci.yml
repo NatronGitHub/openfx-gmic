@@ -335,7 +335,8 @@ jobs:
         if: env.BUILD_VARIANTS == 'true'
         run: |
           .github/workflows/linux_variant.sh debug -DCMAKE_BUILD_TYPE=Debug -DOFX_CXX_STANDARD=17 \
-            -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h"
+            -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h" -DGMIC_BUILD_TESTS=ON
+          ctest --test-dir build-debug --output-on-failure --no-tests=error # tests/regression
           .github/workflows/describe_plugins.sh install-debug/OFX/Plugins $GMIC_PLUGIN_COUNT
       # The installed Linux bundle is uploaded as is, the one that linuxCheckBundle.sh and
       # check_linux_deps.sh checked: it needs only system libraries, but the glibc and libstdc++ of
@@ -350,7 +351,9 @@ jobs:
       - name: Build and describe (release, C++20)
         if: env.BUILD_VARIANTS == 'true'
         run: |
-          .github/workflows/linux_variant.sh cxx20 -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=20
+          .github/workflows/linux_variant.sh cxx20 -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=20 \
+            -DGMIC_POCKETFFT="$PWD/pocketfft_hdronly.h" -DGMIC_BUILD_TESTS=ON
+          ctest --test-dir build-cxx20 --output-on-failure --no-tests=error # tests/regression
           .github/workflows/describe_plugins.sh install-cxx20/OFX/Plugins $GMIC_PLUGIN_COUNT
 
   # Natron 2.6's Linux baseline, weekly or on demand: Rocky Linux 9 (GCC 11, glibc 2.34; VFX
@@ -479,8 +482,9 @@ jobs:
       - name: Build (debug)
         if: env.BUILD_VARIANTS == 'true'
         run: |
-          cmake -S . -B build-debug $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Debug -DOFX_CXX_STANDARD=17
+          cmake -S . -B build-debug $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Debug -DOFX_CXX_STANDARD=17 -DGMIC_BUILD_TESTS=ON
           cmake --build build-debug -j4
+          ctest --test-dir build-debug --output-on-failure --no-tests=error # tests/regression
       # FFTW (opt-in, GPL builds only; MacPorts' fftw-3, installed here only), rendered with the
       # hostDemo of the default build
       - name: Build, describe and render (release, FFT=fftw3)
@@ -523,8 +527,9 @@ jobs:
       - name: Build and describe (release, C++20)
         if: env.BUILD_VARIANTS == 'true'
         run: |
-          cmake -S . -B build-cxx20 $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=20
+          cmake -S . -B build-cxx20 $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release -DOFX_CXX_STANDARD=20 -DGMIC_BUILD_TESTS=ON
           cmake --build build-cxx20 -j4
+          ctest --test-dir build-cxx20 --output-on-failure --no-tests=error # tests/regression
           CXX="/usr/bin/clang++ -I/opt/local/include" \
             HOST_LDFLAGS=-L/opt/local/lib \
             .github/workflows/describe_plugins.sh build-cxx20/Plugins $GMIC_PLUGIN_COUNT
