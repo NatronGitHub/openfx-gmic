@@ -1,4 +1,4 @@
-# Filters and commands of Natron's COMMERCIAL builds (make LICENSE=COMMERCIAL), read by
+# Filters and commands of Natron's COMMERCIAL builds (-DOFX_LICENSE=COMMERCIAL), read by
 # gmic_stdlib_commercial.sh.
 #
 # G'MIC's gmic_stdlib_community.h embeds G'MIC's standard library (src/gmic_stdlib.gmic, dual

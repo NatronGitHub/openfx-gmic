@@ -1,5 +1,5 @@
 #!/bin/sh
-# Generate the gmic_stdlib_community.h of Natron's COMMERCIAL builds (make LICENSE=COMMERCIAL):
+# Generate the gmic_stdlib_community.h of Natron's COMMERCIAL builds (-DOFX_LICENSE=COMMERCIAL):
 # G'MIC's standard library and only the community filters whose licence allows it, without the
 # filters and commands listed in gmic_stdlib_commercial.txt (see the explanations there).
 # Usage: gmic_stdlib_commercial.sh <gmic_<ver>.tar.gz> <G'MIC version> <output .h>
@@ -11,7 +11,7 @@
 # command that only the left-out files define (see check_reachable below).
 # Also writes <output .h>.commands, the names of the commands it defines (for gmic_hotfixes.h).
 # The header starts with a ' #  openfx-gmic : COMMERCIAL standard library' line, which
-# CMakeLists.txt and GMIC_OFX/Makefile check. It is only written (renamed) once complete.
+# CMakeLists.txt checks. It is only written (renamed) once complete.
 # Only POSIX sh, tar, curl, awk, sed and sha256sum or shasum are used.
 set -e
 tarball=$1

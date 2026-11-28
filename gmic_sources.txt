@@ -1,0 +1,72 @@
+# The G'MIC sources of the build: the pinned G'MIC release (its tarball's checksum), the pocketfft
+# pin, and the local patches applied to the extracted sources, in order. The place to change the
+# G'MIC version and its checksum (add GMICSRC_SHA256_<version>). A bump also updates
+# GMIC_PLUGIN_COUNT in ci.yml and the '#@openfx_gmic_hotfixes' line of gmic_hotfixes.gmic.
+#
+# Read by CMakeLists.txt, .github/workflows/gmic_version.sh (GMICVER), gmic_develop_sources.sh
+# (which rewrites GMICVER, the checksum and the patch lists in a test checkout), the cache key of
+# .github/actions/gmic-sources, and openfx-misc's weekly CImg patch check
+# (https://github.com/NatronGitHub/openfx-misc, .github/tools/check-cimg-patches.sh: CIMG_PATCHES,
+# POCKETFFTCOMMIT, POCKETFFT_SHA256, GMICVER). Format, for all of them: "NAME = value", each
+# assigned once, on one line (no continuation), no variables; lists are separated by spaces;
+# "#" starts a comment line. CMakeLists.txt fails on anything else.
+
+GMICVER = 4.0.8
+# The checksums of the release tarballs (gmic_<version>.tar.gz), mandatory: CMakeLists.txt uses
+# GMICSRC_SHA256_<GMICVER> (or -DGMICSRC_SHA256=<sha256>).
+GMICSRC_SHA256_4.0.8 = de30b742c2c69526732ace3a413d4e81fc08d9cf770c3a7b197298b6ab830b0f
+
+# pocketfft (FFT=pocketfft, the default), C++ header-only version, at a pinned commit of its 'cpp'
+# branch, and the sha256 of its pocketfft_hdronly.h
+POCKETFFTCOMMIT = 4d865cba24359b05b37da4e75aee24498c3b78e7
+POCKETFFT_SHA256 = 518a95c552aeaee352aa30122137cd9e135d23c91e2863d9272aaa758744c86d
+
+# Local patches to CImg.h, extracted from the G'MIC sources (re-extracted when a patch changes):
+# - cimg-omp-rand.sh: the random numbers of rand, noise and the math parser in OpenMP loops do not
+#   depend on thread scheduling, so that most seeded filters give the same result at each render
+#   (https://github.com/NatronGitHub/openfx-gmic/issues/44)
+# - cimg-vvar2.sh: the math parser's vvar() with two arguments no longer calls a NULL function
+#   pointer (crash) (https://github.com/GreycLab/CImg/issues/501)
+# - cimg-vargkth2.sh: the math parser's vargkth() with two arguments gives 0, the index that it
+#   gives with more arguments and in CImg 4.0.7 (except for NaN input, see the script), instead of 1
+#   (https://github.com/GreycLab/CImg/issues/501)
+# - cimg-log1p-peephole.sh: the math parser's log(1 + x) -> log1p(x) optimization no longer
+#   rewrites the code that computed a variable, e.g. 'y=1+x;log(y);y' and 'log(y=x+1);y' gave
+#   log(1 + x)
+#   (https://github.com/GreycLab/CImg/issues/502)
+# - cimg-abs-peephole.sh: the same for the abs(maxabs()) -> absmaxabs() optimization, e.g.
+#   'm=maxabs(a,b,c);abs(a)' gave abs(maxabs(a,b,c)) (https://github.com/GreycLab/CImg/issues/502)
+# - cimg-fusion-guards.sh: the math parser's fusions of '+', '-', '*' and '/' only rewrite a
+#   temporary, e.g. 'z=1+(y=x*2);y' gave nan (https://github.com/GreycLab/CImg/issues/502, #232)
+# - cimg-vector-assign.sh: the same for the vector assignments 'V = expr' and '(V) = expr', e.g.
+#   'A=[3,1,2];B=sort(A);(A)=B;size(B)' gave 0 (https://github.com/GreycLab/CImg/issues/505, #245)
+# - cimg-same-reuse.sh: same() no longer writes its result into a live temporary, e.g.
+#   'a=1;sin(a)+same(vector36(a),vector36(a))' gave 2 (#246)
+# - cimg-hypot-layout.sh: hypot() of 1 or 2 values doesn't overflow or underflow with CImg
+#   develop's opcode layout (does nothing with CImg 4.0.8) (#244)
+# - cimg-fftw-no-cleanup-at-unload.sh (FFT=fftw3): no fftw_cleanup_threads() in the destructor of
+#   CImg's static FFTW3_static, run by the host's dlclose(): FFTW's worker threads were still
+#   exiting when the plug-in was unmapped (crash after the render, e.g. ABN Filigrees on Linux)
+#   (https://github.com/GreycLab/CImg/issues/500)
+# - cimg-msvc-snprintf.sh (MSVC): cimg_snprintf() always ends its output with a '\0' (it called
+#   the CRT's _vsnprintf, which doesn't when it truncates): G'MIC's 'input' left image titles
+#   unterminated, read past their end (crash, e.g. Montage Pappus Chain on Windows ARM64) (#111,
+#   https://github.com/GreycLab/CImg/issues/507)
+# - cimg-run-realloc.sh: a fill or eval of an image fails with an error ("Running pipeline has
+#   re-allocated the image list.") when a run() in its expression inserts enough images to
+#   re-allocate the image list, instead of writing into the freed image (its writes were lost, e.g.
+#   the tiles of 'arrange' (Montage) of 13 or 14 images) (#243,
+#   https://github.com/GreycLab/gmic/issues/231). Two parts: the check in mp_run(), G'MIC develop's
+#   (GreycLab/gmic 6938fc8, GreycLab/CImg e3e326b; does nothing on develop: drop it at the next
+#   G'MIC bump), and _fill() no longer reads the freed image after that error ('fill' dropped the
+#   error on macOS): develop needs it too, keep it until upstream fixes it
+# G'MIC 4.0.8 has the fixes of the other patches that 4.0.7 needed (see CHANGELOG.md), and CImg's
+# pocketfft support (cimg_use_pocketfft, https://github.com/GreycLab/CImg/pull/497).
+CIMG_PATCHES = patches/cimg-omp-rand.sh patches/cimg-vvar2.sh patches/cimg-vargkth2.sh patches/cimg-log1p-peephole.sh patches/cimg-abs-peephole.sh patches/cimg-fusion-guards.sh patches/cimg-vector-assign.sh patches/cimg-same-reuse.sh patches/cimg-hypot-layout.sh patches/cimg-fftw-no-cleanup-at-unload.sh patches/cimg-msvc-snprintf.sh patches/cimg-run-realloc.sh
+
+# The same for gmic.cpp, applied after CIMG_PATCHES:
+# - gmic-win-thread-stack.sh: an 8 MiB stack for the threads of G'MIC's 'parallel' command on
+#   Windows (https://github.com/GreycLab/gmic/issues/226)
+# - gmic-argx-overflow.sh: 'displacement' and 'serialize' no longer strcpy() into argx's 1-byte
+#   sentinel (a stack-buffer overflow)
+GMIC_PATCHES = patches/gmic-win-thread-stack.sh patches/gmic-argx-overflow.sh

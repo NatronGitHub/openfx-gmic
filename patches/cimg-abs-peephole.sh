@@ -1,5 +1,5 @@
 #!/bin/sh
-# Patch CImg.h, extracted from the G'MIC sources by the top-level Makefile, so that the math
+# Patch CImg.h, extracted from the G'MIC sources, so that the math
 # parser's abs(maxabs(...)) -> absmaxabs(...) optimization (and the same for minabs) only rewrites
 # code compiled for abs()'s own argument, into a temporary. Usage: cimg-abs-peephole.sh <CImg.h>
 # https://github.com/GreycLab/CImg/issues/502
