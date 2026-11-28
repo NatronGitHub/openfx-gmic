@@ -2997,8 +2997,17 @@ static const int kCheckSize = 256;
 // (about kRemainingProbes times the second one), as for a filter whose time doesn't depend on the
 // image's size (a generator), the size is measured at full size, without them (issue #228). A
 // filter that is slow per pixel keeps the small probes: at full size, it would cost a full render.
+// The probes are only 1296 pixels apart (64 and 80 pixels wide, 16:9), and the extrapolation
+// multiplies the difference of their times by about 1600 for an HD Source: the second probe's
+// time is first reduced by kTimingNoise times the first one's, so that a generator whose times
+// jitter by up to about 20% still gives about its first probe's time. A filter that is linear in
+// pixels (the second probe about 1.56 times the first) still extrapolates to about a full render.
+// The trade-off: a filter with up to about 40% of its time per pixel at the first probe takes the
+// shortcut too, which costs at most one more render at full size, and only matters in a background
+// host (in an interactive one, the six probes of such a filter run past the limit as well).
 static const double kSlowProbeTime = kPredictionTimeLimit / 6.;
 static const double kRemainingProbes = 4.;
+static const double kTimingNoise = 1.25;
 
 // A fit Y = a*X + b of a size or an offset against Source's width or height (see fitAxis)
 struct AxisFit
@@ -3197,7 +3206,7 @@ static std::optional<ResultGeometry> resultGeometry(const SequenceData& sequence
 		if (k < 2) probeTime[k] = std::chrono::steady_clock::now() - start;
 		if (k == 1 && probeTime[0].count() > kSlowProbeTime) {
 			const double p0 = (double)W[0] * H[0], p1 = (double)W[1] * H[1];
-			const double perPixel = p1 > p0 ? std::max(0., probeTime[1].count() - probeTime[0].count()) / (p1 - p0) : 0.;
+			const double perPixel = p1 > p0 ? std::max(0., probeTime[1].count() - kTimingNoise * probeTime[0].count()) / (p1 - p0) : 0.;
 			const double full = probeTime[0].count() + perPixel * ((double)source.width * source.height - p0);
 			if (full < kRemainingProbes * probeTime[1].count()) {
 				return fullSize("slow probes, cheaper at full size than the other probes");

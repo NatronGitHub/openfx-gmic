@@ -314,6 +314,14 @@ fx_userfile_probe_slow :
   if !i(0,0,0,2) repeat 110 { wait 100 } fi
   r 200%,200%,1,100%,0 fill_color 255,128,0,255
 
+# slow on the probe images whatever their size (2 s each, as a generator), quick on other inputs:
+# on a large Source, the first two small probes make it measured at full size, without the other
+# four (#228), within the plug-in's 10 s prediction budget (six probes would run past it)
+#@gui User File Probe Generator : fx_userfile_probe_generator, fx_userfile_probe_generator
+fx_userfile_probe_generator :
+  if !i(0,0,0,2) wait 2000 fi
+  fill_color 32,64,96,255
+
 # a size that is not an affine function of the input's: sqrt(W*H) wide. The fits fail, and the
 # plug-in confirms the size with one probe at full size (rendered on the test's small Source, which
 # is probed at its own size anyway, and on a 1920x1080 Source)

@@ -48,9 +48,10 @@ coordinates. On a 1800x1080-pixel Source: rotations (User File Rotate) and sizes
 are no exact fractions (User File Percent) must be predicted within the plug-in's 1-pixel
 margin; Larger, Smaller and Shifted must be exact, with no margin; and User File Frame Max
 (percent of max(w,h)), User File Area Size (sqrt(W*H)) and User File Product (W*H/1024) must be
-confirmed at full size, exactly, all without a warning. User File Slow is slower than the
-plug-in's 10 s prediction budget: rendered at frames 0 and 1, its prediction must time out
-once, the second query must not try again, and both outputs have Source's size (about 35 s).
+confirmed at full size, exactly, all without a warning; User File Probe Generator (2 s on every
+probe) must be measured at full size after two small probes, within the 10 s budget (#228).
+User File Slow is slower than the plug-in's 10 s prediction budget: rendered at frames 0 and 1,
+its prediction must time out once, the second query must not try again, and both outputs have Source's size (about 35 s).
 User File Probe Fails fails on the plug-in's probes, User File Probe Slow is slow (11 s) only on
 them, and both double the test's input (#228): rendered at frames 0 and 1 (two views each), the
 first render must keep Source's size, cropped, with the warning that the size could not be
@@ -217,6 +218,9 @@ PERCENT_PLUGIN = 'eu.gmic.UserFilePercent'
 # not exact fractions of the input's size: refined with a margin, never a warning
 PERCENTS = (10.0, 70.0)
 FRAME_MAX_PLUGIN = 'eu.gmic.UserFileFrameMax'
+# (#228) 2 s on every probe: on the large Source, measured at full size after two small probes
+GENERATOR_PLUGIN = 'eu.gmic.UserFileProbeGenerator'
+GENERATOR_NOTE = 'slow probes, cheaper at full size than the other probes'
 ROD_TOLERANCE = 1e-3
 KEPT_NOTE = "'star_tone'" + DEFINED_BY
 HOTFIX_WARNING = 'Warning: hot fix'
@@ -587,6 +591,8 @@ def check_large_sources(host, plugins, work):
     plus 0 to 2 pixels, at Source's bottom-left corner (they have no position of their own), with
     no warning. The frame in percent of
     max(w,h) and the size in sqrt(W*H) (AREA_PLUGIN) are confirmed at full size: exact.
+    GENERATOR_PLUGIN, 2 s on every probe, is measured at full size after the first two small
+    probes (#228), within the 10 s budget, which six probes would exceed (about 6 s).
 
     Args:
         host: the path of hostDemo.
@@ -687,6 +693,18 @@ def check_large_sources(host, plugins, work):
         problems.append('%s: not confirmed at full size' % FRAME_MAX_PLUGIN)
     report = {'renders': [first]}
     problems += ['%s: %s' % (FRAME_MAX_PLUGIN, p) for p in check_output(report, (0.0, 128 / 255.0, 1.0, 1.0))]
+    # a generator: three probes (about 6 s), not six (12 s, past the 10 s budget)
+    problem, log, first, src, (width, height), par = large_source_render(host, plugins, work, GENERATOR_PLUGIN, [])
+    if problem:
+        return problems + ['%s: %s' % (GENERATOR_PLUGIN, problem)]
+    if GENERATOR_NOTE not in log:
+        problems.append('%s: not measured at full size after two small probes' % GENERATOR_PLUGIN)
+    if TIMEOUT_NOTE in log or GEOMETRY_WARNING in log:
+        problems.append('%s: the prediction timed out, or the result does not match the output' % GENERATOR_PLUGIN)
+    output = first.get('output') or {}
+    if (output.get('w'), output.get('h')) != (width, height):
+        problems.append('%s: the output is %sx%s, expected %dx%d'
+                        % (GENERATOR_PLUGIN, output.get('w'), output.get('h'), width, height))
     return problems
 
 
