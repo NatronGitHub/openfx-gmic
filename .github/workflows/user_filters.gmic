@@ -243,8 +243,11 @@ fx_userfile_five_channels :
 fx_userfile_render_scale :
   fill_color {$1*2.55},{$2*2.55},{(0$_preview_x1+1==w&&0$_preview_y1+1==h)*255}
 
-# replaces the built-in 'fc' (fill_color)
+# replaces the built-in 'fc' (fill_color). (skip: a command that names no argument doesn't take its
+# arguments, which G'MIC would then read as the next item, here an image 10x20x30, a second result
+# that Output Layer Merged would composite, #260)
 fc :
+  skip $*
   f 128
 
 # a definition of its own of a command that the plug-in hot-fixes (gmic_hotfixes.gmic): it is
