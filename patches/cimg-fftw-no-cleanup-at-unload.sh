@@ -1,5 +1,5 @@
 #!/bin/sh
-# Patch CImg.h, extracted from the G'MIC sources by the top-level Makefile, so that the destructor
+# Patch CImg.h, extracted from the G'MIC sources, so that the destructor
 # of its static FFTW3_static object doesn't call fftw_cleanup_threads(). Usage:
 # cimg-fftw-no-cleanup-at-unload.sh <CImg.h>
 # https://github.com/GreycLab/CImg/issues/500

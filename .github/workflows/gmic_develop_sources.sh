@@ -14,10 +14,10 @@
 #
 # The checkout then gets a tarball as the release ones (gmic_<version>.tar.gz, <version> from
 # gmic.h's gmic_version, e.g. 4.1.0 for 410, with the files that the build extracts and
-# gmic_cli.cpp, for fft_smoke.sh), and its Makefile, which CMakeLists.txt and the tests read,
-# names that version, with the tarball's checksum: as a G'MIC bump would, in this checkout only.
-# Each local patch (CIMG_PATCHES, GMIC_PATCHES) is tried on the develop sources, in order: one
-# that fails is reported and left out of the Makefile's lists, not an error. The report (Markdown)
+# gmic_cli.cpp, for fft_smoke.sh), and its gmic_sources.txt, which CMakeLists.txt and the tests
+# read, names that version, with the tarball's checksum: as a G'MIC bump would, in this checkout
+# only. Each local patch (CIMG_PATCHES, GMIC_PATCHES) is tried on the develop sources, in order:
+# one that fails is reported and left out of gmic_sources.txt's lists, not an error. The report (Markdown)
 # gives the commits, the version and each patch's outcome.
 # Uses $CXX (default c++), and pkg-config for zlib.
 set -euo pipefail
@@ -89,7 +89,7 @@ tar -C "$WORK" -czf "$TREE/gmic_$ver.tar.gz" "gmic-$ver"
 if command -v sha256sum > /dev/null; then sum=$(sha256sum "$TREE/gmic_$ver.tar.gz" | cut -d' ' -f1)
 else sum=$(shasum -a 256 "$TREE/gmic_$ver.tar.gz" | cut -d' ' -f1); fi
 
-# The local patches, in the Makefile's order, each on the result of the previous ones
+# The local patches, in gmic_sources.txt's order, each on the result of the previous ones
 cimg_kept="" gmic_kept=""
 cp "$src/CImg.h" "$src/gmic.cpp" "$WORK/"
 {
@@ -117,7 +117,7 @@ for list in CIMG_PATCHES:CImg.h GMIC_PATCHES:gmic.cpp; do
     var=${list%%:*} file=${list#*:}
     kept=""
     # shellcheck disable=SC2013
-    for p in $(sed -n -e "s/^$var *= *//p" "$TREE/Makefile"); do
+    for p in $(sed -n -e "s/^$var *= *//p" "$TREE/gmic_sources.txt"); do
         if out=$(cd "$WORK" && sh "$TREE/$p" "$file" 2>&1); then
             kept="$kept $p"
             case $out in
@@ -139,18 +139,19 @@ for list in CIMG_PATCHES:CImg.h GMIC_PATCHES:gmic.cpp; do
     fi
     case $var in CIMG_PATCHES) cimg_kept=$kept;; GMIC_PATCHES) gmic_kept=$kept;; esac
 done
-# the Makefile: GMICVER, its checksum (before 'GMICSRC_SHA256=', which picks the one of GMICVER)
-# and the patches that apply
+# gmic_sources.txt: GMICVER, its checksum (after it, replacing one that the file may already have
+# for that version) and the patches that apply
 awk -v ver="$ver" -v sum="$sum" -v cimg="$cimg_kept" -v gmic="$gmic_kept" '
-    /^GMICVER *=/ { print "GMICVER=" ver; next }
-    index($0, "GMICSRC_SHA256_" ver "=") == 1 { next }
-    /^GMICSRC_SHA256 *=/ { print "GMICSRC_SHA256_" ver "=" sum }
-    /^CIMG_PATCHES *=/ { print "CIMG_PATCHES = " cimg; next }
-    /^GMIC_PATCHES *=/ { print "GMIC_PATCHES = " gmic; next }
-    { print }' "$TREE/Makefile" > "$WORK/Makefile"
-cp "$WORK/Makefile" "$TREE/Makefile"
-if ! grep -qx "GMICVER=$ver" "$TREE/Makefile" || ! grep -qx "GMICSRC_SHA256_$ver=$sum" "$TREE/Makefile"; then
-    echo "Error: could not set GMICVER and GMICSRC_SHA256_$ver in $TREE/Makefile: update $0"
+    { name = $0; sub(/[ \t]*=.*/, "", name) }
+    name == "GMICVER" { print "GMICVER = " ver; print "GMICSRC_SHA256_" ver " = " sum; next }
+    name == "GMICSRC_SHA256_" ver { next }
+    name == "CIMG_PATCHES" { print "CIMG_PATCHES = " cimg; next }
+    name == "GMIC_PATCHES" { print "GMIC_PATCHES = " gmic; next }
+    { print }' "$TREE/gmic_sources.txt" > "$WORK/gmic_sources.txt"
+cp "$WORK/gmic_sources.txt" "$TREE/gmic_sources.txt"
+if ! grep -qx "GMICVER = $ver" "$TREE/gmic_sources.txt" ||
+        ! grep -qx "GMICSRC_SHA256_$ver = $sum" "$TREE/gmic_sources.txt"; then
+    echo "Error: could not set GMICVER and GMICSRC_SHA256_$ver in $TREE/gmic_sources.txt: update $0"
     exit 1
 fi
 echo "$TREE: G'MIC $ver from the develop sources (gmic_$ver.tar.gz, sha256 $sum)"

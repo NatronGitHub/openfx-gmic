@@ -1,5 +1,5 @@
 #!/bin/sh
-# Patch CImg.h, extracted from the G'MIC sources by the top-level Makefile, so that the math
+# Patch CImg.h, extracted from the G'MIC sources, so that the math
 # parser's same(A,B) writes its result into a new slot, not into a live temporary.
 # Usage: cimg-same-reuse.sh <CImg.h>
 # https://github.com/NatronGitHub/openfx-gmic/issues/246

@@ -9,7 +9,7 @@
 // set to a directory that does not exist, so that no G'MIC configuration of the user (a
 // gmic_ofx.gmic, a gmic_ofx_plugins.txt, or the user source ~/.gmic or user.gmic) changes the
 // list. It fails unless the list has one entry per plug-in.
-// Built and run by CMakeLists.txt (GMIC_PLUGIN_LIST) and GMIC_OFX/Makefile.
+// Built and run by CMakeLists.txt (GMIC_PLUGIN_LIST).
 //
 // The plug-in reads OFX_GMIC_WRITE_PLUGIN_LIST with the narrow getenv and writes the list with a
 // narrow ofstream, which can't represent every path (e.g. a non-ASCII one on Windows): the tool

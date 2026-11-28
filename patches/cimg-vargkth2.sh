@@ -1,5 +1,5 @@
 #!/bin/sh
-# Patch CImg.h, extracted from the G'MIC sources by the top-level Makefile, so that the math
+# Patch CImg.h, extracted from the G'MIC sources, so that the math
 # parser's vargkth() with exactly two arguments gives 0, the index of its single value, as with
 # more arguments.
 # Usage: cimg-vargkth2.sh <CImg.h>

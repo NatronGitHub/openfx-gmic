@@ -19,7 +19,7 @@ Dual-licensed, choose one of (see COPYING):
 - CeCILL v2.0, compatible with the GNU GPL (Licence_CeCILL_V2-en.txt,
   http://www.cecill.info/licences/Licence_CeCILL_V2-en.html).
 
-COMMERCIAL builds (LICENSE=COMMERCIAL), made for Natron's COMMERCIAL builds, contain no GPL
+COMMERCIAL builds (-DOFX_LICENSE=COMMERCIAL), made for Natron's COMMERCIAL builds, contain no GPL
 code: only code compatible with the CeCILL-C option (pocketfft is BSD-3-Clause, some filters
 CeCILL-B). The default (GPL) build also includes community filters under other licences
 (CeCILL-only, GPL, non-commercial: see gmic_stdlib_commercial.txt), and GPL builds may link FFTW
@@ -32,10 +32,10 @@ Getting the sources
     git clone --recursive https://github.com/NatronGitHub/openfx-gmic.git
     git submodule update -i    # in an existing clone: the openfx and SupportExt (GPL builds) submodules are required
 
-The G'MIC sources (version GMICVER in the Makefile, 4.0.8) are downloaded at build time and are
+The G'MIC sources (version GMICVER in gmic_sources.txt, 4.0.8) are downloaded at build time and are
 not in git: the release tarball gmic_<version>.tar.gz, from the GitHub release of GreycLab/gmic,
 gmic.eu or the MacPorts distfiles mirror, checked against GMICSRC_SHA256_<version>. They are then
-patched: patches/cimg-omp-rand.sh makes CImg's random numbers in OpenMP loops reproducible,
+patched by the scripts that gmic_sources.txt lists (CIMG_PATCHES, GMIC_PATCHES), e.g.: patches/cimg-omp-rand.sh makes CImg's random numbers in OpenMP loops reproducible,
 patches/cimg-vvar2.sh, patches/cimg-vargkth2.sh, patches/cimg-log1p-peephole.sh and
 patches/cimg-abs-peephole.sh fix math parser bugs,
 patches/cimg-fftw-no-cleanup-at-unload.sh keeps FFTW's threads when the plug-in is unloaded
@@ -49,8 +49,8 @@ definitions of broken filters (each fix is skipped once G'MIC has it).
 Requirements
 ------------
 
-- A C++17 or later compiler (C++20 for Qt6 builds of Natron), pkg-config, and make and curl, or
-  CMake >= 3.21 (with Ninja for the example below, or any other generator).
+- A C++17 or later compiler (C++20 for Qt6 builds of Natron), pkg-config, and CMake >= 3.21
+  (with Ninja for the example below, or any other generator).
 - Libraries, found through pkg-config: zlib, libpng; with FFT=fftw3 only,
   fftw3 >= 3.3.5 and fftw3_threads (the default FFT, pocketfft, is header-only and downloaded at
   build time).
@@ -59,7 +59,7 @@ Requirements
   statically, so that GMIC.ofx needs only system libraries. Distributions' archives are often not
   built with -fPIC (e.g. Ubuntu's libpng16.a), and then fail to link: build them with
   .github/workflows/build_static_deps.sh <prefix>, as CI does, and set
-  PKG_CONFIG_PATH=<prefix>/lib/pkgconfig. GMIC_STATIC_DEPS=0 (CMake: -DGMIC_STATIC_DEPS=OFF) links
+  PKG_CONFIG_PATH=<prefix>/lib/pkgconfig. -DGMIC_STATIC_DEPS=OFF links
   the shared zlib and libpng instead: distribution packages and Natron's
   release builds use it (Natron's installer bundles these libraries).
 - The OpenGL headers and library (e.g. libgl-dev, mesa-libGL-devel; macOS and Windows have them),
@@ -67,7 +67,7 @@ Requirements
   builds.
 - Python 3, for the render test only.
 - Platforms: Linux, macOS (Apple clang; libraries from MacPorts or Homebrew) and Windows: MSVC
-  x64 with CMake, as in CI (see "Building with MSVC" below), or MSYS2 (UCRT64, tested weekly; with make or CMake;
+  x64 with CMake, as in CI (see "Building with MSVC" below), or MSYS2 (UCRT64, tested weekly;
   libraries from its packages: mingw-w64-ucrt-x86_64-zlib, -libpng, -libgomp and -pkgconf).
 
 Runtime requirements on Linux: GMIC.ofx needs only the system libraries libc, libm, libstdc++,
@@ -85,41 +85,6 @@ filters fail with "Unreachable network file". Unlike the libcurl code of earlier
 command verifies TLS certificates: downloads may fail behind a proxy that intercepts TLS with a
 certificate that the system doesn't trust.
 
-Building with make
-------------------
-
-CI builds with CMake (https://github.com/NatronGitHub/Natron/issues/1181), as Natron's
-build-plugins.sh does by default. The Makefile is a fallback (build-plugins.sh's
-PLUGINS_BUILD_SYSTEM=make), tested only by one weekly Linux release build compared with the CMake
-one. CMakeLists.txt reads the G'MIC version, the checksums, POCKETFFTCOMMIT, CIMG_PATCHES and GMIC_PATCHES from
-it.
-
-    make CONFIG=release OPENMP=1 CXXSTD=c++17
-    make CONFIG=release OPENMP=1 CXXSTD=c++17 install   # may need root
-
-The bundle is GMIC_OFX/<OS>-<BITS>-<CONFIG>/GMIC.ofx.bundle (e.g. GMIC_OFX/Linux-64-release).
-"make install", with the same options as the build, copies it to /usr/OFX/Plugins (macOS:
-/Library/OFX/Plugins; Windows: C:\Program Files\Common Files\OFX\Plugins). "make distclean"
-also removes the downloaded sources.
-
-Options:
-- CONFIG: release or relwithdebinfo (default: an unoptimised -g build in <OS>-<BITS>-debug).
-- OPENMP=1: multithreaded G'MIC (off by default). On macOS, libomp is taken from LIBOMP_PREFIX
-  (default /opt/local, MacPorts' layout: include/libomp and lib/libomp); with Homebrew's libomp,
-  build with CMake and OFX_LIBOMP_ROOT.
-- CXXSTD: c++17 or later, e.g. c++20 (default: c++17, or none if CXX or CXXFLAGS_EXTRA already
-  has a -std option).
-- GMIC_STATIC_DEPS: Linux only, 1 (default): link zlib, libpng and FFTW statically; 0: shared.
-- LICENSE: GPL (default) or COMMERCIAL (see "Licence"; gmic_stdlib_commercial.txt lists the
-  filters left out, and why).
-- FFT: pocketfft (default, downloaded; BSD-3-Clause, as in openfx-misc) or fftw3 (FFTW, opt-in,
-  GPL builds only).
-- POCKETFFT_HEADER: a downloaded pocketfft_hdronly.h, for offline builds (copied, then checked
-  against POCKETFFT_SHA256); without it, it is downloaded at POCKETFFTCOMMIT.
-- GMIC_PLUGIN_LIST: 1 (default) or 0: ship the list of the plug-ins (see "Choosing the
-  plug-ins"), which the build makes by loading the plug-in. 0 by default when the compiler
-  targets another processor than the build machine's (not checked on macOS).
-
 Building with CMake
 -------------------
 
@@ -135,18 +100,20 @@ Distribute the installed bundle (cmake --install), not build/Plugins: the instal
 (mode 755; macOS: rpaths into /opt/local, /usr/local and Homebrew removed, re-signed;
 OFX_DEPLOY_BUNDLES: bundled libraries).
 
-Options (the Makefile's equivalent in parentheses):
-- CMAKE_BUILD_TYPE: Release (default), Debug or RelWithDebInfo (CONFIG).
-- OFX_CXX_STANDARD: 17 (default, the minimum) or 20 (CXXSTD).
-- OFX_USE_OPENMP: ON (default) (OPENMP=1); OFX_LIBOMP_ROOT: libomp for Apple clang (default:
+Options:
+- CMAKE_BUILD_TYPE: Release (default), Debug or RelWithDebInfo.
+- OFX_CXX_STANDARD: 17 (default, the minimum) or 20.
+- OFX_USE_OPENMP: ON (default); OFX_LIBOMP_ROOT: libomp for Apple clang (default:
   MacPorts'; Homebrew: -DOFX_LIBOMP_ROOT=$(brew --prefix libomp)).
-- OFX_LICENSE: GPL (default) or COMMERCIAL (LICENSE); FFT: pocketfft (default) or fftw3 (FFT).
+- OFX_LICENSE: GPL (default) or COMMERCIAL (see "Licence"; gmic_stdlib_commercial.txt lists the
+  filters left out, and why); FFT: pocketfft (default, downloaded; BSD-3-Clause, as in openfx-misc)
+  or fftw3 (FFTW, opt-in, GPL builds only).
 - GMIC_TARBALL: a downloaded gmic_<version>.tar.gz, for offline builds; GMIC_DOWNLOAD_DIR: where
   to download it (default: the build directory).
-- GMIC_POCKETFFT: a downloaded pocketfft_hdronly.h (POCKETFFT_HEADER), for offline builds: the
-  file at the Makefile's POCKETFFTCOMMIT, checked against POCKETFFT_SHA256 (downloaded there if
+- GMIC_POCKETFFT: a downloaded pocketfft_hdronly.h, for offline builds: the
+  file at gmic_sources.txt's POCKETFFTCOMMIT, checked against POCKETFFT_SHA256 (downloaded there if
   missing).
-- GMIC_STATIC_DEPS: Linux only, ON (default) or OFF (GMIC_STATIC_DEPS=1 or 0).
+- GMIC_STATIC_DEPS: Linux only, ON (default): link zlib, libpng and FFTW statically; OFF: shared.
 - OFX_DEPLOY_BUNDLES=ON: on macOS, the install step copies the libraries into the bundle.
   GMIC.ofx targets macOS 14.0 by default (CMAKE_OSX_DEPLOYMENT_TARGET, MACOSX_DEPLOYMENT_TARGET),
   but the copied libraries keep the macOS version they were built for. CI builds, which aren't

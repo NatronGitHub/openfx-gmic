@@ -2,7 +2,7 @@ name: G'MIC sources cache
 description: >-
   Restore (or save at the end of the job) the G'MIC tarball and pocketfft_hdronly.h, downloaded
   into the workspace (GMIC_DOWNLOAD_DIR, GMIC_POCKETFFT), where the CMake build finds them. The key
-  hashes the Makefile, which pins both (GMICVER, POCKETFFTCOMMIT, read by CMakeLists.txt).
+  hashes gmic_sources.txt, which pins both (GMICVER, POCKETFFTCOMMIT, read by CMakeLists.txt).
 runs:
   using: composite
   steps:
@@ -12,4 +12,4 @@ runs:
         path: |
           gmic_*.tar.gz
           pocketfft_hdronly.h
-        key: gmic-src-${{ hashFiles('Makefile') }}
+        key: gmic-src-${{ hashFiles('gmic_sources.txt') }}

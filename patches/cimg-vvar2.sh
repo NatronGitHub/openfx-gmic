@@ -1,5 +1,5 @@
 #!/bin/sh
-# Patch CImg.h, extracted from the G'MIC sources by the top-level Makefile, so that the math
+# Patch CImg.h, extracted from the G'MIC sources, so that the math
 # parser's vvar() with exactly two arguments no longer crashes. Usage: cimg-vvar2.sh <CImg.h>
 # https://github.com/GreycLab/CImg/issues/501
 #

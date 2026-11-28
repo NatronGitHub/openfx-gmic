@@ -1,5 +1,5 @@
 #!/bin/sh
-# Patch CImg.h, extracted from the G'MIC sources by the top-level Makefile, so that the math
+# Patch CImg.h, extracted from the G'MIC sources, so that the math
 # parser's fusions of '+', '-', '*' and '/' only rewrite an operand's last opcode when that operand
 # is a temporary. Usage: cimg-fusion-guards.sh <CImg.h>
 # https://github.com/GreycLab/CImg/issues/502, https://github.com/NatronGitHub/openfx-gmic/issues/232

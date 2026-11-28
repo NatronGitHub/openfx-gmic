@@ -46,8 +46,8 @@
 #                built-in one still gets the fix, and a definition of <command> (or of a
 #                callee) of its own is kept, with a note instead of the warning.
 #
-#                The '#@openfx_gmic_hotfixes' line gives the G'MIC version (GMICVER in the
-#                Makefile) these fixes were last reviewed against: the build warns (and
+#                The '#@openfx_gmic_hotfixes' line gives the G'MIC version (GMICVER in
+#                gmic_sources.txt) these fixes were last reviewed against: the build warns (and
 #                does not fail) for another version, since the checks above already find
 #                every fix that needs a review. When bumping GMICVER, remove the blocks that
 #                upstream has fixed (dead weight from then on), review the others if the
