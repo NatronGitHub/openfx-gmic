@@ -22,10 +22,10 @@ POCKETFFTCOMMIT = 4d865cba24359b05b37da4e75aee24498c3b78e7
 POCKETFFT_SHA256 = 518a95c552aeaee352aa30122137cd9e135d23c91e2863d9272aaa758744c86d
 # Local patches to pocketfft_hdronly.h, applied in order (openfx-misc copies them, as the CImg
 # patches):
-# - pocketfft-no-thread-local.sh: the thread pool's per-task share of the work (thread_id(),
-#   num_threads()) in a pthread key instead of two thread_local variables, and no pthread_atfork()
-#   handlers, so that macOS can unload the plug-in (it never unloads a binary that has
-#   thread-local variables) (https://github.com/NatronGitHub/openfx/issues/385)
+# - pocketfft-no-thread-local.sh: the thread pool passes each task's share of the work as
+#   parameters (upstream's https://github.com/mreineck/pocketfft/pull/3) instead of setting two
+#   thread_local variables, which macOS never unloads (https://github.com/NatronGitHub/openfx/issues/385,
+#   #265)
 POCKETFFT_PATCHES = patches/pocketfft-no-thread-local.sh
 
 # Local patches to CImg.h, extracted from the G'MIC sources (re-extracted when a patch changes):
